@@ -17,11 +17,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+# Try FA3 (Hopper-native or community fallback), fall back to PyTorch SDPA
+USE_FA3 = True
+try:
+    from kernels import get_kernel
+    cap = torch.cuda.get_device_capability()
+    repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+    fa3 = get_kernel(repo).flash_attn_interface
+except Exception:
+    USE_FA3 = False
+    fa3 = None
+    print("FA3 not available, using PyTorch SDPA fallback")
 
 from constants import MAX_SEQ_LEN, TIME_BUDGET
 from prepare import Tokenizer, make_dataloader, evaluate_bpb
@@ -91,7 +97,31 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        if USE_FA3:
+            y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        else:
+            # SDPA expects (B, H, T, D)
+            q = q.transpose(1, 2)
+            k = k.transpose(1, 2)
+            v = v.transpose(1, 2)
+            # GQA head expansion
+            if self.n_kv_head < self.n_head:
+                r = self.n_head // self.n_kv_head
+                k = k.repeat_interleave(r, dim=1)
+                v = v.repeat_interleave(r, dim=1)
+            # Sliding window causal attention
+            ws = window_size[0]
+            if 0 < ws < T:
+                pos = torch.arange(T, device=q.device)
+                mask = (pos.unsqueeze(0) <= pos.unsqueeze(1)) & \
+                       (pos.unsqueeze(0) >= pos.unsqueeze(1) - ws + 1)
+                attn_mask = torch.zeros(T, T, device=q.device, dtype=q.dtype)
+                attn_mask.masked_fill_(~mask, float('-inf'))
+                y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+            else:
+                y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+            y = y.transpose(1, 2)
+
         y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
