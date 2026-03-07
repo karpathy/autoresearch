@@ -3,7 +3,8 @@ name = "opencastor-autoresearch"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-    "anthropic>=0.40.0",
+    "google-genai>=1.0.0",
+    "google-auth>=2.0.0",
     "ollama>=0.4.0",
     "gitpython>=3.1.0",
 ]

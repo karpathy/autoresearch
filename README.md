@@ -8,10 +8,10 @@ software improvement (tests, docs, presets) instead of ML training.
 ## How it works
 
 - **Draft model**: gemma3:1b via Ollama (on-device, free)
-- **Review model**: Claude Haiku 4.5 (cloud, ~$0.15/night)
+- **Review model**: Gemini 2.0 Flash via Google ADC (no API key needed)
 - **Loop**: propose → review → apply → test → keep/revert → log
 - **Schedule**: 12am–6am nightly via cron
-- **Cost**: ~$0.07–0.15/night
+- **Cost**: free (ADC quota)
 
 ## Tracks (rotates by day)
 
@@ -24,10 +24,11 @@ software improvement (tests, docs, presets) instead of ML training.
 
 ## Setup
 
-1. `cp .env.example .env && nano .env` — add your Anthropic API key
-2. `pip install anthropic ollama gitpython`
-3. Ensure Ollama is running: `ollama pull gemma3:1b`
-4. Add cron job: `crontab -e` and add:
+1. `cp .env.example .env` — no API key needed, uses Google ADC
+2. Ensure ADC is configured: `gcloud auth application-default login`
+3. `pip install google-genai google-auth ollama gitpython`
+4. Ensure Ollama is running: `ollama pull gemma3:1b`
+5. Add cron job: `crontab -e` and add:
    ```
    0 0 * * * /home/craigm26/opencastor-autoresearch/cron.sh >> /home/craigm26/autoresearch.log 2>&1
    ```

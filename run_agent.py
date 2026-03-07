@@ -19,12 +19,25 @@ import textwrap
 from datetime import datetime
 from pathlib import Path
 
-import anthropic
+import google.auth
+import google.auth.transport.requests
+from google import genai
 import ollama
+
+# Authenticate using Application Default Credentials (gcloud auth application-default login)
+_creds, _project = google.auth.default()
+_auth_req = google.auth.transport.requests.Request()
+_creds.refresh(_auth_req)
+_genai_client = genai.Client(
+    vertexai=True,
+    project=_project,
+    location="us-central1",
+    credentials=_creds,
+)
 
 OPENCASTOR_REPO = Path(os.environ["OPENCASTOR_REPO_PATH"])
 TODAY_TRACK = os.environ.get("TODAY_TRACK", "A")
-HAIKU_MODEL = "claude-haiku-4-5-20251001"
+REVIEWER_MODEL = "gemini-2.0-flash"
 DRAFT_MODEL = "gemma3:1b"
 RESULTS_TSV = Path(__file__).parent / "results.tsv"
 
@@ -33,9 +46,6 @@ FORBIDDEN_FILES = {
     "castor/safety.py",
     "castor/auth.py",
 }
-
-client = anthropic.Anthropic()
-
 
 def git(cmd: str, cwd: Path = OPENCASTOR_REPO) -> str:
     """Run a git command in cwd and return stdout."""
@@ -161,7 +171,7 @@ def draft_improvement(file_path: str, file_content: str, program: str) -> str:
 
 
 def haiku_review(draft: str, file_path: str) -> tuple[bool, str]:
-    """Ask Claude Haiku to review the draft. Returns (approved, reason)."""
+    """Ask Gemini to review the draft via Google ADC. Returns (approved, reason)."""
     track_name = {"A": "pytest tests", "B": "docstrings", "C": "RCAN preset"}[TODAY_TRACK]
     prompt = textwrap.dedent(f"""
         You are reviewing a proposed {track_name} change for the OpenCastor robot runtime repo.
@@ -181,12 +191,8 @@ def haiku_review(draft: str, file_path: str) -> tuple[bool, str]:
         PASS - <one sentence explaining why it's good>
         FAIL - <one sentence explaining the problem>
     """)
-    msg = client.messages.create(
-        model=HAIKU_MODEL,
-        max_tokens=120,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = msg.content[0].text.strip()
+    response = _genai_client.models.generate_content(model=REVIEWER_MODEL, contents=prompt)
+    text = response.text.strip()
     passed = text.upper().startswith("PASS")
     return passed, text
 
