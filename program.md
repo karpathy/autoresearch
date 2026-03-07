@@ -98,9 +98,10 @@ LOOP FOREVER (until I wake up and come back in the morning):
 3. git commit
 4. run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
 5. read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. record the results in the tsv
-7. if val_bpb improved (lower), you "advance" the branch, keeping the git commit
-8. if val_bpb is equal or worse, you git reset back to where you started
+6. If the grep output is empty, the run crashed. You MUST run `tail -n 50 run.log` to read the Python stack trace so you can actually diagnose and fix the bug.
+7. record the results in the tsv
+8. if val_bpb improved (lower), you "advance" the branch, keeping the git commit
+9. if val_bpb is equal or worse, you git reset back to where you started
 
 The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
 
