@@ -26,19 +26,25 @@ Training runs for a **fixed 5-minute time budget** (wall clock, excluding startu
 **Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
 
 ```bash
-# 1. Install dependencies
+
+# 1. Install uv project manager (if you don't already have it)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. Install dependencies
 uv sync
 
-# 2. Download data and train tokenizer (one-time, ~5 min)
+# 3. Download data and train tokenizer (one-time, ~2 min)
 uv run prepare.py
 
-# 3. Run a single training experiment (5 min + startup)
+# 4. Manually run a single training experiment (~5 min)
 uv run train.py
 ```
 
+If the above commands all work ok, your setup is working and you can go into autonomous research mode.
+
 ## Running the agent
 
-Simply spin up your Claude/Codex or whatever you want in this repo, then you can something like:
+Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
 
 ```
 Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
@@ -59,8 +65,7 @@ pyproject.toml  — dependencies
 ## Design choices
 
 - **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes. This makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc).
-- **BPB metric.** Bits per byte is independent of tokenizer vocabulary size, so the agent could in principle change the vocab size and still get a fair comparison.
+- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
 - **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
 
 ## License
