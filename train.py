@@ -29,6 +29,7 @@ class GPTConfig:
     n_kv_head: int = 6
     n_embd: int = 768
     window_pattern: str = "SSSL"
+    resid_dropout: float = 0.0
 
 
 def norm(x):
@@ -120,10 +121,11 @@ class Block(nn.Module):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
+        self.drop = nn.Dropout(config.resid_dropout)
 
     def __call__(self, x, ve, mask):
-        x = x + self.attn(norm(x), ve, mask)
-        x = x + self.mlp(norm(x))
+        x = x + self.drop(self.attn(norm(x), ve, mask))
+        x = x + self.drop(self.mlp(norm(x)))
         return x
 
 
