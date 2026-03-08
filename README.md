@@ -67,6 +67,7 @@ pyproject.toml  — dependencies
 ## Notable forks
 
 - [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos)
+- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx)
 
 ## License
 
