@@ -6,3 +6,4 @@ cf0a4d4	1.106064	3.119931	2.013867	window_boundary_exploit	discard	added tail lo
 96dc43a	1.424936	3.438803	2.013867	adversarial_search	keep	adversarial token search — evolved val sequences to 3.439 bpb
 cb09950	1.516566	3.530433	2.013867	adversarial_search	keep	improved search — adaptive mutation, crossover, 2x population
 0e308f5	1.549741	3.563608	2.013867	adversarial_search	keep	batched forward pass — more candidates per generation, worst=3.564
+8c31be2	1.673638	3.633419	1.959782	adversarial_search	keep	weight_decay=0.4 model — gap=1.674, subgroup improved 0.69->0.56

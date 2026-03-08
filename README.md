@@ -62,7 +62,17 @@ The agent reads `program_dojo.md`, modifies `test_protocol.py`, runs a 5-minute 
 
 ### Closed loop (train + stress-test)
 
-The full pipeline: the agent modifies `train.py`, trains, then immediately stress-tests the result. Keeps changes only if val_bpb improved WITHOUT making the model more fragile. Uses adversarial findings to inform the next training change.
+The full pipeline combines both loops into one autonomous cycle where adversarial findings directly inform training decisions. Each iteration:
+
+1. The agent reads adversarial results (e.g., "window boundary has 1.5 BPB gap")
+2. Reasons about the root cause (e.g., "sliding window SSSL pattern loses context at the boundary")
+3. Decides what to change in `train.py` (e.g., "switch to SSLL to give more layers full attention")
+4. Trains the model (5 min)
+5. Stress-tests it with adversarial protocols (5 min)
+6. Evaluates both metrics: keeps changes only if val_bpb improved WITHOUT making the model more fragile
+7. Repeats with a new idea based on what it just learned
+
+The model and its tests co-evolve — training failures inform better tests, and test results inform better training.
 
 - **`program_loop.md`** — agent instructions for the closed loop. Point your agent here.
 - **`loop_results.tsv`** — combined metrics: val_bpb, robustness_gap, worst_case_bpb, worst_test per experiment.
@@ -92,12 +102,6 @@ results.tsv          — training experiment log (val_bpb)
 dojo_results.tsv     — adversarial experiment log (robustness_gap)
 loop_results.tsv     — closed loop log (val_bpb + robustness_gap combined)
 ```
-
-## Connection to DOJO
-
-This is a prototype of a larger vision: **DOJO** is an open-source platform where AI models get stress-tested by a community of agents, other models, and humans before they touch patients. Instead of developers grading their own homework, DOJO distributes the evaluation — contributors submit specialized testing protocols that probe models for shortcut learning, population bias, and failure modes that standard evaluation misses.
-
-This repo demonstrates the core mechanism: an autonomous agent that iteratively improves its own adversarial testing capability. The same loop that Karpathy uses to improve models, applied to improving the tests themselves.
 
 ## Acknowledgments
 

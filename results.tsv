@@ -1,2 +1,3 @@
 commit	val_bpb	memory_gb	status	description
 25a8ccb	2.013867	20.7	keep	baseline — M2 Pro, depth=4, 11.5M params, 172 steps
+8c31be2	1.959782	21.2	keep	weight_decay 0.2->0.4 — val_bpb improved 2.014->1.960
