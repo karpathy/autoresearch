@@ -3,3 +3,4 @@ commit	val_bpb	memory_gb	status	description
 8c31be2	1.959782	21.2	keep	weight_decay 0.2->0.4 — val_bpb improved 2.014->1.960
 5a90b01	1.919606	21.2	keep	window SSSL->SSLL — val_bpb improved 1.960->1.920
 3361b59	1.882925	21.2	keep	adam beta2 0.95->0.9 — val_bpb improved 1.920->1.883
+6dce675	1.831907	21.2	keep	MLP squared_relu->gelu — val_bpb improved 1.883->1.832

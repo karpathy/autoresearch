@@ -9,3 +9,4 @@ cb09950	1.516566	3.530433	2.013867	adversarial_search	keep	improved search — a
 8c31be2	1.673638	3.633419	1.959782	adversarial_search	keep	weight_decay=0.4 model — gap=1.674, subgroup improved 0.69->0.56
 5a90b01	1.657995	3.577601	1.919606	adversarial_search	keep	SSLL window model — both val_bpb and gap improved, subgroup 0.56->0.53
 3361b59	1.694398	3.577322	1.882925	adversarial_search	keep	beta2=0.9 — val_bpb improved, gap within threshold, subgroup 0.53->0.52
+6dce675	1.685553	3.517460	1.831907	adversarial_search	keep	gelu activation — val_bpb improved, gap slightly decreased
