@@ -1,20 +1,10 @@
-# Python-generated files
+.DS_Store
+.venv/
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-worktrees/
-results/
-queue/
-
-# Agent prompt files (generated per-session by launchers)
-CLAUDE.md
-AGENTS.md
-
-# Experimental code/artifacts
-dev/
+*.pyc
+*.log
+run.log
+surfaces.txt
+surface-verify-prompt.md
+build-2-closeout.md
+checkpoints/
