@@ -9,3 +9,4 @@ commit	val_bpb	robustness_gap	worst_case_bpb	worst_test	memory_gb	status	descrip
 b3a553c	1.900172	1.787814	3.687986	adversarial_search	21.2	discard	warmdown 0.5->0.3 — val_bpb improved 1.920->1.900 but gap spiked 1.658->1.788
 3361b59	1.882925	1.694398	3.577322	adversarial_search	21.2	keep	adam beta2 0.95->0.9 — val_bpb 1.920->1.883, gap 1.658->1.694 (within threshold)
 d50c56a	1.948703	0.000000	0.000000	skipped	21.2	discard	embedding_lr 0.6->0.8 — val_bpb regressed 1.883->1.949
+53b243f	1.693204	1.974203	3.667407	adversarial_search	21.2	discard	batch 2^16->2^15 — val_bpb great 1.883->1.693 but gap spiked 1.694->1.974
