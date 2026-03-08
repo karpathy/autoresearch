@@ -20,3 +20,4 @@ c38b7a0	2.000569	0.000000	0.000000	skipped	21.2	discard	unembedding_lr 0.004->0.
 f9d297d	1.967433	0.000000	0.000000	skipped	21.7	discard	device_batch 16->32 — val_bpb regressed 1.883->1.967, larger batch slower
 f7123d6	1.974483	0.000000	0.000000	skipped	21.2	discard	logit cap 15->30 — val_bpb regressed 1.883->1.974, tighter cap helps regularize
 6dce675	1.831907	1.685553	3.517460	adversarial_search	21.2	keep	MLP squared_relu->gelu — val_bpb 1.883->1.832, gap 1.694->1.686 (stable)
+4cee3f8	2.100946	0.000000	0.000000	skipped	21.9	discard	SwiGLU MLP — val_bpb regressed 1.832->2.101, architecture change needs LR re-tuning
