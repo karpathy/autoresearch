@@ -5,8 +5,12 @@ Usage: uv run train.py
 """
 
 import os
+import shutil
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+# Triton's bundled ptxas doesn't support sm_121a (GB10/Blackwell). Use system ptxas from CUDA toolkit.
+if _ptxas := shutil.which("ptxas"):
+    os.environ.setdefault("TRITON_PTXAS_PATH", _ptxas)
 
 import gc
 import time
@@ -16,11 +20,38 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kernels import get_kernel
 cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+
+def _sdpa_attn(q, k, v, causal=True, window_size=(-1, 0)):
+    """SDPA fallback for when the flash-attn3 kernel has no image for this GPU."""
+    B, T, Hq, D = q.shape
+    _, _, Hkv, _ = k.shape
+    if Hq != Hkv:
+        k = k.repeat_interleave(Hq // Hkv, dim=2)
+        v = v.repeat_interleave(Hq // Hkv, dim=2)
+    q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+    left = window_size[0]
+    if left < 0 or left >= T:
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=causal)
+    else:
+        rows = torch.arange(T, device=q.device).unsqueeze(1)
+        cols = torch.arange(T, device=q.device).unsqueeze(0)
+        mask = (cols <= rows) & (cols >= rows - left)
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+    return out.transpose(1, 2)
+
+# kernels-community/flash-attn3 has no kernel image for sm_121a (GB10/Grace Blackwell).
+# Skip loading the kernel entirely for these GPUs and use SDPA instead.
+if cap >= (12, 1):
+    _flash_attn_func = _sdpa_attn
+    print(f"FA3 has no kernel image for sm_{cap[0]}{cap[1]}, using torch SDPA")
+else:
+    from kernels import get_kernel
+    # varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
+    repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+    fa3 = get_kernel(repo).flash_attn_interface
+    _flash_attn_func = torch._dynamo.disable(fa3.flash_attn_func)
+    print("Using Flash Attention 3")
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -89,7 +120,7 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        y = _flash_attn_func(q, k, v, causal=True, window_size=window_size)
         y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
