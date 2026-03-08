@@ -331,6 +331,260 @@ def read_brief(knowledge_dir: Path | str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Synthesis generation
+# ---------------------------------------------------------------------------
+
+
+def generate_session_synthesis(knowledge_dir: Path | str, session_tag: str) -> str:
+    """Generate a session synthesis report from all current cards.
+
+    Saves the report to knowledge/synthesis/{session_tag}.md and returns the
+    file path as a string.
+    """
+    knowledge_dir = Path(knowledge_dir)
+    cards = load_cards(knowledge_dir)
+    coverage = get_coverage_map(knowledge_dir)
+
+    # Ensure synthesis directory exists
+    synthesis_dir = knowledge_dir / "synthesis"
+    synthesis_dir.mkdir(parents=True, exist_ok=True)
+
+    # Gather platform info from the most recent card (or fallback)
+    platform_info = get_device_info()
+    if cards:
+        platform_info = cards[0].get("platform", platform_info)
+    gpu = platform_info.get("gpu", "unknown")
+
+    # Categorize cards
+    kept = [c for c in cards if c.get("status") == "keep"]
+    discarded = [c for c in cards if c.get("status") == "revert"]
+    crashed = [c for c in cards if c.get("status") == "crash"]
+
+    # Sort kept by delta (most negative = best improvement first)
+    kept.sort(key=lambda c: c.get("results", {}).get("delta", 0))
+
+    # Best val_bpb across all cards
+    all_bpbs = [
+        c.get("results", {}).get("val_bpb")
+        for c in cards
+        if c.get("results", {}).get("val_bpb") is not None
+    ]
+    best_bpb = min(all_bpbs) if all_bpbs else None
+
+    # Baseline: the val_bpb of a card with delta == 0 or closest to 0
+    baseline_cards = [
+        c for c in cards
+        if c.get("results", {}).get("delta") is not None
+        and c.get("results", {}).get("val_bpb") is not None
+    ]
+    if baseline_cards:
+        baseline_card = min(
+            baseline_cards,
+            key=lambda c: abs(c["results"]["delta"]),
+        )
+        baseline_bpb = baseline_card["results"]["val_bpb"] + abs(baseline_card["results"]["delta"])
+    else:
+        baseline_bpb = None
+
+    # Build the report
+    lines: list[str] = []
+    lines.append(f"# Session Synthesis: {session_tag}")
+    lines.append("")
+    lines.append(f"- **Platform:** {gpu}")
+    lines.append(f"- **Experiments:** {len(cards)}")
+    if best_bpb is not None:
+        lines.append(f"- **Best val_bpb:** {best_bpb:.6f}")
+    if baseline_bpb is not None:
+        lines.append(f"- **Baseline val_bpb:** {baseline_bpb:.6f}")
+    lines.append("")
+
+    # Confirmed Findings
+    lines.append("## Confirmed Findings")
+    lines.append("")
+    if kept:
+        for card in kept:
+            results = card.get("results", {})
+            delta = results.get("delta")
+            bpb = results.get("val_bpb")
+            delta_str = f"{delta:+.6f}" if delta is not None else "n/a"
+            bpb_str = f"{bpb:.6f}" if bpb is not None else "n/a"
+            lines.append(
+                f"- [{card['id']}] {card['hypothesis'][:80]} "
+                f"| delta={delta_str}, bpb={bpb_str}"
+            )
+            lines.append(f"  - Lesson: {card.get('lesson', 'n/a')}")
+    else:
+        lines.append("No confirmed findings yet.")
+    lines.append("")
+
+    # Dead Ends
+    lines.append("## Dead Ends")
+    lines.append("")
+    if discarded:
+        for card in discarded:
+            results = card.get("results", {})
+            delta = results.get("delta")
+            delta_str = f"{delta:+.6f}" if delta is not None else "n/a"
+            lines.append(
+                f"- [{card['id']}] {card['hypothesis'][:80]} "
+                f"| delta={delta_str}"
+            )
+            lines.append(f"  - Lesson: {card.get('lesson', 'n/a')}")
+    else:
+        lines.append("No dead ends recorded.")
+    lines.append("")
+
+    # Crashes
+    if crashed:
+        lines.append("## Crashes")
+        lines.append("")
+        for card in crashed:
+            lines.append(
+                f"- [{card['id']}] {card['hypothesis'][:80]}"
+            )
+            lines.append(f"  - Lesson: {card.get('lesson', 'n/a')}")
+        lines.append("")
+
+    # Open Questions
+    lines.append("## Open Questions")
+    lines.append("")
+    open_q = get_open_questions(knowledge_dir)
+    # Also identify under-explored tags (count <= 2 and not saturated)
+    under_explored = [
+        tag for tag, stats in coverage.items()
+        if stats["count"] <= 2
+    ]
+    if open_q:
+        for q in open_q:
+            lines.append(f"- {q}")
+    if under_explored:
+        for tag in sorted(under_explored):
+            lines.append(f"- Tag '{tag}' is under-explored ({coverage[tag]['count']} experiments)")
+    if not open_q and not under_explored:
+        lines.append("No open questions identified.")
+    lines.append("")
+
+    content = "\n".join(lines)
+    out_path = synthesis_dir / f"{session_tag}.md"
+    out_path.write_text(content, encoding="utf-8")
+    return str(out_path)
+
+
+def update_meta_synthesis(knowledge_dir: Path | str) -> str:
+    """Regenerate knowledge/synthesis/meta-synthesis.md from ALL cards.
+
+    Returns the file path as a string.
+    """
+    knowledge_dir = Path(knowledge_dir)
+    cards = load_cards(knowledge_dir)
+    coverage = get_coverage_map(knowledge_dir)
+
+    synthesis_dir = knowledge_dir / "synthesis"
+    synthesis_dir.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Categorize
+    kept = [c for c in cards if c.get("status") == "keep"]
+    kept.sort(key=lambda c: c.get("results", {}).get("delta", 0))
+
+    # Collect unique platforms
+    platforms: dict[str, list[dict]] = {}
+    for card in cards:
+        gpu = card.get("platform", {}).get("gpu", "unknown")
+        platforms.setdefault(gpu, []).append(card)
+
+    # Build meta-synthesis
+    lines: list[str] = []
+    lines.append("# Meta-Synthesis")
+    lines.append("")
+    lines.append(f"- **Last updated:** {now}")
+    lines.append(f"- **Total experiments:** {len(cards)}")
+    lines.append("")
+
+    # Key Findings
+    lines.append("## Key Findings")
+    lines.append("")
+    if kept:
+        for card in kept:
+            results = card.get("results", {})
+            delta = results.get("delta")
+            bpb = results.get("val_bpb")
+            gpu = card.get("platform", {}).get("gpu", "unknown")
+            delta_str = f"{delta:+.6f}" if delta is not None else "n/a"
+            bpb_str = f"{bpb:.6f}" if bpb is not None else "n/a"
+            lines.append(
+                f"- [{card['id']}] {card['hypothesis'][:80]} "
+                f"| delta={delta_str}, bpb={bpb_str} (platform: {gpu})"
+            )
+    else:
+        lines.append("No confirmed findings yet.")
+    lines.append("")
+
+    # Platform-Specific sections (only if multiple platforms)
+    if len(platforms) > 1:
+        lines.append("## Platform-Specific Findings")
+        lines.append("")
+        for gpu_name, gpu_cards in sorted(platforms.items()):
+            gpu_kept = [c for c in gpu_cards if c.get("status") == "keep"]
+            lines.append(f"### {gpu_name}")
+            lines.append(f"- Experiments: {len(gpu_cards)}, Kept: {len(gpu_kept)}")
+            if gpu_kept:
+                best = min(gpu_kept, key=lambda c: c.get("results", {}).get("delta", 0))
+                delta = best.get("results", {}).get("delta")
+                if delta is not None:
+                    lines.append(f"- Best delta: {delta:+.6f}")
+            lines.append("")
+
+    # Experiment Coverage Map table
+    lines.append("## Experiment Coverage Map")
+    lines.append("")
+    lines.append("| Tag | Count | Kept | Best Delta | Saturated? |")
+    lines.append("|-----|-------|------|------------|------------|")
+    for tag, stats in sorted(coverage.items()):
+        delta_str = f"{stats['best_delta']:+.6f}" if stats["best_delta"] is not None else "n/a"
+        # A tag is "saturated" if it has 5+ experiments and keeping rate is low
+        saturated = "Yes" if stats["count"] >= 5 and stats["kept"] <= 1 else "No"
+        lines.append(
+            f"| {tag} | {stats['count']} | {stats['kept']} | {delta_str} | {saturated} |"
+        )
+    lines.append("")
+
+    # Open Questions
+    lines.append("## Open Questions")
+    lines.append("")
+    under_explored = [
+        tag for tag, stats in coverage.items()
+        if stats["count"] <= 2
+    ]
+    high_potential = [
+        tag for tag, stats in coverage.items()
+        if stats["best_delta"] is not None and stats["best_delta"] < -0.01 and stats["count"] <= 3
+    ]
+    questions_added = False
+    if under_explored:
+        for tag in sorted(under_explored):
+            lines.append(f"- Tag '{tag}' is under-explored ({coverage[tag]['count']} experiments)")
+        questions_added = True
+    if high_potential:
+        for tag in sorted(high_potential):
+            if tag not in under_explored:
+                delta_str = f"{coverage[tag]['best_delta']:+.6f}"
+                lines.append(
+                    f"- Tag '{tag}' shows promise (best_delta={delta_str}) — worth more exploration"
+                )
+                questions_added = True
+    if not questions_added:
+        lines.append("No open questions identified.")
+    lines.append("")
+
+    content = "\n".join(lines)
+    out_path = synthesis_dir / "meta-synthesis.md"
+    out_path.write_text(content, encoding="utf-8")
+    return str(out_path)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -366,6 +620,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # coverage
     subparsers.add_parser("coverage", help="Print coverage map")
+
+    # synthesize
+    syn = subparsers.add_parser("synthesize", help="Generate session synthesis")
+    syn.add_argument("--session", required=True, help="Session tag (e.g. mar8)")
+
+    # update-meta
+    subparsers.add_parser("update-meta", help="Regenerate meta-synthesis.md")
 
     return parser
 
@@ -428,6 +689,14 @@ def main() -> None:
                     f"best_delta={delta_str}, "
                     f"best_bpb={bpb_str}"
                 )
+
+    elif args.command == "synthesize":
+        out_path = generate_session_synthesis(knowledge_dir, args.session)
+        print(f"Session synthesis written to: {out_path}")
+
+    elif args.command == "update-meta":
+        out_path = update_meta_synthesis(knowledge_dir)
+        print(f"Meta-synthesis written to: {out_path}")
 
     else:
         parser.print_help()

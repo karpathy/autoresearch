@@ -12,6 +12,7 @@ import pytest
 
 from commons import (
     create_card,
+    generate_session_synthesis,
     get_cards_by_tag,
     get_coverage_map,
     get_meta_synthesis,
@@ -22,6 +23,7 @@ from commons import (
     load_index,
     read_brief,
     update_index,
+    update_meta_synthesis,
 )
 
 
@@ -455,6 +457,167 @@ class TestReadBrief:
 
 
 # ---------------------------------------------------------------------------
+# Session synthesis
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateSessionSynthesis:
+    def test_creates_file(self, knowledge_dir: Path):
+        _make_card(knowledge_dir, commit_id="s1", status="keep", tags=["lr"])
+        out_path = generate_session_synthesis(knowledge_dir, "mar8")
+        assert Path(out_path).exists()
+        assert Path(out_path).name == "mar8.md"
+
+    def test_includes_header(self, knowledge_dir: Path):
+        _make_card(knowledge_dir, commit_id="s1", status="keep", tags=["lr"])
+        out_path = generate_session_synthesis(knowledge_dir, "mar8")
+        content = Path(out_path).read_text(encoding="utf-8")
+        assert "# Session Synthesis: mar8" in content
+        assert "**Platform:**" in content
+        assert "**Experiments:** 1" in content
+
+    def test_includes_confirmed_findings(self, knowledge_dir: Path):
+        _make_card(
+            knowledge_dir,
+            commit_id="s1",
+            status="keep",
+            hypothesis="LR warmup helps",
+            tags=["lr"],
+            results={"val_bpb": 0.95, "delta": -0.05, "peak_vram_mb": 1000, "training_seconds": 300, "num_steps": 100},
+        )
+        out_path = generate_session_synthesis(knowledge_dir, "mar8")
+        content = Path(out_path).read_text(encoding="utf-8")
+        assert "## Confirmed Findings" in content
+        assert "LR warmup helps" in content
+
+    def test_includes_dead_ends(self, knowledge_dir: Path):
+        _make_card(
+            knowledge_dir,
+            commit_id="s1",
+            status="revert",
+            hypothesis="Bigger batch is worse",
+            tags=["batch"],
+        )
+        out_path = generate_session_synthesis(knowledge_dir, "mar8")
+        content = Path(out_path).read_text(encoding="utf-8")
+        assert "## Dead Ends" in content
+        assert "Bigger batch is worse" in content
+
+    def test_includes_crashes_section(self, knowledge_dir: Path):
+        _make_card(
+            knowledge_dir,
+            commit_id="s1",
+            status="crash",
+            hypothesis="OOM with large model",
+            tags=["scaling"],
+        )
+        out_path = generate_session_synthesis(knowledge_dir, "mar8")
+        content = Path(out_path).read_text(encoding="utf-8")
+        assert "## Crashes" in content
+        assert "OOM with large model" in content
+
+    def test_includes_open_questions(self, knowledge_dir: Path):
+        _make_card(knowledge_dir, commit_id="s1", status="keep", tags=["lr"])
+        out_path = generate_session_synthesis(knowledge_dir, "mar8")
+        content = Path(out_path).read_text(encoding="utf-8")
+        assert "## Open Questions" in content
+        # 'lr' has only 1 experiment so should be noted as under-explored
+        assert "under-explored" in content
+
+    def test_best_bpb_in_header(self, knowledge_dir: Path):
+        _make_card(
+            knowledge_dir,
+            commit_id="s1",
+            status="keep",
+            tags=["lr"],
+            results={"val_bpb": 0.95, "delta": -0.05, "peak_vram_mb": 1000, "training_seconds": 300, "num_steps": 100},
+        )
+        out_path = generate_session_synthesis(knowledge_dir, "mar8")
+        content = Path(out_path).read_text(encoding="utf-8")
+        assert "**Best val_bpb:** 0.950000" in content
+
+    def test_empty_cards(self, knowledge_dir: Path):
+        out_path = generate_session_synthesis(knowledge_dir, "empty_session")
+        content = Path(out_path).read_text(encoding="utf-8")
+        assert "# Session Synthesis: empty_session" in content
+        assert "**Experiments:** 0" in content
+        assert "No confirmed findings yet." in content
+
+
+# ---------------------------------------------------------------------------
+# Meta-synthesis generation
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateMetaSynthesis:
+    def test_creates_file(self, knowledge_dir: Path):
+        _make_card(knowledge_dir, commit_id="m1", status="keep", tags=["lr"])
+        out_path = update_meta_synthesis(knowledge_dir)
+        assert Path(out_path).exists()
+        assert Path(out_path).name == "meta-synthesis.md"
+
+    def test_includes_header(self, knowledge_dir: Path):
+        _make_card(knowledge_dir, commit_id="m1", tags=["lr"])
+        out_path = update_meta_synthesis(knowledge_dir)
+        content = Path(out_path).read_text(encoding="utf-8")
+        assert "# Meta-Synthesis" in content
+        assert "**Last updated:**" in content
+        assert "**Total experiments:** 1" in content
+
+    def test_includes_key_findings(self, knowledge_dir: Path):
+        _make_card(
+            knowledge_dir,
+            commit_id="m1",
+            status="keep",
+            hypothesis="LR warmup beneficial",
+            tags=["lr"],
+            results={"val_bpb": 0.95, "delta": -0.05, "peak_vram_mb": 1000, "training_seconds": 300, "num_steps": 100},
+        )
+        out_path = update_meta_synthesis(knowledge_dir)
+        content = Path(out_path).read_text(encoding="utf-8")
+        assert "## Key Findings" in content
+        assert "LR warmup beneficial" in content
+
+    def test_includes_coverage_map_table(self, knowledge_dir: Path):
+        _make_card(knowledge_dir, commit_id="m1", tags=["lr"], status="keep")
+        _make_card(knowledge_dir, commit_id="m2", tags=["batch"], status="revert")
+        out_path = update_meta_synthesis(knowledge_dir)
+        content = Path(out_path).read_text(encoding="utf-8")
+        assert "## Experiment Coverage Map" in content
+        assert "| Tag | Count | Kept | Best Delta | Saturated? |" in content
+        assert "| lr |" in content
+        assert "| batch |" in content
+
+    def test_includes_open_questions(self, knowledge_dir: Path):
+        _make_card(knowledge_dir, commit_id="m1", tags=["lr"])
+        out_path = update_meta_synthesis(knowledge_dir)
+        content = Path(out_path).read_text(encoding="utf-8")
+        assert "## Open Questions" in content
+
+    def test_empty_cards(self, knowledge_dir: Path):
+        out_path = update_meta_synthesis(knowledge_dir)
+        content = Path(out_path).read_text(encoding="utf-8")
+        assert "# Meta-Synthesis" in content
+        assert "**Total experiments:** 0" in content
+        assert "No confirmed findings yet." in content
+
+    def test_no_platform_section_for_single_platform(self, knowledge_dir: Path):
+        _make_card(knowledge_dir, commit_id="m1", tags=["lr"])
+        out_path = update_meta_synthesis(knowledge_dir)
+        content = Path(out_path).read_text(encoding="utf-8")
+        assert "## Platform-Specific Findings" not in content
+
+    def test_open_questions_readable_by_get_open_questions(self, knowledge_dir: Path):
+        """Meta-synthesis open questions should be parseable by get_open_questions."""
+        _make_card(knowledge_dir, commit_id="m1", tags=["lr"])
+        update_meta_synthesis(knowledge_dir)
+        questions = get_open_questions(knowledge_dir)
+        # Should find at least the under-explored tag question
+        assert len(questions) >= 1
+        assert any("under-explored" in q for q in questions)
+
+
+# ---------------------------------------------------------------------------
 # CLI tests (via subprocess to avoid sys.exit issues)
 # ---------------------------------------------------------------------------
 
@@ -544,3 +707,33 @@ class TestCLI:
         )
         assert result.returncode == 0
         assert "Index updated" in result.stdout
+
+    def test_synthesize_command(self, knowledge_dir: Path):
+        import subprocess
+
+        _make_card(knowledge_dir, tags=["lr"])
+        result = subprocess.run(
+            ["python", "commons.py", "synthesize", "--session", "mar8"],
+            capture_output=True,
+            text=True,
+            cwd=str(Path(__file__).resolve().parent),
+            env={**__import__("os").environ, "KNOWLEDGE_DIR": str(knowledge_dir)},
+        )
+        assert result.returncode == 0
+        assert "Session synthesis written to" in result.stdout
+        assert (knowledge_dir / "synthesis" / "mar8.md").exists()
+
+    def test_update_meta_command(self, knowledge_dir: Path):
+        import subprocess
+
+        _make_card(knowledge_dir, tags=["lr"])
+        result = subprocess.run(
+            ["python", "commons.py", "update-meta"],
+            capture_output=True,
+            text=True,
+            cwd=str(Path(__file__).resolve().parent),
+            env={**__import__("os").environ, "KNOWLEDGE_DIR": str(knowledge_dir)},
+        )
+        assert result.returncode == 0
+        assert "Meta-synthesis written to" in result.stdout
+        assert (knowledge_dir / "synthesis" / "meta-synthesis.md").exists()
