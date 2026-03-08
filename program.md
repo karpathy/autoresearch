@@ -1,6 +1,6 @@
-# autoresearch
+# autoresearch-commons
 
-This is an experiment to have the LLM do its own research.
+This is an experiment to have the LLM do its own research — with a shared knowledge base so agents learn from each other's experiments.
 
 ## Setup
 
@@ -12,9 +12,11 @@ To set up a new experiment, work with the user to:
    - `README.md` — repository context.
    - `prepare.py` — fixed constants, data prep, tokenizer, dataloader, evaluation. Do not modify.
    - `train.py` — the file you modify. Model architecture, optimizer, training loop.
+   - `commons.py` — knowledge base interface. Do not modify, but use its CLI commands.
 4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
 5. **Initialize results.tsv**: Create `results.tsv` with header row and baseline entry. The baseline results are already known from the output format section below (val_bpb: 0.997900, peak_vram_mb: 45060.2). Do NOT re-run the baseline — just record it.
-6. **Confirm and go**: Confirm setup looks good.
+6. **Read the knowledge base**: Run `uv run commons.py read-brief` to see what prior experiments have found. If there are prior findings, use them to inform your experiment choices from the start.
+7. **Confirm and go**: Confirm setup looks good.
 
 Once you get confirmation, kick off the experimentation.
 
@@ -93,15 +95,35 @@ The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autorese
 
 LOOP FOREVER:
 
-1. Look at the git state: the current branch/commit we're on
+1. **Consult the knowledge base**: Run `uv run commons.py read-brief` and review the coverage map and recent findings. Choose an experiment that explores under-covered areas or builds on promising findings. If this is your first experiment, establish the baseline.
 2. Tune `train.py` with an experimental idea by directly hacking the code.
 3. git commit
 4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
+5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:\|^num_steps:\|^training_seconds:" run.log`
 6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
 7. Record the results in the tsv
-8. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
-9. If val_bpb is equal or worse, you git reset back to where you started
+8. **Write an experiment card**: Record your findings to the shared knowledge base:
+   ```
+   uv run commons.py write-card \
+     --commit <7-CHAR-HASH> \
+     --hypothesis "<what you tried and why>" \
+     --result <val_bpb> \
+     --delta <change from previous best> \
+     --peak-memory <peak_vram_mb> \
+     --training-seconds <training_seconds> \
+     --num-steps <num_steps> \
+     --status <keep|discard|crash> \
+     --lesson "<what you learned from this experiment>" \
+     --tags "<comma,separated,category,tags>"
+   ```
+   Use descriptive tags like: `batch_size`, `architecture`, `optimizer`, `learning_rate`, `regularization`, `depth`, `activation`, `window_pattern`, `init_scale`, etc.
+9. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
+10. If val_bpb is equal or worse, you git reset back to where you started
+11. **Every 20 experiments**: Generate a synthesis report and update the meta-synthesis:
+    ```
+    uv run commons.py synthesize --session <tag>
+    uv run commons.py update-meta
+    ```
 
 The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
 
