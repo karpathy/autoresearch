@@ -5,3 +5,4 @@ f7721c0	0.692006	2.705873	2.013867	subgroup_disparity	discard	real val data for 
 cf0a4d4	1.106064	3.119931	2.013867	window_boundary_exploit	discard	added tail loss test (p95=2.321) — didn't beat window
 96dc43a	1.424936	3.438803	2.013867	adversarial_search	keep	adversarial token search — evolved val sequences to 3.439 bpb
 cb09950	1.516566	3.530433	2.013867	adversarial_search	keep	improved search — adaptive mutation, crossover, 2x population
+0e308f5	1.549741	3.563608	2.013867	adversarial_search	keep	batched forward pass — more candidates per generation, worst=3.564
