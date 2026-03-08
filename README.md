@@ -1,73 +1,150 @@
-# autoresearch
+# autoresearch-commons
 
-![teaser](progress.png)
+A fork of [karpathy/autoresearch](https://github.com/karpathy/autoresearch) that adds **collaborative knowledge sharing** between autonomous research agents.
 
-*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
+The original autoresearch gives an AI agent a real LLM training setup and lets it experiment autonomously overnight. This fork adds the missing piece: a shared knowledge base so agents **learn from each other's experiments** — across sessions, across hardware, across people.
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069).
+> *"The next step for autoresearch is that it has to be asynchronously massively collaborative for agents (think SETI@home style). The goal is not to emulate a single PhD student, it's to emulate a research community of them."* — @karpathy, March 2026
 
-## How it works
+## What's new
 
-The repo is deliberately kept small and only really has a three files that matter:
+This fork adds a **knowledge protocol** and an **orchestration layer** on top of the original autoresearch:
 
-- **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
-- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+| File | Purpose | Who uses it |
+|------|---------|-------------|
+| `platform_utils.py` | Auto-detect CUDA / MPS / CPU | `train.py` imports it |
+| `commons.py` | Knowledge base read/write CLI | Agents call it |
+| `director.py` | Experiment orchestration (optional) | Human runs it |
+| `director.md` | Director agent instructions | Director agent |
+| `knowledge/` | Shared experiment knowledge | Everyone |
+| `program.md` | Worker instructions (modified) | Worker agents |
 
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
+Everything from the original is preserved: `prepare.py` (untouched), `train.py` (same structure, now platform-portable), the 5-minute time budget, and val_bpb as the sole metric.
 
 ## Quick start
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+**Requirements:** NVIDIA GPU, Apple Silicon Mac, or CPU. Python 3.10+, [uv](https://docs.astral.sh/uv/).
 
 ```bash
-
-# 1. Install uv project manager (if you don't already have it)
+# 1. Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 2. Install dependencies
 uv sync
 
+# For CUDA users with Flash Attention 3:
+uv sync --extra cuda
+
 # 3. Download data and train tokenizer (one-time, ~2 min)
 uv run prepare.py
 
-# 4. Manually run a single training experiment (~5 min)
+# 4. Run a single training experiment (~5 min)
 uv run train.py
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
+## Running an agent (single-agent mode)
 
-**Platforms support**. This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. The code is just a demonstration and I don't know how much I'll support it going forward. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
-
-## Running the agent
-
-Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
+Same as the original, but now agents read/write to the knowledge base:
 
 ```
-Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
+Hi have a look at program.md and let's kick off a new experiment!
 ```
 
-The `program.md` file is essentially a super lightweight "skill".
+The modified `program.md` adds two steps to the experiment loop:
+1. **Before experimenting:** `uv run commons.py read-brief` — read what's been tried
+2. **After each experiment:** `uv run commons.py write-card ...` — record what was learned
+
+## Running the director (multi-agent mode)
+
+The director plans experiment strategy from the knowledge base:
+
+```bash
+# See what experiments the knowledge base suggests
+uv run director.py plan
+
+# Add a custom experiment idea
+uv run director.py add --hypothesis "Try SwiGLU activation" --category architecture --priority 1
+
+# Check queue status
+uv run director.py status
+```
+
+## Knowledge base CLI
+
+```bash
+# Read knowledge summary (what agents see before planning)
+uv run commons.py read-brief
+
+# Record an experiment result
+uv run commons.py write-card \
+  --commit abc1234 \
+  --hypothesis "Halve batch size" \
+  --result 0.986 \
+  --delta -0.012 \
+  --status keep \
+  --lesson "More steps in fixed time budget" \
+  --tags "batch_size,optimization"
+
+# View experiment coverage
+uv run commons.py coverage
+
+# Generate session synthesis report
+uv run commons.py synthesize --session mar8
+
+# Update rolling meta-synthesis
+uv run commons.py update-meta
+```
 
 ## Project structure
 
 ```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
+prepare.py          — constants, data prep + runtime utilities (do not modify)
+train.py            — model, optimizer, training loop (agent modifies this)
+platform_utils.py   — CUDA/MPS/CPU auto-detection and abstraction
+commons.py          — knowledge base interface (library + CLI)
+director.py         — experiment orchestration (optional)
+program.md          — worker agent instructions
+director.md         — director agent instructions
+knowledge/
+  cards/            — one JSON per experiment (the raw data)
+  synthesis/        — session reports + meta-synthesis (the summaries)
+  index.json        — fast-query experiment index
+  queue.json        — experiment queue (director-managed)
 ```
 
-## Design choices
+## How the knowledge protocol works
 
-- **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
-- **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+Every experiment produces an **experiment card** (JSON):
+- What was tried (hypothesis) and what changed (config diff)
+- The result (val_bpb, delta, memory, steps)
+- What was learned (lesson) and categorical tags
+- Platform info (so agents know which findings are hardware-specific)
 
-## Notable forks
+Periodically, cards are **synthesized** into session reports and a rolling **meta-synthesis** that includes:
+- Confirmed findings and dead ends
+- An **experiment coverage map** showing what areas are saturated vs. under-explored
+- Open questions for future experiments
 
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx)
+The next agent reads the meta-synthesis before planning, so it doesn't repeat dead ends and focuses on high-value directions.
+
+## Platform support
+
+This fork auto-detects your hardware:
+- **NVIDIA GPU (CUDA):** Flash Attention 3, torch.compile, bfloat16 autocast
+- **Apple Silicon (MPS):** SDPA attention with sliding window mask, no compile, smaller default batch size
+- **CPU:** SDPA attention, bfloat16 autocast, slowest but works anywhere
+
+## Design philosophy
+
+- **The knowledge protocol is the contribution.** Platform ports let more people run experiments. The knowledge protocol lets agents *learn from each other*. That's the real multiplier.
+- **Separation of concerns.** The protocol (knowledge format) is git-native and works standalone. The orchestration (director) is an optional convenience layer.
+- **Minimal upstream diff.** We add files, not complexity. `train.py` gets one import swap. Everything else is additive.
+
+## Credits
+
+- [Andrej Karpathy](https://github.com/karpathy) — autoresearch and nanochat
+- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) — MPS adaptation patterns
+- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) — MLX reference
 
 ## License
 
