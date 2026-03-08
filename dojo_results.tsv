@@ -1,1 +1,2 @@
 commit	robustness_gap	worst_test	status	description
+25a8ccb	1.104683	window_boundary_exploit	keep	baseline DOJO run: 4 tests, subgroup disparity on digits (gap=0.692), noise robust, no memorization
