@@ -219,6 +219,33 @@ def update_index(knowledge_dir: Path | str) -> None:
     _atomic_write_json(index_path, index)
 
 
+def retract_card(
+    knowledge_dir: Path | str,
+    card_id: str,
+    reason: str,
+) -> dict:
+    """Mark a card as retracted. Modifies the JSON file in place.
+
+    Raises FileNotFoundError if no card with that ID exists.
+    """
+    knowledge_dir = Path(knowledge_dir)
+    cards_dir = knowledge_dir / "cards"
+
+    for fpath in cards_dir.glob("*.json"):
+        try:
+            card = json.loads(fpath.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if card.get("id") == card_id:
+            card["status"] = "retracted"
+            card["retraction_reason"] = reason
+            _atomic_write_json(fpath, card)
+            update_index(knowledge_dir)
+            return card
+
+    raise FileNotFoundError(f"No card found with id '{card_id}'")
+
+
 def load_index(knowledge_dir: Path | str) -> dict:
     """Load and return the index.json contents."""
     knowledge_dir = Path(knowledge_dir)
@@ -237,6 +264,8 @@ def get_coverage_map(knowledge_dir: Path | str) -> dict:
     coverage: dict[str, dict] = {}
 
     for card in cards:
+        if card.get("status") == "retracted":
+            continue
         results = card.get("results", {})
         delta = results.get("delta")
         bpb = results.get("val_bpb")
@@ -338,7 +367,7 @@ def read_brief(knowledge_dir: Path | str) -> str:
             )
 
     # --- Recent cards ---
-    recent = get_recent_cards(knowledge_dir, n=5)
+    recent = [c for c in get_recent_cards(knowledge_dir, n=10) if c.get("status") != "retracted"][:5]
     parts.append("")
     parts.append("## Recent Experiments")
     if not recent:
@@ -651,6 +680,11 @@ def _build_parser() -> argparse.ArgumentParser:
     wc.add_argument("--tags", required=True, help="Comma-separated tags")
     wc.add_argument("--config-diff", default="{}", help="JSON string of config diff")
 
+    # retract
+    rt = subparsers.add_parser("retract", help="Mark a card as retracted")
+    rt.add_argument("--id", required=True, help="Card ID to retract")
+    rt.add_argument("--reason", required=True, help="Reason for retraction")
+
     # update-index
     subparsers.add_parser("update-index", help="Regenerate index.json")
 
@@ -705,6 +739,14 @@ def main() -> None:
             tags=[t.strip() for t in args.tags.split(",")],
         )
         print(f"Card created: {card['id']}")
+
+    elif args.command == "retract":
+        try:
+            card = retract_card(knowledge_dir, args.id, args.reason)
+            print(f"Card {card['id']} retracted: {args.reason}")
+        except FileNotFoundError as e:
+            print(str(e), file=sys.stderr)
+            sys.exit(1)
 
     elif args.command == "update-index":
         update_index(knowledge_dir)

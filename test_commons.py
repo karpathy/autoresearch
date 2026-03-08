@@ -22,6 +22,7 @@ from commons import (
     load_cards,
     load_index,
     read_brief,
+    retract_card,
     update_index,
     update_meta_synthesis,
 )
@@ -769,3 +770,38 @@ class TestCardValidation:
         for i, status in enumerate(["keep", "revert", "inconclusive", "crash"]):
             card = _make_card(knowledge_dir, commit_id=f"c_{status}_{i}", status=status)
             assert card["status"] == status
+
+
+# ---------------------------------------------------------------------------
+# Card retraction
+# ---------------------------------------------------------------------------
+
+
+class TestRetractCard:
+    def test_retract_changes_status(self, knowledge_dir: Path):
+        card = _make_card(knowledge_dir)
+        retract_card(knowledge_dir, card["id"], reason="Buggy measurement")
+        cards = load_cards(knowledge_dir)
+        assert cards[0]["status"] == "retracted"
+
+    def test_retract_adds_reason(self, knowledge_dir: Path):
+        card = _make_card(knowledge_dir)
+        retract_card(knowledge_dir, card["id"], reason="Bad GPU readings")
+        cards = load_cards(knowledge_dir)
+        assert cards[0]["retraction_reason"] == "Bad GPU readings"
+
+    def test_retract_nonexistent_raises(self, knowledge_dir: Path):
+        with pytest.raises(FileNotFoundError):
+            retract_card(knowledge_dir, "nonexistent_id", reason="test")
+
+    def test_retracted_excluded_from_coverage(self, knowledge_dir: Path):
+        card = _make_card(knowledge_dir, tags=["lr"])
+        retract_card(knowledge_dir, card["id"], reason="bad")
+        coverage = get_coverage_map(knowledge_dir)
+        assert coverage.get("lr", {}).get("count", 0) == 0
+
+    def test_retracted_excluded_from_brief(self, knowledge_dir: Path):
+        card = _make_card(knowledge_dir, hypothesis="Retracted experiment")
+        retract_card(knowledge_dir, card["id"], reason="bad")
+        brief = read_brief(knowledge_dir)
+        assert "Retracted experiment" not in brief
