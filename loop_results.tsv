@@ -13,3 +13,4 @@ d50c56a	1.948703	0.000000	0.000000	skipped	21.2	discard	embedding_lr 0.6->0.8 �
 20234b4	1.947611	0.000000	0.000000	skipped	21.2	discard	sliding window 1024->1536 — val_bpb regressed 1.883->1.948, wider window slows steps
 005e59b	1.917249	0.000000	0.000000	skipped	21.2	discard	scalar_lr 0.5->0.3 — val_bpb regressed 1.883->1.917
 c38b7a0	2.000569	0.000000	0.000000	skipped	21.2	discard	unembedding_lr 0.004->0.008 — val_bpb regressed 1.883->2.001
+3775afb	2.085710	0.000000	0.000000	skipped	21.2	discard	adam beta1 0.8->0.9 — val_bpb regressed 1.883->2.086, too much momentum
