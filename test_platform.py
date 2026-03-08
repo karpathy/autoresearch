@@ -17,6 +17,9 @@ from platform_utils import (
     sync_device,
     get_peak_memory_mb,
     seed_device,
+    validate_window_pattern,
+    start_memory_tracking,
+    get_tracked_peak_memory_mb,
 )
 
 
@@ -249,3 +252,43 @@ class TestSeedDevice:
         seed_device(42)
         b = torch.randn(10)
         assert torch.allclose(a, b)
+
+
+# ---------------------------------------------------------------------------
+# validate_window_pattern
+# ---------------------------------------------------------------------------
+
+class TestWindowPatternValidation:
+    def test_valid_patterns(self):
+        assert validate_window_pattern("SSSL") is True
+        assert validate_window_pattern("SL") is True
+        assert validate_window_pattern("L") is True
+        assert validate_window_pattern("S") is True
+
+    def test_invalid_pattern_raises(self):
+        with pytest.raises(ValueError, match="WINDOW_PATTERN"):
+            validate_window_pattern("SSLX")
+        with pytest.raises(ValueError, match="WINDOW_PATTERN"):
+            validate_window_pattern("")
+
+    def test_case_insensitive_valid(self):
+        assert validate_window_pattern("sssl") is True
+
+
+# ---------------------------------------------------------------------------
+# Memory Tracking
+# ---------------------------------------------------------------------------
+
+class TestMemoryTracking:
+    def test_tracked_peak_returns_float(self):
+        start_memory_tracking()
+        peak = get_tracked_peak_memory_mb()
+        assert isinstance(peak, float)
+        assert peak >= 0.0
+
+    def test_start_tracking_is_idempotent(self):
+        """Calling start twice should not crash."""
+        start_memory_tracking()
+        start_memory_tracking()
+        peak = get_tracked_peak_memory_mb()
+        assert isinstance(peak, float)

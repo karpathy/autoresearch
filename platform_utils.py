@@ -8,6 +8,7 @@ Do NOT rename this file to platform.py — that shadows the builtin.
 
 import os
 import subprocess
+import threading
 from contextlib import nullcontext
 
 import torch
@@ -216,6 +217,20 @@ def _sdpa_attention(q, k, v, causal=True, window_size=(-1, 0)):
     return y
 
 
+def validate_window_pattern(pattern: str) -> bool:
+    """Validate that a window pattern contains only 'S' and 'L' characters.
+
+    Raises ValueError if invalid. Returns True if valid.
+    """
+    if not pattern:
+        raise ValueError("WINDOW_PATTERN must be a non-empty string of 'S' and 'L' characters")
+    if not all(c in "SL" for c in pattern.upper()):
+        raise ValueError(
+            f"WINDOW_PATTERN must contain only 'S' and 'L' characters, got '{pattern}'"
+        )
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Compilation
 # ---------------------------------------------------------------------------
@@ -292,12 +307,65 @@ def get_peak_memory_mb() -> float:
     if plat == "cuda":
         return torch.cuda.max_memory_allocated() / (1024 * 1024)
     if plat == "mps":
-        # MPS does not expose peak memory tracking — this returns current
-        # allocation, not the high watermark. Best available approximation.
+        # Use tracked peak if available (more accurate), fall back to current
+        if _tracking and _peak_memory_mb > 0:
+            return _peak_memory_mb
         if hasattr(torch.mps, "current_allocated_memory"):
             return torch.mps.current_allocated_memory() / (1024 * 1024)
         return 0.0
     return 0.0
+
+
+# ---------------------------------------------------------------------------
+# MPS Peak Memory Tracking
+# ---------------------------------------------------------------------------
+
+_peak_memory_mb = 0.0
+_tracking = False
+_tracker_stop = threading.Event()
+
+
+def start_memory_tracking(interval_seconds: float = 0.1):
+    """Start a background thread that polls MPS memory to track peak usage.
+
+    On CUDA this is a no-op (CUDA tracks peak natively via max_memory_allocated).
+    On CPU this is a no-op.
+    """
+    global _peak_memory_mb, _tracking
+
+    plat = detect_platform()
+    if plat != "mps" or not hasattr(torch.mps, "current_allocated_memory"):
+        return
+
+    _peak_memory_mb = 0.0
+    _tracking = True
+    _tracker_stop.clear()
+
+    def _sampler():
+        global _peak_memory_mb
+        while not _tracker_stop.is_set():
+            try:
+                current = torch.mps.current_allocated_memory() / (1024 * 1024)
+                if current > _peak_memory_mb:
+                    _peak_memory_mb = current
+            except Exception:
+                pass
+            _tracker_stop.wait(interval_seconds)
+
+    t = threading.Thread(target=_sampler, daemon=True)
+    t.start()
+
+
+def get_tracked_peak_memory_mb() -> float:
+    """Return the peak memory observed since start_memory_tracking().
+
+    On CUDA, delegates to torch.cuda.max_memory_allocated().
+    On other platforms, returns the tracked peak or 0.0.
+    """
+    plat = detect_platform()
+    if plat == "cuda":
+        return torch.cuda.max_memory_allocated() / (1024 * 1024)
+    return _peak_memory_mb
 
 
 # ---------------------------------------------------------------------------

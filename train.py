@@ -19,9 +19,12 @@ import torch.nn.functional as F
 from platform_utils import (
     detect_platform, get_device, get_attention_forward, get_compile_fn,
     get_autocast_ctx, sync_device, get_peak_memory_mb, seed_device, should_compile,
+    validate_window_pattern, start_memory_tracking,
 )
 
 attn_fn = get_attention_forward()
+print(f"Platform: {detect_platform()}")
+print(f"Attention: {'Flash Attention 3' if detect_platform() == 'cuda' else 'SDPA'}")
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -449,6 +452,7 @@ class MuonAdamW(torch.optim.Optimizer):
 ASPECT_RATIO = 64       # model_dim = depth * ASPECT_RATIO
 HEAD_DIM = 128          # target head dimension for attention
 WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
+validate_window_pattern(WINDOW_PATTERN)
 
 # Optimization
 TOTAL_BATCH_SIZE = 2**19 # ~524K tokens per optimizer step
@@ -472,6 +476,7 @@ DEVICE_BATCH_SIZE = 32 if detect_platform() == "mps" else 128  # per-device batc
 
 t_start = time.time()
 seed_device(42)
+start_memory_tracking()
 torch.set_float32_matmul_precision("high")
 device = get_device()
 autocast_ctx = get_autocast_ctx()
