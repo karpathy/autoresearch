@@ -18,7 +18,7 @@ By design, training runs for a **fixed 5-minute time budget** (wall clock, exclu
 
 ## Quick start
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+**Requirements:** A single NVIDIA GPU (tested on H100) or Apple Silicon (M1/M2/M3), Python 3.10+, [uv](https://docs.astral.sh/uv/).
 
 ```bash
 
@@ -37,7 +37,12 @@ uv run train.py
 
 If the above commands all work ok, your setup is working and you can go into autonomous research mode.
 
-**Platforms support**. This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. The code is just a demonstration and I don't know how much I'll support it going forward. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
+**Platform support.** The code auto-detects the best available device:
+- **NVIDIA GPU** — Uses Flash Attention 3 kernels (Hopper or Ampere), bfloat16, full `torch.compile`.
+- **Apple Silicon (M1/M2/M3)** — Uses PyTorch MPS with SDPA fallback, float16, reduced batch size (32). Training is slower than on NVIDIA but works out of the box.
+- **CPU** — Fallback with SDPA; suitable for small tests only.
+
+On Apple Silicon, if you hit OOM, reduce `DEVICE_BATCH_SIZE` in `train.py` (e.g. to 16). MFU (model FLOPs utilization) is reported only on CUDA.
 
 ## Running the agent
 
@@ -66,7 +71,7 @@ pyproject.toml  — dependencies
 
 ## Notable forks
 
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos)
+- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) — early Mac support (upstream now includes Apple Silicon)
 
 ## License
 
