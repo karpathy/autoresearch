@@ -4,3 +4,4 @@ commit	val_bpb	robustness_gap	worst_case_bpb	worst_test	memory_gb	status	descrip
 8c31be2	1.959782	1.673638	3.633419	adversarial_search	21.2	keep	weight_decay 0.2->0.4 — val_bpb 2.014->1.960, subgroup gap 0.69->0.56, adversarial gap up 1.55->1.67 (borderline but strong val improvement)
 68c7435	2.176980	0.000000	0.000000	skipped	23.1	discard	aspect_ratio 64->96 — val_bpb regressed 1.960->2.177, wider model too slow to converge in 5min
 02e49e7	2.064267	0.000000	0.000000	skipped	21.2	discard	matrix_lr 0.04->0.06 — val_bpb regressed 1.960->2.064, LR too high
+1169c2c	1.980227	0.000000	0.000000	skipped	21.2	discard	warmup_ratio 0.0->0.1 — val_bpb regressed 1.960->1.980, warmup wastes steps in short budget
