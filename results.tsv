@@ -9,3 +9,4 @@ commit	val_bpb	memory_gb	status	description
 a9c57f1	1.781256	21.2	keep	weight_decay 0.8->1.0 — val_bpb improved 1.789->1.781
 038b27d	1.779800	21.2	keep	weight_decay 1.0->1.5 — val_bpb 1.781->1.780 (plateau)
 c058164	1.753978	21.2	keep	MLP 4x->3x — val_bpb improved 1.780->1.754
+58adb6d	1.736654	20.2	keep	MLP 3x->2x — val_bpb improved 1.754->1.737

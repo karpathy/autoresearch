@@ -26,3 +26,4 @@ f7123d6	1.974483	0.000000	0.000000	skipped	21.2	discard	logit cap 15->30 — val
 a9c57f1	1.781256	1.792119	3.573376	adversarial_search	21.2	keep	weight_decay 0.8->1.0 — val_bpb 1.789->1.781, gap 1.777->1.792 (stable)
 038b27d	1.779800	1.803334	3.583134	adversarial_search	21.2	keep	weight_decay 1.0->1.5 — val_bpb 1.781->1.780, gap 1.792->1.803 (plateau reached)
 c058164	1.753978	1.854936	3.608914	adversarial_search	21.2	keep	MLP 4x->3x — val_bpb 1.780->1.754, gap 1.803->1.855 (within threshold)
+58adb6d	1.736654	1.837830	3.574484	adversarial_search	20.2	keep	MLP 3x->2x — val_bpb 1.754->1.737 AND gap 1.855->1.838, both improved!
