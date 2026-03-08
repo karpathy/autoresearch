@@ -12,3 +12,4 @@ d50c56a	1.948703	0.000000	0.000000	skipped	21.2	discard	embedding_lr 0.6->0.8 �
 53b243f	1.693204	1.974203	3.667407	adversarial_search	21.2	discard	batch 2^16->2^15 — val_bpb great 1.883->1.693 but gap spiked 1.694->1.974
 20234b4	1.947611	0.000000	0.000000	skipped	21.2	discard	sliding window 1024->1536 — val_bpb regressed 1.883->1.948, wider window slows steps
 005e59b	1.917249	0.000000	0.000000	skipped	21.2	discard	scalar_lr 0.5->0.3 — val_bpb regressed 1.883->1.917
+c38b7a0	2.000569	0.000000	0.000000	skipped	21.2	discard	unembedding_lr 0.004->0.008 — val_bpb regressed 1.883->2.001
