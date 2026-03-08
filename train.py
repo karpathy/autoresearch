@@ -496,7 +496,6 @@ else:
 # On MPS/CPU fallback attention can otherwise require very large buffers.
 if device_type != "cuda":
     DEVICE_BATCH_SIZE = min(DEVICE_BATCH_SIZE, 4)
-    print(f"Non-CUDA device detected ({device_type}); using DEVICE_BATCH_SIZE={DEVICE_BATCH_SIZE} for memory safety.")
 
 
 def synchronize():
@@ -659,8 +658,9 @@ with autocast_ctx:
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
-steady_state_mfu = 0.0 if H100_BF16_PEAK_FLOPS is None else steady_state_mfu
+steady_state_mfu = 0.0 if (H100_BF16_PEAK_FLOPS is None or total_training_time <= 0) else (
+    100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS
+)
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if device_type == "cuda" else 0.0
 
 print("---")
