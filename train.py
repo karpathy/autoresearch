@@ -30,6 +30,7 @@ from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evalua
 
 @dataclass
 class GPTConfig:
+    """Configuration for the GPT model architecture."""
     sequence_len: int = 2048
     vocab_size: int = 32768
     n_layer: int = 12
@@ -37,6 +38,8 @@ class GPTConfig:
     n_kv_head: int = 6
     n_embd: int = 768
     window_pattern: str = "SSSL"
+    softcap: float = 15.0           # logit soft-capping temperature
+    ve_gate_channels: int = 32      # channels used for value embedding gate
 
 
 def norm(x):
@@ -58,6 +61,8 @@ def apply_rotary_emb(x, cos, sin):
 
 
 class CausalSelfAttention(nn.Module):
+    """Multi-head attention with GQA, RoPE, sliding window, and optional value embeddings."""
+
     def __init__(self, config, layer_idx):
         super().__init__()
         self.n_head = config.n_head
@@ -70,7 +75,7 @@ class CausalSelfAttention(nn.Module):
         self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.ve_gate_channels = 32
+        self.ve_gate_channels = config.ve_gate_channels
         self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
     def forward(self, x, ve, cos_sin, window_size):
@@ -96,6 +101,8 @@ class CausalSelfAttention(nn.Module):
 
 
 class MLP(nn.Module):
+    """Feed-forward network with ReluSquared activation."""
+
     def __init__(self, config):
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
@@ -109,6 +116,8 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
+    """Transformer block: pre-norm attention + pre-norm MLP with residual connections."""
+
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
@@ -121,6 +130,8 @@ class Block(nn.Module):
 
 
 class GPT(nn.Module):
+    """GPT language model with RoPE, sliding window attention, value embeddings, and per-layer residual scaling."""
+
     def __init__(self, config):
         super().__init__()
         self.config = config
@@ -170,10 +181,6 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             if block.attn.ve_gate is not None:
                 torch.nn.init.zeros_(block.attn.ve_gate.weight)
-        # Rotary embeddings
-        head_dim = self.config.n_embd // self.config.n_head
-        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
-        self.cos, self.sin = cos, sin
         # Cast embeddings to bf16
         self.transformer.wte.to(dtype=torch.bfloat16)
         for ve in self.value_embeds.values():
@@ -278,7 +285,7 @@ class GPT(nn.Module):
             x = block(x, ve, cos_sin, self.window_sizes[i])
         x = norm(x)
 
-        softcap = 15
+        softcap = self.config.softcap
         logits = self.lm_head(x)
         logits = logits.float()
         logits = softcap * torch.tanh(logits / softcap)
@@ -444,10 +451,13 @@ ADAM_BETAS = (0.8, 0.95) # Adam beta1, beta2
 WARMUP_RATIO = 0.0      # fraction of time budget for LR warmup
 WARMDOWN_RATIO = 0.5    # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
+MUON_MOMENTUM_WARMUP_STEPS = 300  # steps to warm Muon momentum from 0.85 to 0.95
 
 # Model size
 DEPTH = 8               # number of transformer layers
 DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
+COMPILATION_WARMUP_STEPS = 10  # steps excluded from timing (torch.compile warmup)
+LOSS_DIVERGENCE_THRESHOLD = 100  # abort if train loss exceeds this
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
@@ -524,7 +534,7 @@ def get_lr_multiplier(progress):
         return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
 
 def get_muon_momentum(step):
-    frac = min(step / 300, 1)
+    frac = min(step / MUON_MOMENTUM_WARMUP_STEPS, 1)
     return (1 - frac) * 0.85 + frac * 0.95
 
 def get_weight_decay(progress):
@@ -566,7 +576,7 @@ while True:
     train_loss_f = train_loss.item()
 
     # Fast fail: abort if loss is exploding
-    if train_loss_f > 100:
+    if train_loss_f > LOSS_DIVERGENCE_THRESHOLD:
         print("FAIL")
         exit(1)
 
@@ -574,7 +584,7 @@ while True:
     t1 = time.time()
     dt = t1 - t0
 
-    if step > 10:
+    if step > COMPILATION_WARMUP_STEPS:
         total_training_time += dt
 
     # Logging
@@ -599,7 +609,7 @@ while True:
     step += 1
 
     # Time's up — but only stop after warmup steps so we don't count compilation
-    if step > 10 and total_training_time >= TIME_BUDGET:
+    if step > COMPILATION_WARMUP_STEPS and total_training_time >= TIME_BUDGET:
         break
 
 print()  # newline after \r training log
@@ -614,7 +624,7 @@ with autocast_ctx:
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
+steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - COMPILATION_WARMUP_STEPS) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
 print("---")
