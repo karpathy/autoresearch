@@ -22,3 +22,4 @@ f7123d6	1.974483	0.000000	0.000000	skipped	21.2	discard	logit cap 15->30 — val
 6dce675	1.831907	1.685553	3.517460	adversarial_search	21.2	keep	MLP squared_relu->gelu — val_bpb 1.883->1.832, gap 1.694->1.686 (stable)
 4cee3f8	2.100946	0.000000	0.000000	skipped	21.9	discard	SwiGLU MLP — val_bpb regressed 1.832->2.101, architecture change needs LR re-tuning
 6decea3	1.800693	1.693378	3.494071	adversarial_search	21.2	keep	weight_decay 0.4->0.6 — val_bpb 1.832->1.801, gap 1.686->1.693 (stable)
+8623992	1.789406	1.777430	3.566837	adversarial_search	21.2	keep	weight_decay 0.6->0.8 — val_bpb 1.801->1.789, gap 1.693->1.777 (within threshold)

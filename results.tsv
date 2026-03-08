@@ -5,3 +5,4 @@ commit	val_bpb	memory_gb	status	description
 3361b59	1.882925	21.2	keep	adam beta2 0.95->0.9 — val_bpb improved 1.920->1.883
 6dce675	1.831907	21.2	keep	MLP squared_relu->gelu — val_bpb improved 1.883->1.832
 6decea3	1.800693	21.2	keep	weight_decay 0.4->0.6 — val_bpb improved 1.832->1.801
+8623992	1.789406	21.2	keep	weight_decay 0.6->0.8 — val_bpb improved 1.801->1.789

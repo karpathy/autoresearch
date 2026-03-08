@@ -11,3 +11,4 @@ cb09950	1.516566	3.530433	2.013867	adversarial_search	keep	improved search — a
 3361b59	1.694398	3.577322	1.882925	adversarial_search	keep	beta2=0.9 — val_bpb improved, gap within threshold, subgroup 0.53->0.52
 6dce675	1.685553	3.517460	1.831907	adversarial_search	keep	gelu activation — val_bpb improved, gap slightly decreased
 6decea3	1.693378	3.494071	1.800693	adversarial_search	keep	weight_decay=0.6 — val_bpb improved, gap stable
+8623992	1.777430	3.566837	1.789406	adversarial_search	keep	weight_decay=0.8 — val_bpb improved, subgroup 0.51->0.50
