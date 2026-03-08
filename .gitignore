@@ -8,9 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
-worktrees/
-results/
-queue/
 
 # Agent prompt files (generated per-session by launchers)
 CLAUDE.md
@@ -18,3 +15,26 @@ AGENTS.md
 
 # Experimental code/artifacts
 dev/
+worktrees/
+results/
+queue/
+
+# Training artifacts
+run.log
+results.tsv
+*.pt
+*.ckpt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Kiro steering files
+.kiro/

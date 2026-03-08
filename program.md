@@ -111,4 +111,22 @@ The idea is that you are a completely autonomous researcher trying things out. I
 
 **NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
 
+## Experiment Ideas (by category)
+
+When brainstorming, consider these categories:
+
+- **Architecture**: depth/width ratio, head count, GQA ratios, MLP expansion factor, activation functions (SiLU, GELU vs ReluSquared), attention variants, window patterns
+- **Optimization**: learning rates per group, batch size, warmup/warmdown schedules, momentum, weight decay schedules, beta values
+- **Regularization**: dropout, weight decay strength, gradient clipping
+- **Efficiency**: sequence packing, mixed precision strategies, memory-compute tradeoffs (bigger model with fewer steps vs smaller model with more steps)
+- **Scaling**: depth vs width tradeoffs within the fixed time budget — deeper/narrower vs shallower/wider
+- **Simplification**: removing components that don't help (value embeddings, per-layer lambdas, softcap) — simpler code at equal performance is a win
+
+## Common Failure Modes
+
+- OOM: reduce DEVICE_BATCH_SIZE or model size. Check peak_vram_mb.
+- Loss divergence: usually means LR too high. The script auto-aborts if loss > threshold.
+- Slow convergence: might need more warmup, or the model is too large for the time budget.
+- Compilation overhead: torch.compile adds ~30s startup. Very large models may spend too much time compiling.
+
 As an example use case, a user might leave you running while they sleep. If each experiment takes you ~5 minutes then you can run approx 12/hour, for a total of about 100 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
