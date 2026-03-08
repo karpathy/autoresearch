@@ -305,3 +305,127 @@ class TestHypothesisDedup:
     def test_empty_knowledge_returns_empty(self, knowledge_dir: Path):
         ideas = plan_experiments(knowledge_dir)
         assert ideas == []
+
+
+# ---------------------------------------------------------------------------
+# Director CLI tests
+# ---------------------------------------------------------------------------
+
+
+class TestDirectorCLI:
+    def test_plan_command(self, knowledge_dir: Path):
+        import subprocess
+        from commons import create_card
+        create_card(
+            knowledge_dir, commit_id="c1",
+            hypothesis="Test", config_diff={},
+            results={"val_bpb": 0.99, "delta": -0.01},
+            status="keep", lesson="test", tags=["lr"],
+        )
+        result = subprocess.run(
+            ["python", "director.py", "plan"],
+            capture_output=True, text=True,
+            cwd=str(Path(__file__).resolve().parent),
+            env={**__import__("os").environ, "KNOWLEDGE_DIR": str(knowledge_dir)},
+        )
+        assert result.returncode == 0
+        assert "experiment" in result.stdout.lower() or "planned" in result.stdout.lower()
+
+    def test_status_command_empty(self, knowledge_dir: Path):
+        import subprocess
+        result = subprocess.run(
+            ["python", "director.py", "status"],
+            capture_output=True, text=True,
+            cwd=str(Path(__file__).resolve().parent),
+            env={**__import__("os").environ, "KNOWLEDGE_DIR": str(knowledge_dir)},
+        )
+        assert result.returncode == 0
+        assert "Queue status" in result.stdout
+
+    def test_add_command(self, knowledge_dir: Path):
+        import subprocess
+        result = subprocess.run(
+            [
+                "python", "director.py", "add",
+                "--hypothesis", "Test from CLI",
+                "--category", "test",
+                "--priority", "2",
+            ],
+            capture_output=True, text=True,
+            cwd=str(Path(__file__).resolve().parent),
+            env={**__import__("os").environ, "KNOWLEDGE_DIR": str(knowledge_dir)},
+        )
+        assert result.returncode == 0
+        assert "Added" in result.stdout
+
+    def test_status_after_add(self, knowledge_dir: Path):
+        import subprocess
+        env = {**__import__("os").environ, "KNOWLEDGE_DIR": str(knowledge_dir)}
+        cwd = str(Path(__file__).resolve().parent)
+        # Add an experiment
+        subprocess.run(
+            ["python", "director.py", "add", "--hypothesis", "Test", "--category", "test"],
+            capture_output=True, text=True, cwd=cwd, env=env,
+        )
+        # Check status
+        result = subprocess.run(
+            ["python", "director.py", "status"],
+            capture_output=True, text=True, cwd=cwd, env=env,
+        )
+        assert result.returncode == 0
+        assert "Pending:     1" in result.stdout or "Pending: 1" in result.stdout or "pending" in result.stdout.lower()
+
+
+# ---------------------------------------------------------------------------
+# Integration tests (commons + director together)
+# ---------------------------------------------------------------------------
+
+
+class TestCommonsDirectorIntegration:
+    def test_plan_from_cards(self, knowledge_dir: Path):
+        """Director can plan experiments based on cards created by commons."""
+        from commons import create_card
+        create_card(
+            knowledge_dir, commit_id="c1",
+            hypothesis="Baseline", config_diff={},
+            results={"val_bpb": 1.0, "delta": 0.0},
+            status="keep", lesson="baseline", tags=["baseline"],
+        )
+        create_card(
+            knowledge_dir, commit_id="c2",
+            hypothesis="Halve batch", config_diff={},
+            results={"val_bpb": 0.99, "delta": -0.01},
+            status="keep", lesson="helped", tags=["batch_size"],
+        )
+        ideas = plan_experiments(knowledge_dir)
+        assert len(ideas) >= 2
+        categories = {i["category"] for i in ideas}
+        assert "baseline" in categories
+        assert "batch_size" in categories
+
+    def test_full_lifecycle(self, knowledge_dir: Path):
+        """End-to-end: create card -> plan -> enqueue -> claim -> complete."""
+        from commons import create_card
+        create_card(
+            knowledge_dir, commit_id="c1",
+            hypothesis="Test", config_diff={},
+            results={"val_bpb": 0.99, "delta": -0.01},
+            status="keep", lesson="test", tags=["lr"],
+        )
+        ideas = plan_experiments(knowledge_dir)
+        assert len(ideas) > 0
+
+        exp = add_to_queue(
+            knowledge_dir,
+            hypothesis=ideas[0]["hypothesis"],
+            category=ideas[0]["category"],
+            priority=ideas[0]["priority"],
+        )
+        claimed = claim_next_experiment(knowledge_dir, worker_id="w1")
+        assert claimed is not None
+        assert claimed["id"] == exp["id"]
+
+        complete_experiment(knowledge_dir, exp["id"])
+        queue = load_queue(knowledge_dir)
+        completed = [e for e in queue["experiments"] if e["status"] == "completed"]
+        assert len(completed) == 1

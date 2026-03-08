@@ -12,6 +12,7 @@ import pytest
 
 from commons import (
     create_card,
+    generate_progress_plot,
     generate_session_synthesis,
     get_cards_by_tag,
     get_coverage_map,
@@ -911,3 +912,83 @@ class TestBriefWithQueue:
     def test_brief_no_queue_section_when_empty(self, knowledge_dir: Path):
         brief = read_brief(knowledge_dir)
         assert "Experiment Queue" not in brief
+
+
+# ---------------------------------------------------------------------------
+# Malformed CLI input tests
+# ---------------------------------------------------------------------------
+
+
+class TestCLIMalformedInput:
+    def test_invalid_json_config_diff(self, knowledge_dir: Path):
+        import subprocess
+        result = subprocess.run(
+            [
+                "python", "commons.py", "write-card",
+                "--commit", "c1", "--hypothesis", "test",
+                "--result", "0.99", "--delta", "0",
+                "--peak-memory", "1000", "--training-seconds", "300",
+                "--num-steps", "100", "--status", "keep",
+                "--lesson", "test", "--tags", "test",
+                "--config-diff", "NOT VALID JSON",
+            ],
+            capture_output=True, text=True,
+            cwd=str(Path(__file__).resolve().parent),
+            env={**__import__("os").environ, "KNOWLEDGE_DIR": str(knowledge_dir)},
+        )
+        assert result.returncode != 0
+
+    def test_invalid_status_rejected(self, knowledge_dir: Path):
+        import subprocess
+        result = subprocess.run(
+            [
+                "python", "commons.py", "write-card",
+                "--commit", "c1", "--hypothesis", "test",
+                "--result", "0.99", "--delta", "0",
+                "--peak-memory", "1000", "--training-seconds", "300",
+                "--num-steps", "100", "--status", "INVALID",
+                "--lesson", "test", "--tags", "test",
+            ],
+            capture_output=True, text=True,
+            cwd=str(Path(__file__).resolve().parent),
+            env={**__import__("os").environ, "KNOWLEDGE_DIR": str(knowledge_dir)},
+        )
+        assert result.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# Progress plot
+# ---------------------------------------------------------------------------
+
+
+class TestPlotCommand:
+    def test_plot_generates_file(self, knowledge_dir: Path):
+        _make_card(
+            knowledge_dir, commit_id="p1",
+            results={"val_bpb": 1.0, "delta": 0.0, "peak_vram_mb": 1000, "training_seconds": 300, "num_steps": 100},
+            tags=["baseline"],
+        )
+        _make_card(
+            knowledge_dir, commit_id="p2",
+            results={"val_bpb": 0.98, "delta": -0.02, "peak_vram_mb": 1000, "training_seconds": 300, "num_steps": 100},
+            tags=["lr"],
+        )
+        out_path = generate_progress_plot(knowledge_dir)
+        assert Path(out_path).exists()
+        assert out_path.endswith(".png")
+
+    def test_plot_cli_command(self, knowledge_dir: Path):
+        import subprocess
+        _make_card(knowledge_dir, commit_id="p1", tags=["test"])
+        result = subprocess.run(
+            ["python", "commons.py", "plot"],
+            capture_output=True, text=True,
+            cwd=str(Path(__file__).resolve().parent),
+            env={**__import__("os").environ, "KNOWLEDGE_DIR": str(knowledge_dir)},
+        )
+        assert result.returncode == 0
+        assert "Plot saved" in result.stdout
+
+    def test_plot_empty_knowledge_base(self, knowledge_dir: Path):
+        out_path = generate_progress_plot(knowledge_dir)
+        assert Path(out_path).exists()
