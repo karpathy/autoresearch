@@ -32,11 +32,12 @@ uv run train.py
 # Run DOJO adversarial testing on the trained model
 uv run run_dojo.py
 
-# Start autonomous research (training mode)
-# Point Claude Code at program.md and let it go
+# Start the closed loop (train + stress-test, automated)
+# Point Claude Code at program_loop.md and let it go
 
-# Start autonomous DOJO (adversarial testing mode)
-# Point Claude Code at program_dojo.md and let it go
+# Or run each mode separately:
+# Training only: point Claude Code at program.md
+# Adversarial only: point Claude Code at program_dojo.md
 ```
 
 ## How it works
@@ -59,6 +60,15 @@ After training produces a checkpoint, DOJO mode stress-tests it:
 
 The agent reads `program_dojo.md`, modifies `test_protocol.py`, runs a 5-minute adversarial evaluation, checks `robustness_gap`, and commits or reverts. Repeat overnight. Wake up to a map of your model's failure modes.
 
+### Closed loop (train + stress-test)
+
+The full pipeline: the agent modifies `train.py`, trains, then immediately stress-tests the result. Keeps changes only if val_bpb improved WITHOUT making the model more fragile. Uses adversarial findings to inform the next training change.
+
+- **`program_loop.md`** — agent instructions for the closed loop. Point your agent here.
+- **`loop_results.tsv`** — combined metrics: val_bpb, robustness_gap, worst_case_bpb, worst_test per experiment.
+
+~12 min per experiment (5 min train + 2 min compile/eval + 5 min adversarial). ~5 experiments/hour, ~40 overnight.
+
 ### Adversarial tests
 
 | Test | What it finds | Why it matters |
@@ -71,14 +81,16 @@ The agent reads `program_dojo.md`, modifies `test_protocol.py`, runs a 5-minute 
 ## Project structure
 
 ```
-prepare.py          — constants, data prep + runtime utilities (do not modify)
-train.py            — model, optimizer, training loop (agent modifies this)
-program.md          — agent instructions for training mode
-test_protocol.py    — adversarial test functions (agent modifies this in DOJO mode)
-run_dojo.py         — DOJO runner: loads checkpoint, runs tests, reports gap
-program_dojo.md     — agent instructions for DOJO mode
-results.tsv         — training experiment log
-dojo_results.tsv    — DOJO experiment log
+prepare.py           — constants, data prep + runtime utilities (do not modify)
+train.py             — model, optimizer, training loop (agent modifies this)
+program.md           — agent instructions for training mode
+program_dojo.md      — agent instructions for adversarial testing mode
+program_loop.md      — agent instructions for closed loop (train + test)
+test_protocol.py     — adversarial test functions (agent modifies this)
+run_dojo.py          — adversarial test runner: loads checkpoint, runs tests, reports gap
+results.tsv          — training experiment log (val_bpb)
+dojo_results.tsv     — adversarial experiment log (robustness_gap)
+loop_results.tsv     — closed loop log (val_bpb + robustness_gap combined)
 ```
 
 ## Connection to DOJO
