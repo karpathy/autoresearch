@@ -1,27 +1,24 @@
 [project]
-name = "autoresearch"
+name = "mlxresearch"
 version = "0.1.0"
-description = "Autonomous pretraining research swarm"
-readme = "README.md"
-requires-python = ">=3.10"
+description = "AI agents running research on Apple Silicon MLX training automatically — no NVIDIA required"
+requires-python = ">=3.12"
 dependencies = [
-    "kernels>=0.11.7",
-    "matplotlib>=3.10.8",
-    "numpy>=2.2.6",
-    "pandas>=2.3.3",
+    "mlx>=0.24.0",
+    "mlx-lm>=0.22.0",
+    "numpy",
+    "requests",
+    "huggingface-hub",
+    "safetensors",
+    "datasets",
     "pyarrow>=21.0.0",
-    "requests>=2.32.0",
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
-    "torch==2.9.1",
 ]
 
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cu128" },
-]
+[tool.setuptools]
+py-modules = ["train", "prepare"]
 
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"

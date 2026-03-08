@@ -18,3 +18,8 @@ AGENTS.md
 
 # Experimental code/artifacts
 dev/
+experiments/
+adapters/
+data/
+*.log
+benchmark.json
