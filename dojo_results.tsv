@@ -4,3 +4,4 @@ a47a443	1.107010	window_boundary_exploit	discard	finer subgroup disparity — sp
 f7721c0	0.692006	subgroup_disparity	discard	real val data for window test — honest but gap dropped
 cf0a4d4	1.106064	window_boundary_exploit	discard	added tail loss test (p95=2.321) — didn't beat window
 96dc43a	1.424936	adversarial_search	keep	adversarial token search — evolved val sequences to 3.439 bpb
+cb09950	1.516566	adversarial_search	keep	improved search — adaptive mutation, crossover, 2x population, worst=3.530 bpb

@@ -380,45 +380,46 @@ def test_adversarial_search(model, tokenizer, baseline_bpb, time_budget):
     token_bytes = get_token_bytes()
     vocab_size = tokenizer.get_vocab_size()
 
-    # Seed with real validation sequences
-    x_seed, y_seed, _ = next(val_loader)
-    mx.eval(x_seed, y_seed)
+    # Seed with real validation sequences — use 2 batches for more diversity
+    candidates = []
+    for _ in range(2):
+        x_seed, y_seed, _ = next(val_loader)
+        mx.eval(x_seed, y_seed)
+        for i in range(x_seed.shape[0]):
+            seq = x_seed[i:i+1]
+            tgt = y_seed[i:i+1]
+            loss = model(seq, tgt, reduction="none").reshape(-1)
+            nb = mx.take(token_bytes, tgt.reshape(-1), axis=0)
+            mask = nb > 0
+            nats = mx.sum(loss * mask).item()
+            nbytes = int(mx.sum(nb).item())
+            mx.eval()
+            bpb = nats / (math.log(2) * nbytes) if nbytes > 0 else 0.0
+            candidates.append((np.array(seq.reshape(-1)), bpb))
 
-    best_bpb = 0.0
-    best_description = ""
     generations = 0
 
-    # Evolve each sequence independently
-    candidates = []
-    for i in range(x_seed.shape[0]):
-        seq = x_seed[i:i+1]  # (1, seq_len)
-        tgt = y_seed[i:i+1]
-        loss = model(seq, tgt, reduction="none").reshape(-1)
-        nb = mx.take(token_bytes, tgt.reshape(-1), axis=0)
-        mask = nb > 0
-        nats = mx.sum(loss * mask).item()
-        nbytes = int(mx.sum(nb).item())
-        mx.eval()
-        bpb = nats / (math.log(2) * nbytes) if nbytes > 0 else 0.0
-        candidates.append((np.array(seq.reshape(-1)), bpb))
-
     while time.time() - t0 < time_budget:
-        for idx in range(len(candidates)):
+        # Sort by BPB descending — focus effort on most promising candidates
+        candidates.sort(key=lambda c: c[1], reverse=True)
+        # Focus on top half
+        active = min(len(candidates), 8)
+
+        for idx in range(active):
             if time.time() - t0 >= time_budget:
                 break
 
             seq_np, current_bpb = candidates[idx]
 
-            # Mutate: replace 5-10% of tokens with random ones
-            mutation_rate = 0.05 + 0.05 * np.random.random()
+            # Adaptive mutation rate: higher for lower-BPB candidates
+            base_rate = 0.02 + 0.18 * (1.0 - idx / active)  # 2-20%
             mutant = seq_np.copy()
-            n_mutations = max(1, int(len(mutant) * mutation_rate))
+            n_mutations = max(1, int(len(mutant) * base_rate))
             positions = np.random.choice(len(mutant), n_mutations, replace=False)
             mutant[positions] = np.random.randint(4, vocab_size, size=n_mutations)
 
             # Evaluate mutant
             seq_mx = mx.array(mutant.reshape(1, -1), dtype=mx.int32)
-            # Build targets by shifting
             inputs = seq_mx[:, :-1]
             targets = seq_mx[:, 1:]
             loss = model(inputs, targets, reduction="none").reshape(-1)
@@ -432,6 +433,27 @@ def test_adversarial_search(model, tokenizer, baseline_bpb, time_budget):
                 mutant_bpb = nats / (math.log(2) * nbytes)
                 if mutant_bpb > current_bpb:
                     candidates[idx] = (mutant, mutant_bpb)
+
+        # Crossover: combine top 2 candidates
+        if len(candidates) >= 2 and time.time() - t0 < time_budget:
+            parent_a = candidates[0][0]
+            parent_b = candidates[1][0]
+            crossover_point = np.random.randint(len(parent_a) // 4, 3 * len(parent_a) // 4)
+            child = np.concatenate([parent_a[:crossover_point], parent_b[crossover_point:]])
+            seq_mx = mx.array(child.reshape(1, -1), dtype=mx.int32)
+            inputs = seq_mx[:, :-1]
+            targets = seq_mx[:, 1:]
+            loss = model(inputs, targets, reduction="none").reshape(-1)
+            nb = mx.take(token_bytes, targets.reshape(-1), axis=0)
+            mask = nb > 0
+            nats = mx.sum(loss * mask).item()
+            nbytes = int(mx.sum(nb).item())
+            mx.eval()
+            if nbytes > 0:
+                child_bpb = nats / (math.log(2) * nbytes)
+                # Replace worst candidate if child is better
+                if child_bpb > candidates[-1][1]:
+                    candidates[-1] = (child, child_bpb)
 
         generations += 1
 
