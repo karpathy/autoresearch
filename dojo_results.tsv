@@ -7,3 +7,4 @@ cf0a4d4	1.106064	3.119931	2.013867	window_boundary_exploit	discard	added tail lo
 cb09950	1.516566	3.530433	2.013867	adversarial_search	keep	improved search — adaptive mutation, crossover, 2x population
 0e308f5	1.549741	3.563608	2.013867	adversarial_search	keep	batched forward pass — more candidates per generation, worst=3.564
 8c31be2	1.673638	3.633419	1.959782	adversarial_search	keep	weight_decay=0.4 model — gap=1.674, subgroup improved 0.69->0.56
+5a90b01	1.657995	3.577601	1.919606	adversarial_search	keep	SSLL window model — both val_bpb and gap improved, subgroup 0.56->0.53
