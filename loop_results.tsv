@@ -6,3 +6,4 @@ commit	val_bpb	robustness_gap	worst_case_bpb	worst_test	memory_gb	status	descrip
 02e49e7	2.064267	0.000000	0.000000	skipped	21.2	discard	matrix_lr 0.04->0.06 — val_bpb regressed 1.960->2.064, LR too high
 1169c2c	1.980227	0.000000	0.000000	skipped	21.2	discard	warmup_ratio 0.0->0.1 — val_bpb regressed 1.960->1.980, warmup wastes steps in short budget
 5a90b01	1.919606	1.657995	3.577601	adversarial_search	21.2	keep	window SSSL->SSLL — val_bpb 1.960->1.920 AND gap 1.674->1.658, both improved
+b3a553c	1.900172	1.787814	3.687986	adversarial_search	21.2	discard	warmdown 0.5->0.3 — val_bpb improved 1.920->1.900 but gap spiked 1.658->1.788
