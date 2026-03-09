@@ -51,6 +51,8 @@ The `program.md` file is essentially a super lightweight "skill".
 
 This repo also includes a thin adapter that uses [TTT-Discover](https://github.com/test-time-training/discover) as the outer RL engine for `autoresearch`.
 
+This integration is inspired by and credits the TTT-Discover paper, [Learning to Discover at Test Time](https://arxiv.org/abs/2601.16175), and the upstream [test-time-training/discover](https://github.com/test-time-training/discover) repository.
+
 Because upstream `ttt-discover` depends on Python 3.11+, the integrated repo now targets Python 3.11+ for both the original and TTT workflows.
 
 - The outer model proposes full replacements for `train.py`.
