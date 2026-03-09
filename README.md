@@ -4,7 +4,7 @@
 
 ## *Overview*<br>&#8203;
 
-&#8203;
+  autoresearch is an experiment in autonomous AI research. An AI agent iteratively modifies a simple GPT training script, runs 5-minute experiments, and keeps improvements that lower validation loss. You wake up to a log of experiments and (hopefully) a better model.
 
 *One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
 
