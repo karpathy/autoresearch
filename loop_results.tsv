@@ -112,3 +112,4 @@ cca0250	1.487268	0.000000	0.000000	skipped	20.1	discard	final_lr_frac 0.05->0.1 
 bdc524f	1.464756	0.000000	0.000000	skipped	20.1	discard	adam beta2 0.9->0.85 — regressed
 91bf382	1.465306	0.000000	0.000000	skipped	20.1	discard	warmup_ratio 0.0->0.05 — regressed
 672985a	1.603299	0.000000	0.000000	skipped	20.1	discard	unembedding_lr 0.003->0.002 — badly regressed
+923f23a	1.453435	2.158313	3.611748	adversarial_search	20.1	keep	RoPE base 10000->50000 — val_bpb 1.459->1.453, gap 2.073->2.158 (within threshold)
