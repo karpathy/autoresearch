@@ -19,3 +19,4 @@ d5c7c2e	1.691225	20.2	keep	matrix_lr 0.04->0.03 — val_bpb improved 1.705->1.69
 ecc0501	1.659930	20.2	keep	scalar_lr 0.3->0.2 — val_bpb improved 1.665->1.660
 18f3a50	1.650659	20.2	keep	scalar_lr 0.2->0.1 — val_bpb improved 1.660->1.651
 771face	1.517504	20.2	keep	batch 2^16->2^15 — val_bpb improved 1.651->1.518
+b920108	1.484138	20.2	keep	batch 2^15->2^14, device_batch 16->8 — val_bpb improved 1.518->1.484

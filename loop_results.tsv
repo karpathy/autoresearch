@@ -57,3 +57,4 @@ ecc0501	1.659930	2.031955	3.691885	adversarial_search	20.2	keep	scalar_lr 0.3->0
 422202b	1.662625	0.000000	0.000000	skipped	20.2	discard	weight_decay 1.5->2.0 — val_bpb regressed 1.651->1.663
 7e59060	1.695053	0.000000	0.000000	skipped	20.2	discard	unembedding_lr 0.004->0.002 — val_bpb regressed 1.651->1.695
 771face	1.517504	2.115630	3.633134	adversarial_search	20.2	keep	batch 2^16->2^15 — val_bpb 1.651->1.518 (!), gap 2.031->2.116 (within threshold), subgroup 0.43->0.16 (!)
+b920108	1.484138	2.082791	3.566929	adversarial_search	20.2	keep	batch 2^15->2^14, device_batch 16->8 — val_bpb 1.518->1.484, gap 2.116->2.083 (both improved!), subgroup 0.16->0.11
