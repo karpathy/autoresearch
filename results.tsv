@@ -23,3 +23,4 @@ b920108	1.484138	20.2	keep	batch 2^15->2^14, device_batch 16->8 — val_bpb impr
 958a801	1.479792	20.2	keep	final_lr_frac 0.0->0.05 — val_bpb improved 1.484->1.480
 88bd54e	1.459391	20.1	keep	no logit cap + all LRs -30% — val_bpb improved 1.480->1.459
 923f23a	1.453435	20.1	keep	RoPE base 10000->50000 — val_bpb improved 1.459->1.453
+0493ddc	1.452248	20.1	keep	adam eps 1e-10->1e-8 — val_bpb improved 1.453->1.452

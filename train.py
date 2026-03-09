@@ -237,49 +237,49 @@ class AdamW:
                 self.param_config[path] = {
                     "lr": matrix_lr,
                     "betas": adam_betas,
-                    "eps": 1e-10,
+                    "eps": 1e-8,
                     "weight_decay": weight_decay,
                 }
             elif "wte" in path:
                 self.param_config[path] = {
                     "lr": embedding_lr * dmodel_lr_scale,
                     "betas": adam_betas,
-                    "eps": 1e-10,
+                    "eps": 1e-8,
                     "weight_decay": 0.0,
                 }
             elif "value_embeds" in path:
                 self.param_config[path] = {
                     "lr": embedding_lr * dmodel_lr_scale,
                     "betas": adam_betas,
-                    "eps": 1e-10,
+                    "eps": 1e-8,
                     "weight_decay": 0.0,
                 }
             elif "lm_head" in path:
                 self.param_config[path] = {
                     "lr": unembedding_lr * dmodel_lr_scale,
                     "betas": adam_betas,
-                    "eps": 1e-10,
+                    "eps": 1e-8,
                     "weight_decay": 0.0,
                 }
             elif "resid_lambdas" in path:
                 self.param_config[path] = {
                     "lr": scalar_lr * 0.01,
                     "betas": adam_betas,
-                    "eps": 1e-10,
+                    "eps": 1e-8,
                     "weight_decay": 0.0,
                 }
             elif "x0_lambdas" in path:
                 self.param_config[path] = {
                     "lr": scalar_lr,
                     "betas": (0.96, 0.95),
-                    "eps": 1e-10,
+                    "eps": 1e-8,
                     "weight_decay": 0.0,
                 }
             else:
                 self.param_config[path] = {
                     "lr": unembedding_lr * dmodel_lr_scale,
                     "betas": adam_betas,
-                    "eps": 1e-10,
+                    "eps": 1e-8,
                     "weight_decay": 0.0,
                 }
 
