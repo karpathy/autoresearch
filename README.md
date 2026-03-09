@@ -2,6 +2,14 @@
 
 Apple Silicon (MLX) fork of [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) with **DOJO mode** — an adversarial testing loop that stress-tests trained models for failure modes that standard evaluation misses.
 
+## Progress
+
+![Closed Loop Progress](progress.png)
+
+**Top**: val_bpb over 70 experiments (green = kept, gray = discarded). **Bottom**: robustness_gap from adversarial testing (red X = DOJO caught a fragile improvement that looked good on val_bpb but failed stress-testing).
+
+Best so far: **val_bpb = 1.484** (-26.3% from 2.014 baseline), robustness_gap = 2.083, subgroup disparity = 0.11 (-84% from 0.69 baseline).
+
 ## What is this?
 
 Two autonomous loops in one repo:

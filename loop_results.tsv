@@ -58,3 +58,14 @@ ecc0501	1.659930	2.031955	3.691885	adversarial_search	20.2	keep	scalar_lr 0.3->0
 7e59060	1.695053	0.000000	0.000000	skipped	20.2	discard	unembedding_lr 0.004->0.002 — val_bpb regressed 1.651->1.695
 771face	1.517504	2.115630	3.633134	adversarial_search	20.2	keep	batch 2^16->2^15 — val_bpb 1.651->1.518 (!), gap 2.031->2.116 (within threshold), subgroup 0.43->0.16 (!)
 b920108	1.484138	2.082791	3.566929	adversarial_search	20.2	keep	batch 2^15->2^14, device_batch 16->8 — val_bpb 1.518->1.484, gap 2.116->2.083 (both improved!), subgroup 0.16->0.11
+c1b03e0	1.575226	0.000000	0.000000	skipped	20.2	discard	batch 2^14->2^13 — regressed
+bbb80c5	1.505775	0.000000	0.000000	skipped	20.2	discard	warmup 0.0->0.05 — regressed
+8177aba	1.505059	0.000000	0.000000	skipped	20.2	discard	warmdown 0.4->0.3 — regressed
+fa96445	1.497284	0.000000	0.000000	skipped	20.2	discard	matrix_lr 0.015->0.01 — regressed
+fdb14ed	1.471272	2.221400	3.692672	adversarial_search	20.2	discard	weight_decay 1.5->1.0 — gap spiked
+c7a67ad	1.545810	0.000000	0.000000	skipped	20.2	discard	embedding_lr 0.6->0.5 — regressed
+da6bea5	1.495555	0.000000	0.000000	skipped	20.2	discard	embedding_lr 0.6->0.8 — regressed
+dcddbbd	1.486500	0.000000	0.000000	skipped	20.2	discard	weight_decay 1.5->1.25 — no improvement
+374226b	1.557619	0.000000	0.000000	skipped	20.2	discard	matrix_lr 0.015->0.02 — regressed
+97c0f1f	1.533458	0.000000	0.000000	skipped	20.2	discard	adam beta2 0.9->0.85 — regressed
+bb4a0cb	1.484826	0.000000	0.000000	skipped	20.2	discard	adam beta1 0.8->0.7 — no improvement
