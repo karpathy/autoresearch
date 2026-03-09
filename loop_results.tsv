@@ -114,3 +114,4 @@ bdc524f	1.464756	0.000000	0.000000	skipped	20.1	discard	adam beta2 0.9->0.85 —
 672985a	1.603299	0.000000	0.000000	skipped	20.1	discard	unembedding_lr 0.003->0.002 — badly regressed
 923f23a	1.453435	2.158313	3.611748	adversarial_search	20.1	keep	RoPE base 10000->50000 — val_bpb 1.459->1.453, gap 2.073->2.158 (within threshold)
 ac30825	1.596175	0.000000	0.000000	skipped	22.0	discard	depth 4->5 — too slow (468 steps vs 866), regressed
+0493ddc	1.452248	2.099260	3.551508	adversarial_search	20.1	keep	adam eps 1e-10->1e-8 — val_bpb 1.453->1.452, gap 2.158->2.099 (both improved!)
