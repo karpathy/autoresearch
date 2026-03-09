@@ -36,6 +36,15 @@ To start a fresh experiment branch, work with the user to:
 3. Verify that the root `.venv` exists and use it for all Python commands in this repo. Do not create a fresh environment unless the human explicitly asks.
 4. Verify that `~/.cache/autoresearch/` contains the tokenizer and data shards. If not, tell the human to run `.venv/bin/python prepare.py`.
 5. Initialize `results.tsv` if it does not exist. Use this header:
+1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar5`). The branch `autoresearch/<tag>` must not already exist — this is a fresh run.
+2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
+3. **Read the in-scope files**: The repo is small. Read these files for full context:
+   - `README.md` — repository context.
+   - `prepare.py` — fixed constants, data prep, tokenizer, dataloader, evaluation. Do not modify.
+   - `train.py` — the file you modify. Model architecture, optimizer, training loop.
+4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
+5. **Initialize results.tsv**: Create `results.tsv` with just the header row. The baseline will be recorded after the first run.
+6. **Confirm and go**: Confirm setup looks good.
 
 ```tsv
 commit	val_bpb	memory_gb	status	description
