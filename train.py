@@ -9,6 +9,7 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
+import platform
 import time
 from dataclasses import dataclass, asdict
 
@@ -16,13 +17,36 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kernels import get_kernel
 cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+ATTN_BACKEND = "sdpa" if cap > (12, 0) else "fa3"
+repo = None
+fa3 = None
+if ATTN_BACKEND == "fa3":
+    from kernels import get_kernel
+    # varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
+    repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+    fa3 = get_kernel(repo).flash_attn_interface
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
+
+
+def get_torch_compile_status():
+    if os.environ.get("AUTORESEARCH_DISABLE_TORCH_COMPILE") == "1":
+        return False, "disabled via AUTORESEARCH_DISABLE_TORCH_COMPILE"
+    if cap > (12, 0):
+        return False, "torch.compile is disabled for CUDA capability > 12.0"
+    return True, ""
+
+
+TORCH_COMPILE_ENABLED, TORCH_COMPILE_REASON = get_torch_compile_status()
+
+
+def maybe_compile(*compile_args, **compile_kwargs):
+    def decorate(fn):
+        if not TORCH_COMPILE_ENABLED:
+            return fn
+        return torch.compile(fn, *compile_args, **compile_kwargs)
+    return decorate
 
 # ---------------------------------------------------------------------------
 # GPT Model
@@ -57,6 +81,55 @@ def apply_rotary_emb(x, cos, sin):
     return torch.cat([y1, y2], 3)
 
 
+SDPA_WINDOW_CHUNK_SIZE = 128
+_SDPA_MASK_CACHE = {}
+
+
+def get_local_mask(q_start, q_len, k_start, k_len, left_window, device):
+    key = (q_start, q_len, k_start, k_len, left_window, device.index or -1)
+    mask = _SDPA_MASK_CACHE.get(key)
+    if mask is None:
+        q_pos = torch.arange(q_start, q_start + q_len, device=device)[:, None]
+        k_pos = torch.arange(k_start, k_start + k_len, device=device)[None, :]
+        dist = q_pos - k_pos
+        mask = (dist >= 0) & (dist < left_window)
+        _SDPA_MASK_CACHE[key] = mask
+    return mask
+
+
+def sdpa_attention(q, k, v, window_size):
+    q = q.transpose(1, 2)
+    k = k.transpose(1, 2)
+    v = v.transpose(1, 2)
+    if k.size(1) != q.size(1):
+        repeat_factor = q.size(1) // k.size(1)
+        k = k.repeat_interleave(repeat_factor, dim=1)
+        v = v.repeat_interleave(repeat_factor, dim=1)
+
+    left_window, _ = window_size
+    seq_len = q.size(2)
+    if left_window < 0 or left_window >= seq_len:
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        return y.transpose(1, 2)
+
+    outputs = []
+    for q_start in range(0, seq_len, SDPA_WINDOW_CHUNK_SIZE):
+        q_end = min(q_start + SDPA_WINDOW_CHUNK_SIZE, seq_len)
+        k_start = max(0, q_start - left_window + 1)
+        k_end = q_end
+        attn_mask = get_local_mask(
+            q_start, q_end - q_start, k_start, k_end - k_start, left_window, q.device,
+        )
+        y_chunk = F.scaled_dot_product_attention(
+            q[:, :, q_start:q_end],
+            k[:, :, k_start:k_end],
+            v[:, :, k_start:k_end],
+            attn_mask=attn_mask,
+        )
+        outputs.append(y_chunk)
+    return torch.cat(outputs, dim=2).transpose(1, 2)
+
+
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
@@ -89,7 +162,10 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        if ATTN_BACKEND == "fa3":
+            y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        else:
+            y = sdpa_attention(q, k, v, window_size)
         y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
@@ -301,7 +377,7 @@ polar_express_coeffs = [
     (2.3465413258596377, -1.7097828382687081, 0.42323551169305323),
 ]
 
-@torch.compile(dynamic=False, fullgraph=True)
+@maybe_compile(dynamic=False, fullgraph=True)
 def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t):
     p.mul_(1 - lr_t * wd_t)
     exp_avg.lerp_(grad, 1 - beta1_t)
@@ -312,7 +388,7 @@ def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_
     step_size = lr_t / bias1
     p.add_(exp_avg / denom, alpha=-step_size)
 
-@torch.compile(dynamic=False, fullgraph=True)
+@maybe_compile(dynamic=False, fullgraph=True)
 def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momentum_buffer,
                     momentum_t, lr_t, wd_t, beta2_t, ns_steps, red_dim):
     # Nesterov momentum
@@ -434,7 +510,7 @@ HEAD_DIM = 128          # target head dimension for attention
 WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**19 # ~524K tokens per optimizer step
+TOTAL_BATCH_SIZE = int(os.environ.get("AUTORESEARCH_TOTAL_BATCH_SIZE", 2**19)) # ~524K tokens per optimizer step
 EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
@@ -447,7 +523,7 @@ FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
 DEPTH = 8               # number of transformer layers
-DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
+DEVICE_BATCH_SIZE = int(os.environ.get("AUTORESEARCH_DEVICE_BATCH_SIZE", 128))  # per-device batch size (reduce if OOM)
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
@@ -461,9 +537,18 @@ device = torch.device("cuda")
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
 H100_BF16_PEAK_FLOPS = 989.5e12
 
+
+def should_compile_model():
+    if os.environ.get("AUTORESEARCH_DISABLE_MODEL_COMPILE") == "1":
+        return False, "disabled via AUTORESEARCH_DISABLE_MODEL_COMPILE"
+    if not TORCH_COMPILE_ENABLED:
+        return False, TORCH_COMPILE_REASON
+    return True, ""
+
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
 print(f"Vocab size: {vocab_size:,}")
+print(f"Attention backend: {ATTN_BACKEND}")
 
 def build_model_config(depth):
     base_dim = depth * ASPECT_RATIO
@@ -504,13 +589,23 @@ optimizer = model.setup_optimizer(
     weight_decay=WEIGHT_DECAY,
 )
 
-model = torch.compile(model, dynamic=False)
+compile_model, compile_reason = should_compile_model()
+if compile_model:
+    model = torch.compile(model, dynamic=False)
+else:
+    print(f"Skipping torch.compile(model): {compile_reason}")
+
+TIMING_SKIP_STEPS = 11 if compile_model else 0
+default_eval_batch_size = DEVICE_BATCH_SIZE if compile_model else max(DEVICE_BATCH_SIZE, 512)
+EVAL_BATCH_SIZE = int(os.environ.get("AUTORESEARCH_EVAL_BATCH_SIZE", default_eval_batch_size))
 
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
 x, y, epoch = next(train_loader)  # prefetch first batch
 
 print(f"Time budget: {TIME_BUDGET}s")
 print(f"Gradient accumulation steps: {grad_accum_steps}")
+print(f"Timing skip steps: {TIMING_SKIP_STEPS}")
+print(f"Eval batch size: {EVAL_BATCH_SIZE}")
 
 # Schedules (all based on progress = training_time / TIME_BUDGET)
 
@@ -574,7 +669,8 @@ while True:
     t1 = time.time()
     dt = t1 - t0
 
-    if step > 10:
+    counted_step = step >= TIMING_SKIP_STEPS
+    if counted_step:
         total_training_time += dt
 
     # Logging
@@ -599,7 +695,7 @@ while True:
     step += 1
 
     # Time's up — but only stop after warmup steps so we don't count compilation
-    if step > 10 and total_training_time >= TIME_BUDGET:
+    if counted_step and total_training_time >= TIME_BUDGET:
         break
 
 print()  # newline after \r training log
@@ -609,12 +705,13 @@ total_tokens = step * TOTAL_BATCH_SIZE
 # Final eval
 model.eval()
 with autocast_ctx:
-    val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+    val_bpb = evaluate_bpb(model, tokenizer, EVAL_BATCH_SIZE)
 
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
+timed_steps = max(step - TIMING_SKIP_STEPS, 0)
+steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * timed_steps / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
 print("---")

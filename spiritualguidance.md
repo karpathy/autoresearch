@@ -83,3 +83,34 @@ Copy this block for every new training cycle:
 - Durable lesson for `program.md`:
 - Action taken:
 ```
+
+## Cycle 001
+
+### State
+- Best val_bpb so far: 1.113907 on `mkfour`
+- Current branch/commit: `codex/spiritual-guidance-loop` at `3295b94`, with runtime compatibility edits in `train.py`
+- Current hypothesis pressure: the first successful non-H100 run is throughput-bound and memory-constrained rather than obviously optimization-broken
+
+### Architect
+- Observation: `mkfour` only completed after dropping to `AUTORESEARCH_DEVICE_BATCH_SIZE=32`, yielding `146.8M` tokens in `300.9s` with `11.7 GB` peak VRAM. The dominant constraint is throughput per 5-minute budget, not lack of model capacity.
+- Warning: optimizer and schedule tweaks are premature while the host is underfeeding the model. External env overrides also make runs harder to compare unless the intent is recorded explicitly.
+- Proposal: target the largest memory-heavy architectural extra first, then spend the recovered headroom on a larger device batch or faster eval. Value embeddings are the first suspect because they add substantial parameters and activation traffic.
+
+### Oracle
+- Pattern sensed: the successful run did not look unstable; it looked cramped. The model seems less sick than starved.
+- Risk: treating a 24 GB 4090 like a shrunken H100 will trap the search in slow local moves and bad comparisons.
+- Experiment nudge: make one bold simplification that frees memory in a legible way, then convert that freedom into throughput. Reduce or remove value embeddings before touching fine-grained learning-rate trivia.
+
+### Joint Directive
+- Hypothesis: on `mkfour`, reclaiming memory from value embeddings will improve end-to-end research quality more than subtle optimizer tuning, because extra throughput and a larger feasible batch should buy more useful learning within the fixed budget.
+- Edit plan: make a single architectural simplification around value embeddings, then rerun with the highest stable device batch the host can sustain. Keep the rest of the stack fixed so the causal story stays clean.
+- Keep/discard criteria: keep the change if it materially improves throughput or lets a larger batch fit without a clear val_bpb regression. Discard it if it only simplifies the model while making quality worse.
+
+### Outcome
+- Result: `mkfour` completed with `val_bpb 1.113907`, `training_seconds 300.9`, `total_seconds 368.8`, `peak_vram_mb 11702.0`, `num_steps 280`
+- Status: keep as current runnable host configuration
+- Memory: `northstar` still fails to finish within the 600-second ceiling even after compile and attention fallbacks, so `mkfour` is currently the more productive research surface
+
+### Program Update Check
+- Durable lesson for `program.md`: none yet; this is a strong host-specific signal, but not a universal process law
+- Action taken: guidance updated here only
