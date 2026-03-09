@@ -223,12 +223,53 @@ for i in $(seq 0 2); do git worktree remove --force worktrees/agent$i; done
 | GPU | VRAM | Agents | Batch | Expected steps/5min | Notes |
 |-----|------|--------|-------|---------------------|-------|
 | H100 80GB | 80GB | 1 (single-ralph) | 128 | ~950 | Original target |
+| H100 96GB | 96GB | 5→2 (hybrid) | 64→128 | ~300→500 | Planned, see below |
 | A100 SXM4 40GB | 40GB | 3 (multi-ralph) | 32 | ~140 each | Tested, concurrent |
 | A100 SXM4 40GB | 40GB | 1 (single-ralph) | 64 | ~355 | Tested, solo |
 | RTX 4070 Ti SUPER | 16GB | 1 (single-ralph) | 32 | ~358 (depth 5) | Tested, 32 experiments |
 | RTX 4070 Ti SUPER | 16GB | 1 (single-ralph) | 32 | ~169 (depth 8) | Tested |
 
 For multi-ralph, calculate: `DEVICE_BATCH_SIZE` such that `per_process_VRAM × num_agents < total_VRAM`. Include ~30% overhead for torch.compile spikes.
+
+### Hybrid strategy: 96GB GPU, 4 hours
+
+The optimal strategy combines multi-ralph's breadth with single-ralph's depth in two phases. Based on our findings: multi-ralph explores wide (finds combinations fast) but single-ralph explores deep (finds structural insights like model shrinking). A hybrid captures both.
+
+**Phase 1: Wide exploration (hour 1) — 5 agents, batch=64**
+
+96GB ÷ ~17GB per process = 5 agents at `DEVICE_BATCH_SIZE=64`. Each gets ~300 steps — clean enough signal to identify winners while running 5 concurrent searches. Target: ~50 experiments covering all hyperparameter dimensions + architecture variants.
+
+```bash
+sed -i 's/DEVICE_BATCH_SIZE = .*/DEVICE_BATCH_SIZE = 64/' train.py
+./multi-ralph/launch.sh 5
+```
+
+The 5 agents will cover: LR scaling (matrix, embed, unembed, scalar), schedule (warmdown, warmup, final LR frac), architecture (depth 5-12, aspect ratios, window patterns), optimizer (weight decay, adam betas), init (x0_lambda, resid_lambda), and wild cards (softcap, SwiGLU, RoPE, tied embeddings).
+
+**Phase 2: Deep exploitation (hours 2-4) — 2 agents, batch=128**
+
+Take the top findings from phase 1. Switch to 2 agents at `DEVICE_BATCH_SIZE=128` (~39GB each = 78GB). Each gets ~500+ steps — near-H100 quality. One agent combines winners, the other searches architecture.
+
+```bash
+# Stop phase 1
+for i in $(seq 0 4); do screen -S ralph-agent$i -X quit; done
+for i in $(seq 0 4); do git worktree remove --force worktrees/agent$i; done
+
+# Start phase 2
+sed -i 's/DEVICE_BATCH_SIZE = .*/DEVICE_BATCH_SIZE = 128/' train.py
+./multi-ralph/launch.sh 2
+```
+
+**Why 2 phases?**
+
+Our A100 experiment showed the problem: at 3 concurrent agents, step counts vary 120-177 (30% noise). You can't resolve a 0.003 improvement from noise at 120 steps. Phase 1 identifies *which dimensions matter* (like single-ralph discovering depth was the biggest lever at experiment 17). Phase 2 resolves the fine details with clean signal.
+
+**Expected:** ~120 experiments total (50 + 70). The breadth of phase 1 finds the structural wins early, phase 2 stacks and refines them with confidence.
+
+| Phase | Hours | Agents | Batch | Steps/run | Experiments | Purpose |
+|-------|-------|--------|-------|-----------|-------------|---------|
+| 1 | 1 | 5 | 64 | ~300 | ~50 | Broad sweep: find what matters |
+| 2 | 3 | 2 | 128 | ~500+ | ~70 | Deep refinement: stack winners |
 
 ## Origin
 
