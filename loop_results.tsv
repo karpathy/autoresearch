@@ -30,3 +30,4 @@ c058164	1.753978	1.854936	3.608914	adversarial_search	21.2	keep	MLP 4x->3x — v
 264515d	1.710341	1.902431	3.612772	adversarial_search	20.2	keep	MLP 2x->1x — val_bpb 1.737->1.710, gap 1.838->1.902 (within threshold), subgroup 0.49->0.47
 a399980	1.873158	0.000000	0.000000	skipped	22.0	discard	aspect_ratio 64->80 — val_bpb regressed 1.710->1.873, wider model still too slow
 2892f58	1.713891	0.000000	0.000000	skipped	20.2	discard	device_batch 16->8 — val_bpb 1.710->1.714, no improvement
+efd44b9	1.894166	0.000000	0.000000	skipped	22.1	discard	depth 4->5 — val_bpb regressed 1.710->1.894, still too many params
