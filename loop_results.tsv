@@ -42,3 +42,4 @@ f506b81	1.711775	0.000000	0.000000	skipped	20.2	discard	adam beta2 0.9->0.85 —
 8f38fdd	1.686838	2.056255	3.743093	adversarial_search	20.2	discard	remove logit cap — val_bpb improved 1.710->1.687 but gap spiked 1.902->2.056
 7894a6f	1.723751	0.000000	0.000000	skipped	20.2	discard	ve_gate_channels 32->64 — val_bpb regressed 1.710->1.724
 6bbdc01	1.735324	0.000000	0.000000	skipped	20.2	discard	RoPE base 10000->5000 — val_bpb regressed 1.710->1.735
+7c65967	1.705212	1.974242	3.679454	adversarial_search	20.2	keep	warmdown_ratio 0.5->0.4 — val_bpb 1.710->1.705, gap 1.902->1.974 (within threshold), subgroup 0.47->0.46

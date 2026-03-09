@@ -17,3 +17,4 @@ a9c57f1	1.792119	3.573376	1.781256	adversarial_search	keep	weight_decay=1.0 — 
 c058164	1.854936	3.608914	1.753978	adversarial_search	keep	MLP 3x — more steps per budget, subgroup 0.50->0.50
 58adb6d	1.837830	3.574484	1.736654	adversarial_search	keep	MLP 2x — both val_bpb and gap improved, subgroup 0.50->0.49
 264515d	1.902431	3.612772	1.710341	adversarial_search	keep	MLP 1x — subgroup 0.49->0.47, gap within threshold
+7c65967	1.974242	3.679454	1.705212	adversarial_search	keep	warmdown 0.5->0.4 — subgroup 0.47->0.46, gap within threshold

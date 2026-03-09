@@ -11,3 +11,4 @@ a9c57f1	1.781256	21.2	keep	weight_decay 0.8->1.0 — val_bpb improved 1.789->1.7
 c058164	1.753978	21.2	keep	MLP 4x->3x — val_bpb improved 1.780->1.754
 58adb6d	1.736654	20.2	keep	MLP 3x->2x — val_bpb improved 1.754->1.737
 264515d	1.710341	20.2	keep	MLP 2x->1x — val_bpb improved 1.737->1.710
+7c65967	1.705212	20.2	keep	warmdown_ratio 0.5->0.4 — val_bpb improved 1.710->1.705
