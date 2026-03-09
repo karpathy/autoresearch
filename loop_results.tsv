@@ -35,3 +35,4 @@ c7f5b78	1.741096	0.000000	0.000000	skipped	20.2	discard	adam beta1 0.8->0.7 — 
 f69530f	1.713912	0.000000	0.000000	skipped	20.2	discard	logit cap 15->10 — val_bpb 1.710->1.714, no improvement
 0142e1b	1.711085	0.000000	0.000000	skipped	20.2	discard	window SSLL->SLSL — val_bpb 1.710->1.711, no improvement
 7ff04a6	1.720324	0.000000	0.000000	skipped	20.2	discard	weight_decay 1.5->2.0 — val_bpb regressed 1.710->1.720, WD too strong
+1abcc6a	1.782443	0.000000	0.000000	skipped	20.2	discard	head_dim 128->64 — val_bpb regressed 1.710->1.782, more heads adds overhead
