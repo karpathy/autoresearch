@@ -78,7 +78,7 @@ class CausalSelfAttention(nn.Module):
             if has_ve(layer_idx, config.n_layer)
             else None
         )
-        self.rope = nn.RoPE(self.head_dim, traditional=True, base=10000)
+        self.rope = nn.RoPE(self.head_dim, traditional=True, base=50000)
 
     def __call__(self, x, ve, mask):
         batch_size, seq_len, _ = x.shape

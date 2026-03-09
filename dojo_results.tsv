@@ -28,3 +28,4 @@ ecc0501	2.031955	3.691885	1.659930	adversarial_search	keep	scalar_lr 0.2 — sub
 b920108	2.082791	3.566929	1.484138	adversarial_search	keep	batch 2^14 — both val_bpb and gap improved, subgroup 0.16->0.11
 958a801	2.157905	3.637697	1.479792	adversarial_search	keep	final_lr_frac 0.05 — gap within threshold
 88bd54e	2.072741	3.532132	1.459391	adversarial_search	keep	no logit cap + LRs -30% — both val_bpb and gap improved, subgroup 0.11->0.10
+923f23a	2.158313	3.611748	1.453435	adversarial_search	keep	RoPE base 50000 — val_bpb improved, gap within threshold, subgroup 0.10->0.11

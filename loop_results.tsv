@@ -95,3 +95,21 @@ bc105c6	1.598126	0.000000	0.000000	skipped	20.1	discard	matrix_lr 0.015->0.0125 
 405cfaa	2.080690	0.000000	0.000000	skipped	20.2	discard	EMA 0.999 — badly regressed, too much averaging
 94fa82c	1.601336	0.000000	0.000000	skipped	20.2	discard	SWA warmdown average — regressed
 88bd54e	1.459391	2.072741	3.532132	adversarial_search	20.1	keep	no logit cap + all LRs -30% — val_bpb 1.480->1.459, gap 2.158->2.073 (both improved!)
+5c02425	1.477425	0.000000	0.000000	skipped	20.1	discard	all LRs -20% more — regressed
+d00e86a	1.492987	0.000000	0.000000	skipped	20.1	discard	all LRs -10% more — regressed
+b05ab34	1.467270	0.000000	0.000000	skipped	20.1	discard	all LRs +10% — regressed
+7b74680	1.466074	0.000000	0.000000	skipped	20.1	discard	weight_decay 1.5->1.0 — regressed
+4caa1f8	1.523301	0.000000	0.000000	skipped	20.1	discard	warmdown_ratio 0.4->0.5 — regressed
+5e18581	1.517633	0.000000	0.000000	skipped	20.1	discard	batch 2^14->2^13 — regressed
+c8147d4	1.470260	0.000000	0.000000	skipped	20.1	discard	matrix_lr 0.01->0.012 — regressed
+4920583	1.475467	0.000000	0.000000	skipped	20.1	discard	weight_decay 1.5->1.75 — regressed
+cca0250	1.487268	0.000000	0.000000	skipped	20.1	discard	final_lr_frac 0.05->0.1 — regressed
+78838ad	1.487287	0.000000	0.000000	skipped	20.1	discard	embedding_lr 0.42->0.5 — regressed
+3809e0f	1.493333	0.000000	0.000000	skipped	20.1	discard	warmdown_ratio 0.4->0.3 — regressed
+886aace	1.466736	0.000000	0.000000	skipped	19.9	discard	MLP 1x->0.5x — regressed despite more steps
+87a0ce5	1.485331	0.000000	0.000000	skipped	20.1	discard	adam beta1 0.8->0.85 — regressed
+568d211	1.457735	2.185153	3.642889	adversarial_search	20.1	discard	gelu->silu — val_bpb improved but gap spiked 2.073->2.185
+bdc524f	1.464756	0.000000	0.000000	skipped	20.1	discard	adam beta2 0.9->0.85 — regressed
+91bf382	1.465306	0.000000	0.000000	skipped	20.1	discard	warmup_ratio 0.0->0.05 — regressed
+672985a	1.603299	0.000000	0.000000	skipped	20.1	discard	unembedding_lr 0.003->0.002 — badly regressed
+923f23a	1.453435	2.158313	3.611748	adversarial_search	20.1	keep	RoPE base 10000->50000 — val_bpb 1.459->1.453, gap 2.073->2.158 (within threshold)
