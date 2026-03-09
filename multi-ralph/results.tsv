@@ -11,3 +11,6 @@ exp003	1.258704	16.2	discard	gpu0: depth=9 aspect=57 (model_dim=640, only 117 st
 008	1.208443	11.7	keep	agent2: warmdown 0.3 (156 steps, beats concurrent baseline 1.258)
 009	1.362157	11.7	discard	gpu0: lower LRs (matrix=0.02, embed=0.3, unembed=0.002) — too slow to converge
 011	1.200689	11.7	discard	agent1: x0_lambda 0.05 + Matrix LR 0.08 (worse than x0_lambda alone)
+010	1.239609	11.7	keep	agent2: weight_decay=0.05 on x0_lambda=0.05 base (137 steps, slight improvement over concurrent baseline)
+012	1.253045	11.7	discard	gpu0: x0_lambda=0.05 + RoPE base=50K (1.253, no improvement over x0_lambda alone)
+014	1.212238	11.7	discard	agent1: x0_lambda 0.05 + warmdown 0.3 (worse than x0_lambda alone 1.181)
