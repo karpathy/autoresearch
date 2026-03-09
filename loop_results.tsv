@@ -52,3 +52,4 @@ c70f3a0	1.717344	0.000000	0.000000	skipped	20.2	discard	matrix_lr 0.015->0.01 �
 bf0b92a	1.694334	0.000000	0.000000	skipped	20.2	discard	warmdown_ratio 0.4->0.3 — val_bpb regressed 1.682->1.694
 436fbf4	1.665435	2.014228	3.679663	adversarial_search	20.2	keep	scalar_lr 0.5->0.3 — val_bpb 1.682->1.665, gap 2.058->2.014 (both improved!)
 ecc0501	1.659930	2.031955	3.691885	adversarial_search	20.2	keep	scalar_lr 0.3->0.2 — val_bpb 1.665->1.660, gap 2.014->2.032 (within threshold), subgroup 0.45->0.44
+18f3a50	1.650659	2.030834	3.681493	adversarial_search	20.2	keep	scalar_lr 0.2->0.1 — val_bpb 1.660->1.651, gap 2.032->2.031 (stable!), subgroup 0.44->0.43

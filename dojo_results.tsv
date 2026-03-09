@@ -23,3 +23,4 @@ d5c7c2e	2.003108	3.694333	1.691225	adversarial_search	keep	matrix_lr 0.03 — ga
 11a63a9	2.058193	3.740151	1.681958	adversarial_search	keep	matrix_lr 0.015 — subgroup improved 0.48->0.45
 436fbf4	2.014228	3.679663	1.665435	adversarial_search	keep	scalar_lr 0.3 — both val_bpb and gap improved
 ecc0501	2.031955	3.691885	1.659930	adversarial_search	keep	scalar_lr 0.2 — subgroup improved 0.45->0.44
+18f3a50	2.030834	3.681493	1.650659	adversarial_search	keep	scalar_lr 0.1 — gap perfectly stable, subgroup 0.44->0.43

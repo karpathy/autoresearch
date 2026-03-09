@@ -17,3 +17,4 @@ d5c7c2e	1.691225	20.2	keep	matrix_lr 0.04->0.03 — val_bpb improved 1.705->1.69
 11a63a9	1.681958	20.2	keep	matrix_lr 0.02->0.015 — val_bpb improved 1.688->1.682
 436fbf4	1.665435	20.2	keep	scalar_lr 0.5->0.3 — val_bpb improved 1.682->1.665
 ecc0501	1.659930	20.2	keep	scalar_lr 0.3->0.2 — val_bpb improved 1.665->1.660
+18f3a50	1.650659	20.2	keep	scalar_lr 0.2->0.1 — val_bpb improved 1.660->1.651
