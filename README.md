@@ -2,7 +2,7 @@
 
 ## *Overview*
 
-&#8203;
+Autoresearch is an experiment in autonomous AI research. An AI agent iteratively modifies a simple GPT training script, runs 5-minute experiments, and keeps improvements that lower validation loss. You wake up to a log of experiments and (hopefully) a better model.<br>&#8203;
 
 ⁠![teaser](progress.png)
 
