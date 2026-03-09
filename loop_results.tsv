@@ -33,3 +33,4 @@ a399980	1.873158	0.000000	0.000000	skipped	22.0	discard	aspect_ratio 64->80 — 
 efd44b9	1.894166	0.000000	0.000000	skipped	22.1	discard	depth 4->5 — val_bpb regressed 1.710->1.894, still too many params
 c7f5b78	1.741096	0.000000	0.000000	skipped	20.2	discard	adam beta1 0.8->0.7 — val_bpb regressed 1.710->1.741
 f69530f	1.713912	0.000000	0.000000	skipped	20.2	discard	logit cap 15->10 — val_bpb 1.710->1.714, no improvement
+0142e1b	1.711085	0.000000	0.000000	skipped	20.2	discard	window SSLL->SLSL — val_bpb 1.710->1.711, no improvement
