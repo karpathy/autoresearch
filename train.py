@@ -65,14 +65,21 @@ class GpuProfile:
 
 
 SUPPORTED_CONSUMER_CAPABILITIES = {
+    (7, 5): "turing",
     (8, 6): "ampere",
     (8, 9): "ada",
     (12, 0): "blackwell",
 }
+MIN_SUPPORTED_VRAM_GB_BY_ARCH = {
+    "turing": 8.0,
+    "ampere": 10.0,
+    "ada": 10.0,
+    "blackwell": 10.0,
+}
 AUTOTUNE_WARMUP_STEPS = 2
 AUTOTUNE_MEASURE_STEPS = 3
 AUTOTUNE_MAX_MEMORY_FRACTION = 0.90
-AUTOTUNE_CACHE_VERSION = "gpu-profile-v1"
+AUTOTUNE_CACHE_VERSION = "gpu-profile-v2"
 
 
 def _get_gpu_peak_flops(gpu_name):
@@ -93,6 +100,11 @@ def _get_gpu_peak_flops(gpu_name):
         ("5070", 150.0e12),
         ("5060 ti", 120.0e12),
         ("4060 ti", 88.4e12),
+        ("2080 ti", 107.5e12),
+        ("2080 super", 89.6e12),
+        ("2080", 80.3e12),
+        ("2070 super", 72.6e12),
+        ("2070", 59.7e12),
         ("3090 ti", 160.0e12),
         ("3090", 142.6e12),
         ("3080 ti", 136.0e12),
@@ -109,14 +121,25 @@ def _get_gpu_peak_flops(gpu_name):
 def _resolve_gpu_profile(gpu_name, capability, gpu_vram_gb, is_windows):
     name = gpu_name.lower()
     arch = SUPPORTED_CONSUMER_CAPABILITIES.get(capability)
+    min_vram_gb = MIN_SUPPORTED_VRAM_GB_BY_ARCH.get(arch, float("inf"))
     is_rtx = "rtx" in name
     is_laptop = "laptop" in name
-    supported_consumer = is_rtx and not is_laptop and arch is not None and gpu_vram_gb >= 10.0
+    supported_consumer = is_rtx and not is_laptop and arch is not None and gpu_vram_gb >= min_vram_gb
 
     if supported_consumer:
+        if gpu_vram_gb < 12.0:
+            return GpuProfile(
+                name=f"{arch}-8-11gb",
+                is_supported_consumer=True,
+                is_compatibility_only=False,
+                train_batch_candidates=(8, 4, 2, 1),
+                checkpoint_modes=(True,),
+                default_checkpointing=True,
+                eval_batch_cap=4,
+            )
         if gpu_vram_gb < 16.0:
             return GpuProfile(
-                name=f"{arch}-10-12gb",
+                name=f"{arch}-12-15gb",
                 is_supported_consumer=True,
                 is_compatibility_only=False,
                 train_batch_candidates=(16, 8, 4),
@@ -161,8 +184,9 @@ def _compatibility_warning(gpu_name, capability, gpu_vram_gb):
         return "laptop GPUs are outside the supported desktop matrix"
     if arch is None:
         return f"compute capability {capability[0]}.{capability[1]} is outside supported consumer tiers"
-    if gpu_vram_gb < 10.0:
-        return f"{gpu_vram_gb:.1f} GB VRAM is below the 10 GB floor"
+    min_vram_gb = MIN_SUPPORTED_VRAM_GB_BY_ARCH.get(arch, float("inf"))
+    if gpu_vram_gb < min_vram_gb:
+        return f"{gpu_vram_gb:.1f} GB VRAM is below the {min_vram_gb:g} GB floor for {arch}"
     return None
 
 
@@ -214,6 +238,12 @@ def _make_autotune_cache_key(runtime):
     )
 
 
+def _select_amp_dtype(gpu_cc):
+    if gpu_cc >= (8, 0) and torch.cuda.is_bf16_supported(including_emulation=False):
+        return torch.bfloat16
+    return torch.float16
+
+
 def detect_runtime():
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required. No CUDA device detected.")
@@ -230,7 +260,7 @@ def detect_runtime():
     if warning is not None:
         print(f"Warning: {warning}; running compatibility runtime path.")
 
-    amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    amp_dtype = _select_amp_dtype(gpu_cc)
     tf32_enabled = bool(getattr(torch.cuda, "is_tf32_supported", lambda: False)())
     torch.backends.cuda.matmul.allow_tf32 = tf32_enabled
     if hasattr(torch.backends, "cudnn"):

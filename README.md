@@ -2,7 +2,7 @@
 
 > Convert your gaming PC into an autonomous AI researcher.
 
-> This repository is a fork of [karpathy/autoresearch](https://github.com/karpathy/autoresearch). The purpose of this fork is native support for desktop consumer NVIDIA GPUs with at least 10 GB VRAM on Windows, while keeping Linux compatibility paths.
+> This repository is a fork of [karpathy/autoresearch](https://github.com/karpathy/autoresearch). The purpose of this fork is native support for desktop consumer NVIDIA GPUs on Windows, with tiered VRAM floors by architecture.
 
 ![teaser](progress.png)
 
@@ -13,9 +13,10 @@ The idea: give an AI agent a small but real LLM training setup and let it experi
 ## Fork scope
 
 - Upstream source: [karpathy/autoresearch](https://github.com/karpathy/autoresearch)
-- Primary objective: run natively on Windows with desktop consumer NVIDIA GPUs that have at least 10 GB VRAM, without unofficial Triton-on-Windows stacks.
+- Primary objective: run natively on Windows with desktop consumer NVIDIA GPUs (Turing with >=8 GB VRAM, Ampere/Ada/Blackwell with >=10 GB VRAM), without unofficial Triton-on-Windows stacks.
 - Scope of changes: compatibility and stability updates required for that target platform.
-- Linux/H100-oriented fast paths are removed in this fork to keep the runtime path simple and consumer-focused.
+- The original Linux/H100-oriented path from upstream is removed in this fork and is not supported here.
+- If you need the upstream Linux/H100 path, use [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
 
 ## How it works
 
@@ -32,7 +33,7 @@ By design, training runs for a **fixed 5-minute time budget** (wall clock, exclu
 **Requirements:** A single NVIDIA GPU, Python 3.10+, [uv](https://docs.astral.sh/uv/).
 
 - Single runtime path uses PyTorch SDPA attention and eager execution (no FA3/`torch.compile` fast path).
-- Native Windows support targets desktop consumer GPUs with >=10 GB VRAM, official PyTorch CUDA wheels, and SDPA attention.
+- Native Windows support targets desktop consumer GPUs with a tiered VRAM policy (Turing >=8 GB, Ampere/Ada/Blackwell >=10 GB), official PyTorch CUDA wheels, and SDPA attention.
 - Default dataset is now TinyStories GPT-4 clean for practical consumer-GPU setup.
 
 ```powershell
@@ -88,11 +89,15 @@ pyproject.toml  — dependencies
 
 This fork's platform policy is explicit and tiered.
 
-- Supported desktop consumer GPUs (Ampere): `RTX 3060 12GB`, `RTX 3080 10GB`, `RTX 3080 12GB`, `RTX 3080 Ti 12GB`, `RTX 3090 24GB`, `RTX 3090 Ti 24GB`.
-- Supported desktop consumer GPUs (Ada): `RTX 4060 Ti 16GB`, `RTX 4070 12GB`, `RTX 4070 SUPER 12GB`, `RTX 4070 Ti 12GB`, `RTX 4070 Ti SUPER 16GB`, `RTX 4080 16GB`, `RTX 4080 SUPER 16GB`, `RTX 4090 24GB`.
-- Supported desktop consumer GPUs (Blackwell): `RTX 5060 Ti 16GB`, `RTX 5070 12GB`, `RTX 5070 Ti 16GB`, `RTX 5080 16GB`, `RTX 5090 32GB`.
+| Architecture | Minimum VRAM floor | Supported desktop consumer GPUs |
+| --- | --- | --- |
+| Turing | `>=8 GB` | `RTX 2060 12GB`, `RTX 2060 SUPER 8GB`, `RTX 2070 8GB`, `RTX 2070 SUPER 8GB`, `RTX 2080 8GB`, `RTX 2080 SUPER 8GB`, `RTX 2080 Ti 11GB` |
+| Ampere | `>=10 GB` | `RTX 3060 12GB`, `RTX 3080 10GB`, `RTX 3080 12GB`, `RTX 3080 Ti 12GB`, `RTX 3090 24GB`, `RTX 3090 Ti 24GB` |
+| Ada | `>=10 GB` | `RTX 4060 Ti 16GB`, `RTX 4070 12GB`, `RTX 4070 SUPER 12GB`, `RTX 4070 Ti 12GB`, `RTX 4070 Ti SUPER 16GB`, `RTX 4080 16GB`, `RTX 4080 SUPER 16GB`, `RTX 4090 24GB` |
+| Blackwell | `>=10 GB` | `RTX 5060 Ti 16GB`, `RTX 5070 12GB`, `RTX 5070 Ti 16GB`, `RTX 5080 16GB`, `RTX 5090 32GB` |
 - Desktop only: laptop GPUs are not officially supported due to wide power and thermal variance.
-- 8 GB variants are explicitly out of matrix support, even when the model family name matches a supported desktop SKU.
+- Floor policy: Turing desktop GPUs are supported at >=8 GB VRAM; Ampere/Ada/Blackwell desktop GPUs require >=10 GB VRAM.
+- `RTX 2060 6GB` remains out of matrix support due to VRAM floor.
 - Runtime path is intentionally unified across platforms: PyTorch SDPA attention + eager optimizer steps.
 - Runtime adaptation is profile-driven: compute capability, BF16/TF32 support, OS, and VRAM tier determine candidate batch sizes and checkpointing strategy.
 - Supported consumer profiles run a short eager-mode autotune pass and cache the selected candidate per GPU/runtime fingerprint.
@@ -100,11 +105,6 @@ This fork's platform policy is explicit and tiered.
 - Tested hardware in this repo remains RTX 3080 10 GB on Windows. Other listed SKUs are matrix-supported but may be less field-tested here.
 - Non-goals for this fork include FA3/H100-specialized paths, unofficial Triton-for-Windows stacks, AMD/ROCm, Apple Metal, and multi-GPU training.
 - Default dataset is `karpathy/tinystories_gpt4_clean` for consumer-GPU practicality.
-
-## Notable forks
-
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx)
 
 ## License
 
