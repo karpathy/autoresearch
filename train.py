@@ -574,7 +574,7 @@ while True:
     t1 = time.time()
     dt = t1 - t0
 
-    if step > 10:
+    if step >= 10:
         total_training_time += dt
 
     # Logging
