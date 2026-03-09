@@ -46,3 +46,4 @@ f506b81	1.711775	0.000000	0.000000	skipped	20.2	discard	adam beta2 0.9->0.85 —
 8729201	1.717078	0.000000	0.000000	skipped	20.2	discard	embedding_lr 0.6->0.5 — val_bpb regressed 1.705->1.717
 d5c7c2e	1.691225	2.003108	3.694333	adversarial_search	20.2	keep	matrix_lr 0.04->0.03 — val_bpb 1.705->1.691, gap 1.974->2.003 (within threshold)
 642de54	1.688223	1.984259	3.672482	adversarial_search	20.2	keep	matrix_lr 0.03->0.02 — val_bpb 1.691->1.688, gap 2.003->1.984 (both improved!)
+11a63a9	1.681958	2.058193	3.740151	adversarial_search	20.2	keep	matrix_lr 0.02->0.015 — val_bpb 1.688->1.682, gap 1.984->2.058 (within threshold), subgroup 0.48->0.45
