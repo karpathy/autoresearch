@@ -1,1 +1,13 @@
 commit	val_bpb	memory_gb	status	description
+baseline	1.094873	11.7	keep	gpu0: baseline DEPTH=8 batch=32 all defaults
+001	1.207139	11.7	discard	agent1: Higher Matrix LR 0.04→0.08
+exp003	1.258704	16.2	discard	gpu0: depth=9 aspect=57 (model_dim=640, only 117 steps, too slow)
+002	1.223299	11.7	discard	agent2: RoPE base frequency 50K (base=50000, much worse)
+003	1.333033	11.7	discard	gpu0: warmdown=0.7 (LR drops too early with only 121 concurrent steps)
+004	1.242305	11.7	discard	agent1: Embedding LR 0.6→0.8 + Unembedding LR 0.004→0.008
+005	1.180672	11.7	discard	agent2: x0_lambda init 0.05 (177 steps concurrent)
+006	1.279999	11.7	discard	gpu0: SSSSL window pattern (1.280 vs concurrent avg ~1.2)
+007	1.258207	11.7	keep	agent1: Concurrent baseline (no changes, 141 steps with GPU contention)
+008	1.208443	11.7	keep	agent2: warmdown 0.3 (156 steps, beats concurrent baseline 1.258)
+009	1.362157	11.7	discard	gpu0: lower LRs (matrix=0.02, embed=0.3, unembed=0.002) — too slow to converge
+011	1.200689	11.7	discard	agent1: x0_lambda 0.05 + Matrix LR 0.08 (worse than x0_lambda alone)

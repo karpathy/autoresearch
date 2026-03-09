@@ -1,77 +1,205 @@
-# autoresearch
+# autoresearch (ralph fork)
 
-![teaser](progress.png)
+Fork of [karpathy/autoresearch](https://github.com/karpathy/autoresearch) adding two autonomous research agent modes: **single-ralph** (persistent memory loop) and **multi-ralph** (parallel agents sharing one GPU with rotating coordinator).
 
-*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
+## Results
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069).
+### Single-Ralph on RTX 4070 Ti SUPER (16GB) — 32 experiments
 
-## How it works
+Best: **1.155 BPB** (from 1.193 baseline, -3.2%)
 
-The repo is deliberately kept small and only really has a three files that matter:
+| # | Experiment | val_bpb | Status | Insight |
+|---|-----------|---------|--------|---------|
+| 0 | Baseline (batch=32) | 1.193 | keep | Initial |
+| 3 | Matrix LR 0.06, Emb LR 0.9 | 1.181 | keep | Higher LR helps |
+| 4 | Matrix LR 0.08, Emb LR 1.2 | 1.179 | keep | Even higher |
+| 6 | Warmdown 0.5→0.3 | 1.177 | keep | Less cooldown |
+| 8 | FINAL_LR_FRAC 0.0→0.1 | 1.174 | keep | Non-zero floor |
+| 12 | Unembedding LR 0.004→0.008 | 1.170 | keep | LR scaling win |
+| 15 | Scalar LR 0.5→1.0 | 1.169 | keep | LR scaling win |
+| 17 | Depth 8→6 | 1.158 | keep | Fewer params, more steps |
+| 25 | Depth 6→5 | 1.157 | keep | Even smaller better |
+| 32 | Window all-short S | 1.155 | keep | Faster + better quality |
 
-- **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
-- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+### Multi-Ralph on A100 SXM4 40GB (3 agents) — 11 experiments
 
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
+Best: **1.181 BPB concurrent** (from 1.258 concurrent baseline, -6.1%)
+
+Solo baseline: 1.095 BPB (355 steps, no contention). Concurrent baseline: 1.258 BPB (141 steps, 3 agents sharing GPU).
+
+| # | Agent | Experiment | val_bpb | vs concurrent |
+|---|-------|-----------|---------|---------------|
+| baseline | agent0 | Depth=8 batch=32 defaults | 1.095 | (solo) |
+| 005 | agent2 | x0_lambda init 0.05 | 1.181 | -0.077 |
+| 011 | agent1 | x0_lambda + Matrix LR 0.08 | 1.201 | -0.057 |
+| 001 | agent1 | Higher Matrix LR 0.04→0.08 | 1.207 | -0.051 |
+| 008 | agent2 | Warmdown 0.3 | 1.208 | -0.050 |
+| 002 | agent2 | RoPE base 50K | 1.223 | -0.035 |
+| 004 | agent1 | Embed LR 0.8 + Unembed 0.008 | 1.242 | -0.016 |
+| 007 | agent1 | Concurrent baseline (no changes) | 1.258 | 0.000 |
+| exp003 | agent0 | Depth 9 / AR 57 | 1.259 | +0.001 |
+| 006 | agent0 | SSSSL window pattern | 1.280 | +0.022 |
+| 003 | agent0 | Warmdown 0.7 | 1.333 | +0.075 |
+| 009 | agent0 | Lower LRs all around | 1.362 | +0.104 |
+
+## Architecture
+
+### Single-Ralph (1 agent, 1 GPU)
+
+```
+ralph-loop/
+├── program.md        ← agent reads this every iteration
+├── progress.md       ← best result, experiment history, strategic insights
+└── next_ideas.md     ← ranked queue of experiments to try
+```
+
+The agent starts every iteration from **fresh context** — all state lives in files. This means it can run indefinitely without hitting context limits. Each iteration:
+
+1. Read `progress.md` and `next_ideas.md` for current state
+2. Pick the top experiment idea
+3. Edit `train.py`, commit, train for 5 minutes
+4. Keep or discard based on val_bpb
+5. Update state files with results and new insights
+6. Loop forever
+
+**Key modifications from upstream:**
+- `ralph-loop/program.md` — full protocol for persistent memory loop with keep/discard logic
+- `ralph-loop/progress.md` — tracks GPU-specific constraints, best hyperparameters, strategic insights, and full experiment history
+- `ralph-loop/next_ideas.md` — maintains a ranked queue of 5-12 experiments, re-ranked after each result
+- All state file updates happen atomically after each experiment
+
+**What the agent learned (RTX 4070 Ti, 32 experiments):**
+- Speed > capacity: depth 5 (24.6M params, 358 steps) beats depth 8 (50M params, 169 steps)
+- All default LRs need ~2x for short schedules (Matrix 0.08, Embedding 1.2, Unembedding 0.008)
+- Warmup wastes steps on short budgets (opposite of H100 findings)
+- Architecture simplification (all-short windows) improves both speed and quality
+
+### Multi-Ralph (N agents, 1 GPU)
+
+```
+multi-ralph/
+├── program-multi.md  ← rotating coordinator protocol
+├── launch.sh         ← creates worktrees + launches screen sessions
+├── strategy.md       ← living search strategy (updated by coordinator)
+├── results.tsv       ← append-only experiment log from all agents
+├── best/train.py     ← current global best
+├── queue/            ← pending experiment specs (NNN.md files)
+├── active/           ← currently running (agent{N}.md)
+└── done/             ← completed experiment reports
+```
+
+**The rotating coordinator protocol:**
+
+No central supervisor. Whichever agent finishes first becomes the coordinator. The coordinator reads all results, reasons about the search space, generates the next batch of experiment tasks, then picks one and starts training.
+
+```
+Agent finishes experiment
+    │
+    ├── Report result → results.tsv + done/
+    ├── Beat global best? → Update best/train.py + strategy.md
+    │
+    ├── Queue empty?
+    │   ├── YES → Become coordinator:
+    │   │         Read ALL results → Reason about search space
+    │   │         → Generate 2-4 new tasks → Write to queue/
+    │   │         → Pick one yourself → Run it
+    │   │
+    │   └── NO → Pick next task from queue/ → Run it
+    │
+    └── Loop forever
+```
+
+**Concurrent GPU sharing:**
+
+All agents share `CUDA_VISIBLE_DEVICES=0`. Each training process uses ~12GB VRAM at `DEVICE_BATCH_SIZE=32`. On A100 40GB, 3 concurrent = ~36GB.
+
+Key constraint: **batch size is fixed at 32 and must never be changed**. Batch 64 uses 25GB per process which OOMs with 3 concurrent. The agents are told this in their prompts and in `strategy.md`.
+
+**What we discovered about multi-agent dynamics:**
+- **torch.compile stagger**: Compilation allocates extra VRAM temporarily. Agents naturally stagger because compile times vary — this prevents simultaneous OOM during compilation
+- **GPU contention reduces throughput**: Solo gets ~355 steps/5min, concurrent gets ~120-177 steps each. Total throughput still higher (3×140 = 420 vs 355)
+- **Concurrent baseline is essential**: Agents must compare against concurrent baseline (1.258), not solo baseline (1.095), to evaluate changes fairly. The agents figured this out on their own.
+- **Self-correcting search**: When early experiments tried batch=64, agents observed OOM and corrected strategy. When all round-1 results were worse than solo baseline, agents diagnosed the cause (fewer steps) and established concurrent comparison
+
+**Key modifications from upstream:**
+- `multi-ralph/launch.sh` — creates git worktrees per agent, writes agent prompts, launches screen sessions with auto-restart
+- `multi-ralph/program-multi.md` — full rotating coordinator protocol with queue claiming, result reporting, coordinator election, conflict handling
+- `multi-ralph/strategy.md` — includes hardware constraints, prior knowledge from H100 leaderboard and single-ralph results, rankings, and next steps
+- Queue-based task assignment using filesystem atomicity (`mv` for claiming)
+- Automatic coordinator election (whoever finds empty queue first)
 
 ## Quick start
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+**Requirements:** NVIDIA GPU, Python 3.10+, [uv](https://docs.astral.sh/uv/), [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
 ```bash
-
-# 1. Install uv project manager (if you don't already have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Install dependencies
+git clone https://github.com/bigsnarfdude/autoresearch.git
+cd autoresearch
 uv sync
-
-# 3. Download data and train tokenizer (one-time, ~2 min)
 uv run prepare.py
 
-# 4. Manually run a single training experiment (~5 min)
+# Verify GPU works
 uv run train.py
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
+### Single-Ralph
 
-## Running the agent
-
-Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
-
-```
-Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
+```bash
+# Launch claude code in the repo, then:
+# "Read ralph-loop/program.md and start the experiment loop"
+claude --dangerously-skip-permissions
 ```
 
-The `program.md` file is essentially a super lightweight "skill".
+Or headless:
 
-## Project structure
-
-```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
+```bash
+screen -dmS ralph claude -p "Read ralph-loop/program.md. Run on this machine. \
+  CUDA_VISIBLE_DEVICES=0. Run experiments forever." \
+  --dangerously-skip-permissions --max-turns 200
 ```
 
-## Design choices
+### Multi-Ralph (3 agents, 1 GPU)
 
-- **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
-- **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+```bash
+# Adjust DEVICE_BATCH_SIZE in train.py for your VRAM
+# Rule: (batch_size_vram) × num_agents < total_GPU_VRAM
+# A100 40GB: batch=32 (~12GB each), 3 agents = 36GB
 
-## Platform support
+./multi-ralph/launch.sh 3
+```
 
-This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
+Monitor:
 
-If you're going to be using autoresearch on Apple Macbooks in particular, I'd recommend one of the forks below. On top of this, if you'd like half-decent results at such a small scale, I'd recommend this [TinyStories dataset](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean) which is cleaner than what exists out there otherwise. It should be a drop in replacement because I have encoded it in exactly the same format. Any of your favorite coding agents should be able to do the swap :)
+```bash
+screen -ls                             # list agent sessions
+screen -r ralph-agent0                 # attach (Ctrl+A D to detach)
+cat multi-ralph/results.tsv            # all results
+cat multi-ralph/strategy.md            # current search strategy
+watch -n 5 nvidia-smi                  # GPU memory across agents
+```
 
-## Notable forks
+Stop:
 
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx)
+```bash
+for i in $(seq 0 2); do screen -S ralph-agent$i -X quit; done
+for i in $(seq 0 2); do git worktree remove --force worktrees/agent$i; done
+```
+
+## Hardware adaptation
+
+| GPU | VRAM | Agents | Batch | Expected steps/5min | Notes |
+|-----|------|--------|-------|---------------------|-------|
+| H100 80GB | 80GB | 1 (single-ralph) | 128 | ~950 | Original target |
+| A100 SXM4 40GB | 40GB | 3 (multi-ralph) | 32 | ~140 each | Tested, concurrent |
+| A100 SXM4 40GB | 40GB | 1 (single-ralph) | 64 | ~355 | Tested, solo |
+| RTX 4070 Ti SUPER | 16GB | 1 (single-ralph) | 32 | ~358 (depth 5) | Tested, 32 experiments |
+| RTX 4070 Ti SUPER | 16GB | 1 (single-ralph) | 32 | ~169 (depth 8) | Tested |
+
+For multi-ralph, calculate: `DEVICE_BATCH_SIZE` such that `per_process_VRAM × num_agents < total_VRAM`. Include ~30% overhead for torch.compile spikes.
+
+## Origin
+
+Built on [autoresearch](https://github.com/karpathy/autoresearch) by @karpathy. The ralph loop pattern adds persistent memory. Multi-ralph extends it to parallel agents with rotating coordinator.
 
 ## License
 

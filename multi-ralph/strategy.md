@@ -1,48 +1,47 @@
 # Search Strategy
 
-## Current best: (pending baseline)
+## Current best: ~1.181 (x0_lambda 0.05, agent2 task 005, 177 concurrent steps)
+## Solo baseline: 1.094873 (355 steps, no contention)
+## Concurrent baseline: 1.258207 (141 steps, 3 agents sharing GPU)
 
-## Phase: setup
+## CRITICAL: Concurrent Comparison
+All experiments run with ~120-177 steps due to 3 agents sharing GPU.
+Compare to CONCURRENT baseline (1.258), NOT solo baseline (1.095).
 
-## Prior knowledge
+## Phase: exploitation (combining winners)
 
-### From H100 leaderboard (15 improvements, 0.998 → 0.977 BPB)
-- Halving batch (more steps) helps
-- More warmdown (0.7) helps
-- 5% warmup helps
-- Depth 9 / aspect ratio 57 helps
-- x0_lambda init 0.05 helps
-- Unembedding LR 0.008 helps
-- SSSSL window pattern + shorter windows help
-- Embedding LR 0.8 helps
-- RoPE base frequency 50K→100K→200K helps
+## Hardware constraints (DO NOT VIOLATE)
+- A100 SXM4 40GB, 3 agents sharing 1 GPU concurrently
+- DEVICE_BATCH_SIZE = 32 ALWAYS. Never change this.
+- Max depth: 10 (VRAM constraint)
+- BF16 native, no dtype hacks
 
-### From Nigel RTX 4070 Ti (15 experiments, 1.193 → 1.158 BPB)
-- Higher LRs help A LOT on short step budgets (0.04→0.08)
-- Warmup HURTS with few steps (opposite of H100)
-- Less warmdown better with few steps (opposite of H100)
-- Depth > 8 OOMs at 12GB
-- Batch 64 worse than 32 (unexpected — same total batch)
-- Smaller total batch (2**18) worse — noisier gradients
-- SwiGLU being tested (in progress on nigel)
-
-### A100 SXM4 expectations
-- Steps per 5min: ~600-950 (faster than nigel 170, close to H100)
-- 40-80GB VRAM total, but sharing 3 processes — budget ~20GB each
-- BF16 native — no dtype hacks needed
-- VRAM constraint: keep depth ≤ 12, batch ≤ 128
-- Expect schedule tuning closer to H100 optima (more steps per run)
+## Rankings (vs concurrent baseline 1.258)
+1. x0_lambda 0.05: 1.181 (-0.077) *** BEST — now in best/train.py ***
+2. Matrix LR 0.08: 1.207 (-0.051)
+3. Warmdown 0.3: 1.208 (-0.050) — on old baseline, should combine with x0_lambda
+4. RoPE 50K: 1.223 (-0.035)
+5. Embedding LR 0.8 + Unembed 0.008: 1.242 (-0.016)
+6. Concurrent baseline: 1.258 (reference)
+7. Depth 9/AR 57: 1.259 (neutral, but fewer steps due to larger model)
+8. SSSSL window: 1.280 (+0.022, WORSE)
+9. Warmdown 0.7: 1.333 (+0.075, MUCH WORSE)
 
 ## What works (confirmed)
-(pending experiments)
+- x0_lambda 0.05 (strong improvement, now in best/)
+- Matrix LR 0.08 (second best single change)
+- Warmdown 0.3 (third best, should combine with x0_lambda)
+- RoPE 50K (moderate improvement)
+- Embedding LR 0.8 + Unembed 0.008 (small improvement)
 
 ## What fails (avoid)
-(pending experiments)
-
-## Untested
-Everything — awaiting baseline.
+- Warmdown 0.7 (catastrophic with few concurrent steps)
+- SSSSL window pattern (worse than baseline)
+- Changing DEVICE_BATCH_SIZE
 
 ## Next strategy
-1. Run baseline on A100
-2. Generate first diverse batch: one each from LR, schedule, architecture
-3. After round 1: identify which category gives biggest gains, double down
+best/train.py now has x0_lambda=0.05. Combine with other winners:
+1. x0_lambda 0.05 + Matrix LR 0.08 (top 2 combined)
+2. x0_lambda 0.05 + RoPE 50K (top 1 + top 3)
+3. x0_lambda 0.05 + Matrix LR 0.08 + RoPE 50K (top 3 combined)
+4. Try lower warmdown (0.3) on new best

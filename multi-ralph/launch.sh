@@ -88,9 +88,11 @@ You are the FIRST agent. Your job:
 
 IMPORTANT:
 - CUDA_VISIBLE_DEVICES=0 is set. All $NUM_AGENTS agents share this GPU concurrently.
-- A100 SXM4 — BF16 is native, no dtype hacks needed.
-- VRAM BUDGET: Keep each experiment under ~20GB VRAM. Do NOT test depth > 12 or batch > 128.
-  The GPU is shared — 3 processes at ~12GB each = ~36GB, fits in 40-80GB A100.
+- A100 SXM4 40GB — BF16 is native, no dtype hacks needed.
+- ***CRITICAL***: DEVICE_BATCH_SIZE MUST be 32. NEVER change it. 3 processes run concurrently
+  at ~12GB each = ~36GB. Batch 64 = 25GB each = OOM with 3 processes. This is non-negotiable.
+  The batch=32 baseline IS your real baseline. Optimize everything else (LR, schedule, arch, etc).
+- Do NOT test depth > 10 (VRAM). Do NOT change DEVICE_BATCH_SIZE or TOTAL_BATCH_SIZE.
 - Always start from: cp multi-ralph/best/train.py train.py
 - After each experiment, check if multi-ralph/queue/ is empty. If so, become coordinator.
 - Append results to multi-ralph/results.tsv (tab-separated, use >>)
@@ -113,8 +115,11 @@ Read multi-ralph/program-multi.md for the full protocol. Then:
 
 IMPORTANT:
 - CUDA_VISIBLE_DEVICES=0 is set. All $NUM_AGENTS agents share this GPU concurrently.
-- A100 SXM4 — BF16 is native, no dtype hacks needed.
-- VRAM BUDGET: Keep each experiment under ~20GB VRAM. No depth > 12 or batch > 128.
+- A100 SXM4 40GB — BF16 is native, no dtype hacks needed.
+- ***CRITICAL***: DEVICE_BATCH_SIZE MUST be 32. NEVER change it. 3 processes run concurrently
+  at ~12GB each = ~36GB. Batch 64 = 25GB each = OOM with 3 processes. This is non-negotiable.
+  Optimize LR, schedule, architecture, RoPE, etc — but NOT batch size.
+- Do NOT test depth > 10 (VRAM). Do NOT change DEVICE_BATCH_SIZE or TOTAL_BATCH_SIZE.
 - Always start from: cp multi-ralph/best/train.py train.py
 - To claim a task: mv multi-ralph/queue/NNN.md multi-ralph/active/agent${AGENT}.md
 - Append results with >> (never overwrite results.tsv)
