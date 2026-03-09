@@ -38,7 +38,7 @@ def norm(x):
 
 def has_ve(layer_idx, n_layer):
     """Returns True if layer should have Value Embedding (alternating, last always included)."""
-    return layer_idx % 2 == (n_layer - 1) % 2
+    return False
 
 
 def create_additive_causal_mask(seq_len, dtype=mx.float32):
