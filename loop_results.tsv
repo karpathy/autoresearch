@@ -40,3 +40,4 @@ f506b81	1.711775	0.000000	0.000000	skipped	20.2	discard	adam beta2 0.9->0.85 —
 0e7575c	1.772653	0.000000	0.000000	skipped	20.1	discard	disable value embeddings — val_bpb regressed 1.710->1.773, VE important for quality
 8304489	1.712568	0.000000	0.000000	skipped	20.2	discard	x0_lambda 0.1->0.0 — val_bpb 1.710->1.713, no improvement
 8f38fdd	1.686838	2.056255	3.743093	adversarial_search	20.2	discard	remove logit cap — val_bpb improved 1.710->1.687 but gap spiked 1.902->2.056
+7894a6f	1.723751	0.000000	0.000000	skipped	20.2	discard	ve_gate_channels 32->64 — val_bpb regressed 1.710->1.724
