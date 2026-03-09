@@ -90,3 +90,8 @@ a4d7241	1.499524	0.000000	0.000000	skipped	20.1	discard	window SSLL->SLLL — re
 03213a7	1.503886	0.000000	0.000000	skipped	20.1	discard	cosine warmdown — regressed vs linear
 5ceaa6e	4.717546	0.000000	0.000000	skipped	20.1	discard	weight tying — catastrophically regressed
 03d9c1c	1.537683	0.000000	0.000000	skipped	20.1	discard	no logit cap + WD 2.0 — regressed despite more steps
+bc105c6	1.598126	0.000000	0.000000	skipped	20.1	discard	matrix_lr 0.015->0.0125 — regressed
+8ffef75	1.548874	0.000000	0.000000	skipped	20.1	discard	init scale 3^0.5->2^0.5 — regressed
+405cfaa	2.080690	0.000000	0.000000	skipped	20.2	discard	EMA 0.999 — badly regressed, too much averaging
+94fa82c	1.601336	0.000000	0.000000	skipped	20.2	discard	SWA warmdown average — regressed
+88bd54e	1.459391	2.072741	3.532132	adversarial_search	20.1	keep	no logit cap + all LRs -30% — val_bpb 1.480->1.459, gap 2.158->2.073 (both improved!)

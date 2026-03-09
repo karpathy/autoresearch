@@ -21,3 +21,4 @@ ecc0501	1.659930	20.2	keep	scalar_lr 0.3->0.2 — val_bpb improved 1.665->1.660
 771face	1.517504	20.2	keep	batch 2^16->2^15 — val_bpb improved 1.651->1.518
 b920108	1.484138	20.2	keep	batch 2^15->2^14, device_batch 16->8 — val_bpb improved 1.518->1.484
 958a801	1.479792	20.2	keep	final_lr_frac 0.0->0.05 — val_bpb improved 1.484->1.480
+88bd54e	1.459391	20.1	keep	no logit cap + all LRs -30% — val_bpb improved 1.480->1.459
