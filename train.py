@@ -17,11 +17,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+# Detect AMD ROCm vs NVIDIA CUDA
+IS_ROCM = hasattr(torch.version, 'hip') and torch.version.hip is not None
+
+if not IS_ROCM:
+    from kernels import get_kernel
+    cap = torch.cuda.get_device_capability()
+    # varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
+    repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+    fa3 = get_kernel(repo).flash_attn_interface
+else:
+    fa3 = None  # Will use PyTorch SDPA on ROCm (dispatches to AOTriton)
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -90,8 +96,18 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
-        y = y.contiguous().view(B, T, -1)
+        if IS_ROCM:
+            # PyTorch SDPA on ROCm dispatches to AOTriton
+            # Note: SDPA doesn't support window_size, so SSSL pattern degrades to
+            # full causal attention on all layers
+            q = q.transpose(1, 2)  # (B, T, H, D) -> (B, H, T, D)
+            k = k.transpose(1, 2)
+            v = v.transpose(1, 2)
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+            y = y.transpose(1, 2).contiguous().view(B, T, -1)
+        else:
+            y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+            y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
 
@@ -302,18 +318,21 @@ polar_express_coeffs = [
     (2.3465413258596377, -1.7097828382687081, 0.42323551169305323),
 ]
 
-@torch.compile(dynamic=False, fullgraph=True)
+_maybe_compile = torch.compile(dynamic=False, fullgraph=True) if not IS_ROCM else lambda fn: fn
+
+@_maybe_compile
 def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t):
     p.mul_(1 - lr_t * wd_t)
-    exp_avg.lerp_(grad, 1 - beta1_t)
-    exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
+    dtype = exp_avg.dtype
+    exp_avg.lerp_(grad, (1 - beta1_t).to(dtype=dtype))
+    exp_avg_sq.lerp_(grad.square(), (1 - beta2_t).to(dtype=dtype))
     bias1 = 1 - beta1_t ** step_t
     bias2 = 1 - beta2_t ** step_t
     denom = (exp_avg_sq / bias2).sqrt() + eps_t
     step_size = lr_t / bias1
     p.add_(exp_avg / denom, alpha=-step_size)
 
-@torch.compile(dynamic=False, fullgraph=True)
+@_maybe_compile
 def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momentum_buffer,
                     momentum_t, lr_t, wd_t, beta2_t, ns_steps, red_dim):
     # Nesterov momentum
@@ -460,7 +479,29 @@ torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 device = torch.device("cuda")
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-H100_BF16_PEAK_FLOPS = 989.5e12
+# Peak BF16 FLOPS by GPU model (for MFU calculation)
+_GPU_PEAK_FLOPS = {
+    "H100":   989.5e12,
+    "H200":   989.5e12,
+    "A100":   312.0e12,
+    "B200":   2250.0e12,
+    # AMD Instinct
+    "MI300X": 1307.4e12,
+    "MI308X": 1307.4e12,
+    "MI325X": 1307.4e12,
+    "MI250X": 383.0e12,
+}
+
+def _detect_peak_flops():
+    gpu_name = torch.cuda.get_device_name(0)
+    for key, flops in _GPU_PEAK_FLOPS.items():
+        if key.lower() in gpu_name.lower():
+            print(f"Detected GPU: {gpu_name} -> peak BF16 FLOPS: {flops:.1e}")
+            return flops
+    print(f"Warning: Unknown GPU '{gpu_name}', defaulting to H100 peak FLOPS for MFU")
+    return 989.5e12
+
+PEAK_BF16_FLOPS = _detect_peak_flops()
 
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
@@ -505,7 +546,10 @@ optimizer = model.setup_optimizer(
     weight_decay=WEIGHT_DECAY,
 )
 
-model = torch.compile(model, dynamic=False)
+if not IS_ROCM:
+    model = torch.compile(model, dynamic=False)
+else:
+    print("ROCm detected: torch.compile disabled (enable with PyTorch 2.9+ on ROCm)")
 
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
 x, y, epoch = next(train_loader)  # prefetch first batch
@@ -584,7 +628,7 @@ while True:
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
     pct_done = 100 * progress
     tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
-    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
+    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / PEAK_BF16_FLOPS
     remaining = max(0, TIME_BUDGET - total_training_time)
 
     print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
@@ -615,7 +659,7 @@ with autocast_ctx:
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
+steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / PEAK_BF16_FLOPS if total_training_time > 0 else 0
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
 print("---")
