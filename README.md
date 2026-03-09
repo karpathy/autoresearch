@@ -18,7 +18,7 @@ By design, training runs for a **fixed 5-minute time budget** (wall clock, exclu
 
 ## Quick start
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.11+, [uv](https://docs.astral.sh/uv/).
 
 ```bash
 
@@ -47,6 +47,57 @@ Hi have a look at program.md and let's kick off a new experiment! let's do the s
 
 The `program.md` file is essentially a super lightweight "skill".
 
+## TTT-Discover mode
+
+This repo also includes a thin adapter that uses [TTT-Discover](https://github.com/test-time-training/discover) as the outer RL engine for `autoresearch`.
+
+Because upstream `ttt-discover` depends on Python 3.11+, the integrated repo now targets Python 3.11+ for both the original and TTT workflows.
+
+- The outer model proposes full replacements for `train.py`.
+- Each candidate `train.py` is executed in an isolated workspace.
+- The inner run's `val_bpb` becomes the reward signal for the outer model.
+- The implementation keeps the `discover` RL recipe intact: online LoRA updates, grouped rollouts, KL control, and state reuse through the upstream sampler.
+
+### Quickstart
+
+```bash
+# 1. Install dependencies, including the pinned ttt-discover dependency
+uv sync
+
+# 2. Prepare data and tokenizer once
+uv run prepare.py
+
+# 3. Launch TTT-Discover outer-loop RL
+uv run python run_ttt_discover.py --config configs/ttt_discover_autoresearch.yaml
+```
+
+The default outer model target is `Qwen/Qwen3.5-35B-A3B`. To swap models, edit one field in [`configs/ttt_discover_autoresearch.yaml`](configs/ttt_discover_autoresearch.yaml):
+
+```yaml
+model_name: Qwen/Qwen3.5-35B-A3B
+```
+
+For example:
+
+```yaml
+model_name: openai/gpt-oss-120b
+```
+
+Outputs are written under `runs/<timestamp>/`:
+
+- `baseline.json` for the original `train.py`
+- `history.jsonl` for every accepted and rejected candidate
+- `best/train.py` for the best discovered replacement
+- `best/metrics.json` for the best run metadata
+- `candidates/` for per-candidate isolated workspaces and logs
+
+### Config notes
+
+- `model_name` is fully configurable and passed through to the installed `discover` backend.
+- `provider` and `api_base` can be set in the YAML or overridden on the CLI.
+- `baseline_command_override` and `candidate_command_override` let you swap the execution command without changing code.
+- `run_ttt_discover.py` uses the upstream `discover` trainer stack directly, but bypasses the public `discover()` model-name guard so non-GPT-OSS models such as Qwen can be used without changing the RL optimization recipe.
+
 ## Project structure
 
 ```
@@ -54,6 +105,8 @@ prepare.py      — constants, data prep + runtime utilities (do not modify)
 train.py        — model, optimizer, training loop (agent modifies this)
 program.md      — agent instructions
 pyproject.toml  — dependencies
+run_ttt_discover.py — TTT-Discover entrypoint for outer-loop RL
+ttt_autoresearch/   — thin autoresearch environment/reward adapter for discover
 ```
 
 ## Design choices
