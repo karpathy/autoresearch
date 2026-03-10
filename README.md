@@ -82,17 +82,9 @@ I think these would be the reasonable hyperparameters to play with. Ask your fav
 
 ## ANE Backend (Apple Neural Engine)
 
-![ANE progress](progress_ane.png)
-
 This fork adds an **ANE training backend** that runs transformer training directly on the Apple Neural Engine via reverse-engineered private APIs. No GPU required — trains on the 15.8 TFLOPS ANE available in every Apple Silicon Mac.
 
-### Attribution
-
-This backend stands on the shoulders of two projects:
-
-- **[maderix/ANE](https://github.com/maderix/ANE)** — the foundational work. The first project to train transformers directly on ANE via Objective-C and raw MIL kernel compilation. All `ane/` headers (`stories_io.h`, `stories_mil.h`, `stories_cpu_ops.h`, `forward.h`, `backward.h`, `ane_runtime.h`, `ane_mil_gen.h`, `model.h`, `download_data.sh`) come directly from this repo. `train_ane.m` is a modified version of `train_large.m` from the same repo.
-
-- **[miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos)** — the MPS port of autoresearch that demonstrated how to adapt the autonomous experiment loop to Apple Silicon. Inspired the structure of this ANE integration.
+Based on [maderix/ANE](https://github.com/maderix/ANE) — the first project to train transformers directly on ANE using Objective-C and raw MIL kernel compilation.
 
 ### How it works
 
