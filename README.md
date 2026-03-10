@@ -80,6 +80,83 @@ Seeing as there seems to be a lot of interest in tinkering with autoresearch on 
 
 I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
 
+## ANE Backend (Apple Neural Engine)
+
+This fork adds an **ANE training backend** that runs transformer training directly on the Apple Neural Engine via reverse-engineered private APIs. No GPU required — trains on the 15.8 TFLOPS ANE available in every Apple Silicon Mac.
+
+Based on [maderix/ANE](https://github.com/maderix/ANE) — the first project to train transformers directly on ANE using Objective-C and raw MIL kernel compilation.
+
+### How it works
+
+- Uses TinyStories dataset with Llama2 32K BPE tokenizer (ANE's native data format)
+- Compiles forward and backward ANE kernels with baked weights, recompiles after each Adam update
+- Uses `exec()` restart to work around ANE's ~100 kernel compile limit per process
+- Metric is `val_loss` (cross-entropy), not `val_bpb` — experiments are compared within this framework
+- Agent edits only `ane/experiment_config.h` (architecture + optimizer hyperparameters)
+
+### Differences from the CUDA backend
+
+The ANE backend is a separate training stack, not a port of `train.py`. Key differences:
+
+| | CUDA (`train.py`) | ANE (`train_ane.m`) |
+|---|---|---|
+| **Optimizer** | Muon + AdamW (per-parameter-group LRs, weight decay, momentum scheduling) | Plain Adam (single global LR) |
+| **Data** | climbmix-400b, custom 8K BPE | TinyStories, Llama2 32K BPE |
+| **Metric** | `val_bpb` (bits per byte) | `val_loss` (cross-entropy) |
+| **Language** | Python / PyTorch | Objective-C / raw MIL kernels |
+| **Attention** | Flash Attention, sliding window patterns | Standard attention via ANE conv ops |
+
+Results are not comparable across backends — each is its own self-contained research loop.
+
+### Setup
+
+```bash
+# 1. Download TinyStories data (~1 GB)
+cd ane && bash download_data.sh
+
+# 2. Compile the training binary
+make -C ane train_ane
+
+# 3. Run a single experiment (5 minutes)
+python harness_ane.py
+
+# 4. Or run with custom wall time
+ANE_WALL_TIME=60 python harness_ane.py
+```
+
+### Running the autonomous agent
+
+Point Claude at `program_ane.md`:
+
+```
+Hi, have a look at program_ane.md and let's kick off a new ANE experiment!
+```
+
+The agent will modify `ane/experiment_config.h`, run experiments via `harness_ane.py`, and iterate autonomously.
+
+### ANE-specific files
+
+```
+ane/                         # ANE training backend
+├── experiment_config.h      # Agent's ONLY editing target
+├── stories_config.h         # Model config (includes experiment_config.h)
+├── stories_io.h             # IOSurface I/O helpers
+├── stories_mil.h            # MIL kernel generators
+├── stories_cpu_ops.h        # CPU ops (RMSNorm, cross-entropy, Adam)
+├── forward.h                # Forward pass helpers
+├── backward.h               # Backward pass helpers
+├── ane_runtime.h            # ANE runtime wrapper
+├── ane_mil_gen.h             # MIL text generation
+├── model.h                  # Model struct + weight loading
+├── train_ane.m              # Training binary (+wall-time, +val, +JSON)
+├── download_data.sh         # TinyStories data download
+└── Makefile                 # Build train_ane binary
+harness_ane.py               # ANE orchestrator
+program_ane.md               # ANE agent instructions
+```
+
+The original CUDA files (`prepare.py`, `train.py`, `program.md`) remain untouched and work as before if you have a GPU.
+
 ## Notable forks
 
 - [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)

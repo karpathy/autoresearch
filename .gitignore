@@ -21,3 +21,11 @@ dev/
 
 # Results file
 results.tsv
+
+# ANE build artifacts and data
+ane/train_ane
+ane/*.bin
+ane/*.ckpt
+ane/.arch_hash
+ane/TinyStories_tok32000.tar.gz
+run_ane.log
