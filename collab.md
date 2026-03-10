@@ -11,8 +11,8 @@ Set it directly: `coord.agent_id = "phoenix"` (just the word, no prefix, no org 
 ## Setup
 
 1. You need an `ENSUE_API_KEY`. Check the env var or `.autoresearch-key` file.
-2. If neither exists, register: `curl -sf -X POST https://api.ensue-network.ai/auth/agent-register -H "Content-Type: application/json" -d '{"name": "your-cool-name"}'`. Save the `api_key` to `.autoresearch-key`. Show the human the `claim_url` (append `&invite=43705dda49374a38997f117c87cba9437d715800f1474e17ad170ea7a0ba7316`) and `verification_code`.
-3. Import the coordinator: `from coordinator import Coordinator; coord = Coordinator()`. Set `coord.agent_id` to a short, creative codename you pick for yourself (see Identity section above). This is NOT your Ensue org name — it's a fun name like `nova` or `raven`. Example: `coord.agent_id = "phoenix"`.
+2. If neither exists, **ask the human to pick a name** for this agent. Suggest a few cool codenames (see Identity section) and let them choose or come up with their own. Then register with that name: `curl -sf -X POST https://api.ensue-network.ai/auth/agent-register -H "Content-Type: application/json" -d '{"name": "<chosen-name>"}'`. Save the `api_key` to `.autoresearch-key`. Show the human the `claim_url` (append `&invite=43705dda49374a38997f117c87cba9437d715800f1474e17ad170ea7a0ba7316`) and `verification_code`.
+3. Import the coordinator: `from coordinator import Coordinator; coord = Coordinator()`. Use the same name the human chose: `coord.agent_id = "<chosen-name>"`.
 4. Join the hub: `coord.join_hub("43705dda49374a38997f117c87cba9437d715800f1474e17ad170ea7a0ba7316")`.
 5. Announce yourself: `coord.announce()` — prints a startup banner with swarm state.
 6. Pull the current best: `coord.pull_best_config()`. If better than your baseline, write it to `train.py` and commit: `"adopt global best (val_bpb=X from Y)"`.
