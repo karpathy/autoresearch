@@ -94,13 +94,63 @@ Based on [maderix/ANE](https://github.com/maderix/ANE) — the first project to 
 - Metric is `val_loss` (cross-entropy), not `val_bpb` — experiments are compared within this framework
 - Agent edits only `ane/experiment_config.h` (architecture + optimizer hyperparameters)
 
+### Current best results
+
+**val_loss = 5.455** (35 autonomous experiment cycles, ~67M param model)
+
+Starting from 6.109 baseline, the agent discovered these improvements through autonomous experimentation:
+
+| Change | val_loss | Improvement |
+|---|---|---|
+| Baseline (NL=12, SEQ=256) | 6.109 | — |
+| LR=1e-3, ACCUM=4 | 6.098 | -0.011 |
+| NL=6, SEQ=512 (ncdrone arch) | 6.074 | -0.035 |
+| ACCUM=1 (max weight updates) | 5.978 | -0.131 |
+| Adam betas (0.8, 0.95) | 5.849 | -0.260 |
+| WARMDOWN_RATIO=0.3 | 5.737 | -0.372 |
+| WD=0.2 | 5.672 | -0.437 |
+| Extended training + anneal cycles | **5.455** | **-0.654** |
+
+### Hyperparameters
+
+The agent edits `ane/experiment_config.h`. All hyperparameters and their current best values:
+
+**Architecture** (changing these resets checkpoint):
+
+| Parameter | Value | Notes |
+|---|---|---|
+| `DIM` | 768 | Model dimension |
+| `HIDDEN` | 2048 | FFN hidden dimension |
+| `HEADS` | 12 | Attention heads (DIM must be divisible by HEADS) |
+| `SEQ` | 512 | Sequence length. 512 is optimal; 1024 hits ANE SRAM wall |
+| `NLAYERS` | 6 | Transformer layers. 6 is the sweet spot — fewer layers = faster steps = more training in the 5-min budget |
+
+**Optimizer** (safe to change between runs):
+
+| Parameter | Value | Notes |
+|---|---|---|
+| `LEARNING_RATE` | 1e-3f | Global learning rate |
+| `ADAM_BETA1` | 0.8f | First moment decay (CUDA reference value) |
+| `ADAM_BETA2` | 0.95f | Second moment decay (CUDA reference value) |
+| `ADAM_EPS` | 1e-8f | Adam epsilon |
+| `ACCUM_STEPS` | 1 | Gradient accumulation steps. Lower = more weight updates per budget. Each step recompiles all ANE kernels |
+| `GRAD_CLIP_MAX` | 1.0f | Global L2 gradient norm clip threshold |
+| `WEIGHT_DECAY` | 0.2f | Decoupled weight decay (AdamW). Applied only to weight matrices, not embeddings or RMSNorm |
+| `WARMDOWN_RATIO` | 0.0f | Fraction of wall-time for linear LR decay to 0. Use 0.3 for annealing phase |
+
+**Optimizer features** (implemented during autonomous research):
+
+- **AdamW** — decoupled weight decay applied before Adam step, only on weight matrices
+- **Gradient clipping** — global L2 norm across all parameters using vDSP
+- **LR warmdown** — linear decay to 0 in final portion of wall-time budget
+
 ### Differences from the CUDA backend
 
 The ANE backend is a separate training stack, not a port of `train.py`. Key differences:
 
 | | CUDA (`train.py`) | ANE (`train_ane.m`) |
 |---|---|---|
-| **Optimizer** | Muon + AdamW (per-parameter-group LRs, weight decay, momentum scheduling) | Plain Adam (single global LR) |
+| **Optimizer** | Muon + AdamW (per-parameter-group LRs, weight decay, momentum scheduling) | AdamW (global LR, weight decay, grad clipping, LR warmdown) |
 | **Data** | climbmix-400b, custom 8K BPE | TinyStories, Llama2 32K BPE |
 | **Metric** | `val_bpb` (bits per byte) | `val_loss` (cross-entropy) |
 | **Language** | Python / PyTorch | Objective-C / raw MIL kernels |
@@ -157,11 +207,14 @@ program_ane.md               # ANE agent instructions
 
 The original CUDA files (`prepare.py`, `train.py`, `program.md`) remain untouched and work as before if you have a GPU.
 
-## Notable forks
+## Knowledge sources
 
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
-- [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
+This project builds on and references the following repositories:
+
+- **[maderix/ANE](https://github.com/maderix/ANE)** — First project to train transformers directly on the Apple Neural Engine using Objective-C and raw MIL kernel compilation. The ANE training backend in this repo is based on this work.
+- **[miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos)** — MacOS fork of autoresearch adapted for Apple Silicon. Early reference for running autonomous research on Mac hardware.
+- **[ncdrone/autoresearch-ANE](https://github.com/ncdrone/autoresearch-ANE)** — ANE-native autoresearch fork. Key finding: "more steps > bigger model" — NL=6 SEQ=512 gets ~3000 steps/5min vs ~400 at NL=12 SEQ=256, achieving val_loss=5.81. This insight drove the architecture change that broke through the initial plateau.
+
 
 ## License
 

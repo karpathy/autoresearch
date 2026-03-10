@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Autoresearch ANE — Training Progress</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
+.header { padding: 20px 24px 12px; border-bottom: 1px solid #21262d; display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+.header h1 { font-size: 20px; font-weight: 600; color: #e6edf3; }
+.header .subtitle { font-size: 13px; color: #8b949e; }
+.header .best { font-size: 14px; color: #3fb950; font-weight: 600; }
+.controls { padding: 12px 24px; border-bottom: 1px solid #21262d; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.controls label { font-size: 12px; color: #8b949e; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.controls input[type="checkbox"] { accent-color: #58a6ff; }
+.controls select { background: #161b22; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 8px; border-radius: 6px; font-size: 12px; }
+.main { display: flex; flex-direction: column; height: calc(100vh - 110px); }
+.chart-container { flex: 1; padding: 24px; min-height: 300px; position: relative; }
+canvas { width: 100% !important; height: 100% !important; }
+.table-container { flex: 0 0 auto; max-height: 40vh; overflow-y: auto; border-top: 1px solid #21262d; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-family: 'SF Mono', 'Fira Code', monospace; }
+thead { position: sticky; top: 0; background: #161b22; z-index: 1; }
+th { padding: 8px 12px; text-align: left; color: #8b949e; font-weight: 500; border-bottom: 1px solid #30363d; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+td { padding: 6px 12px; border-bottom: 1px solid #161b22; }
+tr:hover { background: #161b22; }
+tr.best-row { background: #0d2818; }
+tr.best-row:hover { background: #0f3520; }
+tr.crash-row { opacity: 0.4; }
+tr.discard-row { opacity: 0.6; }
+.val-loss { font-weight: 600; }
+.val-loss.improving { color: #3fb950; }
+.val-loss.regressing { color: #f85149; }
+.val-loss.best { color: #3fb950; font-weight: 700; }
+.status-badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+.status-keep { background: #0d2818; color: #3fb950; border: 1px solid #238636; }
+.status-discard { background: #1c1208; color: #d29922; border: 1px solid #9e6a03; }
+.status-crash { background: #300c0c; color: #f85149; border: 1px solid #da3633; }
+.run-num { color: #8b949e; font-size: 12px; }
+.desc { color: #8b949e; font-size: 12px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ref-line { color: #f0883e; font-size: 12px; }
+.legend { display: flex; gap: 16px; padding: 8px 24px; font-size: 11px; color: #8b949e; border-top: 1px solid #21262d; }
+.legend-item { display: flex; align-items: center; gap: 4px; }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+.tooltip { position: absolute; background: #1c2128; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; font-size: 12px; pointer-events: none; z-index: 10; display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.4); max-width: 320px; }
+.tooltip .tt-val { font-size: 16px; font-weight: 700; color: #e6edf3; }
+.tooltip .tt-desc { color: #8b949e; margin-top: 4px; }
+.tooltip .tt-status { margin-top: 4px; }
+.improvement-banner { padding: 8px 24px; font-size: 13px; display: flex; gap: 20px; flex-wrap: wrap; }
+.improvement-banner .stat { display: flex; flex-direction: column; }
+.improvement-banner .stat-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+.improvement-banner .stat-value { font-size: 16px; font-weight: 600; }
+.improvement-banner .stat-value.green { color: #3fb950; }
+.improvement-banner .stat-value.blue { color: #58a6ff; }
+.improvement-banner .stat-value.orange { color: #f0883e; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Autoresearch ANE</h1>
+  <span class="subtitle">Training Progress — NL=6 SEQ=512 DIM=768</span>
+  <span class="best" id="bestLabel"></span>
+</div>
+
+<div class="improvement-banner" id="stats"></div>
+
+<div class="controls">
+  <label><input type="checkbox" id="showAll" checked> Show all runs</label>
+  <label><input type="checkbox" id="showCrashes"> Show crashes</label>
+  <label><input type="checkbox" id="showRefLine" checked> ncdrone ref (5.81)</label>
+  <label>
+    Y-axis:
+    <select id="yRange">
+      <option value="auto">Auto</option>
+      <option value="tight" selected>Tight (best ± 0.5)</option>
+      <option value="full">Full range</option>
+    </select>
+  </label>
+</div>
+
+<div class="main">
+  <div class="chart-container">
+    <canvas id="chart"></canvas>
+    <div class="tooltip" id="tooltip"></div>
+  </div>
+  <div class="table-container" id="tableContainer"></div>
+</div>
+
+<script>
+const RAW_DATA = [
+  { run: 1, commit: "f5cedc6", val_loss: 6.108732, ane: 5.1, status: "keep", desc: "baseline: DIM=768 HIDDEN=2048 HEADS=12 SEQ=256 NLAYERS=12 LR=3e-4 ACCUM=10" },
+  { run: 2, commit: "a5dc124", val_loss: 6.097895, ane: 4.7, status: "keep", desc: "LR=1e-3 ACCUM=4 resume from baseline" },
+  { run: 3, commit: "a5dc124", val_loss: 6.106775, ane: 4.7, status: "discard", desc: "continue LR=1e-3 ACCUM=4 (no improvement)" },
+  { run: 4, commit: "a6584b5", val_loss: 6.117028, ane: 4.6, status: "discard", desc: "LR=5e-4 ACCUM=4 (LR decay too slow)" },
+  { run: 5, commit: "4381e54", val_loss: 6.118219, ane: 4.7, status: "discard", desc: "LR=2e-3 ACCUM=4 (too aggressive)" },
+  { run: 6, commit: "fef0717", val_loss: 23.001257, ane: 3.6, status: "discard", desc: "NLAYERS=6 LR=1e-3 ACCUM=4 (LR too high for smaller model)" },
+  { run: 7, commit: "480b28f", val_loss: 0, ane: 0, status: "crash", desc: "NLAYERS=6 LR=3e-4 ACCUM=10 (resumed from stale bad ckpt)" },
+  { run: 8, commit: "efe042f", val_loss: 999, ane: 3.6, status: "crash", desc: "NLAYERS=6 LR=3e-4 ACCUM=10 (diverged at 280 steps)" },
+  { run: 9, commit: "e863e07", val_loss: 6.230536, ane: 4.7, status: "keep", desc: "fresh LR=1e-3 ACCUM=4 from scratch (216 steps)" },
+  { run: 10, commit: "e863e07", val_loss: 6.225833, ane: 4.7, status: "keep", desc: "continue LR=1e-3 ACCUM=4 (10 min total)" },
+  { run: 11, commit: "e863e07", val_loss: 6.228567, ane: 4.7, status: "discard", desc: "continue LR=1e-3 ACCUM=4 (15 min, plateaued)" },
+  { run: 12, commit: "43c1509", val_loss: 6.115555, ane: 5.0, status: "keep", desc: "phase1: LR=3e-4 ACCUM=10 baseline (400 steps)" },
+  { run: 13, commit: "21dcbe4", val_loss: 6.104784, ane: 4.7, status: "keep", desc: "phase2: LR=1e-3 ACCUM=4 resume (boost)" },
+  { run: 14, commit: "6d0f5b9", val_loss: 6.112041, ane: 4.6, status: "discard", desc: "phase3: LR=5e-4 (too slow, worse)" },
+  { run: 15, commit: "21dcbe4", val_loss: 6.253082, ane: 4.7, status: "discard", desc: "continue LR=1e-3 ACCUM=4 (overshoot)" },
+  { run: 16, commit: "e483e69", val_loss: 6.199608, ane: 4.6, status: "keep", desc: "baseline with grad clipping: LR=3e-4 ACCUM=4 GRAD_CLIP=1.0" },
+  { run: 17, commit: "b478e9a", val_loss: 6.179957, ane: 4.6, status: "keep", desc: "baseline: LR=3e-4 ACCUM=4 WD=0.1 WARMDOWN=0.5 CLIP=1.0" },
+  { run: 18, commit: "e24f9a9", val_loss: 6.074101, ane: 4.3, status: "keep", desc: "NL=6 SEQ=512 baseline: LR=3e-4 ACCUM=4 WD=0.1 (fresh, 420 steps)" },
+  { run: 19, commit: "98d4d74", val_loss: 6.064989, ane: 4.3, status: "keep", desc: "LR=1e-3 ACCUM=4 resume from NL=6 baseline (420 steps)" },
+  { run: 20, commit: "809d2cc", val_loss: 6.050107, ane: 4.1, status: "keep", desc: "ACCUM=2 LR=1e-3 (more weight updates, 234 steps)" },
+  { run: 21, commit: "17172aa", val_loss: 5.977876, ane: 3.8, status: "keep", desc: "ACCUM=1 LR=1e-3 (max weight updates, 120 steps)" },
+  { run: 22, commit: "b8f77d7", val_loss: 5.848902, ane: 3.9, status: "keep", desc: "Adam betas (0.8, 0.95) CUDA reference values" },
+  { run: 23, commit: "003c470", val_loss: 5.737476, ane: 3.9, status: "keep", desc: "WARMDOWN_RATIO=0.3 (LR anneal, beat ref 5.81)" },
+  { run: 24, commit: "c08b387", val_loss: 5.671995, ane: 3.9, status: "keep", desc: "WD=0.2 CUDA reference weight decay" },
+  { run: 25, commit: "e395785", val_loss: 5.730138, ane: 3.9, status: "discard", desc: "WARMDOWN_RATIO=0.5 (too aggressive, worse)" },
+  { run: 26, commit: "ded937b", val_loss: 5.793985, ane: 3.9, status: "discard", desc: "LR=2e-3 (too high, regressed)" },
+  { run: 27, commit: "c08b387", val_loss: 5.759331, ane: 3.9, status: "discard", desc: "continue at best config (warmdown hurt on resume)" },
+  { run: 28, commit: "72c8393", val_loss: 5.736257, ane: 3.9, status: "keep", desc: "WARMDOWN=0 recovery (still recovering)" },
+  { run: 29, commit: "72c8393", val_loss: 5.634539, ane: 3.9, status: "keep", desc: "WARMDOWN=0 continued (new best, surpassed 5.67)" },
+  { run: 30, commit: "72c8393", val_loss: 5.661294, ane: 3.5, status: "discard", desc: "WARMDOWN=0 continued (plateau, slight regression)" },
+  { run: 31, commit: "8ec0803", val_loss: 5.562713, ane: 3.9, status: "keep", desc: "WARMDOWN=0.3 anneal after extended training (big gain)" },
+  { run: 32, commit: "8a1cb26", val_loss: 5.655492, ane: 3.9, status: "discard", desc: "WARMDOWN=0 cycle2 (expected regression)" },
+  { run: 33, commit: "8a1cb26", val_loss: 5.555130, ane: 4.0, status: "keep", desc: "WARMDOWN=0 cycle2 cont (new best without anneal)" },
+  { run: 34, commit: "8a1cb26", val_loss: 5.454740, ane: 4.0, status: "keep", desc: "WARMDOWN=0 cycle2 cont (big gain, momentum)" },
+  { run: 35, commit: "8a1cb26", val_loss: 5.573525, ane: 3.9, status: "discard", desc: "WARMDOWN=0 cycle2 cont (oscillating, time to anneal)" },
+];
+
+const NCDRONE_REF = 5.81;
+const canvas = document.getElementById('chart');
+const ctx = canvas.getContext('2d');
+const tooltipEl = document.getElementById('tooltip');
+
+function getFilteredData() {
+  const showAll = document.getElementById('showAll').checked;
+  const showCrashes = document.getElementById('showCrashes').checked;
+  return RAW_DATA.filter(d => {
+    if (!showCrashes && d.status === 'crash') return false;
+    if (!showCrashes && (d.val_loss > 10 || d.val_loss === 0)) return false;
+    if (!showAll && d.status === 'discard') return false;
+    return true;
+  });
+}
+
+function getYRange(data) {
+  const mode = document.getElementById('yRange').value;
+  const losses = data.map(d => d.val_loss).filter(v => v > 0 && v < 10);
+  if (!losses.length) return [5, 7];
+  const min = Math.min(...losses);
+  const max = Math.max(...losses);
+  if (mode === 'tight') {
+    const best = Math.min(...losses);
+    return [Math.max(best - 0.15, 5.0), Math.min(best + 0.6, max + 0.1)];
+  }
+  if (mode === 'full') return [Math.floor(min * 10) / 10 - 0.1, Math.ceil(max * 10) / 10 + 0.1];
+  // auto
+  return [Math.floor(min * 10) / 10 - 0.05, Math.ceil(max * 10) / 10 + 0.05];
+}
+
+function drawChart() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  canvas.style.width = rect.width + 'px';
+  canvas.style.height = rect.height + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const W = rect.width;
+  const H = rect.height;
+  const pad = { top: 20, right: 24, bottom: 36, left: 56 };
+  const cw = W - pad.left - pad.right;
+  const ch = H - pad.top - pad.bottom;
+
+  const data = getFilteredData();
+  if (!data.length) return;
+  const [yMin, yMax] = getYRange(data);
+
+  const xScale = (i) => pad.left + (i / (data.length - 1 || 1)) * cw;
+  const yScale = (v) => pad.top + (1 - (v - yMin) / (yMax - yMin || 1)) * ch;
+
+  // Background
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid lines
+  ctx.strokeStyle = '#21262d';
+  ctx.lineWidth = 1;
+  const yTicks = 6;
+  for (let i = 0; i <= yTicks; i++) {
+    const v = yMin + (yMax - yMin) * i / yTicks;
+    const y = yScale(v);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(W - pad.right, y);
+    ctx.stroke();
+    ctx.fillStyle = '#484f58';
+    ctx.font = '11px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(v.toFixed(2), pad.left - 8, y + 4);
+  }
+
+  // X labels
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#484f58';
+  const step = Math.max(1, Math.floor(data.length / 10));
+  for (let i = 0; i < data.length; i += step) {
+    ctx.fillText('#' + data[i].run, xScale(i), H - pad.bottom + 20);
+  }
+  if (data.length > 1) {
+    ctx.fillText('#' + data[data.length-1].run, xScale(data.length-1), H - pad.bottom + 20);
+  }
+
+  // ncdrone reference line
+  if (document.getElementById('showRefLine').checked && NCDRONE_REF >= yMin && NCDRONE_REF <= yMax) {
+    const ry = yScale(NCDRONE_REF);
+    ctx.strokeStyle = '#f0883e';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, ry);
+    ctx.lineTo(W - pad.right, ry);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#f0883e';
+    ctx.textAlign = 'left';
+    ctx.font = '11px -apple-system, system-ui, sans-serif';
+    ctx.fillText('ncdrone ref: 5.81', W - pad.right - 120, ry - 6);
+  }
+
+  // Running best line
+  let bestSoFar = Infinity;
+  const bestLine = data.map(d => {
+    if (d.val_loss > 0 && d.val_loss < 10 && d.status === 'keep') bestSoFar = Math.min(bestSoFar, d.val_loss);
+    return bestSoFar;
+  });
+  ctx.strokeStyle = '#3fb95040';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < data.length; i++) {
+    if (bestLine[i] < Infinity) {
+      const x = xScale(i), y = yScale(Math.max(yMin, Math.min(yMax, bestLine[i])));
+      if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    }
+  }
+  ctx.stroke();
+
+  // Main line
+  ctx.strokeStyle = '#58a6ff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let i = 0; i < data.length; i++) {
+    const x = xScale(i);
+    const v = Math.max(yMin, Math.min(yMax, data[i].val_loss));
+    const y = yScale(v);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Points
+  const globalBest = Math.min(...data.filter(d => d.status === 'keep' && d.val_loss > 0).map(d => d.val_loss));
+  const pointPositions = [];
+  for (let i = 0; i < data.length; i++) {
+    const d = data[i];
+    const x = xScale(i);
+    const v = Math.max(yMin, Math.min(yMax, d.val_loss));
+    const y = yScale(v);
+    let color = '#58a6ff';
+    let r = 4;
+    if (d.status === 'crash') { color = '#f85149'; r = 5; }
+    else if (d.status === 'discard') { color = '#d29922'; r = 3; }
+    else if (d.val_loss === globalBest) { color = '#3fb950'; r = 7; }
+    else if (d.status === 'keep') { color = '#58a6ff'; r = 4; }
+
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    if (d.val_loss === globalBest) {
+      ctx.strokeStyle = '#3fb950';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    pointPositions.push({ x, y, r, d, i });
+  }
+
+  // Store for hover
+  canvas._points = pointPositions;
+  canvas._pad = pad;
+}
+
+// Tooltip
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const points = canvas._points || [];
+  let hit = null;
+  for (const p of points) {
+    const dx = mx - p.x, dy = my - p.y;
+    if (dx * dx + dy * dy < (p.r + 6) * (p.r + 6)) { hit = p; break; }
+  }
+  if (hit) {
+    const d = hit.d;
+    const statusClass = `status-${d.status}`;
+    tooltipEl.innerHTML = `
+      <div class="tt-val">${d.val_loss.toFixed(4)}</div>
+      <div style="color:#8b949e;font-size:11px">Run #${d.run} · ${d.commit} · ANE ${d.ane}%</div>
+      <div class="tt-desc">${d.desc}</div>
+      <div class="tt-status"><span class="status-badge ${statusClass}">${d.status}</span></div>
+    `;
+    tooltipEl.style.display = 'block';
+    let tx = hit.x + 12, ty = hit.y - 10;
+    const tr = tooltipEl.getBoundingClientRect();
+    const cr = canvas.parentElement.getBoundingClientRect();
+    if (tx + 320 > cr.width) tx = hit.x - 330;
+    if (ty < 0) ty = 10;
+    tooltipEl.style.left = tx + 'px';
+    tooltipEl.style.top = ty + 'px';
+  } else {
+    tooltipEl.style.display = 'none';
+  }
+});
+canvas.addEventListener('mouseleave', () => { tooltipEl.style.display = 'none'; });
+
+function drawTable() {
+  const data = getFilteredData();
+  const globalBest = Math.min(...data.filter(d => d.status === 'keep' && d.val_loss > 0).map(d => d.val_loss));
+  let prevBest = Infinity;
+
+  let html = `<table><thead><tr>
+    <th>#</th><th>Commit</th><th>Val Loss</th><th>ANE %</th><th>Status</th><th>Description</th>
+  </tr></thead><tbody>`;
+
+  for (const d of data) {
+    let rowClass = '';
+    if (d.val_loss === globalBest) rowClass = 'best-row';
+    else if (d.status === 'crash') rowClass = 'crash-row';
+    else if (d.status === 'discard') rowClass = 'discard-row';
+
+    let lossClass = 'val-loss';
+    if (d.val_loss === globalBest) lossClass += ' best';
+    else if (d.status === 'keep' && d.val_loss < prevBest) lossClass += ' improving';
+    else if (d.status !== 'crash' && d.val_loss > prevBest + 0.01) lossClass += ' regressing';
+
+    if (d.status === 'keep' && d.val_loss > 0 && d.val_loss < 10) prevBest = Math.min(prevBest, d.val_loss);
+
+    const statusClass = `status-${d.status}`;
+    const lossStr = d.val_loss === 0 ? '—' : d.val_loss > 10 ? 'DIV' : d.val_loss.toFixed(4);
+
+    html += `<tr class="${rowClass}">
+      <td class="run-num">${d.run}</td>
+      <td style="color:#58a6ff;font-size:12px">${d.commit}</td>
+      <td class="${lossClass}">${lossStr}</td>
+      <td style="color:#8b949e">${d.ane > 0 ? d.ane.toFixed(1) : '—'}</td>
+      <td><span class="status-badge ${statusClass}">${d.status}</span></td>
+      <td class="desc" title="${d.desc}">${d.desc}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('tableContainer').innerHTML = html;
+}
+
+function updateStats() {
+  const keeps = RAW_DATA.filter(d => d.status === 'keep' && d.val_loss > 0 && d.val_loss < 10);
+  const best = Math.min(...keeps.map(d => d.val_loss));
+  const first = keeps[0]?.val_loss || 0;
+  const improvement = first - best;
+  const pct = (improvement / first * 100);
+  const totalRuns = RAW_DATA.length;
+  const crashCount = RAW_DATA.filter(d => d.status === 'crash').length;
+  const keepCount = RAW_DATA.filter(d => d.status === 'keep').length;
+  const beatRef = best < NCDRONE_REF;
+
+  document.getElementById('bestLabel').textContent = `Best: ${best.toFixed(4)}` + (beatRef ? ` (beating ref ${NCDRONE_REF})` : '');
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><span class="stat-label">Best Val Loss</span><span class="stat-value green">${best.toFixed(4)}</span></div>
+    <div class="stat"><span class="stat-label">Improvement</span><span class="stat-value green">${improvement > 0 ? '-' : ''}${improvement.toFixed(3)} (${pct.toFixed(1)}%)</span></div>
+    <div class="stat"><span class="stat-label">vs ncdrone ref</span><span class="stat-value ${beatRef ? 'green' : 'orange'}">${beatRef ? '' : '+'}${(best - NCDRONE_REF).toFixed(3)}</span></div>
+    <div class="stat"><span class="stat-label">Total Runs</span><span class="stat-value blue">${totalRuns}</span></div>
+    <div class="stat"><span class="stat-label">Kept / Discarded / Crashed</span><span class="stat-value" style="color:#c9d1d9">${keepCount} / ${totalRuns - keepCount - crashCount} / ${crashCount}</span></div>
+  `;
+}
+
+function updateAll() {
+  drawChart();
+  drawTable();
+  updateStats();
+}
+
+document.getElementById('showAll').addEventListener('change', updateAll);
+document.getElementById('showCrashes').addEventListener('change', updateAll);
+document.getElementById('showRefLine').addEventListener('change', updateAll);
+document.getElementById('yRange').addEventListener('change', updateAll);
+window.addEventListener('resize', updateAll);
+updateAll();
+</script>
+</body>
+</html>
