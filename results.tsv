@@ -1,0 +1,12 @@
+commit	val_bpb	memory_gb	status	description
+bb2f991	0.990350	93.6	keep	baseline DEPTH=12 TOTAL_BATCH_SIZE=2^18
+a4e80dc	1.020343	126.0	discard	DEPTH=14 (too slow, fewer steps, worse val_bpb)
+b09d07d	1.010055	123.8	discard	DEPTH=12 ASPECT_RATIO=80 (wide-12 at 1024 dim, too slow)
+e95e8e0	1.010228	123.8	discard	DEPTH=12 ASPECT_RATIO=75 (896 dim, also too slow)
+d6dd09f	0.000000	0.0	crash	DEPTH=16 BATCH=256 TOTAL=2^19 (OOM)
+3769b76	0.000000	0.0	crash	DEPTH=12 BATCH=256 TOTAL=2^19 (OOM)
+9fb1250	0.990568	93.6	discard	MATRIX_LR=0.05 (slightly worse than 0.04)
+6593cf6	0.990242	93.6	keep	MATRIX_LR=0.03 (small improvement over 0.04)
+129153b	0.989502	93.6	keep	WARMDOWN_RATIO=0.6 (good improvement)
+73fde4f	0.989406	93.6	keep	WARMDOWN_RATIO=0.7 (small further improvement)
+8084aaf	0.989652	93.6	discard	WARMDOWN_RATIO=0.75 (worse, 0.7 is sweet spot)
