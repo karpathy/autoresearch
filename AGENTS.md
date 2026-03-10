@@ -46,6 +46,7 @@ Supported control flags:
 - The script checkpoints state at `workflows/runs/<run_id>/state.json`.
 - If a loop iteration is partially complete, `resume` continues that iteration from the next pending stage.
 - "Run another N iterations" means execute N more loop iterations from current state.
+- Training runs are started in background by default (`--background-train`), and `resume` polls/continues in-flight baseline/train jobs.
 
 ## Logging and Observability
 
@@ -64,4 +65,5 @@ Supported control flags:
 
 - Use `--no-stochastic` only when opencode stochastic execution is unavailable.
 - Setup auto-runs `uv run prepare.py` if cache/tokenizer are missing (disable via `--no-auto-prepare`).
+- Background training is enabled by default; disable with `--no-background-train` for fully foreground execution.
 - `results.tsv` is maintained in repo root and should remain untracked.

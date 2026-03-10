@@ -6,8 +6,10 @@ import datetime as dt
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -197,6 +199,99 @@ def parse_log_metrics(log_text: str) -> tuple[float | None, float | None]:
     val_m = VAL_RE.search(log_text)
     vram_m = VRAM_RE.search(log_text)
     return (float(val_m.group(1)) if val_m else None, float(vram_m.group(1)) if vram_m else None)
+
+
+def parse_run_result_from_log(log_path: Path, return_code: int | None, timed_out: bool) -> dict[str, Any]:
+    text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
+    val, vram = parse_log_metrics(text)
+    status = "timeout" if timed_out else ("success" if val is not None else "crash")
+    return {
+        "status": status,
+        "return_code": return_code,
+        "val_bpb": val,
+        "peak_vram_mb": vram,
+        "memory_gb": round((vram or 0.0) / 1024.0, 1),
+        "log_tail": "\n".join(text.splitlines()[-50:]),
+        "log_path": str(log_path),
+    }
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _kill_process_group(pid: int) -> None:
+    try:
+        os.killpg(pid, signal.SIGTERM)
+        time.sleep(1.0)
+        if _pid_alive(pid):
+            os.killpg(pid, signal.SIGKILL)
+    except Exception:
+        pass
+
+
+def start_training_job(run_id: str, job_name: str, log_path: Path, timeout_seconds: int = 600) -> dict[str, Any]:
+    run_dir = run_paths(run_id)["run_dir"]
+    rc_file = run_dir / f"{job_name}.rc"
+    cmd = (
+        f"cd {json.dumps(str(REPO_ROOT))} && "
+        f"uv run train.py > {json.dumps(str(log_path))} 2>&1; "
+        f"echo $? > {json.dumps(str(rc_file))}"
+    )
+    proc = subprocess.Popen(
+        ["bash", "-lc", cmd],
+        cwd=str(REPO_ROOT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        text=True,
+    )
+    started = now_iso()
+    deadline = (dt.datetime.utcnow() + dt.timedelta(seconds=timeout_seconds)).isoformat(timespec="seconds") + "Z"
+    return {
+        "job_name": job_name,
+        "pid": proc.pid,
+        "log_path": str(log_path),
+        "rc_file": str(rc_file),
+        "started_at": started,
+        "deadline_at": deadline,
+        "timeout_seconds": timeout_seconds,
+    }
+
+
+def poll_training_job(job: dict[str, Any]) -> dict[str, Any]:
+    pid = int(job["pid"])
+    rc_file = Path(str(job["rc_file"]))
+    log_path = Path(str(job["log_path"]))
+    deadline = dt.datetime.fromisoformat(str(job["deadline_at"]).replace("Z", ""))
+
+    if dt.datetime.utcnow() > deadline and _pid_alive(pid):
+        _kill_process_group(pid)
+        result = parse_run_result_from_log(log_path, return_code=None, timed_out=True)
+        result["training_seconds"] = float(job.get("timeout_seconds", 600))
+        return {"done": True, "result": result}
+
+    if rc_file.exists():
+        rc_text = rc_file.read_text(encoding="utf-8", errors="replace").strip()
+        rc = int(rc_text) if rc_text and rc_text.lstrip("-").isdigit() else None
+        result = parse_run_result_from_log(log_path, return_code=rc, timed_out=False)
+        try:
+            started = dt.datetime.fromisoformat(str(job["started_at"]).replace("Z", ""))
+            result["training_seconds"] = round((dt.datetime.utcnow() - started).total_seconds(), 1)
+        except Exception:
+            result["training_seconds"] = None
+        return {"done": True, "result": result}
+
+    if _pid_alive(pid):
+        return {"done": False, "state": "running"}
+
+    result = parse_run_result_from_log(log_path, return_code=None, timed_out=False)
+    result["training_seconds"] = None
+    return {"done": True, "result": result}
 
 
 def run_training(timeout_seconds: int = 600) -> dict[str, Any]:
@@ -417,7 +512,57 @@ def run_baseline(state: dict[str, Any]) -> None:
     )
 
 
-def run_loop_iteration(state: dict[str, Any], iteration: int, loop_stage_subset: list[str], stochastic: bool) -> None:
+def run_baseline_maybe_background(state: dict[str, Any], background_train: bool) -> bool:
+    run_id = state["run_id"]
+    if state.get("baseline_done"):
+        return True
+
+    existing_job = state.get("baseline_job")
+    if existing_job:
+        poll = poll_training_job(existing_job)
+        if not poll.get("done"):
+            append_runner_log(run_id, "INFO", "stage=baseline waiting training_in_progress=true")
+            return False
+        result = poll["result"]
+        commit = short_head()
+        if result["status"] == "success":
+            append_result_row(commit, float(result["val_bpb"]), float(result["memory_gb"]), "keep", "baseline")
+            state["best_val_bpb"] = float(result["val_bpb"])
+            state["kept_commit"] = commit
+        else:
+            append_result_row(commit, 0.0, 0.0, "crash", "baseline")
+        state["baseline_done"] = True
+        state["baseline"] = result
+        state["baseline_job"] = None
+        log_event(run_id, {"type": "stage", "stage": "baseline", "ok": True, "details": result})
+        append_runner_log(
+            run_id,
+            "INFO",
+            f"stage=baseline done status={result['status']} val_bpb={result['val_bpb']} peak_vram_mb={result['peak_vram_mb']} training_seconds={result.get('training_seconds')}",
+        )
+        save_state(state)
+        return True
+
+    if not background_train:
+        run_baseline(state)
+        return True
+
+    append_runner_log(run_id, "INFO", "stage=baseline start background_training=true")
+    job = start_training_job(run_id, "baseline_train", RUN_LOG, timeout_seconds=600)
+    state["baseline_job"] = job
+    save_state(state)
+    log_event(run_id, {"type": "stage", "stage": "baseline", "ok": True, "details": {"started": True, "background": True, "pid": job["pid"]}})
+    append_runner_log(run_id, "INFO", f"stage=baseline background_started pid={job['pid']} log_path={job['log_path']}")
+    return False
+
+
+def run_loop_iteration(
+    state: dict[str, Any],
+    iteration: int,
+    loop_stage_subset: list[str],
+    stochastic: bool,
+    background_train: bool,
+) -> bool:
     run_id = state["run_id"]
     run_dir = run_paths(run_id)["run_dir"]
     iter_dir = run_dir / "iterations" / f"{iteration:04d}"
@@ -523,15 +668,52 @@ def run_loop_iteration(state: dict[str, Any], iteration: int, loop_stage_subset:
             mark_done(stage)
 
         elif stage == "train":
-            train_res = run_training(timeout_seconds=600)
-            iter_state["train"] = train_res
-            log_event(run_id, {"type": "loop", "iteration": iteration, "stage": "train", "train": train_res})
-            append_runner_log(
-                run_id,
-                "INFO",
-                f"loop iteration={iteration} stage=train done status={train_res['status']} val_bpb={train_res['val_bpb']} peak_vram_mb={train_res['peak_vram_mb']} training_seconds={train_res['training_seconds']}",
-            )
-            mark_done(stage)
+            active_job = iter_state.get("train_job")
+            if active_job:
+                poll = poll_training_job(active_job)
+                if not poll.get("done"):
+                    append_runner_log(run_id, "INFO", f"loop iteration={iteration} stage=train waiting pid={active_job.get('pid')}")
+                    save_state(state)
+                    return False
+                train_res = poll["result"]
+                iter_state["train"] = train_res
+                iter_state["train_job"] = None
+                log_event(run_id, {"type": "loop", "iteration": iteration, "stage": "train", "train": train_res})
+                append_runner_log(
+                    run_id,
+                    "INFO",
+                    f"loop iteration={iteration} stage=train done status={train_res['status']} val_bpb={train_res['val_bpb']} peak_vram_mb={train_res['peak_vram_mb']} training_seconds={train_res.get('training_seconds')}",
+                )
+                mark_done(stage)
+            elif background_train:
+                job = start_training_job(run_id, f"iter_{iteration:04d}_train", RUN_LOG, timeout_seconds=600)
+                iter_state["train_job"] = job
+                log_event(
+                    run_id,
+                    {
+                        "type": "loop",
+                        "iteration": iteration,
+                        "stage": "train",
+                        "train": {"started": True, "background": True, "pid": job["pid"]},
+                    },
+                )
+                append_runner_log(
+                    run_id,
+                    "INFO",
+                    f"loop iteration={iteration} stage=train background_started pid={job['pid']} log_path={job['log_path']}",
+                )
+                save_state(state)
+                return False
+            else:
+                train_res = run_training(timeout_seconds=600)
+                iter_state["train"] = train_res
+                log_event(run_id, {"type": "loop", "iteration": iteration, "stage": "train", "train": train_res})
+                append_runner_log(
+                    run_id,
+                    "INFO",
+                    f"loop iteration={iteration} stage=train done status={train_res['status']} val_bpb={train_res['val_bpb']} peak_vram_mb={train_res['peak_vram_mb']} training_seconds={train_res['training_seconds']}",
+                )
+                mark_done(stage)
 
         elif stage == "triage":
             train_res = iter_state.get("train") or {"status": "crash", "log_tail": ""}
@@ -614,6 +796,7 @@ def run_loop_iteration(state: dict[str, Any], iteration: int, loop_stage_subset:
     state["in_progress"] = None
     save_state(state)
     append_runner_log(run_id, "INFO", f"loop iteration={iteration} complete")
+    return True
 
 
 def run_selected(
@@ -623,6 +806,7 @@ def run_selected(
     loop_only: list[str],
     stochastic: bool,
     auto_prepare: bool,
+    background_train: bool,
 ) -> None:
     append_runner_log(
         state["run_id"],
@@ -644,7 +828,10 @@ def run_selected(
         ensure_setup_ready(state)
 
     if "baseline" in top_selection and not state.get("baseline_done"):
-        run_baseline(state)
+        done = run_baseline_maybe_background(state, background_train=background_train)
+        if not done:
+            append_runner_log(state["run_id"], "INFO", "stage=baseline pending background completion")
+            return
         save_state(state)
     elif "baseline" in top_selection:
         append_runner_log(state["run_id"], "INFO", "stage=baseline skip reason=already_done")
@@ -657,7 +844,10 @@ def run_selected(
         completed = 0
         current = start_it
         while completed < loop_count:
-            run_loop_iteration(state, current, loop_only, stochastic)
+            finished = run_loop_iteration(state, current, loop_only, stochastic, background_train)
+            if not finished:
+                append_runner_log(state["run_id"], "INFO", f"loop iteration={current} pending background completion")
+                return
             completed += 1
             current = int(state.get("iterations_completed", 0)) + 1
     elif "loop" in top_selection:
@@ -673,6 +863,7 @@ def create_initial_state(run_id: str, branch: str) -> dict[str, Any]:
         "updated_at": now_iso(),
         "setup_done": False,
         "baseline_done": False,
+        "baseline_job": None,
         "iterations_completed": 0,
         "best_val_bpb": None,
         "kept_commit": None,
@@ -692,6 +883,7 @@ def print_status(state: dict[str, Any]) -> None:
         "best_val_bpb": state.get("best_val_bpb"),
         "kept_commit": state.get("kept_commit"),
         "in_progress": state.get("in_progress"),
+        "baseline_job": state.get("baseline_job"),
         "state_path": str(paths["state"]),
         "history_path": str(paths["history"]),
         "runner_log_path": str(paths["runner_log"]),
@@ -716,6 +908,12 @@ def build_parser() -> argparse.ArgumentParser:
             action=argparse.BooleanOptionalAction,
             default=True,
             help="Run 'uv run prepare.py' during setup when cache/tokenizer are missing (default: true).",
+        )
+        sp.add_argument(
+            "--background-train",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Run train stage in background and resume/poll later (default: true).",
         )
 
     s = sub.add_parser("start", help="Start a new run")
@@ -757,6 +955,7 @@ def main() -> int:
     top_selection = compute_top_selection(only, args.from_stage, args.to_stage)
     stochastic = not args.no_stochastic
     auto_prepare = bool(args.auto_prepare)
+    background_train = bool(args.background_train)
 
     if args.cmd == "start":
         branch = ensure_autoresearch_branch(args.branch)
@@ -772,8 +971,9 @@ def main() -> int:
             "INFO",
             f"config only={args.only} from_stage={args.from_stage} to_stage={args.to_stage} loop_only={args.loop_only} loops={args.loops} stochastic={stochastic}",
         )
+        append_runner_log(run_id, "INFO", f"config auto_prepare={auto_prepare} background_train={background_train}")
         log_event(run_id, {"type": "run", "action": "start", "branch": branch})
-        run_selected(state, top_selection, max(0, args.loops), loop_only, stochastic, auto_prepare)
+        run_selected(state, top_selection, max(0, args.loops), loop_only, stochastic, auto_prepare, background_train)
         save_state(state)
         append_runner_log(run_id, "INFO", "command=start complete")
         print_status(state)
@@ -788,8 +988,9 @@ def main() -> int:
             "INFO",
             f"config only={args.only} from_stage={args.from_stage} to_stage={args.to_stage} loop_only={args.loop_only} loops={args.loops} stochastic={stochastic}",
         )
+        append_runner_log(run_id, "INFO", f"config auto_prepare={auto_prepare} background_train={background_train}")
         log_event(run_id, {"type": "run", "action": "resume"})
-        run_selected(state, top_selection, max(0, args.loops), loop_only, stochastic, auto_prepare)
+        run_selected(state, top_selection, max(0, args.loops), loop_only, stochastic, auto_prepare, background_train)
         save_state(state)
         append_runner_log(run_id, "INFO", "command=resume complete")
         print_status(state)
