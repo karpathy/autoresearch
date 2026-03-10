@@ -11,3 +11,9 @@
 #define ADAM_BETA2 0.999f
 #define ADAM_EPS 1e-8f
 #define ACCUM_STEPS 4
+#define GRAD_CLIP_MAX 1.0f
+// Experiment knobs to explore:
+//   LR: try 8e-4, 9e-4, 1e-3, 1.1e-3, 1.2e-3 (best so far: 1e-3)
+//   ACCUM_STEPS: try 1-2 for more weight updates per wall-time budget
+//   HIDDEN: try 3072 (4x DIM) for wider FFN
+//   SEQ: try 128 for faster steps (more iterations per budget)

@@ -119,6 +119,46 @@ static void embed_lookup(float *x, const float *embed, const uint16_t *tokens, i
     }
 }
 
+// Gradient clipping: global L2 norm across all gradient buffers
+// Returns the pre-clip norm for logging
+static float clip_gradients(LayerGrads *grads, float *grms_final, float *gembed, float max_norm) {
+    double norm_sq = 0;
+    for (int L = 0; L < NLAYERS; L++) {
+        float dot;
+        vDSP_dotpr(grads[L].Wq, 1, grads[L].Wq, 1, &dot, (vDSP_Length)WQ_SZ); norm_sq += dot;
+        vDSP_dotpr(grads[L].Wk, 1, grads[L].Wk, 1, &dot, (vDSP_Length)WQ_SZ); norm_sq += dot;
+        vDSP_dotpr(grads[L].Wv, 1, grads[L].Wv, 1, &dot, (vDSP_Length)WQ_SZ); norm_sq += dot;
+        vDSP_dotpr(grads[L].Wo, 1, grads[L].Wo, 1, &dot, (vDSP_Length)WO_SZ); norm_sq += dot;
+        vDSP_dotpr(grads[L].W1, 1, grads[L].W1, 1, &dot, (vDSP_Length)W1_SZ); norm_sq += dot;
+        vDSP_dotpr(grads[L].W2, 1, grads[L].W2, 1, &dot, (vDSP_Length)W2_SZ); norm_sq += dot;
+        vDSP_dotpr(grads[L].W3, 1, grads[L].W3, 1, &dot, (vDSP_Length)W3_SZ); norm_sq += dot;
+        vDSP_dotpr(grads[L].rms_att, 1, grads[L].rms_att, 1, &dot, (vDSP_Length)DIM); norm_sq += dot;
+        vDSP_dotpr(grads[L].rms_ffn, 1, grads[L].rms_ffn, 1, &dot, (vDSP_Length)DIM); norm_sq += dot;
+    }
+    float dot;
+    vDSP_dotpr(grms_final, 1, grms_final, 1, &dot, (vDSP_Length)DIM); norm_sq += dot;
+    vDSP_dotpr(gembed, 1, gembed, 1, &dot, (vDSP_Length)((size_t)VOCAB*DIM)); norm_sq += dot;
+
+    float total_norm = sqrtf((float)norm_sq);
+    if (total_norm > max_norm) {
+        float scale = max_norm / total_norm;
+        for (int L = 0; L < NLAYERS; L++) {
+            vDSP_vsmul(grads[L].Wq, 1, &scale, grads[L].Wq, 1, (vDSP_Length)WQ_SZ);
+            vDSP_vsmul(grads[L].Wk, 1, &scale, grads[L].Wk, 1, (vDSP_Length)WQ_SZ);
+            vDSP_vsmul(grads[L].Wv, 1, &scale, grads[L].Wv, 1, (vDSP_Length)WQ_SZ);
+            vDSP_vsmul(grads[L].Wo, 1, &scale, grads[L].Wo, 1, (vDSP_Length)WO_SZ);
+            vDSP_vsmul(grads[L].W1, 1, &scale, grads[L].W1, 1, (vDSP_Length)W1_SZ);
+            vDSP_vsmul(grads[L].W2, 1, &scale, grads[L].W2, 1, (vDSP_Length)W2_SZ);
+            vDSP_vsmul(grads[L].W3, 1, &scale, grads[L].W3, 1, (vDSP_Length)W3_SZ);
+            vDSP_vsmul(grads[L].rms_att, 1, &scale, grads[L].rms_att, 1, (vDSP_Length)DIM);
+            vDSP_vsmul(grads[L].rms_ffn, 1, &scale, grads[L].rms_ffn, 1, (vDSP_Length)DIM);
+        }
+        vDSP_vsmul(grms_final, 1, &scale, grms_final, 1, (vDSP_Length)DIM);
+        vDSP_vsmul(gembed, 1, &scale, gembed, 1, (vDSP_Length)((size_t)VOCAB*DIM));
+    }
+    return total_norm;
+}
+
 // Embedding backward: accumulate dE[tok] += dx[:,t] for each position
 static void embed_backward(float *d_embed, const float *dx, const uint16_t *tokens, int dim, int seq) {
     for (int t = 0; t < seq; t++) {

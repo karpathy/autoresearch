@@ -601,6 +601,12 @@ int main(int argc, char *argv[]) {
             for(int i=0;i<DIM;i++) grms_final[i]*=gsc;
             adam_update(rms_final, grms_final, &arms_final, adam_t, lr, adam_b1, adam_b2, adam_eps);
             for(size_t i=0;i<(size_t)VOCAB*DIM;i++) gembed[i]*=gsc;
+
+            // Gradient clipping
+            float gnorm = clip_gradients(grads, grms_final, gembed, GRAD_CLIP_MAX);
+            if (gnorm > GRAD_CLIP_MAX)
+                printf("  [grad clip: %.2f → %.2f]\n", gnorm, GRAD_CLIP_MAX);
+
             adam_update(embed, gembed, &aembed, adam_t, lr, adam_b1, adam_b2, adam_eps);
 
             printf("  [batch %d: compile=%.0fms train=%.1fms (%.1fms/step) compiles=%d]\n",
