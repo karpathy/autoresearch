@@ -503,7 +503,7 @@ device = torch.device("cuda")
 # Low-VRAM preset for GPUs < 6GB (e.g. GTX 1050 Ti 4GB) - SDPA materializes full attn matrices
 VRAM_GB = torch.cuda.get_device_properties(0).total_memory / 1e9
 if VRAM_GB < 6:
-    DEVICE_BATCH_SIZE = 8
+    DEVICE_BATCH_SIZE = 16
     TOTAL_BATCH_SIZE = 2**14  # 16K tokens per step
     WINDOW_PATTERN = "L"     # full attn more efficient than banded when seq is short
     TRAIN_SEQ_LEN = min(MAX_SEQ_LEN, 256)  # SDPA OOMs on long seqs
