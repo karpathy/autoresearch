@@ -10,7 +10,7 @@
 #define ADAM_BETA1 0.9f
 #define ADAM_BETA2 0.999f
 #define ADAM_EPS 1e-8f
-#define ACCUM_STEPS 4
+#define ACCUM_STEPS 2
 #define GRAD_CLIP_MAX 1.0f
 #define WEIGHT_DECAY 0.1f
 #define WARMDOWN_RATIO 0.0f
