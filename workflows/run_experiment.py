@@ -122,6 +122,7 @@ def run_paths(run_id: str) -> dict[str, Path]:
         "run_dir": run_dir,
         "state": run_dir / "state.json",
         "history": run_dir / "history.jsonl",
+        "runner_log": run_dir / "runner.log",
     }
 
 
@@ -145,6 +146,16 @@ def log_event(run_id: str, event: dict[str, Any]) -> None:
     payload = {"ts": now_iso(), **event}
     with p.open("a", encoding="utf-8") as f:
         f.write(json.dumps(payload, sort_keys=True) + "\n")
+    append_runner_log(run_id, "EVENT", json.dumps(event, sort_keys=True))
+
+
+def append_runner_log(run_id: str, level: str, message: str) -> None:
+    p = run_paths(run_id)["runner_log"]
+    p.parent.mkdir(parents=True, exist_ok=True)
+    line = f"[{now_iso()}] [{level}] {message}"
+    with p.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
+    print(line, flush=True)
 
 
 def parse_stage_list(text: str | None, allowed: list[str]) -> list[str] | None:
@@ -189,6 +200,7 @@ def parse_log_metrics(log_text: str) -> tuple[float | None, float | None]:
 
 
 def run_training(timeout_seconds: int = 600) -> dict[str, Any]:
+    started = dt.datetime.utcnow()
     with RUN_LOG.open("w", encoding="utf-8") as f:
         try:
             proc = subprocess.run(["uv", "run", "train.py"], cwd=str(REPO_ROOT), stdout=f, stderr=subprocess.STDOUT, timeout=timeout_seconds)
@@ -200,12 +212,14 @@ def run_training(timeout_seconds: int = 600) -> dict[str, Any]:
     text = RUN_LOG.read_text(encoding="utf-8", errors="replace") if RUN_LOG.exists() else ""
     val, vram = parse_log_metrics(text)
     status = "timeout" if timed_out else ("success" if val is not None else "crash")
+    elapsed = (dt.datetime.utcnow() - started).total_seconds()
     return {
         "status": status,
         "return_code": rc,
         "val_bpb": val,
         "peak_vram_mb": vram,
         "memory_gb": round((vram or 0.0) / 1024.0, 1),
+        "training_seconds": round(elapsed, 1),
         "log_tail": "\n".join(text.splitlines()[-50:]),
         "log_path": str(RUN_LOG),
     }
@@ -275,9 +289,24 @@ def extract_json_payload(text: str) -> Any:
         return json.loads(cleaned[s : e + 1])
 
 
-def run_stochastic_json(prompt: str) -> dict[str, Any]:
+def run_stochastic_json(prompt: str, trace_file: Path | None = None) -> dict[str, Any]:
     cmd = ["opencode", "run", "--format", "json", prompt]
     proc = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True)
+    if trace_file is not None:
+        trace_file.parent.mkdir(parents=True, exist_ok=True)
+        trace_file.write_text(
+            json.dumps(
+                {
+                    "command": cmd,
+                    "return_code": proc.returncode,
+                    "stderr": proc.stderr,
+                    "stdout": proc.stdout,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
     if proc.returncode != 0:
         raise RuntimeError(f"opencode failed: {proc.stderr.strip()}")
     text = extract_text_events(proc.stdout)
@@ -298,22 +327,78 @@ def default_proposal(state: dict[str, Any], iteration: int) -> dict[str, Any]:
     }
 
 
-def run_setup(state: dict[str, Any]) -> None:
+def run_setup(state: dict[str, Any], auto_prepare: bool) -> None:
+    append_runner_log(state["run_id"], "INFO", "stage=setup start")
     in_scope = ["README.md", "prepare.py", "train.py", "program.md", "pyproject.toml"]
     missing = [f for f in in_scope if not (REPO_ROOT / f).exists()]
     data_dir = Path.home() / ".cache" / "autoresearch" / "data"
     tok_path = Path.home() / ".cache" / "autoresearch" / "tokenizer" / "tokenizer.pkl"
     ensure_results_header()
     state["setup_done"] = True
+    data_ready = data_dir.exists() and any(data_dir.glob("*.parquet"))
+    tokenizer_ready = tok_path.exists()
+
+    if auto_prepare and (not data_ready or not tokenizer_ready):
+        append_runner_log(
+            state["run_id"],
+            "INFO",
+            "stage=setup auto_prepare start command='uv run prepare.py'",
+        )
+        prepare_log = run_paths(state["run_id"])["run_dir"] / "prepare.log"
+        with prepare_log.open("w", encoding="utf-8") as f:
+            proc = subprocess.run(
+                ["uv", "run", "prepare.py"],
+                cwd=str(REPO_ROOT),
+                stdout=f,
+                stderr=subprocess.STDOUT,
+                check=False,
+                text=True,
+            )
+        append_runner_log(
+            state["run_id"],
+            "INFO",
+            f"stage=setup auto_prepare done return_code={proc.returncode} log={prepare_log}",
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"auto-prepare failed with return code {proc.returncode}. See {prepare_log}")
+        data_ready = data_dir.exists() and any(data_dir.glob("*.parquet"))
+        tokenizer_ready = tok_path.exists()
+
     state["setup"] = {
         "missing_files": missing,
-        "data_ready": data_dir.exists() and any(data_dir.glob("*.parquet")),
-        "tokenizer_ready": tok_path.exists(),
+        "data_ready": data_ready,
+        "tokenizer_ready": tokenizer_ready,
     }
+    state["setup_ready"] = (
+        len(missing) == 0
+        and bool(state["setup"]["data_ready"])
+        and bool(state["setup"]["tokenizer_ready"])
+    )
     log_event(state["run_id"], {"type": "stage", "stage": "setup", "ok": True, "details": state["setup"]})
+    append_runner_log(
+        state["run_id"],
+        "INFO",
+        f"stage=setup done missing_files={len(missing)} data_ready={state['setup']['data_ready']} tokenizer_ready={state['setup']['tokenizer_ready']}",
+    )
+
+
+def ensure_setup_ready(state: dict[str, Any]) -> None:
+    setup = state.get("setup") or {}
+    missing = setup.get("missing_files") or []
+    data_ready = bool(setup.get("data_ready"))
+    tokenizer_ready = bool(setup.get("tokenizer_ready"))
+    if missing or not data_ready or not tokenizer_ready:
+        msg = (
+            "setup preconditions not met: "
+            f"missing_files={missing}, data_ready={data_ready}, tokenizer_ready={tokenizer_ready}. "
+            "Run 'uv run prepare.py' in this environment, then resume."
+        )
+        append_runner_log(state["run_id"], "ERROR", msg)
+        raise RuntimeError(msg)
 
 
 def run_baseline(state: dict[str, Any]) -> None:
+    append_runner_log(state["run_id"], "INFO", "stage=baseline start training")
     result = run_training(timeout_seconds=600)
     commit = short_head()
     if result["status"] == "success":
@@ -325,6 +410,11 @@ def run_baseline(state: dict[str, Any]) -> None:
     state["baseline_done"] = True
     state["baseline"] = result
     log_event(state["run_id"], {"type": "stage", "stage": "baseline", "ok": True, "details": result})
+    append_runner_log(
+        state["run_id"],
+        "INFO",
+        f"stage=baseline done status={result['status']} val_bpb={result['val_bpb']} peak_vram_mb={result['peak_vram_mb']} training_seconds={result['training_seconds']}",
+    )
 
 
 def run_loop_iteration(state: dict[str, Any], iteration: int, loop_stage_subset: list[str], stochastic: bool) -> None:
@@ -332,6 +422,11 @@ def run_loop_iteration(state: dict[str, Any], iteration: int, loop_stage_subset:
     run_dir = run_paths(run_id)["run_dir"]
     iter_dir = run_dir / "iterations" / f"{iteration:04d}"
     iter_dir.mkdir(parents=True, exist_ok=True)
+    append_runner_log(
+        run_id,
+        "INFO",
+        f"loop iteration={iteration} start loop_stage_subset={','.join(loop_stage_subset)} stochastic={stochastic}",
+    )
 
     in_progress = state.get("in_progress")
     if in_progress and int(in_progress.get("iteration", -1)) == iteration:
@@ -362,7 +457,10 @@ def run_loop_iteration(state: dict[str, Any], iteration: int, loop_stage_subset:
         if stage not in loop_stage_subset:
             continue
         if stage in iter_state["stages_done"]:
+            append_runner_log(run_id, "INFO", f"loop iteration={iteration} stage={stage} skip reason=already_done")
             continue
+
+        append_runner_log(run_id, "INFO", f"loop iteration={iteration} stage={stage} start")
 
         if stage == "propose":
             if stochastic:
@@ -376,11 +474,16 @@ def run_loop_iteration(state: dict[str, Any], iteration: int, loop_stage_subset:
                     f"Current best val_bpb: {state.get('best_val_bpb')}\n"
                     f"Recent results:\n{tail}\n"
                 )
-                proposal = run_stochastic_json(prompt)
+                proposal = run_stochastic_json(prompt, trace_file=iter_dir / "propose_opencode.json")
             else:
                 proposal = default_proposal(state, iteration)
             iter_state["proposal"] = proposal
             log_event(run_id, {"type": "loop", "iteration": iteration, "stage": "propose", "proposal": proposal})
+            append_runner_log(
+                run_id,
+                "INFO",
+                f"loop iteration={iteration} stage=propose done status={proposal.get('status')} description={str(proposal.get('description', ''))[:120]}",
+            )
             mark_done(stage)
 
         elif stage == "apply":
@@ -392,11 +495,16 @@ def run_loop_iteration(state: dict[str, Any], iteration: int, loop_stage_subset:
                     "status must be applied or failed.\n\n"
                     f"Experiment proposal:\n{json.dumps(proposal, indent=2)}"
                 )
-                apply_res = run_stochastic_json(prompt)
+                apply_res = run_stochastic_json(prompt, trace_file=iter_dir / "apply_opencode.json")
             else:
                 apply_res = {"status": "applied", "summary": "manual/default proposal path"}
             iter_state["apply"] = apply_res
             log_event(run_id, {"type": "loop", "iteration": iteration, "stage": "apply", "apply": apply_res})
+            append_runner_log(
+                run_id,
+                "INFO",
+                f"loop iteration={iteration} stage=apply done status={apply_res.get('status')} summary={str(apply_res.get('summary', ''))[:120]}",
+            )
             mark_done(stage)
 
         elif stage == "commit":
@@ -407,12 +515,22 @@ def run_loop_iteration(state: dict[str, Any], iteration: int, loop_stage_subset:
                 sh(["git", "commit", "-m", str(subject)[:120]])
             iter_state["candidate_commit"] = short_head()
             log_event(run_id, {"type": "loop", "iteration": iteration, "stage": "commit", "commit": iter_state["candidate_commit"], "changed": changed})
+            append_runner_log(
+                run_id,
+                "INFO",
+                f"loop iteration={iteration} stage=commit done commit={iter_state['candidate_commit']} changed={changed}",
+            )
             mark_done(stage)
 
         elif stage == "train":
             train_res = run_training(timeout_seconds=600)
             iter_state["train"] = train_res
             log_event(run_id, {"type": "loop", "iteration": iteration, "stage": "train", "train": train_res})
+            append_runner_log(
+                run_id,
+                "INFO",
+                f"loop iteration={iteration} stage=train done status={train_res['status']} val_bpb={train_res['val_bpb']} peak_vram_mb={train_res['peak_vram_mb']} training_seconds={train_res['training_seconds']}",
+            )
             mark_done(stage)
 
         elif stage == "triage":
@@ -426,11 +544,16 @@ def run_loop_iteration(state: dict[str, Any], iteration: int, loop_stage_subset:
                     f"Run status: {train_res.get('status')}\n"
                     f"Log tail:\n{train_res.get('log_tail', '')}"
                 )
-                triage = run_stochastic_json(prompt)
+                triage = run_stochastic_json(prompt, trace_file=iter_dir / "triage_opencode.json")
             else:
                 triage = {"action": "mark_crash_and_discard", "reason": "non-success run"}
             iter_state["triage"] = triage
             log_event(run_id, {"type": "loop", "iteration": iteration, "stage": "triage", "triage": triage})
+            append_runner_log(
+                run_id,
+                "INFO",
+                f"loop iteration={iteration} stage=triage done action={triage.get('action')} reason={str(triage.get('reason', ''))[:120]}",
+            )
             mark_done(stage)
 
         elif stage == "record":
@@ -443,6 +566,11 @@ def run_loop_iteration(state: dict[str, Any], iteration: int, loop_stage_subset:
                 append_result_row(commit, 0.0, 0.0, "crash", desc)
             iter_state["recorded"] = True
             log_event(run_id, {"type": "loop", "iteration": iteration, "stage": "record", "status": train_res.get("status")})
+            append_runner_log(
+                run_id,
+                "INFO",
+                f"loop iteration={iteration} stage=record done status={train_res.get('status')} commit={commit}",
+            )
             mark_done(stage)
 
         elif stage == "decide":
@@ -474,12 +602,18 @@ def run_loop_iteration(state: dict[str, Any], iteration: int, loop_stage_subset:
 
             iter_state["decision"] = decision
             log_event(run_id, {"type": "loop", "iteration": iteration, "stage": "decide", "decision": decision})
+            append_runner_log(
+                run_id,
+                "INFO",
+                f"loop iteration={iteration} stage=decide done decision={decision} best_val_bpb={state.get('best_val_bpb')} kept_commit={state.get('kept_commit')}",
+            )
             mark_done(stage)
 
     iter_state["completed"] = True
     state["iterations_completed"] = max(int(state.get("iterations_completed", 0)), iteration)
     state["in_progress"] = None
     save_state(state)
+    append_runner_log(run_id, "INFO", f"loop iteration={iteration} complete")
 
 
 def run_selected(
@@ -488,25 +622,46 @@ def run_selected(
     loop_count: int,
     loop_only: list[str],
     stochastic: bool,
+    auto_prepare: bool,
 ) -> None:
+    append_runner_log(
+        state["run_id"],
+        "INFO",
+        f"run_selected top={','.join(top_selection)} loops={loop_count} loop_only={','.join(loop_only)} stochastic={stochastic}",
+    )
     if "setup" in top_selection and not state.get("setup_done"):
-        run_setup(state)
+        run_setup(state, auto_prepare=auto_prepare)
         save_state(state)
+    elif "setup" in top_selection:
+        append_runner_log(state["run_id"], "INFO", "stage=setup skip reason=already_done")
+
+    if ("baseline" in top_selection or "loop" in top_selection) and not state.get("setup_done"):
+        append_runner_log(state["run_id"], "INFO", "stage=setup auto-run reason=required_for_baseline_or_loop")
+        run_setup(state, auto_prepare=auto_prepare)
+        save_state(state)
+
+    if "baseline" in top_selection or "loop" in top_selection:
+        ensure_setup_ready(state)
 
     if "baseline" in top_selection and not state.get("baseline_done"):
         run_baseline(state)
         save_state(state)
+    elif "baseline" in top_selection:
+        append_runner_log(state["run_id"], "INFO", "stage=baseline skip reason=already_done")
 
     if "loop" in top_selection and loop_count > 0:
         start_it = int(state.get("iterations_completed", 0)) + 1
         if state.get("in_progress"):
             start_it = int(state["in_progress"]["iteration"])
+            append_runner_log(state["run_id"], "INFO", f"resuming partial iteration={start_it}")
         completed = 0
         current = start_it
         while completed < loop_count:
             run_loop_iteration(state, current, loop_only, stochastic)
             completed += 1
             current = int(state.get("iterations_completed", 0)) + 1
+    elif "loop" in top_selection:
+        append_runner_log(state["run_id"], "INFO", "stage=loop skip reason=loops=0")
 
 
 def create_initial_state(run_id: str, branch: str) -> dict[str, Any]:
@@ -527,6 +682,7 @@ def create_initial_state(run_id: str, branch: str) -> dict[str, Any]:
 
 
 def print_status(state: dict[str, Any]) -> None:
+    paths = run_paths(state["run_id"])
     out = {
         "run_id": state["run_id"],
         "branch": state["branch"],
@@ -536,7 +692,9 @@ def print_status(state: dict[str, Any]) -> None:
         "best_val_bpb": state.get("best_val_bpb"),
         "kept_commit": state.get("kept_commit"),
         "in_progress": state.get("in_progress"),
-        "state_path": str(run_paths(state["run_id"])["state"]),
+        "state_path": str(paths["state"]),
+        "history_path": str(paths["history"]),
+        "runner_log_path": str(paths["runner_log"]),
     }
     print(json.dumps(out, indent=2, sort_keys=True))
 
@@ -553,6 +711,12 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--to-stage", choices=TOP_STAGES)
         sp.add_argument("--loop-only", help="Comma list of loop stages: propose,apply,commit,train,triage,record,decide")
         sp.add_argument("--no-stochastic", action="store_true", help="Disable opencode stochastic stages and use deterministic fallbacks.")
+        sp.add_argument(
+            "--auto-prepare",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Run 'uv run prepare.py' during setup when cache/tokenizer are missing (default: true).",
+        )
 
     s = sub.add_parser("start", help="Start a new run")
     s.add_argument("--branch", help="Optional branch name (e.g. autoresearch/mar10).")
@@ -584,6 +748,7 @@ def main() -> int:
     if args.cmd == "status":
         run_id = args.run_id or resolve_resume_run_id(None)
         state = load_state(run_id)
+        append_runner_log(run_id, "INFO", "command=status")
         print_status(state)
         return 0
 
@@ -591,6 +756,7 @@ def main() -> int:
     loop_only = parse_stage_list(args.loop_only, LOOP_STAGES) or LOOP_STAGES[:]
     top_selection = compute_top_selection(only, args.from_stage, args.to_stage)
     stochastic = not args.no_stochastic
+    auto_prepare = bool(args.auto_prepare)
 
     if args.cmd == "start":
         branch = ensure_autoresearch_branch(args.branch)
@@ -600,18 +766,32 @@ def main() -> int:
             raise RuntimeError(f"run_id already exists: {run_id}")
         state = create_initial_state(run_id, branch)
         save_state(state)
+        append_runner_log(run_id, "INFO", f"command=start branch={branch} run_id={run_id}")
+        append_runner_log(
+            run_id,
+            "INFO",
+            f"config only={args.only} from_stage={args.from_stage} to_stage={args.to_stage} loop_only={args.loop_only} loops={args.loops} stochastic={stochastic}",
+        )
         log_event(run_id, {"type": "run", "action": "start", "branch": branch})
-        run_selected(state, top_selection, max(0, args.loops), loop_only, stochastic)
+        run_selected(state, top_selection, max(0, args.loops), loop_only, stochastic, auto_prepare)
         save_state(state)
+        append_runner_log(run_id, "INFO", "command=start complete")
         print_status(state)
         return 0
 
     if args.cmd == "resume":
         run_id = resolve_resume_run_id(args.run_id)
         state = load_state(run_id)
+        append_runner_log(run_id, "INFO", f"command=resume run_id={run_id}")
+        append_runner_log(
+            run_id,
+            "INFO",
+            f"config only={args.only} from_stage={args.from_stage} to_stage={args.to_stage} loop_only={args.loop_only} loops={args.loops} stochastic={stochastic}",
+        )
         log_event(run_id, {"type": "run", "action": "resume"})
-        run_selected(state, top_selection, max(0, args.loops), loop_only, stochastic)
+        run_selected(state, top_selection, max(0, args.loops), loop_only, stochastic, auto_prepare)
         save_state(state)
+        append_runner_log(run_id, "INFO", "command=resume complete")
         print_status(state)
         return 0
 

@@ -47,6 +47,13 @@ Supported control flags:
 - If a loop iteration is partially complete, `resume` continues that iteration from the next pending stage.
 - "Run another N iterations" means execute N more loop iterations from current state.
 
+## Logging and Observability
+
+- Human-readable execution log: `workflows/runs/<run_id>/runner.log`
+- Structured event log: `workflows/runs/<run_id>/history.jsonl`
+- Checkpoint state: `workflows/runs/<run_id>/state.json`
+- Per-iteration details (including opencode raw outputs): `workflows/runs/<run_id>/iterations/<NNNN>/`
+
 ## Run ID Policy
 
 - Default run id: `<branch-slug>-rNNN`
@@ -56,4 +63,5 @@ Supported control flags:
 ## Notes
 
 - Use `--no-stochastic` only when opencode stochastic execution is unavailable.
+- Setup auto-runs `uv run prepare.py` if cache/tokenizer are missing (disable via `--no-auto-prepare`).
 - `results.tsv` is maintained in repo root and should remain untracked.
