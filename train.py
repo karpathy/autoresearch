@@ -505,7 +505,7 @@ VRAM_GB = torch.cuda.get_device_properties(0).total_memory / 1e9
 if VRAM_GB < 6:
     DEVICE_BATCH_SIZE = 32
     TOTAL_BATCH_SIZE = 2**14  # 16K tokens per step
-    WINDOW_PATTERN = "L"     # full attn more efficient than banded when seq is short
+    WINDOW_PATTERN = "SSSL"   # banded attention (half context in S layers)
     TRAIN_SEQ_LEN = min(MAX_SEQ_LEN, 256)  # SDPA OOMs on long seqs
     DEPTH = 4
     print(f"Low-VRAM mode: {VRAM_GB:.1f}GB GPU detected, using seq_len={TRAIN_SEQ_LEN}, batch={DEVICE_BATCH_SIZE}, depth={DEPTH}")
