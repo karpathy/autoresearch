@@ -94,6 +94,20 @@ Based on [maderix/ANE](https://github.com/maderix/ANE) — the first project to 
 - Metric is `val_loss` (cross-entropy), not `val_bpb` — experiments are compared within this framework
 - Agent edits only `ane/experiment_config.h` (architecture + optimizer hyperparameters)
 
+### Differences from the CUDA backend
+
+The ANE backend is a separate training stack, not a port of `train.py`. Key differences:
+
+| | CUDA (`train.py`) | ANE (`train_ane.m`) |
+|---|---|---|
+| **Optimizer** | Muon + AdamW (per-parameter-group LRs, weight decay, momentum scheduling) | Plain Adam (single global LR) |
+| **Data** | climbmix-400b, custom 8K BPE | TinyStories, Llama2 32K BPE |
+| **Metric** | `val_bpb` (bits per byte) | `val_loss` (cross-entropy) |
+| **Language** | Python / PyTorch | Objective-C / raw MIL kernels |
+| **Attention** | Flash Attention, sliding window patterns | Standard attention via ANE conv ops |
+
+Results are not comparable across backends — each is its own self-contained research loop.
+
 ### Setup
 
 ```bash
