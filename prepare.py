@@ -24,12 +24,13 @@ import tiktoken
 import torch
 
 # ---------------------------------------------------------------------------
-# Constants (fixed, do not modify)
+# Constants (configurable via env vars, see config.py)
 # ---------------------------------------------------------------------------
 
-MAX_SEQ_LEN = 2048       # context length
-TIME_BUDGET = 300        # training time budget in seconds (5 minutes)
-EVAL_TOKENS = 40 * 524288  # number of tokens for val eval
+from config import get_max_seq_len, get_time_budget, get_eval_tokens
+MAX_SEQ_LEN = get_max_seq_len()
+TIME_BUDGET = get_time_budget()
+EVAL_TOKENS = get_eval_tokens()
 
 # ---------------------------------------------------------------------------
 # Configuration

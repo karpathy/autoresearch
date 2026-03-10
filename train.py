@@ -9,6 +9,7 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
+import sys
 import time
 from dataclasses import dataclass, asdict
 
@@ -449,6 +450,8 @@ FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 DEPTH = 8               # number of transformer layers
 DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
 
+PROBE_MODE = "--probe" in sys.argv
+
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
 # ---------------------------------------------------------------------------
@@ -538,6 +541,7 @@ t_start_training = time.time()
 smooth_train_loss = 0
 total_training_time = 0
 step = 0
+loss_checkpoints = []
 
 while True:
     torch.cuda.synchronize()
@@ -560,6 +564,8 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
+    # Compute gradient norm (for logging only, not clipping)
+    grad_norm = sum(p.grad.float().square().sum().item() for p in model.parameters() if p.grad is not None) ** 0.5
     optimizer.step()
     model.zero_grad(set_to_none=True)
 
@@ -567,7 +573,10 @@ while True:
 
     # Fast fail: abort if loss is exploding
     if train_loss_f > 100:
-        print("FAIL")
+        peak_vram_mb_fail = torch.cuda.max_memory_allocated() / 1024 / 1024
+        print()
+        print("---")
+        print(f"FAIL: loss diverged at step {step}, loss={train_loss_f:.4f}, peak_vram_mb={peak_vram_mb_fail:.1f}, progress={100*progress:.1f}%")
         exit(1)
 
     torch.cuda.synchronize()
@@ -581,12 +590,16 @@ while True:
     ema_beta = 0.9
     smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
+    # Record loss at progress milestones
+    next_milestone = len(loss_checkpoints) * 25 + 25
+    if next_milestone <= 75 and 100 * progress >= next_milestone:
+        loss_checkpoints.append((next_milestone, debiased_smooth_loss))
     pct_done = 100 * progress
     tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
     mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
     remaining = max(0, TIME_BUDGET - total_training_time)
 
-    print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
+    print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | gnorm: {grad_norm:.2f} | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
 
     # GC management (Python's GC causes ~500ms stalls)
     if step == 0:
@@ -598,11 +611,22 @@ while True:
 
     step += 1
 
+    # Probe mode: run a few steps then report memory and exit
+    if PROBE_MODE and step >= 3:
+        torch.cuda.synchronize()
+        peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+        print()
+        print("---")
+        print(f"probe_peak_vram_mb: {peak_vram_mb:.1f}")
+        print(f"probe_steps:        {step}")
+        sys.exit(0)
+
     # Time's up — but only stop after warmup steps so we don't count compilation
     if step > 10 and total_training_time >= TIME_BUDGET:
         break
 
 print()  # newline after \r training log
+loss_checkpoints.append((100, debiased_smooth_loss))
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
@@ -627,3 +651,24 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
+print(f"total_batch_size: {TOTAL_BATCH_SIZE}")
+print(f"matrix_lr:        {MATRIX_LR}")
+loss_trajectory = " ".join(f"{pct}%:{loss:.4f}" for pct, loss in loss_checkpoints)
+print(f"loss_trajectory:  {loss_trajectory}")
+
+# Checkpoint save (opt-in via env var)
+if os.environ.get("AR_SAVE_CHECKPOINT", "0") == "1":
+    from checkpoint import save_checkpoint
+    from dataclasses import asdict as _asdict
+    save_checkpoint(model, optimizer, step, _asdict(config), {
+        "val_bpb": val_bpb,
+        "scale": os.environ.get("AR_SCALE", "standard"),
+        "peak_vram_mb": peak_vram_mb,
+        "mfu_percent": steady_state_mfu,
+        "num_params_M": num_params / 1e6,
+        "depth": DEPTH,
+        "total_batch_size": TOTAL_BATCH_SIZE,
+        "matrix_lr": MATRIX_LR,
+        "training_seconds": total_training_time,
+        "num_steps": step,
+    })
