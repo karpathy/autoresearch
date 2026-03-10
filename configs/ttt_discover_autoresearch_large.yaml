@@ -1,7 +1,7 @@
 model_name: Qwen/Qwen3.5-35B-A3B
 provider: null
 api_base: null
-max_steps: 12
+max_steps: 20
 groups_per_step: 2
 samples_per_step: 8
 temperature: 1.0
@@ -10,7 +10,7 @@ run_dir: null
 data_path: null
 baseline_command_override: null
 candidate_command_override: null
-experiment_name: autoresearch-ttt-discover
+experiment_name: autoresearch-ttt-discover-large
 renderer_name: null
 learning_rate: 0.00004
 lora_rank: 32

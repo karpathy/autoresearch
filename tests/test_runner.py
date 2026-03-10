@@ -92,10 +92,10 @@ class RunnerTests(unittest.TestCase):
             ).normalized(root)
             self.assertEqual(config.renderer_name, "gpt_oss_high_reasoning")
 
-    def test_group_defaults_reflect_paper_shaped_config(self) -> None:
+    def test_group_defaults_reflect_medium_preset(self) -> None:
         config = TTTAutoResearchConfig().normalized(Path("."))
-        self.assertEqual(config.max_steps, 50)
-        self.assertEqual(config.groups_per_step, 8)
+        self.assertEqual(config.max_steps, 12)
+        self.assertEqual(config.groups_per_step, 2)
         self.assertEqual(config.samples_per_step, 8)
         self.assertEqual(config.max_concurrent_evaluations, 1)
 

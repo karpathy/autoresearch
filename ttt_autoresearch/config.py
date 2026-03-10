@@ -25,8 +25,8 @@ class TTTAutoResearchConfig:
     model_name: str = "Qwen/Qwen3.5-35B-A3B"
     provider: str | None = None
     api_base: str | None = None
-    max_steps: int = 50
-    groups_per_step: int = 8
+    max_steps: int = 12
+    groups_per_step: int = 2
     samples_per_step: int = 8
     temperature: float = 1.0
     timeout_sec: int = 2700

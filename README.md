@@ -2,41 +2,40 @@
 
 ![teaser](progress.png)
 
-This repo is a focused fork of [karpathy/autoresearch](https://github.com/karpathy/autoresearch) that replaces the ad hoc outer experimentation loop with [TTT-Discover](https://github.com/test-time-training/discover).
+This repo is a focused fork of [karpathy/autoresearch](https://github.com/karpathy/autoresearch) that replaces the outer experiment loop with [TTT-Discover](https://github.com/test-time-training/discover).
 
-The core idea is:
+The setup is:
 
-- The **inner loop** is still `autoresearch`: edit `train.py`, run a fixed-budget training job, measure `val_bpb`.
-- The **outer loop** is now **test-time RL** from TTT-Discover.
-- The outer model proposes full replacements for `train.py`.
-- The resulting inner-loop metric improvement becomes the reward used to update the outer model online.
+- The **inner loop** is still AutoResearch: edit [`train.py`](train.py), run a fixed-budget training job, and measure `val_bpb`.
+- The **outer loop** is TTT-Discover: the model proposes full replacements for `train.py`, sees the resulting metric, and is reinforced online from that reward.
+- The reward is strictly the inner-loop outcome: `current_best_val_bpb - candidate_val_bpb`.
 
-This keeps the original spirit of autoresearch, but makes the search policy itself train during the run.
+This fork keeps the original AutoResearch target and uses TTT-Discover as the policy improvement layer.
 
 ## Credits
 
-This project is derived from:
+This project builds on:
 
 - [karpathy/autoresearch](https://github.com/karpathy/autoresearch)
 - [Learning to Discover at Test Time](https://arxiv.org/abs/2601.16175)
 - [test-time-training/discover](https://github.com/test-time-training/discover)
 
-The RL optimization recipe is intended to stay with upstream `discover`; this repo mainly provides the autoresearch-specific environment, reward, runner, and usage wrapper.
+The RL recipe stays with upstream `discover`. This repo provides the AutoResearch-specific environment, reward, runner, configs, and practical launch workflow.
 
-## What This Repo Does
+## What This Repo Optimizes
 
 The repo has two layers:
 
 1. **Inner optimization target**
-   - `prepare.py` downloads data and trains the tokenizer.
-   - `train.py` is the only file the outer model edits.
+   - [`prepare.py`](prepare.py) downloads data and trains the tokenizer.
+   - [`train.py`](train.py) is the only file the outer model edits.
    - `val_bpb` is the optimization metric. Lower is better.
 
 2. **Outer TTT-Discover loop**
-   - `run_ttt_discover.py` launches the test-time RL run.
-   - `ttt_autoresearch/` adapts autoresearch to the `discover` environment interface.
+   - [`run_ttt_discover.py`](run_ttt_discover.py) launches the run.
+   - [`ttt_autoresearch/`](ttt_autoresearch/) adapts AutoResearch to the `discover` environment interface.
    - Each candidate `train.py` is executed in an isolated workspace.
-   - Reward is computed from `current_best_val_bpb - candidate_val_bpb`.
+   - Reward is computed from the measured improvement over the current best state.
 
 ## Repository Layout
 
@@ -46,7 +45,7 @@ train.py                    Inner training program edited by the outer model
 program.md                  Human-authored research instructions/context
 run_ttt_discover.py         Main TTT-Discover entrypoint
 ttt_autoresearch/           Adapter layer for environment, reward, runner, config
-configs/                    Ready-to-run YAML config
+configs/                    Practical preset YAML configs
 tests/                      Smoke and unit coverage for the adapter
 ```
 
@@ -54,9 +53,9 @@ tests/                      Smoke and unit coverage for the adapter
 
 At each outer-loop step:
 
-1. TTT-Discover samples a group of candidate `train.py` replacements.
-2. Each candidate is evaluated by running a real autoresearch training job.
-3. The resulting `val_bpb` is parsed from the run logs.
+1. TTT-Discover samples grouped candidate replacements for `train.py`.
+2. Each candidate is evaluated by running a real AutoResearch training job.
+3. The run logs are parsed for `val_bpb`.
 4. Reward is computed from improvement over the current best state.
 5. Upstream `discover` performs the online RL update.
 6. If a candidate improves `val_bpb`, it becomes the new best `train.py`.
@@ -64,11 +63,10 @@ At each outer-loop step:
 Important details:
 
 - The **action** is the full replacement contents of `train.py`.
-- The **reward** is the inner-loop metric outcome, not the patch text.
-- The implementation keeps grouped rollouts for the upstream entropic advantage recipe.
-- The default config is now paper-shaped: `8 groups x 8 rollouts x 50 steps`.
-- In this repo, groups are controlled by `groups_per_step` and rollouts within each group are controlled by `samples_per_step`.
-- The checked-in default keeps `max_concurrent_evaluations: 1` for safety; to scale on rented hardware, you raise concurrency and declare explicit `gpu_devices`.
+- The **reward** is the inner-loop metric outcome, not a heuristic about the patch text.
+- `groups_per_step` controls how many rollout groups are sampled at each RL step.
+- `samples_per_step` controls how many rollouts are sampled inside each group.
+- `max_concurrent_evaluations` controls how many expensive inner `train.py` jobs may run at once.
 
 ## Quick Start
 
@@ -79,191 +77,188 @@ Important details:
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/)
 
-Install and prepare the base autoresearch environment:
+Install and prepare the base AutoResearch environment:
 
 ```bash
-# 1. Install dependencies
 uv sync
-
-# 2. Download data and train the tokenizer
 uv run prepare.py
-
-# 3. Sanity check the original inner loop
 uv run train.py
 ```
 
-Then launch the outer TTT-Discover loop:
+Then launch the default practical TTT-Discover mode:
 
 ```bash
 uv run python run_ttt_discover.py --config configs/ttt_discover_autoresearch.yaml
 ```
 
-## Default Configuration
+## Training Presets
 
-The default config lives at [configs/ttt_discover_autoresearch.yaml](configs/ttt_discover_autoresearch.yaml).
+This repo now ships with three practical presets instead of a paper-scale default.
 
-Current defaults:
+### Small
 
-- `model_name: Qwen/Qwen3.5-35B-A3B`
-- `groups_per_step: 8`
+File: [`configs/ttt_discover_autoresearch_small.yaml`](configs/ttt_discover_autoresearch_small.yaml)
+
+- `groups_per_step: 2`
+- `samples_per_step: 4`
+- `max_steps: 12`
+- total evaluations: `96`
+
+Use this when:
+
+- you want a quick sanity run
+- you are testing a new model backend
+- you are on a single GPU and want something that finishes in a reasonable time
+
+### Medium
+
+File: [`configs/ttt_discover_autoresearch_medium.yaml`](configs/ttt_discover_autoresearch_medium.yaml)
+
+- `groups_per_step: 2`
 - `samples_per_step: 8`
-- `max_steps: 50`
-- `temperature: 1.0`
-- `max_concurrent_evaluations: 1`
+- `max_steps: 12`
+- total evaluations: `192`
 
-That means the default run is:
+This is the **recommended main mode** for the repo.
 
-- `8 groups`
-- `8 rollouts per group`
-- `64 total inner evaluations per step`
-- `50 outer RL steps`
-- but only `1` inner evaluation runs at a time unless you explicitly provision more GPUs
+It is also the checked-in default at [`configs/ttt_discover_autoresearch.yaml`](configs/ttt_discover_autoresearch.yaml).
 
-This keeps the paper-shaped RL structure while remaining safe to launch on limited hardware.
+### Large
 
-## Recommended Hardware
+File: [`configs/ttt_discover_autoresearch_large.yaml`](configs/ttt_discover_autoresearch_large.yaml)
 
-If your goal is to match the spirit of the original autoresearch setup and push toward the best `val_bpb`, the inner loop should run on **H100 80GB** class GPUs.
+- `groups_per_step: 2`
+- `samples_per_step: 8`
+- `max_steps: 20`
+- total evaluations: `320`
+
+Use this when the medium run is already stable and you want more policy updates without moving into paper-scale compute.
+
+## Recommended Modes
+
+For this fork, the most realistic settings are:
+
+- **Small:** `2 x 4 x 12`
+- **Medium:** `2 x 8 x 12`
+- **Large:** `2 x 8 x 20`
+
+These are intentionally sized around the practical AutoResearch regime, where each rollout is a real GPU training job. They keep grouped rollouts and online RL updates from TTT-Discover, but avoid the extreme compute profile of the original paper.
+
+## Hardware Recommendation
+
+If your goal is to push `val_bpb` seriously, the inner loop should run on **H100 80GB** class GPUs.
 
 Why:
 
-- [train.py](/Users/aumdesai/AutoResearch-Discover/train.py) uses Hopper-specific FA3 kernels when available.
-- [program.md](/Users/aumdesai/AutoResearch-Discover/program.md) shows representative peak VRAM around `45 GB`.
-- `A100 40GB` is therefore not sufficient.
+- [`train.py`](train.py) uses Hopper-specific FA3 kernels when available.
+- [`program.md`](program.md) shows representative peak VRAM around `45 GB`.
+- `A100 40GB` is therefore not viable for the intended setup.
 
-Recommended inner-loop rental target:
+Recommended inner-loop target:
 
 - **Best cost/performance:** H100 PCIe 80GB
 - **Best absolute performance:** H100 SXM 80GB
 
-For the paper-shaped default config, the natural operational target is:
+For these practical presets, I recommend:
 
-- **64 H100 80GB GPUs** for inner evaluations
-- one rollout per GPU
-- one full outer step in roughly one inner-training wave
+- **Small (`2x4x12`)**: rent `8x H100 80GB`
+- **Medium (`2x8x12`)**: rent `16x H100 80GB`
+- **Large (`2x8x20`)**: rent `16x H100 80GB`
 
-If you have fewer GPUs, the run still works, but each outer step takes multiple waves.
-To use more than one GPU safely, you should set:
+That gives one GPU per rollout in a step wave. If you rent fewer GPUs, the run still works, but each step is split into multiple waves and takes longer.
+
+To run with rented GPUs, set:
 
 ```yaml
-max_concurrent_evaluations: 64
-gpu_devices: ["0", "1", "2", "3", "..."]
+max_concurrent_evaluations: 16
+gpu_devices: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
 ```
 
-The runner now pins each candidate subprocess to one configured `CUDA_VISIBLE_DEVICES` slot.
+The runner pins each candidate subprocess to one configured `CUDA_VISIBLE_DEVICES` slot.
 
 ## Cost Model
 
-There are two separate cost buckets:
+There are two cost buckets:
 
 1. **Inner-loop GPU rental**
-   - pays for the actual `train.py` runs
-   - this dominates total cost in this repo
+   - pays for the real `train.py` runs
+   - dominates total cost in this repo
 
 2. **Outer-loop Tinker cost**
-   - pays for model prefill, sampling, and RL training tokens
-   - this is comparatively small here because the inner rollouts are expensive
+   - pays for prompt prefill, sampling, and RL training tokens
+   - is much smaller than the inner-loop GPU cost here
 
-### Tinker Cost
+### Cost Assumptions
 
-Using the official Tinker pricing for `Qwen/Qwen3.5-35B-A3B`:
+The estimates below use:
 
-- prefill: `$0.36 / 1M tokens`
-- sample: `$0.89 / 1M tokens`
-- train: `$1.07 / 1M tokens`
+- `Qwen/Qwen3.5-35B-A3B` on Tinker
+- H100 PCIe 80GB at about `$2.86 / GPU / hour`
+- about `325.9s` per inner rollout
+- about `$0.020` Tinker cost per rollout as a practical midpoint for this repo
 
-And using this repo's actual prompt/output sizes, a practical estimate is:
+### Preset Cost Estimates
 
-- about **`$0.017-$0.024` per rollout**
-- about **`$0.020` per rollout** as a reasonable midpoint
-
-So for the default paper-shaped config:
-
-- `8 x 8 x 50 = 3200 total rollouts`
-- estimated Tinker cost: about **`$54-$77`**
-- midpoint estimate: about **`$65`**
-
-### GPU Rental Cost
-
-Using H100 PCIe 80GB pricing of roughly **`$2.86 / GPU / hour`**, and assuming one inner rollout takes roughly `325.9s` end to end:
-
-- each rollout costs about **`$0.259`** in GPU rental
-- `3200` rollouts costs about **`$829`** in GPU rental
-
-That means a fully provisioned `8 x 8 x 50` run is roughly:
-
-- **GPU rental:** about `$829`
-- **Tinker:** about `$65`
-- **Total:** about **`$894`**
-
-This is directionally consistent with the TTT-Discover paper's statement that runs cost a few hundred dollars to several hundred dollars per problem, with this repo skewing more expensive on the inner loop because each rollout is a real GPU training job.
+| Mode | Shape | Total evals | GPU rental | Tinker | Total |
+|---|---:|---:|---:|---:|---:|
+| Small | `2x4x12` | 96 | about `$25` | about `$1.9` | about `$27` |
+| Medium | `2x8x12` | 192 | about `$50` | about `$3.8` | about `$54` |
+| Large | `2x8x20` | 320 | about `$83` | about `$6.4` | about `$89` |
 
 ### Cost Distribution
 
-For this repo, the cost split is roughly:
+For these realistic runs, the cost split is still roughly:
 
-- **~90% GPU rental**
-- **~10% Tinker**
+- **~92% GPU rental**
+- **~8% Tinker**
 
-That is the opposite of many lightweight code-generation settings. Here, the expensive part is the real autoresearch evaluation.
+That is the core difference between this repo and cheaper code-generation tasks: each rollout is a real training job.
 
 ## How I Recommend Running It
 
-### If you want the paper-shaped run
+### Single GPU
 
-Use the paper-shaped structure and rent:
-
-- **64x H100 PCIe 80GB**
-
-Set:
+Use the small preset, and keep evaluation serialized:
 
 ```yaml
-groups_per_step: 8
-samples_per_step: 8
-max_steps: 50
-max_concurrent_evaluations: 64
-gpu_devices: ["0", "1", "2", ..., "63"]
-```
-
-This gives:
-
-- `8 groups x 8 rollouts`
-- one GPU per rollout
-- about one rollout wave per step
-- wall-clock of roughly `50 x 5.4 minutes`, plus overhead
-
-This is the closest clean operational match to the repo default.
-
-### If you want a cheaper but still strong run
-
-Use:
-
-- `groups_per_step: 8`
-- `samples_per_step: 8`
-- `max_steps: 8` to `16`
-- `max_concurrent_evaluations` equal to however many GPUs you actually rented
-
-This preserves the paper-like group structure while cutting total spend materially.
-
-### If you only have one GPU
-
-The checked-in config is already safe in the sense that it runs with one evaluation slot, but it will be extremely slow at full `8 x 8 x 50`.
-
-Instead reduce to something like:
-
-```yaml
-groups_per_step: 1
-samples_per_step: 8
-max_steps: 8
+groups_per_step: 2
+samples_per_step: 4
+max_steps: 12
 max_concurrent_evaluations: 1
 gpu_devices: null
 ```
 
-That is much slower and less faithful to the paper, but operationally sane on one machine.
+This is the safest way to stay close to the original one-GPU AutoResearch style while still using the TTT-Discover framework.
+
+### Practical Rented Run
+
+Use the medium preset:
+
+```bash
+uv run python run_ttt_discover.py --config configs/ttt_discover_autoresearch_medium.yaml
+```
+
+Recommended provisioning:
+
+- `16x H100 PCIe 80GB`
+- `max_concurrent_evaluations: 16`
+- `gpu_devices` set to the visible devices on the host
+
+This is the main mode I recommend if your goal is to beat the baseline without exploding compute.
+
+### Larger Budget Run
+
+Use the large preset:
+
+```bash
+uv run python run_ttt_discover.py --config configs/ttt_discover_autoresearch_large.yaml
+```
+
+This keeps the same grouped structure as medium, but increases the number of RL updates from `12` to `20`.
 
 ## Model and Renderer Configuration
 
-The model is configurable, but the prompt/response format must match a supported renderer.
+The model is configurable, but the prompt and response format must match a supported renderer.
 
 Known-good renderer values:
 
@@ -286,53 +281,23 @@ model_name: openai/gpt-oss-120b
 renderer_name: gpt_oss_high_reasoning
 ```
 
-If you use an unknown model family, you should set `renderer_name` explicitly. The config now fails fast if it cannot infer a compatible renderer.
+If you use an unknown model family, set `renderer_name` explicitly. The config fails fast if it cannot infer a compatible renderer.
 
 ## Output Artifacts
 
 Each run writes artifacts under `runs/<timestamp>/`:
 
 - `baseline.json`
-  - baseline execution metadata for the original `train.py`
 - `resolved_config.json`
-  - the fully resolved runtime config
 - `history.jsonl`
-  - one line per evaluated candidate
 - `best/train.py`
-  - the current best discovered inner-loop program
 - `best/metrics.json`
-  - the best run metadata and metric
 - `candidates/`
-  - isolated workspaces with stdout/stderr and per-candidate files
 - `discover_log/`
-  - upstream sampler/checkpoint/log state from `ttt-discover`
-
-## Inner Loop Assumptions
-
-This repo intentionally keeps the inner autoresearch target small even though the outer RL setup can be large:
-
-- `prepare.py` remains fixed.
-- `train.py` is the only file the outer model edits.
-- Training still uses the original fixed wall-clock budget from autoresearch.
-- `val_bpb` remains the optimization target because it is stable across vocabulary and architecture changes.
-
-## Design Choices
-
-### Why only `train.py`?
-
-Because that matches the original autoresearch framing and keeps the action space bounded. It also makes it easier to attribute reward to specific inner-loop changes.
-
-### Why grouped rollouts?
-
-Because upstream `discover` uses grouped rollouts for its entropic advantage estimation and reuse behavior. This repo keeps that outer-loop recipe.
-
-### Why allow large concurrent inner evaluation now?
-
-Because the default configuration is no longer targeting a single local GPU. It is targeting rented multi-GPU execution where one rollout can be assigned to one GPU, which restores fair rollout timing and keeps the paper-like grouped rollout structure.
 
 ## Plain AutoResearch Mode Still Works
 
-This fork does not remove the original autoresearch workflow. You can still use it directly:
+This fork does not remove the original AutoResearch workflow. You can still use it directly:
 
 ```bash
 uv run prepare.py
@@ -356,9 +321,9 @@ What is still environment-dependent:
 
 - a true end-to-end production run on the target Linux/CUDA machine
 - provider-specific model serving details
-- real-world throughput and stability under long TTT sessions
+- long-run throughput and stability on rented multi-GPU hardware
 
-So the repo is structurally ready for the intended setup, but final operational confidence still comes from a real GPU run on the target hardware.
+So the repo is structurally ready for the intended setup, but final operational confidence still comes from a real GPU run on target hardware.
 
 ## License
 

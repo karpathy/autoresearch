@@ -10,7 +10,7 @@ run_dir: null
 data_path: null
 baseline_command_override: null
 candidate_command_override: null
-experiment_name: autoresearch-ttt-discover
+experiment_name: autoresearch-ttt-discover-medium
 renderer_name: null
 learning_rate: 0.00004
 lora_rank: 32

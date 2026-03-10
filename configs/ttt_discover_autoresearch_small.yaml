@@ -3,14 +3,14 @@ provider: null
 api_base: null
 max_steps: 12
 groups_per_step: 2
-samples_per_step: 8
+samples_per_step: 4
 temperature: 1.0
 timeout_sec: 2700
 run_dir: null
 data_path: null
 baseline_command_override: null
 candidate_command_override: null
-experiment_name: autoresearch-ttt-discover
+experiment_name: autoresearch-ttt-discover-small
 renderer_name: null
 learning_rate: 0.00004
 lora_rank: 32
