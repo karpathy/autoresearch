@@ -1,23 +1,233 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Creator Name | Official Hub</title>
+    <style>
+        /* --- CSS STYLES --- */
+        :root {
+            --primary: #ff0000; /* YouTube Red */
+            --dark: #0f0f0f;
+            --light: #f1f1f1;
+            --gray: #2b2b2b;
+        }
 
-# Virtual environments
-.venv
-worktrees/
-results/
-queue/
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--dark);
+            color: var(--light);
+            line-height: 1.6;
+        }
 
-# Agent prompt files (generated per-session by launchers)
-CLAUDE.md
-AGENTS.md
+        /* Navigation */
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 5%;
+            background-color: rgba(15, 15, 15, 0.95);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            border-bottom: 1px solid var(--gray);
+        }
 
-# Experimental code/artifacts
-dev/
+        .logo { font-size: 1.5rem; font-weight: bold; color: var(--light); text-decoration: none; }
+        .logo span { color: var(--primary); }
+        
+        .nav-links a {
+            color: var(--light);
+            text-decoration: none;
+            margin-left: 20px;
+            font-weight: 500;
+            transition: 0.3s;
+        }
+        .nav-links a:hover { color: var(--primary); }
 
-# Results file
-results.tsv
+        /* Hero Section */
+        .hero {
+            text-align: center;
+            padding: 80px 20px;
+            background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.7)), url('https://source.unsplash.com/random/1600x900/?technology');
+            background-size: cover;
+            background-position: center;
+        }
+
+        .hero h1 { font-size: 3rem; margin-bottom: 10px; }
+        .hero p { font-size: 1.2rem; margin-bottom: 30px; color: #ccc; }
+
+        .btn {
+            display: inline-block;
+            padding: 12px 30px;
+            background-color: var(--primary);
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            transition: 0.3s;
+            border: none;
+            cursor: pointer;
+        }
+        .btn:hover { background-color: #cc0000; transform: translateY(-2px); }
+        .btn-outline { background: transparent; border: 2px solid var(--light); margin-left: 10px; }
+        .btn-outline:hover { background: var(--light); color: var(--dark); }
+
+        /* Video Embed */
+        .video-container {
+            max-width: 800px;
+            margin: 0 auto 50px auto;
+            position: relative;
+            padding-bottom: 56.25%; /* 16:9 Aspect Ratio */
+            height: 0;
+            overflow: hidden;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .video-container iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Sections */
+        .section { padding: 60px 5%; max-width: 1200px; margin: 0 auto; }
+        .section-title { text-align: center; margin-bottom: 40px; font-size: 2rem; }
+
+        /* Grid Layouts */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+        }
+
+        /* Cards */
+        .card {
+            background-color: var(--gray);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            transition: 0.3s;
+        }
+        .card:hover { transform: translateY(-5px); }
+        .card img { width: 100%; height: 200px; object-fit: cover; border-radius: 5px; margin-bottom: 15px; }
+        .card h3 { margin: 10px 0; }
+        .price { font-size: 1.2rem; color: var(--primary); font-weight: bold; display: block; margin: 10px 0; }
+
+        /* Footer */
+        footer {
+            background-color: #000;
+            text-align: center;
+            padding: 40px 20px;
+            margin-top: 50px;
+            border-top: 1px solid var(--gray);
+        }
+        .socials a { color: var(--light); margin: 0 10px; font-size: 1.2rem; text-decoration: none; }
+
+        /* Mobile Adjustments */
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 2rem; }
+            .nav-links { display: none; } /* Simplified for demo */
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Navigation -->
+    <nav>
+        <a href="#" class="logo">CREATOR<span>NAME</span></a>
+        <div class="nav-links">
+            <a href="#videos">Videos</a>
+            <a href="#gear">Gear</a>
+            <a href="#shop">Shop</a>
+            <a href="#contact">Contact</a>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <header class="hero">
+        <h1>Welcome to the Official Hub</h1>
+        <p>Tutorials, Reviews, and Lifestyle Content.</p>
+        <div>
+            <a href="https://youtube.com" target="_blank" class="btn">Subscribe on YouTube</a>
+            <a href="#shop" class="btn btn-outline">Get Merch</a>
+        </div>
+    </header>
+
+    <!-- Latest Video Section -->
+    <section id="videos" class="section">
+        <h2 class="section-title">Latest Upload</h2>
+        <div class="video-container">
+            <!-- Replace the src below with your actual YouTube Embed Link -->
+            <iframe width="560" height="315" src="https://www.youtube.com/embed/dQw4w9WgXcQ" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+        </div>
+    </section>
+
+    <!-- Affiliate / Gear Section -->
+    <section id="gear" class="section">
+        <h2 class="section-title">The Gear I Use</h2>
+        <p style="text-align: center; margin-bottom: 30px;">Check out the equipment I use to make these videos. (Affiliate Links)</p>
+        <div class="grid">
+            <div class="card">
+                <img src="https://source.unsplash.com/random/400x300/?camera" alt="Camera">
+                <h3>My Main Camera</h3>
+                <p>Sony Alpha a7III</p>
+                <a href="#" class="btn btn-outline" style="font-size: 0.9rem;">Check Price</a>
+            </div>
+            <div class="card">
+                <img src="https://source.unsplash.com/random/400x300/?microphone" alt="Mic">
+                <h3>My Microphone</h3>
+                <p>Rode PodMic</p>
+                <a href="#" class="btn btn-outline" style="font-size: 0.9rem;">Check Price</a>
+            </div>
+            <div class="card">
+                <img src="https://source.unsplash.com/random/400x300/?lighting" alt="Light">
+                <h3>Lighting Kit</h3>
+                <p>Neewer 2-Pack</p>
+                <a href="#" class="btn btn-outline" style="font-size: 0.9rem;">Check Price</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Merch / Shop Section -->
+    <section id="shop" class="section">
+        <h2 class="section-title">Official Merch</h2>
+        <div class="grid">
+            <div class="card">
+                <img src="https://source.unsplash.com/random/400x300/?tshirt" alt="T-Shirt">
+                <h3>Signature Hoodie</h3>
+                <span class="price">$45.00</span>
+                <a href="#" class="btn">Buy Now</a>
+            </div>
+            <div class="card">
+                <img src="https://source.unsplash.com/random/400x300/?mug" alt="Mug">
+                <h3>Creator Mug</h3>
+                <span class="price">$15.00</span>
+                <a href="#" class="btn">Buy Now</a>
+            </div>
+            <div class="card">
+                <img src="https://source.unsplash.com/random/400x300/?poster" alt="Poster">
+                <h3>Wall Art Print</h3>
+                <span class="price">$25.00</span>
+                <a href="#" class="btn">Buy Now</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer id="contact">
+        <div class="socials">
+            <a href=https://youtube.com/@truckincome101?si=QXJMlp1IUBxjavGd>YouTube</a>
+            <a href="#">Instagram</a>
+            <a href="#">Twitter</a>
+            <a href="#">TikTok</a>
+        </div>
+        <p style="margin-top: 20px; color: #666;">&copy; 2023 Creator Name. All rights reserved.</p>
+    </footer>
+
+</body>
+</html>
