@@ -438,6 +438,119 @@ class MuonAdamW(torch.optim.Optimizer):
                 self._step_muon(group)
 
 # ---------------------------------------------------------------------------
+# Checkpoint utilities
+# ---------------------------------------------------------------------------
+
+CHECKPOINT_DIR = "/tmp/autoresearch_checkpoints"
+PRE_EVAL_CHECKPOINT = os.path.join(CHECKPOINT_DIR, "pre_eval.pt")
+
+# Evaluation retry configuration
+MAX_RETRY_ATTEMPTS = 3  # Maximum number of retry attempts on evaluation failure
+MIN_BATCH_SIZE = 4      # Minimum batch size to try before giving up
+
+
+def is_oom_error(error):
+    """Check if the error is an out-of-memory error that might succeed with smaller batch."""
+    error_str = str(error).lower()
+    oom_keywords = [
+        "out of memory", "oom", "cuda out of memory", "cudamalloc",
+        "memory error", "allocate", "allocation", "memory exhausted",
+        "memoryerror", "outofmemoryerror", "cuda error",
+        "illegal address", "assertion", "launch failed",
+        "cudart", "cuda_runtime", "cudaerror", "torch.cuda.OutOfMemoryError",
+        "runtimeerror: cuda", "allocation failed", "cudaallocate",
+        "device-side assertion", "view size", "buffer"
+    ]
+    return any(keyword in error_str for keyword in oom_keywords)
+
+
+def get_gpu_memory_info():
+    """Get current GPU memory usage information in MB."""
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / 1024 / 1024
+        reserved = torch.cuda.memory_reserved() / 1024 / 1024
+        max_allocated = torch.cuda.max_memory_allocated() / 1024 / 1024
+        return {
+            "allocated_mb": allocated,
+            "reserved_mb": reserved,
+            "max_allocated_mb": max_allocated
+        }
+    return None
+
+
+def clear_gpu_memory():
+    """Clear GPU memory cache and run garbage collection."""
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+    except Exception as e:
+        print(f"Warning: torch.cuda.empty_cache() failed: {e}", file=sys.stderr)
+    try:
+        gc.collect()
+    except Exception as e:
+        print(f"Warning: gc.collect() failed: {e}", file=sys.stderr)
+
+
+def reset_gpu_memory_stats():
+    """Reset GPU memory statistics for accurate memory diagnostics."""
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.reset_accumulated_memory_stats()
+    except Exception as e:
+        print(f"Warning: torch.cuda.reset_peak_memory_stats() failed: {e}", file=sys.stderr)
+
+
+def save_checkpoint(model, optimizer, step, total_training_time, smooth_train_loss):
+    """Save training checkpoint before evaluation."""
+    try:
+        os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+        torch.save({
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "step": step,
+            "total_training_time": total_training_time,
+            "smooth_train_loss": smooth_train_loss,
+        }, PRE_EVAL_CHECKPOINT)
+        print(f"Checkpoint saved to {PRE_EVAL_CHECKPOINT}")
+    except (OSError, IOError, RuntimeError) as e:
+        print(f"Warning: Failed to save checkpoint: {e}", file=sys.stderr)
+
+
+def load_checkpoint(model, optimizer):
+    """Load training checkpoint. Returns (step, total_training_time, smooth_train_loss) or None on failure."""
+    if not os.path.exists(PRE_EVAL_CHECKPOINT):
+        return None
+    try:
+        # Clear GPU memory before loading checkpoint
+        clear_gpu_memory()
+
+        checkpoint = torch.load(PRE_EVAL_CHECKPOINT, map_location="cuda")
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+        # Ensure model is in eval mode after loading checkpoint
+        model.eval()
+
+        print(f"Checkpoint loaded from {PRE_EVAL_CHECKPOINT}")
+        return checkpoint["step"], checkpoint["total_training_time"], checkpoint["smooth_train_loss"]
+    except (OSError, RuntimeError, KeyError) as e:
+        print(f"Warning: Failed to load checkpoint: {e}", file=sys.stderr)
+        return None
+
+
+def delete_checkpoint():
+    """Delete pre-evaluation checkpoint to free disk space."""
+    try:
+        if os.path.exists(PRE_EVAL_CHECKPOINT):
+            os.remove(PRE_EVAL_CHECKPOINT)
+            print(f"Checkpoint deleted: {PRE_EVAL_CHECKPOINT}")
+    except OSError as e:
+        print(f"Warning: Failed to delete checkpoint: {e}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
 # Hyperparameters (edit these directly, no CLI flags needed)
 # ---------------------------------------------------------------------------
 
@@ -628,10 +741,111 @@ def main():
 
     total_tokens = step * TOTAL_BATCH_SIZE
 
-    # Final eval
+    # Final eval - save checkpoint before evaluation to preserve training results
+    # in case evaluation crashes (OOM, CUDA error, etc.)
     model.eval()
-    with autocast_ctx:
-        val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+    print("Saving pre-evaluation checkpoint...")
+    save_checkpoint(model, optimizer, step, total_training_time, smooth_train_loss)
+
+    # Reset GPU memory stats before evaluation to get accurate diagnostics
+    reset_gpu_memory_stats()
+
+    # Try evaluation with retry mechanism; if it fails (OOM, CUDA error, etc.),
+    # training results are preserved in the checkpoint and can be recovered
+    eval_failed = False
+    final_val_bpb = None
+
+    # First attempt with original batch size
+    current_batch_size = DEVICE_BATCH_SIZE
+    attempt = 0
+
+    while attempt < MAX_RETRY_ATTEMPTS:
+        attempt += 1
+        # Output GPU memory info before each evaluation attempt
+        mem_info = get_gpu_memory_info()
+        if mem_info:
+            print(f"GPU memory before evaluation (attempt {attempt}): allocated={mem_info['allocated_mb']:.1f}MB, reserved={mem_info['reserved_mb']:.1f}MB, max_allocated={mem_info['max_allocated_mb']:.1f}MB")
+
+        try:
+            with autocast_ctx:
+                val_bpb = evaluate_bpb(model, tokenizer, current_batch_size)
+            # Evaluation succeeded
+            final_val_bpb = val_bpb
+            if attempt > 1:
+                print(f"Evaluation succeeded on attempt {attempt} with batch size {current_batch_size}: val_bpb={val_bpb:.6f}")
+            break
+        except RuntimeError as eval_error:
+            error_type = "OOM/Retryable" if is_oom_error(eval_error) else "RuntimeError"
+            print(f"Evaluation attempt {attempt}/{MAX_RETRY_ATTEMPTS} failed ({error_type}): {eval_error}", file=sys.stderr)
+
+            # Output GPU memory info after failure
+            mem_info_after = get_gpu_memory_info()
+            if mem_info_after:
+                print(f"GPU memory after failure: allocated={mem_info_after['allocated_mb']:.1f}MB, reserved={mem_info_after['reserved_mb']:.1f}MB", file=sys.stderr)
+
+            # Check if we should retry
+            should_retry = (
+                is_oom_error(eval_error) and
+                current_batch_size > MIN_BATCH_SIZE and
+                attempt < MAX_RETRY_ATTEMPTS
+            )
+
+            if should_retry:
+                # Wait for GPU memory to be released before retrying
+                wait_time = 2 * attempt  # Progressive wait: 2s, 4s, 6s
+                print(f"Waiting {wait_time}s for GPU memory to be released...")
+                time.sleep(wait_time)
+
+                # Reset GPU memory stats for accurate diagnostics on next attempt
+                reset_gpu_memory_stats()
+
+                # Clear GPU memory before loading checkpoint and retrying
+                print("Clearing GPU memory before retry...")
+                clear_gpu_memory()
+
+                # Load checkpoint to recover training state before retry
+                print("Loading checkpoint to recover training results...")
+                recovered = load_checkpoint(model, optimizer)
+                if recovered is not None:
+                    step, total_training_time, smooth_train_loss = recovered
+                    print(f"Recovered: step={step}, training_time={total_training_time:.1f}s")
+
+                    # Ensure model is in eval mode for evaluation
+                    model.eval()
+
+                    # Decrease batch size for next attempt
+                    current_batch_size = max(MIN_BATCH_SIZE, current_batch_size // 2)
+                    print(f"Retrying evaluation with smaller batch size ({current_batch_size})...")
+
+                    # Output GPU memory after checkpoint restore
+                    mem_info_restore = get_gpu_memory_info()
+                    if mem_info_restore:
+                        print(f"GPU memory after checkpoint restore: allocated={mem_info_restore['allocated_mb']:.1f}MB, reserved={mem_info_restore['reserved_mb']:.1f}MB")
+                else:
+                    # Failed to load checkpoint, cannot retry
+                    print("Failed to load checkpoint, cannot retry evaluation", file=sys.stderr)
+                    eval_failed = True
+                    break
+            else:
+                # Cannot retry - either not an OOM error or we've exhausted retries
+                if not is_oom_error(eval_error):
+                    print("Non-OOM error detected, not retrying", file=sys.stderr)
+                if current_batch_size <= MIN_BATCH_SIZE:
+                    print(f"Batch size already at minimum ({MIN_BATCH_SIZE}), not retrying", file=sys.stderr)
+                eval_failed = True
+                break
+
+    # Clean up checkpoint file after successful evaluation
+    if final_val_bpb is not None:
+        delete_checkpoint()
+        val_bpb = final_val_bpb
+
+    if eval_failed or final_val_bpb is None:
+        # If evaluation failed, report failure but preserve checkpoint for recovery
+        print("FAIL: Evaluation crashed after all retry attempts - training results saved in checkpoint")
+        print(f"Checkpoint available at: {PRE_EVAL_CHECKPOINT}")
+        print(f"To recover, manually load from checkpoint and re-run evaluation")
+        raise SystemExit(1)
 
     # Final summary
     t_end = time.time()
