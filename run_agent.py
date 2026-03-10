@@ -28,6 +28,12 @@ import ollama
 _creds, _project = google.auth.default()
 _auth_req = google.auth.transport.requests.Request()
 _creds.refresh(_auth_req)
+# Fall back to quota_project_id from ADC file if google.auth.default() returns None
+if not _project:
+    import json as _json, pathlib as _pl
+    _adc = _pl.Path.home() / ".config/gcloud/application_default_credentials.json"
+    if _adc.exists():
+        _project = _json.loads(_adc.read_text()).get("quota_project_id")
 _genai_client = genai.Client(
     vertexai=True,
     project=_project,

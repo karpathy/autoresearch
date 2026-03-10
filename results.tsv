@@ -1,0 +1,2 @@
+commit	metric_before	metric_after	delta	status	description
+none	0	0	0	rejected	castor/agents/base.py: FAIL - This change introduces a direct print statement, whic

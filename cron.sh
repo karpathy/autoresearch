@@ -31,7 +31,7 @@ git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH"
 
 # Run agent for 6 hours (midnight–6am)
 cd "$REPO"
-timeout 21600 python3 run_agent.py > "$LOG" 2>&1 || true
+timeout 21600 "$REPO/.venv/bin/python3" run_agent.py > "$LOG" 2>&1 || true
 
 echo "[cron] $(date) — Agent stopped. Committing results..."
 
