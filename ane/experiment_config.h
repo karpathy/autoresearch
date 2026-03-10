@@ -6,7 +6,7 @@
 #define SEQ 512
 #define NLAYERS 6
 // Optimizer (safe to change between runs)
-#define LEARNING_RATE 1e-3f
+#define LEARNING_RATE 3e-4f
 #define ADAM_BETA1 0.8f
 #define ADAM_BETA2 0.95f
 #define ADAM_EPS 1e-8f
