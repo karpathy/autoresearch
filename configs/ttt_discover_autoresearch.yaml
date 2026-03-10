@@ -21,3 +21,4 @@ num_cpus_per_task: 0
 eval_timeout: 2700
 local_model_path: null
 keep_history: 6
+max_concurrent_evaluations: 1

@@ -95,9 +95,12 @@ Outputs are written under `runs/<timestamp>/`:
 
 ### Config notes
 
-- `model_name` is fully configurable and passed through to the installed `discover` backend.
+- `model_name` is configurable, but the prompt/response format still needs a compatible `renderer_name`.
+- Known-good renderer names are `qwen3`, `qwen3_instruct`, `gpt_oss_no_sysprompt`, `gpt_oss_low_reasoning`, `gpt_oss_medium_reasoning`, and `gpt_oss_high_reasoning`.
+- For unknown model families, set both `model_name` and `renderer_name` explicitly or startup will fail fast.
 - `provider` and `api_base` can be set in the YAML or overridden on the CLI.
 - `baseline_command_override` and `candidate_command_override` let you swap the execution command without changing code.
+- `max_concurrent_evaluations` defaults to `1` so grouped rollouts do not launch multiple full `train.py` jobs onto the same GPU at once.
 - `run_ttt_discover.py` uses the upstream `discover` trainer stack directly, but bypasses the public `discover()` model-name guard so non-GPT-OSS models such as Qwen can be used without changing the RL optimization recipe.
 
 ## Project structure

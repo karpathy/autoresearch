@@ -10,6 +10,7 @@ from ttt_autoresearch.runner import AutoResearchRunner, PatchCandidate, RunResul
 
 
 _ARTIFACT_LOCK = threading.Lock()
+_EVALUATION_SLOTS: threading.BoundedSemaphore | None = None
 
 
 def reward_for_result(current_best_val_bpb: float, result: RunResult) -> tuple[float, float]:
@@ -30,8 +31,10 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
 
     @classmethod
     def configure(cls, bootstrap: BootstrapContext, runner: AutoResearchRunner) -> None:
+        global _EVALUATION_SLOTS
         cls.bootstrap = bootstrap
         cls.runner = runner
+        _EVALUATION_SLOTS = threading.BoundedSemaphore(bootstrap.config.max_concurrent_evaluations)
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self.problem_type = kwargs.get("problem_type", "autoresearch")
@@ -53,12 +56,7 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
                 status="invalid_candidate",
             )
 
-        result = self.runner.run_candidate(
-            bootstrap=self.bootstrap,
-            candidate=candidate,
-            step=getattr(state, "timestep", -1) + 1,
-            state_id=getattr(state, "id", "unknown"),
-        )
+        result = self._run_candidate(candidate, state)
         current_best = self._current_best_from_state(state)
         reward, correctness = reward_for_result(current_best, result)
         improved_global_best = False
@@ -109,6 +107,25 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
                 "improved_global_best": improved_global_best,
             },
         }
+
+    def _run_candidate(self, candidate: PatchCandidate, state: Any) -> RunResult:
+        if self.bootstrap is None or self.runner is None:
+            raise RuntimeError("AutoResearchRewardEvaluator is not configured.")
+        if _EVALUATION_SLOTS is None:
+            raise RuntimeError("AutoResearchRewardEvaluator evaluation slots are not configured.")
+
+        # Grouped rollouts stay enabled for the upstream entropic advantage recipe,
+        # but inner autoresearch training runs must be serialized on a single GPU.
+        _EVALUATION_SLOTS.acquire()
+        try:
+            return self.runner.run_candidate(
+                bootstrap=self.bootstrap,
+                candidate=candidate,
+                step=getattr(state, "timestep", -1) + 1,
+                state_id=getattr(state, "id", "unknown"),
+            )
+        finally:
+            _EVALUATION_SLOTS.release()
 
     @staticmethod
     def _build_message(candidate: PatchCandidate, result: RunResult, current_best: float, reward: float) -> str:

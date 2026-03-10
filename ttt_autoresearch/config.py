@@ -10,6 +10,14 @@ from typing import Any
 
 
 DISCOVER_GIT_REV = "5df1a0ee9b04272ca33de0101ae64dd499e63f29"
+SUPPORTED_RENDERERS = (
+    "qwen3",
+    "qwen3_instruct",
+    "gpt_oss_no_sysprompt",
+    "gpt_oss_low_reasoning",
+    "gpt_oss_medium_reasoning",
+    "gpt_oss_high_reasoning",
+)
 
 
 @dataclass(slots=True)
@@ -37,6 +45,7 @@ class TTTAutoResearchConfig:
     eval_timeout: int | None = None
     local_model_path: str | None = None
     keep_history: int = 6
+    max_concurrent_evaluations: int = 1
 
     def normalized(self, repo_root: Path) -> "TTTAutoResearchConfig":
         run_dir = _resolve_path(self.run_dir, repo_root) if self.run_dir else repo_root / "runs" / datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -54,7 +63,7 @@ class TTTAutoResearchConfig:
             baseline_command_override=_normalize_command(self.baseline_command_override),
             candidate_command_override=_normalize_command(self.candidate_command_override),
             experiment_name=experiment_name,
-            renderer_name=self.renderer_name or infer_renderer_name(self.model_name),
+            renderer_name=resolve_renderer_name(self.model_name, self.renderer_name),
             learning_rate=self.learning_rate,
             lora_rank=self.lora_rank,
             kl_penalty_coef=self.kl_penalty_coef,
@@ -65,6 +74,7 @@ class TTTAutoResearchConfig:
             eval_timeout=self.eval_timeout or self.timeout_sec,
             local_model_path=_resolve_optional_path_str(self.local_model_path, repo_root),
             keep_history=self.keep_history,
+            max_concurrent_evaluations=max(1, int(self.max_concurrent_evaluations)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -109,7 +119,7 @@ class BootstrapContext:
         return env
 
 
-def infer_renderer_name(model_name: str) -> str:
+def infer_renderer_name(model_name: str) -> str | None:
     lowered = model_name.lower()
     if "qwen" in lowered:
         if "instruct" in lowered:
@@ -117,7 +127,24 @@ def infer_renderer_name(model_name: str) -> str:
         return "qwen3"
     if "gpt-oss" in lowered:
         return "gpt_oss_high_reasoning"
-    return "qwen3"
+    return None
+
+
+def resolve_renderer_name(model_name: str, renderer_name: str | None) -> str:
+    if renderer_name is not None:
+        if renderer_name not in SUPPORTED_RENDERERS:
+            supported = ", ".join(SUPPORTED_RENDERERS)
+            raise ValueError(f"Unsupported renderer_name={renderer_name!r}. Supported values: {supported}.")
+        return renderer_name
+
+    inferred = infer_renderer_name(model_name)
+    if inferred is None:
+        supported = ", ".join(SUPPORTED_RENDERERS)
+        raise ValueError(
+            f"Could not infer a renderer for model_name={model_name!r}. "
+            f"Set renderer_name explicitly to one of: {supported}."
+        )
+    return inferred
 
 
 def load_config(path: str | os.PathLike[str], repo_root: str | os.PathLike[str] | None = None) -> TTTAutoResearchConfig:

@@ -80,6 +80,18 @@ class RunnerTests(unittest.TestCase):
             else:
                 os.environ["OPENAI_BASE_URL"] = old_base
 
+    def test_unknown_model_requires_explicit_renderer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with self.assertRaises(ValueError):
+                TTTAutoResearchConfig(model_name="meta-llama/Meta-Llama-3-70B").normalized(root)
+
+            config = TTTAutoResearchConfig(
+                model_name="meta-llama/Meta-Llama-3-70B",
+                renderer_name="gpt_oss_high_reasoning",
+            ).normalized(root)
+            self.assertEqual(config.renderer_name, "gpt_oss_high_reasoning")
+
 
 if __name__ == "__main__":
     unittest.main()
