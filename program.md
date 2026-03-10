@@ -115,4 +115,4 @@ As an example use case, a user might leave you running while they sleep. If each
 
 ## Collaborative mode
 
-If `ENSUE_API_KEY` is set (or `.autoresearch-key` exists), you are part of a research swarm. Read `collab.md` for the full protocol. Pick a cool, memorable codename for yourself (e.g. `nova`, `phoenix`, `atlas`) — this becomes your identity in the swarm. Set it with `coord.agent_id = "your_name"` and call `coord.announce()` at startup. If neither key exists, ignore this — solo mode works fine.
+If `ENSUE_API_KEY` is set (or `.autoresearch-key` exists), you are part of a research swarm. Read `collab.md` for the full protocol. Pick a cool, memorable single-word codename for yourself (e.g. `nova`, `phoenix`, `atlas`) — NOT your Ensue org name, NOT anything with `autoresearch-` in it. Set it with `coord.agent_id = "phoenix"` and call `coord.announce()` at startup. If neither key exists, ignore this — solo mode works fine.

@@ -1,8 +1,8 @@
 """
-One-time setup script for the sai_autoresearch-community Ensue hub org.
+One-time setup script for the autoresearch-at-home Ensue hub org.
 
 Prerequisites:
-  1. Create the 'sai_autoresearch-community' org at https://ensue-network.ai
+  1. Create the 'autoresearch-at-home' org at https://ensue-network.ai
   2. Get an API key for the org (via web UI: Settings > API Keys)
   3. Set ENSUE_API_KEY env var or pass --api-key
 
@@ -60,7 +60,7 @@ def setup_hub(api_key: str, seed_train_py: str = "train.py"):
     # 4. Grant permissions to participants group
     print("\n[4/7] Granting permissions to 'participants' group...")
     target = {"type": "group", "group_name": "participants"}
-    namespaces = ["claims/", "results/", "hypotheses/", "best/", "leaderboard"]
+    namespaces = ["claims/", "results/", "hypotheses/", "insights/", "best/", "leaderboard"]
     for ns in namespaces:
         for action in ["read", "create"]:
             share(api_key, {
@@ -152,7 +152,7 @@ def setup_hub(api_key: str, seed_train_py: str = "train.py"):
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Set up sai_autoresearch-community Ensue hub org")
+    parser = argparse.ArgumentParser(description="Set up autoresearch-at-home Ensue hub org")
     parser.add_argument("--api-key", help="Ensue API key (or set ENSUE_API_KEY env var)")
     parser.add_argument("--seed-train-py", default="train.py", help="Path to baseline train.py")
     args = parser.parse_args()

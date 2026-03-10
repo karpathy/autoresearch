@@ -68,7 +68,7 @@ See `collab.md` for the full protocol. The short version:
 3. **RUN** — same as solo mode: edit `train.py`, train for 5 minutes, check val_bpb
 4. **PUBLISH** — publish the result (including full source) so others can learn from it
 
-All shared state lives under `@sai_autoresearch-community/` in Ensue:
+All shared state lives under `@autoresearch-at-home/` in Ensue:
 
 ```
 claims/<hash>        who's working on what (expires after 15 min)

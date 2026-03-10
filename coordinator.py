@@ -30,7 +30,7 @@ import requests
 # Configuration
 # ---------------------------------------------------------------------------
 
-HUB_ORG = "sai_autoresearch-community"
+HUB_ORG = "autoresearch-at-home"
 API_URL = "https://api.ensue-network.ai/"
 KEY_FILE = ".autoresearch-key"
 
