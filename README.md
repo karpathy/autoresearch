@@ -20,7 +20,7 @@ If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/s
 
 ## Quick start
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+**Requirements:** A single NVIDIA GPU with CUDA access (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
 
 ```bash
 
@@ -37,7 +37,7 @@ uv run prepare.py
 uv run train.py
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
+If the above commands all work ok, your setup is working and you can go into autonomous research mode. If `train.py` says tokenizer or parquet data is missing, run `uv run prepare.py` first to populate the cache. On unsupported environments, `train.py` and the CUDA-only helpers now stop early with a clear error explaining that this repo expects one visible NVIDIA GPU with CUDA access.
 
 ## Running the agent
 
@@ -66,7 +66,7 @@ pyproject.toml  — dependencies
 
 ## Platform support
 
-This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
+This code currently requires that you have a single NVIDIA GPU with CUDA available. The repository now checks this explicitly and fails early with actionable guidance instead of crashing deep inside PyTorch CUDA calls. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
 
 Seeing as there seems to be a lot of interest in tinkering with autoresearch on much smaller compute platforms than an H100, a few extra words. If you're going to try running autoresearch on smaller computers (Macbooks etc.), I'd recommend one of the forks below. On top of this, here are some recommendations for how to tune the defaults for much smaller models for aspiring forks:
 

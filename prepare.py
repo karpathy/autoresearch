@@ -18,6 +18,7 @@ import pickle
 from multiprocessing import Pool
 
 import requests
+import pyarrow as pa
 import pyarrow.parquet as pq
 import rustbpe
 import tiktoken
@@ -151,8 +152,9 @@ def train_tokenizer():
 
     parquet_files = list_parquet_files()
     if len(parquet_files) < 2:
-        print("Tokenizer: need at least 2 data shards (1 train + 1 val). Download more data first.")
-        sys.exit(1)
+        raise RuntimeError(
+            f"Tokenizer training requires at least 2 data shards (1 train + 1 val), but found {len(parquet_files)} in {DATA_DIR}. Run `uv run prepare.py --num-shards 1` or higher to download enough data."
+        )
 
     # --- Train with rustbpe ---
     print("Tokenizer: training BPE tokenizer...")
@@ -215,8 +217,18 @@ class Tokenizer:
 
     @classmethod
     def from_directory(cls, tokenizer_dir=TOKENIZER_DIR):
-        with open(os.path.join(tokenizer_dir, "tokenizer.pkl"), "rb") as f:
-            enc = pickle.load(f)
+        tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
+        if not os.path.exists(tokenizer_path):
+            raise RuntimeError(
+                f"Tokenizer not found at {tokenizer_path}. Run `uv run prepare.py` first to download data and train the tokenizer."
+            )
+        try:
+            with open(tokenizer_path, "rb") as f:
+                enc = pickle.load(f)
+        except (pickle.UnpicklingError, EOFError, AttributeError, ValueError, OSError) as err:
+            raise RuntimeError(
+                f"Tokenizer at {tokenizer_path} could not be loaded. Run `uv run prepare.py` again to rebuild the tokenizer cache."
+            ) from err
         return cls(enc)
 
     def get_vocab_size(self):
@@ -247,23 +259,61 @@ class Tokenizer:
 
 def get_token_bytes(device="cpu"):
     path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
-    with open(path, "rb") as f:
-        return torch.load(f, map_location=device)
+    if not os.path.exists(path):
+        raise RuntimeError(
+            f"token_bytes cache not found at {path}. Run `uv run prepare.py` first to build the tokenizer artifacts."
+        )
+    try:
+        with open(path, "rb") as f:
+            return torch.load(f, map_location=device)
+    except (OSError, RuntimeError, pickle.UnpicklingError, EOFError, ValueError) as err:
+        raise RuntimeError(
+            f"token_bytes cache at {path} could not be loaded. Run `uv run prepare.py` again to rebuild the tokenizer artifacts."
+        ) from err
+
+
+def require_cuda_environment(context):
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            f"{context} requires a CUDA-enabled NVIDIA GPU, but PyTorch cannot access CUDA. "
+            "Run this repository on a machine with CUDA available, or use a platform-specific fork listed in README.md."
+        )
+    if torch.cuda.device_count() < 1:
+        raise RuntimeError(
+            f"{context} requires one visible NVIDIA GPU, but torch.cuda.device_count() returned 0. "
+            "Check your NVIDIA driver, CUDA runtime, container GPU passthrough, and CUDA_VISIBLE_DEVICES."
+        )
 
 
 def _document_batches(split, tokenizer_batch_size=128):
     """Infinite iterator over document batches from parquet files."""
     parquet_paths = list_parquet_files()
-    assert len(parquet_paths) > 0, "No parquet files found. Run prepare.py first."
+    if len(parquet_paths) == 0:
+        raise RuntimeError(
+            f"No parquet data shards found in {DATA_DIR}. Run `uv run prepare.py` first to download the dataset and train the tokenizer."
+        )
     val_path = os.path.join(DATA_DIR, VAL_FILENAME)
     if split == "train":
         parquet_paths = [p for p in parquet_paths if p != val_path]
+        if len(parquet_paths) == 0:
+            raise RuntimeError(
+                f"No training parquet shards found in {DATA_DIR}. Run `uv run prepare.py --num-shards 1` or higher to download training data."
+            )
     else:
+        if not os.path.exists(val_path):
+            raise RuntimeError(
+                f"Validation shard not found at {val_path}. Run `uv run prepare.py` first to download the pinned validation shard."
+            )
         parquet_paths = [val_path]
     epoch = 1
     while True:
         for filepath in parquet_paths:
-            pf = pq.ParquetFile(filepath)
+            try:
+                pf = pq.ParquetFile(filepath)
+            except (OSError, ValueError, TypeError, pa.ArrowInvalid, pa.ArrowIOError) as err:
+                raise RuntimeError(
+                    f"Parquet shard at {filepath} could not be opened. Run `uv run prepare.py` again to rebuild the cached dataset shards."
+                ) from err
             for rg_idx in range(pf.num_row_groups):
                 rg = pf.read_row_group(rg_idx)
                 batch = rg.column('text').to_pylist()
@@ -279,6 +329,7 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
     When no document fits remaining space, crops shortest doc to fill exactly.
     100% utilization (no padding).
     """
+    require_cuda_environment("make_dataloader")
     assert split in ["train", "val"]
     row_capacity = T + 1
     batches = _document_batches(split)
@@ -348,6 +399,7 @@ def evaluate_bpb(model, tokenizer, batch_size):
     are excluded from both sums.
     Uses fixed MAX_SEQ_LEN so results are comparable across configs.
     """
+    require_cuda_environment("evaluate_bpb")
     token_bytes = get_token_bytes(device="cuda")
     val_loader = make_dataloader(tokenizer, batch_size, MAX_SEQ_LEN, "val")
     steps = EVAL_TOKENS // (batch_size * MAX_SEQ_LEN)
@@ -368,21 +420,25 @@ def evaluate_bpb(model, tokenizer, batch_size):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Prepare data and tokenizer for autoresearch")
-    parser.add_argument("--num-shards", type=int, default=10, help="Number of training shards to download (-1 = all). Val shard is always pinned.")
-    parser.add_argument("--download-workers", type=int, default=8, help="Number of parallel download workers")
-    args = parser.parse_args()
+    try:
+        parser = argparse.ArgumentParser(description="Prepare data and tokenizer for autoresearch")
+        parser.add_argument("--num-shards", type=int, default=10, help="Number of training shards to download (-1 = all). Val shard is always pinned.")
+        parser.add_argument("--download-workers", type=int, default=8, help="Number of parallel download workers")
+        args = parser.parse_args()
 
-    num_shards = MAX_SHARD if args.num_shards == -1 else args.num_shards
+        num_shards = MAX_SHARD if args.num_shards == -1 else args.num_shards
 
-    print(f"Cache directory: {CACHE_DIR}")
-    print()
+        print(f"Cache directory: {CACHE_DIR}")
+        print()
 
-    # Step 1: Download data
-    download_data(num_shards, download_workers=args.download_workers)
-    print()
+        # Step 1: Download data
+        download_data(num_shards, download_workers=args.download_workers)
+        print()
 
-    # Step 2: Train tokenizer
-    train_tokenizer()
-    print()
-    print("Done! Ready to train.")
+        # Step 2: Train tokenizer
+        train_tokenizer()
+        print()
+        print("Done! Ready to train.")
+    except RuntimeError as err:
+        print(f"ERROR: {err}", file=sys.stderr)
+        raise SystemExit(1)
