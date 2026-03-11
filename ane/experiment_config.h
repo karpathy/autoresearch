@@ -13,7 +13,7 @@
 // Gradient accumulation steps before Adam update + weight re-staging (~50ms).
 // Lower = more weight updates per wall-clock minute. With dynamic pipeline,
 // there is no recompilation cost — only the cheap weight transpose + IOSurface write.
-#define ACCUM_STEPS 10
+#define ACCUM_STEPS 2
 #define GRAD_CLIP_MAX 1.0f
 #define WEIGHT_DECAY 0.2f
 // LR schedule: cosine decay with linear warmup

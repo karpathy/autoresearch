@@ -95,7 +95,7 @@ This fork adds an **ANE training backend** that runs transformer training direct
 
 ### Current best results
 
-**val_loss = 3.120** (~109 autonomous experiment cycles, ~67M param model, 5-min budget)
+**val_loss = 3.102** (~122 autonomous experiment cycles, ~67M param model, 5-min budget)
 
 Starting from 6.109 baseline, key improvements discovered through autonomous experimentation:
 
@@ -108,10 +108,12 @@ Starting from 6.109 baseline, key improvements discovered through autonomous exp
 | | Extended training (15 min) | 4.836 | ~120 |
 | **Dynamic pipeline** | **One-time compile, no recompilation** | **3.89** | **~1340** |
 | | EMBED_LR_SCALE=2.0 (reduce embed LR) | 3.49 | ~1140 |
-| | ACCUM ramp 2→4→6→8→10 (gradient smoothing) | **3.120** | **~1500** |
+| | ACCUM ramp 2→4→6→8→10 (gradient smoothing) | 3.120 | ~1500 |
+| **+ vDSP Adam + parallel restage** | **Vectorized optimizer, parallel layer updates** | **3.102** | **~1284** |
 
 Key discoveries:
 - **Dynamic weight pipeline** was the single biggest improvement: eliminating per-batch recompilation turned ~60% of wall time from compilation into training, yielding 11x more steps per 5-minute budget.
+- **Vectorized Adam + parallel restaging**: vDSP vector ops for Adam and `dispatch_apply` across layers gave 12% more steps per cycle, pushing ACCUM=2 to 3.102 without needing the ramp.
 - **ACCUM ramping**: start with low ACCUM (noisy but fast) for early training, then progressively increase ACCUM as the model approaches convergence — smoother gradients matter more at lower loss.
 
 ### Hyperparameters
