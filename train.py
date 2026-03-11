@@ -620,6 +620,7 @@ peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
 print("---")
 print(f"val_bpb:          {val_bpb:.6f}")
+print(f"startup_seconds:  {startup_time:.1f}")
 print(f"training_seconds: {total_training_time:.1f}")
 print(f"total_seconds:    {t_end - t_start:.1f}")
 print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
