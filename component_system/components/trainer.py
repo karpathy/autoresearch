@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+import torch.nn.utils as nn_utils
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, evaluate_bpb, make_dataloader
 
@@ -27,6 +28,7 @@ class TrainingSettings:
     adam_betas: tuple[float, float] = (0.8, 0.95)
     warmup_ratio: float = 0.0
     warmdown_ratio: float = 0.5
+    max_grad_norm: float = 1.0
     final_lr_frac: float = 0.0
     depth: int = 8
     device_batch_size: int = 32  # 24GB vram
@@ -74,7 +76,9 @@ def run_training_session(
     tokens_per_fwdbwd = settings.device_batch_size * MAX_SEQ_LEN
     assert settings.total_batch_size % tokens_per_fwdbwd == 0
     grad_accum_steps = settings.total_batch_size // tokens_per_fwdbwd
-    train_loader = make_dataloader(tokenizer, settings.device_batch_size, MAX_SEQ_LEN, "train")
+    train_loader = make_dataloader(
+        tokenizer, settings.device_batch_size, MAX_SEQ_LEN, "train"
+    )
     x, y, epoch = next(train_loader)
 
     print(f"Vocab size: {tokenizer.get_vocab_size():,}")
@@ -109,11 +113,17 @@ def run_training_session(
                 group["momentum"] = muon_momentum
                 group["weight_decay"] = muon_weight_decay
 
+        # Gradient clipping for training stability
+        if settings.max_grad_norm > 0:
+            nn_utils.clip_grad_norm_(model.parameters(), settings.max_grad_norm)
+
         optimizer.step()
         model.zero_grad(set_to_none=True)
         train_loss_f = train_loss.item()
         if train_loss_f > 100:
-            raise RuntimeError("Training aborted because loss exceeded the fast-fail threshold.")
+            raise RuntimeError(
+                "Training aborted because loss exceeded the fast-fail threshold."
+            )
 
         torch.cuda.synchronize(device=device)
         dt = time.time() - t0
@@ -125,11 +135,17 @@ def run_training_session(
         debiased_smooth_loss = smooth_train_loss / (1 - ema_beta ** (step + 1))
         pct_done = 100 * progress
         tok_per_sec = int(settings.total_batch_size / dt)
-        mfu = 100 * num_flops_per_token * settings.total_batch_size / dt / H100_BF16_PEAK_FLOPS
+        mfu = (
+            100
+            * num_flops_per_token
+            * settings.total_batch_size
+            / dt
+            / H100_BF16_PEAK_FLOPS
+        )
         remaining = max(0.0, TIME_BUDGET - total_training_time)
         print(
             f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | "
-            f"lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | "
+            f"lrm: {lrm:.2f} | dt: {dt * 1000:.0f}ms | tok/sec: {tok_per_sec:,} | "
             f"mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ",
             end="",
             flush=True,
