@@ -49,12 +49,26 @@ Hi have a look at program.md and let's kick off a new experiment! let's do the s
 
 The `program.md` file is essentially a super lightweight "skill".
 
+## Multi-GPU (running multiple agents)
+
+If you have multiple GPUs, you can run agents in parallel using `swarm.py`. It creates isolated git worktrees so each agent has its own `train.py` and branch:
+
+```bash
+# Set up 4 agents on 4 GPUs, optionally run baselines
+uv run swarm.py --tag mar10 --gpus 0,1,2,3 --baseline
+
+# Then open Claude Code / Codex in each worktree directory
+# Cleanup when done
+uv run swarm.py --cleanup
+```
+
 ## Project structure
 
 ```
 prepare.py      — constants, data prep + runtime utilities (do not modify)
 train.py        — model, optimizer, training loop (agent modifies this)
 program.md      — agent instructions
+swarm.py        — multi-GPU launcher (creates worktrees for parallel agents)
 pyproject.toml  — dependencies
 ```
 
