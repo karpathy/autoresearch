@@ -63,6 +63,27 @@ static void adam_update(float *w, const float *g, AdamState *s, int t, float lr,
     }
 }
 
+// Logit softcapping: cap * tanh(logits / cap), clamps logits to [-cap, cap]
+static void logit_softcap(float *logits, int n, float cap) {
+    float inv_cap = 1.0f / cap;
+    vDSP_vsmul(logits, 1, &inv_cap, logits, 1, (vDSP_Length)n);
+    int ni = n;
+    vvtanhf(logits, logits, &ni);
+    vDSP_vsmul(logits, 1, &cap, logits, 1, (vDSP_Length)n);
+}
+
+// Logit softcap backward: dlogits *= 1 - tanh²(x/cap) = 1 - (capped/cap)²
+static void logit_softcap_bwd(float *dlogits, const float *capped_logits, int n, float cap) {
+    float inv_cap = 1.0f / cap;
+    float *tmp = (float*)malloc(n * sizeof(float));
+    vDSP_vsmul(capped_logits, 1, &inv_cap, tmp, 1, (vDSP_Length)n);  // tanh values
+    vDSP_vmul(tmp, 1, tmp, 1, tmp, 1, (vDSP_Length)n);  // tanh²
+    float neg_one = -1.0f, one = 1.0f;
+    vDSP_vsmsa(tmp, 1, &neg_one, &one, tmp, 1, (vDSP_Length)n);  // 1 - tanh²
+    vDSP_vmul(dlogits, 1, tmp, 1, dlogits, 1, (vDSP_Length)n);
+    free(tmp);
+}
+
 // Cross-entropy loss + gradient for logits (column-major: [VOCAB, SEQ])
 // logits[v*SEQ+t] = logit for vocab v, position t
 // targets[t] = target token id for position t
@@ -106,6 +127,54 @@ static float cross_entropy_loss(float *dlogits, const float *logits, const uint1
     vDSP_mtrans(buf, 1, dlogits, 1, (vDSP_Length)V, (vDSP_Length)S);
     free(buf);
     return total_loss / S;
+}
+
+// Vocab compaction: map full 32K vocab to ~1900 active tokens
+typedef struct {
+    int compact_vocab;          // number of active tokens
+    int *full_to_compact;       // [VOCAB] → compact id (-1 if unused)
+    int *compact_to_full;       // [compact_vocab] → full vocab id
+} VocabMap;
+
+static VocabMap vocab_map_build(const uint16_t *data, size_t n_tokens, int full_vocab) {
+    VocabMap vm;
+    vm.full_to_compact = (int*)malloc(full_vocab * sizeof(int));
+    memset(vm.full_to_compact, -1, full_vocab * sizeof(int));
+    for (size_t i = 0; i < n_tokens; i++)
+        vm.full_to_compact[data[i]] = 0;
+    int cid = 0;
+    for (int v = 0; v < full_vocab; v++) {
+        if (vm.full_to_compact[v] == 0)
+            vm.full_to_compact[v] = cid++;
+        else
+            vm.full_to_compact[v] = -1;
+    }
+    vm.compact_vocab = cid;
+    vm.compact_to_full = (int*)malloc(cid * sizeof(int));
+    for (int v = 0; v < full_vocab; v++)
+        if (vm.full_to_compact[v] >= 0)
+            vm.compact_to_full[vm.full_to_compact[v]] = v;
+    return vm;
+}
+
+static float *vocab_compact_embed(const float *full_embed, const VocabMap *vm, int dim) {
+    float *ce = (float*)malloc((size_t)vm->compact_vocab * dim * 4);
+    for (int c = 0; c < vm->compact_vocab; c++)
+        memcpy(ce + c*dim, full_embed + vm->compact_to_full[c]*dim, dim*4);
+    return ce;
+}
+
+static void vocab_scatter_grads(float *full_gembed, const float *compact_gembed, const VocabMap *vm, int dim) {
+    for (int c = 0; c < vm->compact_vocab; c++) {
+        int fv = vm->compact_to_full[c];
+        for (int d = 0; d < dim; d++)
+            full_gembed[fv*dim + d] += compact_gembed[c*dim + d];
+    }
+}
+
+static void vocab_update_full(float *full_embed, const float *compact_embed, const VocabMap *vm, int dim) {
+    for (int c = 0; c < vm->compact_vocab; c++)
+        memcpy(full_embed + vm->compact_to_full[c]*dim, compact_embed + c*dim, dim*4);
 }
 
 // Embedding lookup: token_ids → x [DIM, SEQ] (channel-first)

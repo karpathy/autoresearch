@@ -24,7 +24,7 @@ Once you get confirmation, kick off the experimentation.
 Each experiment runs on the Apple Neural Engine. The training binary runs for a **fixed time budget of 5 minutes** (wall clock). You launch it simply as: `python harness_ane.py`.
 
 **What you CAN do:**
-- Modify `ane/experiment_config.h` — this is the ONLY file you edit. It contains architecture defines (DIM, HIDDEN, HEADS, SEQ, NLAYERS) and optimizer hyperparameters (LEARNING_RATE, ADAM_BETA1, ADAM_BETA2, ADAM_EPS, ACCUM_STEPS).
+- Modify `ane/experiment_config.h` — this is the ONLY file you edit. It contains architecture defines (DIM, HIDDEN, HEADS, SEQ, NLAYERS) and optimizer hyperparameters (LEARNING_RATE, ADAM_BETA1, ADAM_BETA2, ADAM_EPS, ACCUM_STEPS, etc).
 
 **What you CANNOT do:**
 - Modify any other file (`train_ane.m`, `stories_config.h`, `harness_ane.py`, etc.). They are read-only.
@@ -34,8 +34,15 @@ Each experiment runs on the Apple Neural Engine. The training binary runs for a 
 **The goal is simple: get the lowest val_loss.** Since the time budget is fixed, you don't need to worry about training time — it's always 5 minutes. Everything in `experiment_config.h` is fair game.
 
 **Architecture vs hyperparameter changes:**
-- **Architecture changes** (DIM, HIDDEN, HEADS, SEQ, NLAYERS): These reset the checkpoint to random initialization. This is "expensive" — you lose all training progress.
-- **Hyperparameter changes** (LEARNING_RATE, ADAM_BETA1, ADAM_BETA2, ADAM_EPS, ACCUM_STEPS): These continue from the existing checkpoint. This is "cheap" — training progress is preserved.
+- **Architecture changes** (DIM, HIDDEN, HEADS, SEQ, NLAYERS): These reset the checkpoint to random initialization. This is "expensive" — you lose all training progress. The 10 ANE kernels are recompiled once (~470ms one-time cost).
+- **Hyperparameter changes** (LEARNING_RATE, ADAM_BETA1, ADAM_BETA2, ADAM_EPS, ACCUM_STEPS, etc.): These continue from the existing checkpoint. This is "cheap" — training progress is preserved.
+
+**How the ANE pipeline works:**
+- ANE kernels are compiled **once** at startup using a dynamic weight pipeline. Weights are passed via IOSurface spatial dimensions, not baked into kernels.
+- After each Adam update, weights are transposed and re-staged to IOSurfaces (~50ms). There is **no recompilation** during training.
+- `ACCUM_STEPS` controls how many gradient accumulation steps happen before each Adam update + weight re-staging. Lower values = more weight updates per 5-minute budget but slightly more overhead per update.
+- Vocab compaction is automatic: only ~9K of 32K tokens actually appear in TinyStories, so the classifier SGEMM is ~3.5x smaller.
+- Residual connections are scaled by `1/sqrt(2*NLAYERS)` — keep this in mind when changing NLAYERS.
 
 **Simplicity criterion**: All else being equal, simpler is better. A small improvement from a radical architecture change that loses checkpoint progress may not be worth it compared to a hyperparameter tweak.
 

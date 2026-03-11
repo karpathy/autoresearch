@@ -15,6 +15,9 @@ import sys
 import time
 from pathlib import Path
 
+import shutil
+import tempfile
+
 ANE_DIR = Path(__file__).parent / "ane"
 BINARY = ANE_DIR / "train_ane"
 CONFIG_FILE = ANE_DIR / "experiment_config.h"
@@ -83,8 +86,22 @@ def compile_ane() -> tuple[bool, str]:
         return False, str(e)
 
 
+def cleanup_ane_temp():
+    """Remove orphaned ANE kernel temp dirs from /tmp."""
+    tmp = Path(tempfile.gettempdir())
+    count = 0
+    for d in tmp.iterdir():
+        if d.is_dir() and (d / "model.mil").exists():
+            shutil.rmtree(d, ignore_errors=True)
+            count += 1
+    if count:
+        print(f"[harness] Cleaned {count} orphaned ANE temp dirs")
+
+
 def run_experiment(wall_time: int = 300) -> dict:
     """Run a single training experiment. Returns parsed metrics dict."""
+    cleanup_ane_temp()
+
     if not BINARY.exists():
         return {"status": "error", "error": "Binary not found. Run compile first."}
 

@@ -87,27 +87,30 @@ This fork adds an **ANE training backend** that runs transformer training direct
 ### How it works
 
 - Uses TinyStories dataset with Llama2 32K BPE tokenizer (ANE's native data format)
-- Compiles forward and backward ANE kernels with baked weights, recompiles after each Adam update
-- Uses `exec()` restart to work around ANE's ~100 kernel compile limit per process
+- **Dynamic weight pipeline**: 10 ANE kernels are compiled once at startup (~470ms). Weights are passed via IOSurface spatial dimensions using `slice_by_size`, not baked into kernels — no recompilation during training
+- After each Adam update, weights are transposed and re-staged to per-layer IOSurfaces (~50ms)
+- **Scaled initialization**: Wo and W2 weights initialized with `1/sqrt(2*NLAYERS)` residual scaling
 - Metric is `val_loss` (cross-entropy), not `val_bpb` — experiments are compared within this framework
 - Agent edits only `ane/experiment_config.h` (architecture + optimizer hyperparameters)
 
 ### Current best results
 
-**val_loss = 5.455** (35 autonomous experiment cycles, ~67M param model)
+**val_loss = 3.55** (~56 autonomous experiment cycles, ~67M param model, 5-min budget)
 
-Starting from 6.109 baseline, the agent discovered these improvements through autonomous experimentation:
+Starting from 6.109 baseline, key improvements discovered through autonomous experimentation:
 
-| Change | val_loss | Improvement |
-|---|---|---|
-| Baseline (NL=12, SEQ=256) | 6.109 | — |
-| LR=1e-3, ACCUM=4 | 6.098 | -0.011 |
-| NL=6, SEQ=512 (ncdrone arch) | 6.074 | -0.035 |
-| ACCUM=1 (max weight updates) | 5.978 | -0.131 |
-| Adam betas (0.8, 0.95) | 5.849 | -0.260 |
-| WARMDOWN_RATIO=0.3 | 5.737 | -0.372 |
-| WD=0.2 | 5.672 | -0.437 |
-| Extended training + anneal cycles | **5.455** | **-0.654** |
+| Phase | Change | val_loss | Steps/5min |
+|---|---|---|---|
+| Static kernels | Baseline (NL=12, SEQ=256) | 6.109 | ~400 |
+| | NL=6, SEQ=512 + ACCUM=1 | 5.978 | ~120 |
+| | Optimizer tuning (betas, WD, anneal cycles) | 5.414 | ~60 |
+| + ncdrone optimizer | Loss scaling, softcap, diff LR, cosine sched | 5.023 | ~120 |
+| | Extended training (15 min) | 4.836 | ~120 |
+| **Dynamic pipeline** | **One-time compile, no recompilation** | **3.89** | **~1340** |
+| | Continued training + ACCUM tuning | **3.68** | **~1340** |
+| | EMBED_LR_SCALE=2.0 (reduce embed LR near plateau) | **3.55** | **~1340** |
+
+The dynamic weight pipeline was the single biggest improvement: eliminating per-batch recompilation turned ~60% of wall time from compilation into training, yielding 11x more steps per 5-minute budget.
 
 ### Hyperparameters
 
@@ -127,20 +130,29 @@ The agent edits `ane/experiment_config.h`. All hyperparameters and their current
 
 | Parameter | Value | Notes |
 |---|---|---|
-| `LEARNING_RATE` | 1e-3f | Global learning rate |
-| `ADAM_BETA1` | 0.8f | First moment decay (CUDA reference value) |
-| `ADAM_BETA2` | 0.95f | Second moment decay (CUDA reference value) |
+| `LEARNING_RATE` | 3e-4f | Base learning rate (scaled by differential LR multipliers below) |
+| `ADAM_BETA1` | 0.9f | First moment decay |
+| `ADAM_BETA2` | 0.95f | Second moment decay (ncdrone uses 0.95 vs default 0.999) |
 | `ADAM_EPS` | 1e-8f | Adam epsilon |
-| `ACCUM_STEPS` | 1 | Gradient accumulation steps. Lower = more weight updates per budget. Each step recompiles all ANE kernels |
+| `ACCUM_STEPS` | 4 | Gradient accumulation steps per Adam update + weight re-staging (~50ms) |
 | `GRAD_CLIP_MAX` | 1.0f | Global L2 gradient norm clip threshold |
 | `WEIGHT_DECAY` | 0.2f | Decoupled weight decay (AdamW). Applied only to weight matrices, not embeddings or RMSNorm |
-| `WARMDOWN_RATIO` | 0.0f | Fraction of wall-time for linear LR decay to 0. Use 0.3 for annealing phase |
+| `LR_WARMUP_STEPS` | 100 | Linear warmup steps before cosine decay |
+| `LR_MIN_FRAC` | 0.1f | Cosine schedule decays LR to this fraction of max |
+| `LOSS_SCALE` | 256.0f | Loss scaling factor — prevents FP16 gradient underflow. Undone during gradient averaging |
+| `SOFTCAP` | 15.0f | Logit softcapping: `cap * tanh(logits/cap)`, clamps logits to [-cap, cap] to prevent explosion |
+| `EMBED_LR_SCALE` | 5.0f | Embedding LR = base LR × this (embeddings learn faster) |
+| `MATRIX_LR_SCALE` | 0.05f | Weight matrix LR = base LR × this (matrices learn slower) |
 
-**Optimizer features** (implemented during autonomous research):
+**Optimizer features** (from maderix/ANE + ncdrone research):
 
 - **AdamW** — decoupled weight decay applied before Adam step, only on weight matrices
 - **Gradient clipping** — global L2 norm across all parameters using vDSP
-- **LR warmdown** — linear decay to 0 in final portion of wall-time budget
+- **Cosine LR schedule** — linear warmup for `LR_WARMUP_STEPS`, then cosine decay to `LR_MIN_FRAC` of max LR
+- **Loss scaling (256×)** — scales gradients up before FP16 backward pass, undone during gradient averaging. Prevents underflow that causes the 5.5 plateau (maderix)
+- **Logit softcapping** — `cap * tanh(logits/cap)` before softmax with chain-rule correction in backward. Prevents logit explosion during training
+- **Differential learning rates** — embeddings at 5× base LR, weight matrices at 0.05× base LR, norm params at 1× base LR (ncdrone)
+- **Residual scaling** — residual connections scaled by `1/sqrt(2*NLAYERS)` to stabilize deep residual streams
 
 ### Differences from the CUDA backend
 
@@ -148,7 +160,7 @@ The ANE backend is a separate training stack, not a port of `train.py`. Key diff
 
 | | CUDA (`train.py`) | ANE (`train_ane.m`) |
 |---|---|---|
-| **Optimizer** | Muon + AdamW (per-parameter-group LRs, weight decay, momentum scheduling) | AdamW (global LR, weight decay, grad clipping, LR warmdown) |
+| **Optimizer** | Muon + AdamW (per-parameter-group LRs, weight decay, momentum scheduling) | AdamW (differential LR, cosine schedule, loss scaling, logit softcap, residual scaling) |
 | **Data** | climbmix-400b, custom 8K BPE | TinyStories, Llama2 32K BPE |
 | **Metric** | `val_bpb` (bits per byte) | `val_loss` (cross-entropy) |
 | **Language** | Python / PyTorch | Objective-C / raw MIL kernels |
@@ -187,16 +199,11 @@ The agent will modify `ane/experiment_config.h`, run experiments via `harness_an
 ```
 ane/                         # ANE training backend
 ├── experiment_config.h      # Agent's ONLY editing target
-├── stories_config.h         # Model config (includes experiment_config.h)
-├── stories_io.h             # IOSurface I/O helpers
-├── stories_mil.h            # MIL kernel generators
-├── stories_cpu_ops.h        # CPU ops (RMSNorm, cross-entropy, Adam)
-├── forward.h                # Forward pass helpers
-├── backward.h               # Backward pass helpers
-├── ane_runtime.h            # ANE runtime wrapper
-├── ane_mil_gen.h             # MIL text generation
-├── model.h                  # Model struct + weight loading
-├── train_ane.m              # Training binary (+wall-time, +val, +JSON)
+├── stories_config.h         # Model config, structs (includes experiment_config.h)
+├── stories_io.h             # IOSurface I/O, dynamic weight staging, request helpers
+├── stories_mil_dynamic.h    # Dynamic MIL kernel generators (10 kernels, slice_by_size weights)
+├── stories_cpu_ops.h        # CPU ops (RMSNorm, SiLU bwd, cross-entropy, Adam, vocab compaction)
+├── train_ane.m              # Training binary (dynamic pipeline, one-time compile, wall-time budget)
 ├── download_data.sh         # TinyStories data download
 └── Makefile                 # Build train_ane binary
 harness_ane.py               # ANE orchestrator

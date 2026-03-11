@@ -18,16 +18,6 @@
 #include "experiment_config.h"
 #define HD (DIM/HEADS)
 #define VOCAB 32000
-#define MAX_COMPILES 100
-
-// Per compile: 5 weight-bearing kernels per layer + 1 classifier = 5*12+1 = 61
-// Plus 1 static (sdpaBwd2 per layer, no weights) = 12 more but those are weight-free
-// Actually sdpaBwd2 has no weights, compile once per layer
-// Weight-bearing: fwdAttn(1) + fwdFFN(1) + ffnBwd(1) + sdpaBwd1(1) + qkvBwd(1) = 5 per layer
-// 5 * 12 = 60 weight-bearing compiles per batch
-// With MAX_COMPILES=100, we get 1 batch of ACCUM_STEPS before restart
-#define KERNELS_PER_LAYER 5
-#define TOTAL_WEIGHT_KERNELS (KERNELS_PER_LAYER * NLAYERS)
 
 // Attention score channels for SDPA backward
 #define SCORE_CH (HEADS*SEQ)
@@ -80,11 +70,34 @@ typedef struct {
     float *rms_att, *rms_ffn;
 } LayerGrads;
 
-// ANE kernels per layer
+// ANE kernel handle
 typedef struct { void *model; IOSurfaceRef ioIn, ioOut; void *request; void *tmpDir; } Kern;
+
+// Dynamic kernel set (compiled ONCE, shared across all layers)
 typedef struct {
-    Kern *fwdAttn, *fwdFFN, *ffnBwd, *sdpaBwd1, *sdpaBwd2, *qkvBwd;
-} LayerKernels;
+    Kern *sdpaFwd;     // QKV matmul + SDPA (no Wo)
+    Kern *woFwd;       // attn_out @ Wo^T → o_out
+    Kern *ffnFused;    // W1,W3 + SiLU + W2 + residual
+    Kern *ffnBwdW2t;   // dffn @ W2 → dsilu_raw
+    Kern *ffnBwdW13t;  // dh1@W1 + dh3@W3 → dx_ffn
+    Kern *wotBwd;      // dy @ Wo → da
+    Kern *sdpaBwd1;    // Q,K,V,da → dV,probs,dp (weight-free, has mask)
+    Kern *sdpaBwd2;    // probs,dp,Q,K → dQ,dK (weight-free)
+    Kern *qBwd;        // dq @ Wq → dx_q
+    Kern *kvBwd;       // dk@Wk + dv@Wv → dx_kv
+} DynLayerKernels;
+
+// Per-layer IOSurfaces for pre-staged weights
+typedef struct {
+    IOSurfaceRef sdpaFwd_in, woFwd_in, ffnFused_in;
+    IOSurfaceRef ffnBwdW2t_in, ffnBwdW13t_in, wotBwd_in, qBwd_in, kvBwd_in;
+} PerLayerSurfaces;
+
+// Per-layer ANE requests (bound to per-layer IOSurfaces)
+typedef struct {
+    void *sdpaFwd, *woFwd, *ffnFused;
+    void *ffnBwdW2t, *ffnBwdW13t, *wotBwd, *qBwd, *kvBwd;
+} PerLayerRequests;
 
 // Checkpoint header
 typedef struct {
@@ -107,7 +120,6 @@ typedef struct {
 // Globals
 static Class g_D, g_I, g_AR, g_AIO;
 static mach_timebase_info_data_t g_tb;
-static int g_compile_count = 0;
 
 static void ane_init(void) {
     dlopen("/System/Library/PrivateFrameworks/AppleNeuralEngine.framework/AppleNeuralEngine", RTLD_NOW);
