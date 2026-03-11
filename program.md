@@ -87,6 +87,38 @@ c3d4e5f	1.005000	44.0	discard	switch to GeLU activation
 d4e5f6g	0.000000	0.0	crash	double model width (OOM)
 ```
 
+## Experiment memory
+
+Maintain a file called `insights.md` alongside `results.tsv`. Update it every ~5 experiments. It should contain:
+
+1. **Best result so far**: the current best val_bpb, commit hash, and what configuration produced it.
+2. **What works**: a short bullet list of changes that improved val_bpb (e.g. "increasing LR to 0.04 gave -0.005").
+3. **What doesn't work**: a short bullet list of changes that hurt or had no effect (e.g. "GeLU activation: +0.007 worse", "RMSNorm: no change").
+4. **Structural hypotheses**: 2-3 ideas for architectural changes you haven't tried yet.
+
+Keep `insights.md` under ~50 lines. It's a compressed memory, not a log. Overwrite stale entries rather than appending indefinitely. Before proposing each new experiment, re-read `insights.md` to avoid re-exploring dead ends.
+
+## Plateau detection
+
+Track your recent improvement rate. If your last 5 consecutive experiments all failed to improve val_bpb by at least 0.001, you have hit a **plateau**. When this happens:
+
+- **Stop tuning hyperparameters.** More LR/batch-size/warmup sweeps will not help.
+- **Make a structural change.** This means changing the model architecture itself: different attention mechanism, different normalization, different positional encoding, adding/removing layers, changing the optimizer algorithm, etc.
+- **Try something you haven't tried before.** Re-read `train.py` from scratch for new angles. Consult the comments and references in the code for ideas from the literature.
+
+The pattern is: early experiments should explore broadly across categories, middle experiments can tune what works, and when you plateau you must escape via a structural leap.
+
+## Experiment categories
+
+To maintain diversity, mentally categorize each experiment as one of:
+
+- **Architecture**: layer count, width, attention type, normalization, positional encoding
+- **Optimization**: optimizer, learning rate schedule, warmup, weight decay, gradient clipping
+- **Training dynamics**: batch size, sequence packing, gradient accumulation, loss function
+- **Simplification**: removing components, reducing complexity for equal or better results
+
+Avoid running more than 3 experiments in the same category in a row. If you've been tuning LR for 3 runs, switch to an architecture change. Diversity of exploration beats depth of exploitation in the early/mid phase.
+
 ## The experiment loop
 
 The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
