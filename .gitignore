@@ -18,6 +18,10 @@ AGENTS.md
 
 # Experimental code/artifacts
 dev/
+.modal-control/
 
 # Results file
 results.tsv
+
+# Secret files
+.env

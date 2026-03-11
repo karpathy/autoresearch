@@ -20,7 +20,13 @@ Once you get confirmation, kick off the experimentation.
 
 ## Experimentation
 
-Each experiment runs on a single GPU. The training script runs for a **fixed time budget of 5 minutes** (wall clock training time, excluding startup/compilation). You launch it simply as: `uv run train.py`.
+Each experiment runs on a single GPU. The training script runs for a **fixed time budget of 5 minutes** (wall clock training time, excluding startup/compilation). In this repo, launch experiments through the local Modal control shim instead of trying to use a local GPU directly.
+
+**Execution interface**:
+- Use `python3 modal_control.py` as the only execution surface.
+- Do **not** invoke `modal_train.py` directly unless you are debugging infrastructure.
+- The local controller returns a `run_id` and stores run state/logs under `.modal-control/`.
+- If a local `.env` file exists, `modal_control.py` loads it automatically before spawning Modal commands.
 
 **What you CAN do:**
 - Modify `train.py` — this is the only file you edit. Everything is fair game: model architecture, optimizer, hyperparameters, training loop, batch size, model size, etc.
@@ -96,12 +102,21 @@ LOOP FOREVER:
 1. Look at the git state: the current branch/commit we're on
 2. Tune `train.py` with an experimental idea by directly hacking the code.
 3. git commit
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
-8. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
-9. If val_bpb is equal or worse, you git reset back to where you started
+4. Run the experiment:
+   - First/baseline run: `python3 modal_control.py start`
+   - Warm runs after the cache exists: `python3 modal_control.py start --skip-prepare`
+   - Read the returned `run_id`
+5. Poll until terminal:
+   - `python3 modal_control.py status <run_id>`
+   - Use `python3 modal_control.py logs <run_id> --tail 80` while it is running
+   - If a run is still not terminal after 10 minutes, stop it with `python3 modal_control.py stop <run_id>` and treat it as a crash
+6. Read out the results:
+   - `python3 modal_control.py result <run_id>`
+   - Record `val_bpb` and `peak_vram_mb` from the parsed JSON
+7. If the run crashes, inspect the tail of the managed log with `python3 modal_control.py logs <run_id> --tail 120` and attempt a fix. If you can't get things to work after more than a few attempts, give up.
+8. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
+9. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
+10. If val_bpb is equal or worse, you git reset back to where you started
 
 The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
 
