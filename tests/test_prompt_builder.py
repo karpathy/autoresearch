@@ -44,7 +44,7 @@ class PromptBuilderTests(unittest.TestCase):
         self.assertIn("TOTAL_BATCH_SIZE % (DEVICE_BATCH_SIZE * MAX_SEQ_LEN) == 0", prompt)
         self.assertIn("Preserve the final summary prints", prompt)
         self.assertIn("Return only one or more exact SEARCH/REPLACE edit blocks for `train.py`", prompt)
-        self.assertIn("Prefer 1-3 small patch blocks", prompt)
+        self.assertIn("Prefer as few patch blocks as needed", prompt)
         self.assertIn("Treat each SEARCH block like an exact `old_string` tool argument", prompt)
         self.assertIn("Do not return standalone code fragments", prompt)
         self.assertIn("Do not wrap the answer in JSON", prompt)

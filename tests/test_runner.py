@@ -162,36 +162,6 @@ class RunnerTests(unittest.TestCase):
             self.assertFalse(preflight.ok)
             self.assertEqual(preflight.stage, "summary_output")
 
-    def test_preflight_rejects_overly_large_patch_scope(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "program.md").write_text("program", encoding="utf-8")
-            (root / "prepare.py").write_text("TIME_BUDGET = 1\n", encoding="utf-8")
-            original = (
-                "from prepare import MAX_SEQ_LEN\n"
-                "TOTAL_BATCH_SIZE = 2048\n"
-                "DEVICE_BATCH_SIZE = 1\n"
-                "tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN\n"
-                "assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0\n"
-                "class GPT:\n"
-                "    def forward(self, idx, targets=None, reduction='mean'):\n"
-                "        return 0\n"
-                "print(f\"val_bpb:          {1.0:.6f}\")\n"
-            )
-            (root / "train.py").write_text(original, encoding="utf-8")
-            config = TTTAutoResearchConfig(execution_backend="local").normalized(root)
-            runner = AutoResearchRunner(root, config, Path(config.run_dir))
-            search_block = "print(f\"val_bpb:          {1.0:.6f}\")\n"
-            replacement = "".join(f"print({idx})\n" for idx in range(250))
-            candidate = parse_patch_candidate_for_state(
-                f"<<<<<<< SEARCH\n{search_block}=======\n{replacement}>>>>>>> REPLACE",
-                original,
-            )
-            workspace = runner.prepare_candidate_workspace(candidate, step=0)
-            preflight = runner.preflight_candidate(workspace, candidate)
-            self.assertFalse(preflight.ok)
-            self.assertEqual(preflight.stage, "edit_scope")
-
     def test_build_bootstrap_prefers_stored_baseline_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

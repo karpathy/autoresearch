@@ -63,7 +63,7 @@ Everything in `train.py` is fair game:
 - You may only edit `train.py`
 - Do not modify `prepare.py`, dependencies, or the evaluation harness
 - Return only one or more exact SEARCH/REPLACE edit blocks for `train.py`
-- Prefer 1-3 small patch blocks
+- Prefer as few patch blocks as needed, but use as many exact patch blocks as necessary to make the edit apply cleanly
 - Each SEARCH block must copy exact contiguous text from the current `train.py`
 - If you change constants or a small code region, include enough surrounding context in SEARCH to make the patch unique
 - Treat each SEARCH block like an exact `old_string` tool argument: it must match exactly once

@@ -28,8 +28,6 @@ SEARCH_REPLACE_BLOCK_RE = re.compile(
 VAL_BPB_PRINT_RE = re.compile(r"print\(\s*f?[\"']val_bpb:\s*", re.MULTILINE)
 FORWARD_WITH_REDUCTION_RE = re.compile(r"def\s+forward\s*\([^)]*\breduction\s*=", re.MULTILINE)
 _KNOWN_PREPARE_CONSTANTS = {"MAX_SEQ_LEN": 2048}
-MAX_PATCH_BLOCKS = 3
-MAX_LINES_CHANGED = 160
 
 
 @dataclass(slots=True)
@@ -106,8 +104,6 @@ def apply_search_replace_patch(patch_text: str, current_train_py: str) -> tuple[
     blocks = list(SEARCH_REPLACE_BLOCK_RE.finditer(patch_text))
     if not blocks:
         raise ValueError("Candidate must contain one or more SEARCH/REPLACE patch blocks.")
-    if len(blocks) > MAX_PATCH_BLOCKS:
-        raise ValueError(f"Candidate must contain at most {MAX_PATCH_BLOCKS} SEARCH/REPLACE blocks.")
 
     updated = current_train_py
     for match in blocks:
@@ -223,20 +219,6 @@ class AutoResearchRunner:
     def preflight_candidate(self, workspace: Path, candidate: PatchCandidate) -> PreflightResult:
         train_path = workspace / "train.py"
         source = train_path.read_text(encoding="utf-8")
-        if candidate.patch_block_count > MAX_PATCH_BLOCKS:
-            return PreflightResult(
-                ok=False,
-                stage="edit_scope",
-                reason=f"Candidate used {candidate.patch_block_count} patch blocks; limit is {MAX_PATCH_BLOCKS}.",
-                details={"patch_block_count": candidate.patch_block_count, "max_patch_blocks": MAX_PATCH_BLOCKS},
-            )
-        if candidate.lines_changed > MAX_LINES_CHANGED:
-            return PreflightResult(
-                ok=False,
-                stage="edit_scope",
-                reason=f"Candidate changed {candidate.lines_changed} lines; limit is {MAX_LINES_CHANGED}.",
-                details={"lines_changed": candidate.lines_changed, "max_lines_changed": MAX_LINES_CHANGED},
-            )
         try:
             module = ast.parse(source, filename=str(train_path))
         except SyntaxError as exc:
