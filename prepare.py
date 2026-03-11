@@ -90,6 +90,10 @@ def download_single_shard(index):
 
 def download_data(num_shards, download_workers=8):
     """Download training shards + pinned validation shard."""
+    if num_shards < 0:
+        raise ValueError("num_shards must be >= 0")
+    if download_workers < 1:
+        raise ValueError("download_workers must be >= 1")
     os.makedirs(DATA_DIR, exist_ok=True)
     num_train = min(num_shards, MAX_SHARD)
     ids = list(range(num_train))
@@ -373,6 +377,11 @@ if __name__ == "__main__":
     parser.add_argument("--num-shards", type=int, default=10, help="Number of training shards to download (-1 = all). Val shard is always pinned.")
     parser.add_argument("--download-workers", type=int, default=8, help="Number of parallel download workers")
     args = parser.parse_args()
+
+    if args.num_shards < -1:
+        parser.error("num_shards must be -1 (all) or >= 0")
+    if args.download_workers < 1:
+        parser.error("download_workers must be >= 1")
 
     num_shards = MAX_SHARD if args.num_shards == -1 else args.num_shards
 
