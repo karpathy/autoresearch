@@ -1,388 +1,509 @@
 """
-One-time data preparation for autoresearch experiments.
-Downloads data shards and trains a BPE tokenizer.
+Autotrader data preparation, backtesting engine, and evaluation.
 
-Usage:
-    python prepare.py                  # full prep (download + tokenizer)
-    python prepare.py --num-shards 8   # download only 8 shards (for testing)
+DO NOT MODIFY — the autonomous agent modifies only train.py.
 
-Data and tokenizer are stored in ~/.cache/autoresearch/.
+This module provides:
+  - Data download and caching (BTC/USD hourly OHLCV from Binance)
+  - Strict temporal train/val/holdout splits
+  - A backtesting engine that converts predictions into trading signals
+  - Composite metric computation (higher is better)
+  - Validation pass/fail without leaking the actual metric
+
+Public API for train.py:
+  load_train_data() -> pd.DataFrame
+  load_val_data()   -> pd.DataFrame
+  evaluate_model(predictions, timestamps, n_params, split) -> dict
+  TIME_BUDGET       -> int (seconds)
 """
 
+import argparse
+import io
+import math
 import os
 import sys
 import time
-import math
-import argparse
-import pickle
-from multiprocessing import Pool
+import zipfile
+from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import requests
-import pyarrow.parquet as pq
-import rustbpe
-import tiktoken
-import torch
 
 # ---------------------------------------------------------------------------
-# Constants (fixed, do not modify)
+# Constants
 # ---------------------------------------------------------------------------
 
-MAX_SEQ_LEN = 2048       # context length
-TIME_BUDGET = 300        # training time budget in seconds (5 minutes)
-EVAL_TOKENS = 40 * 524288  # number of tokens for val eval
+CACHE_DIR = Path.home() / ".cache" / "autotrader"
+PARQUET_PATH = CACHE_DIR / "btcusdt_1h.parquet"
+
+TIME_BUDGET = 120  # seconds for training
+
+FORWARD_HOURS = 24      # predict 24-hour forward returns
+THRESHOLD = 0.005       # 0.5% threshold for long/short signals
+FEE_RATE = 0.001        # 0.1% per trade (one side)
+SLIPPAGE_RATE = 0.0005  # 0.05% per trade (one side)
+
+# Temporal split boundaries (inclusive)
+TRAIN_START = pd.Timestamp("2018-01-01")
+TRAIN_END   = pd.Timestamp("2022-12-31 23:00:00")
+VAL_START   = pd.Timestamp("2023-01-01")
+VAL_END     = pd.Timestamp("2024-06-30 23:00:00")
+HOLDOUT_START = pd.Timestamp("2024-07-01")
+HOLDOUT_END   = pd.Timestamp("2025-12-31 23:00:00")
+
+# Subperiods for consistency check (train window)
+TRAIN_SUBPERIODS = [
+    (pd.Timestamp("2018-01-01"), pd.Timestamp("2019-12-31 23:00:00")),
+    (pd.Timestamp("2020-01-01"), pd.Timestamp("2021-12-31 23:00:00")),
+    (pd.Timestamp("2022-01-01"), pd.Timestamp("2022-12-31 23:00:00")),
+]
+
+# Subperiods for consistency check (val window)
+VAL_SUBPERIODS = [
+    (pd.Timestamp("2023-01-01"), pd.Timestamp("2023-12-31 23:00:00")),
+    (pd.Timestamp("2024-01-01"), pd.Timestamp("2024-06-30 23:00:00")),
+]
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Data Download
 # ---------------------------------------------------------------------------
 
-CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "autoresearch")
-DATA_DIR = os.path.join(CACHE_DIR, "data")
-TOKENIZER_DIR = os.path.join(CACHE_DIR, "tokenizer")
-BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main"
-MAX_SHARD = 6542 # the last datashard is shard_06542.parquet
-VAL_SHARD = MAX_SHARD  # pinned validation shard (shard_06542)
-VAL_FILENAME = f"shard_{VAL_SHARD:05d}.parquet"
-VOCAB_SIZE = 8192
+_BINANCE_URL = (
+    "https://data.binance.vision/data/spot/monthly/klines"
+    "/BTCUSDT/1h/BTCUSDT-1h-{year}-{month:02d}.zip"
+)
 
-# BPE split pattern (GPT-4 style, with \p{N}{1,2} instead of {1,3})
-SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
+# Binance CSV columns (no header in file)
+_BINANCE_COLS = [
+    "open_time", "open", "high", "low", "close", "volume",
+    "close_time", "quote_volume", "n_trades",
+    "taker_buy_base", "taker_buy_quote", "ignore",
+]
 
-SPECIAL_TOKENS = [f"<|reserved_{i}|>" for i in range(4)]
-BOS_TOKEN = "<|reserved_0|>"
 
-# ---------------------------------------------------------------------------
-# Data download
-# ---------------------------------------------------------------------------
-
-def download_single_shard(index):
-    """Download one parquet shard with retries. Returns True on success."""
-    filename = f"shard_{index:05d}.parquet"
-    filepath = os.path.join(DATA_DIR, filename)
-    if os.path.exists(filepath):
-        return True
-
-    url = f"{BASE_URL}/{filename}"
-    max_attempts = 5
-    for attempt in range(1, max_attempts + 1):
+def _download_month(year: int, month: int, max_retries: int = 5) -> pd.DataFrame | None:
+    """Download a single month of hourly klines from Binance public data."""
+    url = _BINANCE_URL.format(year=year, month=month)
+    for attempt in range(max_retries):
         try:
-            response = requests.get(url, stream=True, timeout=30)
-            response.raise_for_status()
-            temp_path = filepath + ".tmp"
-            with open(temp_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
-            os.rename(temp_path, filepath)
-            print(f"  Downloaded {filename}")
-            return True
-        except (requests.RequestException, IOError) as e:
-            print(f"  Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
-            for path in [filepath + ".tmp", filepath]:
-                if os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
-            if attempt < max_attempts:
-                time.sleep(2 ** attempt)
-    return False
+            resp = requests.get(url, timeout=30)
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                csv_name = zf.namelist()[0]
+                with zf.open(csv_name) as f:
+                    df = pd.read_csv(f, header=None, names=_BINANCE_COLS)
+            return df
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait = 2 ** (attempt + 1)
+                print(f"  Retry {attempt + 1}/{max_retries} for {year}-{month:02d} "
+                      f"(waiting {wait}s): {e}")
+                time.sleep(wait)
+            else:
+                print(f"  FAILED to download {year}-{month:02d} after "
+                      f"{max_retries} attempts: {e}")
+                return None
 
 
-def download_data(num_shards, download_workers=8):
-    """Download training shards + pinned validation shard."""
-    os.makedirs(DATA_DIR, exist_ok=True)
-    num_train = min(num_shards, MAX_SHARD)
-    ids = list(range(num_train))
-    if VAL_SHARD not in ids:
-        ids.append(VAL_SHARD)
+def download_data() -> pd.DataFrame:
+    """Download BTC/USD hourly OHLCV data and cache as parquet."""
+    if PARQUET_PATH.exists():
+        print(f"Loading cached data from {PARQUET_PATH}")
+        return pd.read_parquet(PARQUET_PATH)
 
-    # Count what's already downloaded
-    existing = sum(1 for i in ids if os.path.exists(os.path.join(DATA_DIR, f"shard_{i:05d}.parquet")))
-    if existing == len(ids):
-        print(f"Data: all {len(ids)} shards already downloaded at {DATA_DIR}")
-        return
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    print("Downloading BTC/USD hourly data from Binance...")
 
-    needed = len(ids) - existing
-    print(f"Data: downloading {needed} shards ({existing} already exist)...")
+    frames = []
+    for year in range(2018, 2026):
+        for month in range(1, 13):
+            ts = pd.Timestamp(f"{year}-{month:02d}-01")
+            if ts > HOLDOUT_END + pd.DateOffset(months=1):
+                break
+            print(f"  Downloading {year}-{month:02d}...", end=" ", flush=True)
+            df = _download_month(year, month)
+            if df is not None:
+                print(f"{len(df)} rows")
+                frames.append(df)
+            else:
+                print("skipped (not available)")
 
-    workers = max(1, min(download_workers, needed))
-    with Pool(processes=workers) as pool:
-        results = pool.map(download_single_shard, ids)
+    if not frames:
+        raise RuntimeError("No data downloaded. Check network connectivity.")
 
-    ok = sum(1 for r in results if r)
-    print(f"Data: {ok}/{len(ids)} shards ready at {DATA_DIR}")
+    raw = pd.concat(frames, ignore_index=True)
+
+    # Convert open_time to datetime.
+    # Binance changed from milliseconds to microseconds in Jan 2025.
+    timestamps = raw["open_time"].values.astype(np.float64)
+    is_microseconds = timestamps > 1e15
+    ts_seconds = np.where(is_microseconds, timestamps / 1e6, timestamps / 1e3)
+    raw["timestamp"] = pd.to_datetime(ts_seconds, unit="s", utc=True)
+    raw["timestamp"] = raw["timestamp"].dt.tz_localize(None)
+
+    df = pd.DataFrame({
+        "timestamp": raw["timestamp"],
+        "open": raw["open"].astype(float),
+        "high": raw["high"].astype(float),
+        "low": raw["low"].astype(float),
+        "close": raw["close"].astype(float),
+        "volume": raw["volume"].astype(float),
+    })
+
+    # Sort and deduplicate
+    df = df.sort_values("timestamp").drop_duplicates(subset="timestamp").reset_index(drop=True)
+
+    # Forward-fill any gaps (create complete hourly index)
+    full_idx = pd.date_range(df["timestamp"].min(), df["timestamp"].max(), freq="h")
+    df = df.set_index("timestamp").reindex(full_idx).ffill().reset_index()
+    df = df.rename(columns={"index": "timestamp"})
+
+    # Filter to our data range
+    df = df[(df["timestamp"] >= TRAIN_START) & (df["timestamp"] <= HOLDOUT_END)].reset_index(drop=True)
+
+    print(f"Total: {len(df)} hourly candles "
+          f"({df['timestamp'].min()} to {df['timestamp'].max()})")
+
+    df.to_parquet(PARQUET_PATH, index=False)
+    print(f"Cached to {PARQUET_PATH}")
+
+    return df
+
+
+def _load_all_data() -> pd.DataFrame:
+    """Load the full dataset (all periods). Internal use only."""
+    return download_data()
+
 
 # ---------------------------------------------------------------------------
-# Tokenizer training
+# Public Data Loaders
 # ---------------------------------------------------------------------------
 
-def list_parquet_files():
-    """Return sorted list of parquet file paths in the data directory."""
-    files = sorted(f for f in os.listdir(DATA_DIR) if f.endswith(".parquet") and not f.endswith(".tmp"))
-    return [os.path.join(DATA_DIR, f) for f in files]
+def load_train_data() -> pd.DataFrame:
+    """Return OHLCV DataFrame for the training period only (2018-2022)."""
+    df = _load_all_data()
+    mask = (df["timestamp"] >= TRAIN_START) & (df["timestamp"] <= TRAIN_END)
+    return df[mask].reset_index(drop=True)
 
 
-def text_iterator(max_chars=1_000_000_000, doc_cap=10_000):
-    """Yield documents from training split (all shards except pinned val shard)."""
-    parquet_paths = [p for p in list_parquet_files() if not p.endswith(VAL_FILENAME)]
-    nchars = 0
-    for filepath in parquet_paths:
-        pf = pq.ParquetFile(filepath)
-        for rg_idx in range(pf.num_row_groups):
-            rg = pf.read_row_group(rg_idx)
-            for text in rg.column("text").to_pylist():
-                doc = text[:doc_cap] if len(text) > doc_cap else text
-                nchars += len(doc)
-                yield doc
-                if nchars >= max_chars:
-                    return
+def load_val_data() -> pd.DataFrame:
+    """Return OHLCV DataFrame for the validation period only (2023-01 to 2024-06).
+
+    No targets — prevents lookahead bias. The agent uses this to generate
+    predictions, which are then evaluated by evaluate_model().
+    """
+    df = _load_all_data()
+    mask = (df["timestamp"] >= VAL_START) & (df["timestamp"] <= VAL_END)
+    return df[mask].reset_index(drop=True)
 
 
-def train_tokenizer():
-    """Train BPE tokenizer using rustbpe, save as tiktoken pickle."""
-    tokenizer_pkl = os.path.join(TOKENIZER_DIR, "tokenizer.pkl")
-    token_bytes_path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
+def _load_holdout_data() -> pd.DataFrame:
+    """Return OHLCV DataFrame for the holdout period. Internal use only."""
+    df = _load_all_data()
+    mask = (df["timestamp"] >= HOLDOUT_START) & (df["timestamp"] <= HOLDOUT_END)
+    return df[mask].reset_index(drop=True)
 
-    if os.path.exists(tokenizer_pkl) and os.path.exists(token_bytes_path):
-        print(f"Tokenizer: already trained at {TOKENIZER_DIR}")
-        return
 
-    os.makedirs(TOKENIZER_DIR, exist_ok=True)
+# ---------------------------------------------------------------------------
+# Backtesting Engine (internal)
+# ---------------------------------------------------------------------------
 
-    parquet_files = list_parquet_files()
-    if len(parquet_files) < 2:
-        print("Tokenizer: need at least 2 data shards (1 train + 1 val). Download more data first.")
-        sys.exit(1)
+def _compute_forward_returns(close: np.ndarray) -> np.ndarray:
+    """Compute FORWARD_HOURS-ahead percentage returns.
 
-    # --- Train with rustbpe ---
-    print("Tokenizer: training BPE tokenizer...")
-    t0 = time.time()
+    Returns array of same length as input; last FORWARD_HOURS entries are NaN.
+    """
+    n = len(close)
+    fwd = np.full(n, np.nan)
+    fwd[:n - FORWARD_HOURS] = close[FORWARD_HOURS:] / close[:n - FORWARD_HOURS] - 1.0
+    return fwd
 
-    tokenizer = rustbpe.Tokenizer()
-    vocab_size_no_special = VOCAB_SIZE - len(SPECIAL_TOKENS)
-    tokenizer.train_from_iterator(text_iterator(), vocab_size_no_special, pattern=SPLIT_PATTERN)
 
-    # Build tiktoken encoding from trained merges
-    pattern = tokenizer.get_pattern()
-    mergeable_ranks = {bytes(k): v for k, v in tokenizer.get_mergeable_ranks()}
-    tokens_offset = len(mergeable_ranks)
-    special_tokens = {name: tokens_offset + i for i, name in enumerate(SPECIAL_TOKENS)}
-    enc = tiktoken.Encoding(
-        name="rustbpe",
-        pat_str=pattern,
-        mergeable_ranks=mergeable_ranks,
-        special_tokens=special_tokens,
+def _backtest(predictions: np.ndarray, close_prices: np.ndarray,
+              timestamps: np.ndarray, subperiods: list) -> dict:
+    """Run backtest on predictions against actual prices.
+
+    Args:
+        predictions: Array of forward-return predictions, one per timestamp.
+        close_prices: Array of close prices aligned with predictions.
+        timestamps: Array of pd.Timestamp aligned with predictions.
+        subperiods: List of (start, end) Timestamp tuples for consistency check.
+
+    Returns:
+        dict with keys: sharpe, max_drawdown, n_trades, total_return,
+                        subperiod_returns (list of floats).
+    """
+    n = len(predictions)
+    assert len(close_prices) == n and len(timestamps) == n
+
+    # Determine positions: +1 = long, -1 = short, 0 = flat
+    positions = np.zeros(n, dtype=np.float64)
+    positions[predictions > THRESHOLD] = 1.0
+    positions[predictions < -THRESHOLD] = -1.0
+
+    # Compute hourly price returns
+    price_returns = np.zeros(n)
+    price_returns[1:] = close_prices[1:] / close_prices[:-1] - 1.0
+
+    # Portfolio returns: position at time t earns the return from t to t+1.
+    # The position decided at t-1 is held during period t.
+    portfolio_returns = np.zeros(n)
+    n_trades = 0
+
+    for i in range(1, n):
+        pos = positions[i - 1]
+        portfolio_returns[i] = pos * price_returns[i]
+
+        # Count trades: position change incurs fees + slippage
+        prev_pos = positions[i - 2] if i >= 2 else 0.0
+
+        if pos != prev_pos:
+            cost = 0.0
+            if prev_pos != 0.0:
+                cost += FEE_RATE + SLIPPAGE_RATE  # close old
+            if pos != 0.0:
+                cost += FEE_RATE + SLIPPAGE_RATE  # open new
+                n_trades += 1
+            portfolio_returns[i] -= cost
+
+    # Equity curve
+    equity = np.cumprod(1.0 + portfolio_returns)
+
+    # Sharpe ratio (annualized from hourly)
+    if np.std(portfolio_returns) > 0:
+        sharpe = np.mean(portfolio_returns) / np.std(portfolio_returns) * math.sqrt(8760)
+    else:
+        sharpe = 0.0
+
+    # Max drawdown
+    peak = np.maximum.accumulate(equity)
+    drawdown = (equity - peak) / peak
+    max_drawdown = float(np.min(drawdown))  # negative number
+
+    # Total return
+    total_return = float(equity[-1] / equity[0] - 1.0) if len(equity) > 0 else 0.0
+
+    # Subperiod returns
+    ts_series = pd.Series(timestamps)
+    subperiod_returns = []
+    for sp_start, sp_end in subperiods:
+        mask = (ts_series >= sp_start) & (ts_series <= sp_end)
+        if mask.sum() > 0:
+            sp_equity = np.cumprod(1.0 + portfolio_returns[mask.values])
+            sp_return = float(sp_equity[-1] - 1.0)
+            subperiod_returns.append(sp_return)
+        else:
+            subperiod_returns.append(0.0)
+
+    return {
+        "sharpe": sharpe,
+        "max_drawdown": max_drawdown,
+        "n_trades": n_trades,
+        "total_return": total_return,
+        "subperiod_returns": subperiod_returns,
+    }
+
+
+def _compute_score(sharpe: float, max_drawdown: float, n_trades: int,
+                   subperiod_returns: list, n_params: int,
+                   min_subperiods_profitable: int) -> float:
+    """Compute composite score with penalty multiplier.
+
+    score = sharpe_ratio * penalty_multiplier
+
+    penalty_multiplier is 0.0 if:
+      - n_trades < 30
+      - |max_drawdown| > 25%
+      - fewer than min_subperiods_profitable subperiods are profitable
+
+    Soft penalty for model complexity:
+      penalty_multiplier *= 1 / (1 + 0.02 * n_params_thousands)
+    """
+    penalty = 1.0
+
+    if n_trades < 30:
+        penalty = 0.0
+    if abs(max_drawdown) > 0.25:
+        penalty = 0.0
+
+    profitable_periods = sum(1 for r in subperiod_returns if r > 0)
+    if profitable_periods < min_subperiods_profitable:
+        penalty = 0.0
+
+    n_params_k = n_params / 1000.0
+    penalty *= 1.0 / (1.0 + 0.02 * n_params_k)
+
+    return sharpe * penalty
+
+
+# ---------------------------------------------------------------------------
+# Public Evaluation API
+# ---------------------------------------------------------------------------
+
+def evaluate_model(predictions: np.ndarray, timestamps: np.ndarray,
+                   n_params: int, split: str = "train") -> dict:
+    """Evaluate model predictions via backtesting.
+
+    Args:
+        predictions: 1-D array of forward-return predictions.
+        timestamps: 1-D array of pd.Timestamp (same length as predictions).
+            Each timestamp is the time at which the prediction was made.
+        n_params: Number of trainable parameters in the model.
+        split: "train" or "val".
+
+    Returns:
+        dict with keys: score, sharpe, max_drawdown, n_trades, total_return, val_pass.
+        When split="val", only val_pass is meaningful; other fields are None.
+    """
+    predictions = np.asarray(predictions, dtype=np.float64).ravel()
+    timestamps = np.asarray(timestamps).ravel()
+    assert len(predictions) == len(timestamps), (
+        f"predictions ({len(predictions)}) and timestamps ({len(timestamps)}) "
+        f"must have the same length"
     )
 
-    # Save tokenizer
-    with open(tokenizer_pkl, "wb") as f:
-        pickle.dump(enc, f)
+    all_data = _load_all_data()
 
-    t1 = time.time()
-    print(f"Tokenizer: trained in {t1 - t0:.1f}s, saved to {tokenizer_pkl}")
-
-    # --- Build token_bytes lookup for BPB evaluation ---
-    print("Tokenizer: building token_bytes lookup...")
-    special_set = set(SPECIAL_TOKENS)
-    token_bytes_list = []
-    for token_id in range(enc.n_vocab):
-        token_str = enc.decode([token_id])
-        if token_str in special_set:
-            token_bytes_list.append(0)
-        else:
-            token_bytes_list.append(len(token_str.encode("utf-8")))
-    token_bytes_tensor = torch.tensor(token_bytes_list, dtype=torch.int32)
-    torch.save(token_bytes_tensor, token_bytes_path)
-    print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
-
-    # Sanity check
-    test = "Hello world! Numbers: 123. Unicode: 你好"
-    encoded = enc.encode_ordinary(test)
-    decoded = enc.decode(encoded)
-    assert decoded == test, f"Tokenizer roundtrip failed: {test!r} -> {decoded!r}"
-    print(f"Tokenizer: sanity check passed (vocab_size={enc.n_vocab})")
-
-# ---------------------------------------------------------------------------
-# Runtime utilities (imported by train.py)
-# ---------------------------------------------------------------------------
-
-class Tokenizer:
-    """Minimal tokenizer wrapper. Training is handled above."""
-
-    def __init__(self, enc):
-        self.enc = enc
-        self.bos_token_id = enc.encode_single_token(BOS_TOKEN)
-
-    @classmethod
-    def from_directory(cls, tokenizer_dir=TOKENIZER_DIR):
-        with open(os.path.join(tokenizer_dir, "tokenizer.pkl"), "rb") as f:
-            enc = pickle.load(f)
-        return cls(enc)
-
-    def get_vocab_size(self):
-        return self.enc.n_vocab
-
-    def get_bos_token_id(self):
-        return self.bos_token_id
-
-    def encode(self, text, prepend=None, num_threads=8):
-        if prepend is not None:
-            prepend_id = prepend if isinstance(prepend, int) else self.enc.encode_single_token(prepend)
-        if isinstance(text, str):
-            ids = self.enc.encode_ordinary(text)
-            if prepend is not None:
-                ids.insert(0, prepend_id)
-        elif isinstance(text, list):
-            ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
-            if prepend is not None:
-                for row in ids:
-                    row.insert(0, prepend_id)
-        else:
-            raise ValueError(f"Invalid input type: {type(text)}")
-        return ids
-
-    def decode(self, ids):
-        return self.enc.decode(ids)
-
-
-def get_token_bytes(device="cpu"):
-    path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
-    with open(path, "rb") as f:
-        return torch.load(f, map_location=device)
-
-
-def _document_batches(split, tokenizer_batch_size=128):
-    """Infinite iterator over document batches from parquet files."""
-    parquet_paths = list_parquet_files()
-    assert len(parquet_paths) > 0, "No parquet files found. Run prepare.py first."
-    val_path = os.path.join(DATA_DIR, VAL_FILENAME)
     if split == "train":
-        parquet_paths = [p for p in parquet_paths if p != val_path]
+        mask = (all_data["timestamp"] >= TRAIN_START) & (all_data["timestamp"] <= TRAIN_END)
+        subperiods = TRAIN_SUBPERIODS
+        min_profitable = 2
+    elif split == "val":
+        mask = (all_data["timestamp"] >= VAL_START) & (all_data["timestamp"] <= VAL_END)
+        subperiods = VAL_SUBPERIODS
+        min_profitable = len(VAL_SUBPERIODS)
+    elif split == "holdout":
+        mask = (all_data["timestamp"] >= HOLDOUT_START) & (all_data["timestamp"] <= HOLDOUT_END)
+        subperiods = [
+            (pd.Timestamp("2024-07-01"), pd.Timestamp("2024-12-31 23:00:00")),
+            (pd.Timestamp("2025-01-01"), pd.Timestamp("2025-12-31 23:00:00")),
+        ]
+        min_profitable = len(subperiods)
     else:
-        parquet_paths = [val_path]
-    epoch = 1
-    while True:
-        for filepath in parquet_paths:
-            pf = pq.ParquetFile(filepath)
-            for rg_idx in range(pf.num_row_groups):
-                rg = pf.read_row_group(rg_idx)
-                batch = rg.column('text').to_pylist()
-                for i in range(0, len(batch), tokenizer_batch_size):
-                    yield batch[i:i+tokenizer_batch_size], epoch
-        epoch += 1
+        raise ValueError(f"split must be 'train', 'val', or 'holdout', got '{split}'")
 
+    split_data = all_data[mask].reset_index(drop=True)
 
-def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
-    """
-    BOS-aligned dataloader with best-fit packing.
-    Every row starts with BOS. Documents packed using best-fit to minimize cropping.
-    When no document fits remaining space, crops shortest doc to fill exactly.
-    100% utilization (no padding).
-    """
-    assert split in ["train", "val"]
-    row_capacity = T + 1
-    batches = _document_batches(split)
-    bos_token = tokenizer.get_bos_token_id()
-    doc_buffer = []
-    epoch = 1
+    # Align predictions with price data by timestamp
+    pred_df = pd.DataFrame({"timestamp": timestamps, "prediction": predictions})
+    merged = split_data.merge(pred_df, on="timestamp", how="inner")
 
-    def refill_buffer():
-        nonlocal epoch
-        doc_batch, epoch = next(batches)
-        token_lists = tokenizer.encode(doc_batch, prepend=bos_token)
-        doc_buffer.extend(token_lists)
+    if len(merged) == 0:
+        raise ValueError(
+            f"No matching timestamps between predictions and {split} data. "
+            f"Predictions span {timestamps[0]} to {timestamps[-1]}, "
+            f"split data spans {split_data['timestamp'].iloc[0]} to "
+            f"{split_data['timestamp'].iloc[-1]}"
+        )
 
-    # Pre-allocate buffers: [inputs (B*T) | targets (B*T)]
-    row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
-    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=True)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device="cuda")
-    cpu_inputs = cpu_buffer[:B * T].view(B, T)
-    cpu_targets = cpu_buffer[B * T:].view(B, T)
-    inputs = gpu_buffer[:B * T].view(B, T)
-    targets = gpu_buffer[B * T:].view(B, T)
+    bt = _backtest(
+        predictions=merged["prediction"].values,
+        close_prices=merged["close"].values,
+        timestamps=merged["timestamp"].values,
+        subperiods=subperiods,
+    )
 
-    while True:
-        for row_idx in range(B):
-            pos = 0
-            while pos < row_capacity:
-                while len(doc_buffer) < buffer_size:
-                    refill_buffer()
+    score = _compute_score(
+        sharpe=bt["sharpe"],
+        max_drawdown=bt["max_drawdown"],
+        n_trades=bt["n_trades"],
+        subperiod_returns=bt["subperiod_returns"],
+        n_params=n_params,
+        min_subperiods_profitable=min_profitable,
+    )
 
-                remaining = row_capacity - pos
+    if split == "train":
+        return {
+            "score": score,
+            "sharpe": bt["sharpe"],
+            "max_drawdown": bt["max_drawdown"],
+            "n_trades": bt["n_trades"],
+            "total_return": bt["total_return"],
+            "val_pass": None,
+        }
+    elif split == "val":
+        return {
+            "score": None,
+            "sharpe": None,
+            "max_drawdown": None,
+            "n_trades": None,
+            "total_return": None,
+            "val_pass": score > 0,
+        }
+    else:
+        return {
+            "score": score,
+            "sharpe": bt["sharpe"],
+            "max_drawdown": bt["max_drawdown"],
+            "n_trades": bt["n_trades"],
+            "total_return": bt["total_return"],
+            "val_pass": None,
+        }
 
-                # Find largest doc that fits entirely
-                best_idx = -1
-                best_len = 0
-                for i, doc in enumerate(doc_buffer):
-                    doc_len = len(doc)
-                    if doc_len <= remaining and doc_len > best_len:
-                        best_idx = i
-                        best_len = doc_len
-
-                if best_idx >= 0:
-                    doc = doc_buffer.pop(best_idx)
-                    row_buffer[row_idx, pos:pos + len(doc)] = torch.tensor(doc, dtype=torch.long)
-                    pos += len(doc)
-                else:
-                    # No doc fits — crop shortest to fill remaining
-                    shortest_idx = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
-                    doc = doc_buffer.pop(shortest_idx)
-                    row_buffer[row_idx, pos:pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
-                    pos += remaining
-
-        cpu_inputs.copy_(row_buffer[:, :-1])
-        cpu_targets.copy_(row_buffer[:, 1:])
-        gpu_buffer.copy_(cpu_buffer, non_blocking=True)
-        yield inputs, targets, epoch
 
 # ---------------------------------------------------------------------------
-# Evaluation (DO NOT CHANGE — this is the fixed metric)
+# CLI
 # ---------------------------------------------------------------------------
 
-@torch.no_grad()
-def evaluate_bpb(model, tokenizer, batch_size):
-    """
-    Bits per byte (BPB): vocab size-independent evaluation metric.
-    Sums per-token cross-entropy (in nats), sums target byte lengths,
-    then converts nats/byte to bits/byte. Special tokens (byte length 0)
-    are excluded from both sums.
-    Uses fixed MAX_SEQ_LEN so results are comparable across configs.
-    """
-    token_bytes = get_token_bytes(device="cuda")
-    val_loader = make_dataloader(tokenizer, batch_size, MAX_SEQ_LEN, "val")
-    steps = EVAL_TOKENS // (batch_size * MAX_SEQ_LEN)
-    total_nats = 0.0
-    total_bytes = 0
-    for _ in range(steps):
-        x, y, _ = next(val_loader)
-        loss_flat = model(x, y, reduction='none').view(-1)
-        y_flat = y.view(-1)
-        nbytes = token_bytes[y_flat]
-        mask = nbytes > 0
-        total_nats += (loss_flat * mask).sum().item()
-        total_bytes += nbytes.sum().item()
-    return total_nats / (math.log(2) * total_bytes)
+def _run_holdout_evaluation():
+    """Run holdout evaluation. For human use only — never called by agent."""
+    print("=" * 60)
+    print("HOLDOUT EVALUATION")
+    print("=" * 60)
+    print()
+    print("This evaluates the current model on held-out data")
+    print("(2024-07-01 to 2025-12-31) that the agent never sees.")
+    print()
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+    try:
+        import train as train_module
+    except ImportError:
+        print("ERROR: Could not import train.py. Make sure it exists.")
+        sys.exit(1)
+
+    holdout_data = _load_holdout_data()
+    print(f"Holdout data: {len(holdout_data)} rows "
+          f"({holdout_data['timestamp'].iloc[0]} to "
+          f"{holdout_data['timestamp'].iloc[-1]})")
+
+    if not hasattr(train_module, "predict_on_data"):
+        print("ERROR: train.py must define predict_on_data(df) -> (predictions, timestamps)")
+        sys.exit(1)
+
+    predictions, timestamps = train_module.predict_on_data(holdout_data)
+    n_params = train_module.count_model_params()
+
+    result = evaluate_model(predictions, timestamps, n_params, split="holdout")
+
+    print()
+    print("--- HOLDOUT RESULTS ---")
+    print(f"score:        {result['score']:.4f}")
+    print(f"sharpe:       {result['sharpe']:.4f}")
+    print(f"max_drawdown: {result['max_drawdown']:.1%}")
+    print(f"n_trades:     {result['n_trades']}")
+    print(f"total_return: {result['total_return']:.1%}")
+    print(f"n_params:     {n_params}")
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Prepare data and tokenizer for autoresearch")
-    parser.add_argument("--num-shards", type=int, default=10, help="Number of training shards to download (-1 = all). Val shard is always pinned.")
-    parser.add_argument("--download-workers", type=int, default=8, help="Number of parallel download workers")
+    parser = argparse.ArgumentParser(description="Autotrader data preparation")
+    parser.add_argument("--evaluate-holdout", action="store_true",
+                        help="Run holdout evaluation (human use only)")
     args = parser.parse_args()
 
-    num_shards = MAX_SHARD if args.num_shards == -1 else args.num_shards
-
-    print(f"Cache directory: {CACHE_DIR}")
-    print()
-
-    # Step 1: Download data
-    download_data(num_shards, download_workers=args.download_workers)
-    print()
-
-    # Step 2: Train tokenizer
-    train_tokenizer()
-    print()
-    print("Done! Ready to train.")
+    if args.evaluate_holdout:
+        _run_holdout_evaluation()
+    else:
+        df = download_data()
+        print(f"\nData summary:")
+        print(f"  Rows: {len(df)}")
+        print(f"  Range: {df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]}")
+        train = load_train_data()
+        val = load_val_data()
+        holdout = _load_holdout_data()
+        print(f"  Train:   {len(train)} rows ({train['timestamp'].iloc[0]} to {train['timestamp'].iloc[-1]})")
+        print(f"  Val:     {len(val)} rows ({val['timestamp'].iloc[0]} to {val['timestamp'].iloc[-1]})")
+        print(f"  Holdout: {len(holdout)} rows ({holdout['timestamp'].iloc[0]} to {holdout['timestamp'].iloc[-1]})")
