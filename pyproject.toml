@@ -1,19 +1,19 @@
 [project]
 name = "autoresearch"
-version = "0.1.0"
-description = "Autonomous pretraining research swarm"
+version = "0.2.0"
+description = "Autonomous OOD feature-mining and modeling loop for deception2"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "kernels>=0.11.7",
+    "joblib>=1.4.2",
     "matplotlib>=3.10.8",
     "numpy>=2.2.6",
     "pandas>=2.3.3",
     "pyarrow>=21.0.0",
-    "requests>=2.32.0",
-    "rustbpe>=0.1.0",
-    "tiktoken>=0.11.0",
+    "scikit-learn>=1.7.1",
     "torch==2.9.1",
+    "transformers>=4.57.0",
+    "xgboost>=3.0.5",
 ]
 
 [tool.uv.sources]
