@@ -17,6 +17,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# Verify CUDA is available before proceeding
+if not torch.cuda.is_available():
+    print("Error: No CUDA GPU detected. This script requires an NVIDIA GPU.")
+    print("If you're on Mac, see the MLX forks listed in README.md")
+    print("If you're on Windows/Linux, ensure CUDA drivers are installed.")
+    exit(1)
+
 from kernels import get_kernel
 cap = torch.cuda.get_device_capability()
 # varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
