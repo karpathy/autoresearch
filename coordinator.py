@@ -921,15 +921,7 @@ class Coordinator:
             for match in result.get("results", []):
                 try:
                     hyp = json.loads(match.get("value", "{}"))
-                    if "suggested_config" in hyp:
-                        desc = hyp.get("title", "")
-                        # Use the new key format to check if claimed
-                        exp_key = _experiment_key(hyp.get("agent_id", "unknown"), desc)
-                        if not self.check_claimed(exp_key):
-                            # Also check old hash format
-                            exp_hash = _experiment_hash(desc)
-                            if not self.check_claimed(exp_hash):
-                                hypotheses.append(hyp)
+                    hypotheses.append(hyp)
                 except (json.JSONDecodeError, KeyError):
                     pass
             return hypotheses

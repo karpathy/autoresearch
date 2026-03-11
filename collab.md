@@ -59,7 +59,7 @@ If you suspect the global best has been corrupted, the previous best info is alw
 
 ## The loop
 
-Same as `program.md`, plus three hooks:
+The experiment loop is defined in `program.md`. In collaborative mode, steps 1 (THINK), 2 (CLAIM), and 10 (PUBLISH) are **not optional** — they are core parts of the loop. The details below expand on what each step requires:
 
 **THINK** (before picking an experiment):
 
