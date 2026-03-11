@@ -221,6 +221,8 @@ This project builds on and references the following repositories:
 - **[maderix/ANE](https://github.com/maderix/ANE)** — First project to train transformers directly on the Apple Neural Engine using Objective-C and raw MIL kernel compilation. The ANE training backend in this repo is based on this work.
 - **[miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos)** — MacOS fork of autoresearch adapted for Apple Silicon. Early reference for running autonomous research on Mac hardware.
 - **[ncdrone/autoresearch-ANE](https://github.com/ncdrone/autoresearch-ANE)** — ANE-native autoresearch fork. Key finding: "more steps > bigger model" — NL=6 SEQ=512 gets ~3000 steps/5min vs ~400 at NL=12 SEQ=256, achieving val_loss=5.81. This insight drove the architecture change that broke through the initial plateau.
+- **[mechramc/orion](https://github.com/mechramc/orion)** — Production ANE runtime for Stories110M/GPT-2. Delta compilation, Graph IR compiler, LoRA hot-swapping. Documents 14 ANE hardware constraints.
+- **[vipuldivyanshu92/ANEgpt](https://github.com/vipuldivyanshu92/ANEgpt)** — ANE transformer training with async CPU-ANE pipelining, kernel lifecycle separation, and per-operation profiling.
 
 
 ## License

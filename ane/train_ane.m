@@ -12,9 +12,7 @@
 
 // Transpose W[rows,cols] → W^T[cols,rows] stored as [cols channels, rows spatial]
 static void transpose_weight(float *dst, const float *src, int rows, int cols) {
-    for (int r = 0; r < rows; r++)
-        for (int c = 0; c < cols; c++)
-            dst[c * rows + r] = src[r * cols + c];
+    vDSP_mtrans(src, 1, dst, 1, (vDSP_Length)cols, (vDSP_Length)rows);
 }
 
 // ===== Weight loading from llama2.c format =====
@@ -693,40 +691,49 @@ int main(int argc, char *argv[]) {
                 float wd = WEIGHT_DECAY;
                 float mlr = scheduled_lr * MATRIX_LR_SCALE;
                 float elr = scheduled_lr * EMBED_LR_SCALE;
-                for (int L=0; L<NLAYERS; L++) {
-                    LayerGrads *g = &grads[L];
-                    adam_update(lw[L].Wq, g->Wq, &la[L].Wq, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
-                    adam_update(lw[L].Wk, g->Wk, &la[L].Wk, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
-                    adam_update(lw[L].Wv, g->Wv, &la[L].Wv, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
-                    adam_update(lw[L].Wo, g->Wo, &la[L].Wo, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
-                    adam_update(lw[L].W1, g->W1, &la[L].W1, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
-                    adam_update(lw[L].W2, g->W2, &la[L].W2, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
-                    adam_update(lw[L].W3, g->W3, &la[L].W3, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
-                    adam_update(lw[L].rms_att, g->rms_att, &la[L].rms_att, adam_t, scheduled_lr, adam_b1, adam_b2, adam_eps, 0.0f);
-                    adam_update(lw[L].rms_ffn, g->rms_ffn, &la[L].rms_ffn, adam_t, scheduled_lr, adam_b1, adam_b2, adam_eps, 0.0f);
+                // Parallel Adam update + transpose + restage across layers
+                // (pointer indirection needed for block capture of C arrays)
+                LayerWeights *p_lw = lw; LayerAdam *p_la = la;
+                LayerGrads *p_gr = grads; PerLayerSurfaces *p_pls = pls;
+                float **p_Wqt = Wqt_buf, **p_Wkt = Wkt_buf, **p_Wvt = Wvt_buf, **p_Wot = Wot_buf;
+                float **p_W1t = W1t_buf, **p_W3t = W3t_buf;
+                dispatch_queue_t par_q = dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0);
+                dispatch_apply(NLAYERS, par_q, ^(size_t Li) {
+                    int L = (int)Li;
+                    LayerGrads *g = &p_gr[L];
+                    adam_update(p_lw[L].Wq, g->Wq, &p_la[L].Wq, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
+                    adam_update(p_lw[L].Wk, g->Wk, &p_la[L].Wk, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
+                    adam_update(p_lw[L].Wv, g->Wv, &p_la[L].Wv, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
+                    adam_update(p_lw[L].Wo, g->Wo, &p_la[L].Wo, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
+                    adam_update(p_lw[L].W1, g->W1, &p_la[L].W1, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
+                    adam_update(p_lw[L].W2, g->W2, &p_la[L].W2, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
+                    adam_update(p_lw[L].W3, g->W3, &p_la[L].W3, adam_t, mlr, adam_b1, adam_b2, adam_eps, wd);
+                    adam_update(p_lw[L].rms_att, g->rms_att, &p_la[L].rms_att, adam_t, scheduled_lr, adam_b1, adam_b2, adam_eps, 0.0f);
+                    adam_update(p_lw[L].rms_ffn, g->rms_ffn, &p_la[L].rms_ffn, adam_t, scheduled_lr, adam_b1, adam_b2, adam_eps, 0.0f);
 
                     // Update transposed weight buffers and re-stage
-                    transpose_weight(Wqt_buf[L], lw[L].Wq, DIM, DIM);
-                    transpose_weight(Wkt_buf[L], lw[L].Wk, DIM, DIM);
-                    transpose_weight(Wvt_buf[L], lw[L].Wv, DIM, DIM);
-                    transpose_weight(Wot_buf[L], lw[L].Wo, DIM, DIM);
-                    transpose_weight(W1t_buf[L], lw[L].W1, HIDDEN, DIM);
-                    transpose_weight(W3t_buf[L], lw[L].W3, HIDDEN, DIM);
+                    transpose_weight(p_Wqt[L], p_lw[L].Wq, DIM, DIM);
+                    transpose_weight(p_Wkt[L], p_lw[L].Wk, DIM, DIM);
+                    transpose_weight(p_Wvt[L], p_lw[L].Wv, DIM, DIM);
+                    transpose_weight(p_Wot[L], p_lw[L].Wo, DIM, DIM);
+                    transpose_weight(p_W1t[L], p_lw[L].W1, HIDDEN, DIM);
+                    transpose_weight(p_W3t[L], p_lw[L].W3, HIDDEN, DIM);
 
-                    stage_sdpa_fwd_weights(pls[L].sdpaFwd_in, Wqt_buf[L], Wkt_buf[L], Wvt_buf[L]);
-                    stage_wo_fwd_weights(pls[L].woFwd_in, Wot_buf[L]);
-                    stage_ffn_fused_weights(pls[L].ffnFused_in, W1t_buf[L], W3t_buf[L], lw[L].W2);
-                    stage_ffn_bwd_w2t_weights(pls[L].ffnBwdW2t_in, lw[L].W2);
-                    stage_ffn_bwd_w13t_weights(pls[L].ffnBwdW13t_in, lw[L].W1, lw[L].W3);
-                    stage_wot_bwd_weights(pls[L].wotBwd_in, lw[L].Wo);
-                    stage_q_bwd_weights(pls[L].qBwd_in, lw[L].Wq);
-                    stage_kv_bwd_weights(pls[L].kvBwd_in, lw[L].Wk, lw[L].Wv);
-                }
+                    stage_sdpa_fwd_weights(p_pls[L].sdpaFwd_in, p_Wqt[L], p_Wkt[L], p_Wvt[L]);
+                    stage_wo_fwd_weights(p_pls[L].woFwd_in, p_Wot[L]);
+                    stage_ffn_fused_weights(p_pls[L].ffnFused_in, p_W1t[L], p_W3t[L], p_lw[L].W2);
+                    stage_ffn_bwd_w2t_weights(p_pls[L].ffnBwdW2t_in, p_lw[L].W2);
+                    stage_ffn_bwd_w13t_weights(p_pls[L].ffnBwdW13t_in, p_lw[L].W1, p_lw[L].W3);
+                    stage_wot_bwd_weights(p_pls[L].wotBwd_in, p_lw[L].Wo);
+                    stage_q_bwd_weights(p_pls[L].qBwd_in, p_lw[L].Wq);
+                    stage_kv_bwd_weights(p_pls[L].kvBwd_in, p_lw[L].Wk, p_lw[L].Wv);
+
+                    layer_grads_zero(&p_gr[L]);
+                });
                 adam_update(rms_final, grms_final, &arms_final, adam_t, scheduled_lr, adam_b1, adam_b2, adam_eps, 0.0f);
                 adam_update(embed, gembed, &aembed, adam_t, elr, adam_b1, adam_b2, adam_eps, 0.0f);
 
-                // Zero grads
-                for (int L=0; L<NLAYERS; L++) layer_grads_zero(&grads[L]);
+                // Zero grads (layers done inside dispatch_apply above)
                 memset(grms_final, 0, DIM*4);
                 memset(gembed, 0, (size_t)VOCAB*DIM*4);
             }

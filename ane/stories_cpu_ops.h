@@ -54,13 +54,41 @@ static void rmsnorm_bwd(float *dx, float *dw, const float *dy, const float *x, c
 
 static void adam_update(float *w, const float *g, AdamState *s, int t, float lr, float b1, float b2, float eps, float wd) {
     float bc1 = 1.0f - powf(b1, t), bc2 = 1.0f - powf(b2, t);
-    for (size_t i=0; i<s->n; i++) {
-        if (wd > 0) w[i] -= wd * lr * w[i];  // decoupled weight decay (AdamW)
-        s->m[i] = b1*s->m[i] + (1-b1)*g[i];
-        s->v[i] = b2*s->v[i] + (1-b2)*g[i]*g[i];
-        float mh = s->m[i]/bc1, vh = s->v[i]/bc2;
-        w[i] -= lr * mh / (sqrtf(vh) + eps);
+    float inv_bc1 = 1.0f / bc1, inv_bc2 = 1.0f / bc2;
+    float one_minus_b1 = 1.0f - b1, one_minus_b2 = 1.0f - b2;
+    vDSP_Length n = (vDSP_Length)s->n;
+
+    // Decoupled weight decay (AdamW): w -= wd * lr * w
+    if (wd > 0) {
+        float neg_wd_lr = -wd * lr;
+        vDSP_vsma(w, 1, &neg_wd_lr, w, 1, w, 1, n);
     }
+
+    // m = b1*m + (1-b1)*g
+    vDSP_vsmul(s->m, 1, &b1, s->m, 1, n);
+    vDSP_vsma(g, 1, &one_minus_b1, s->m, 1, s->m, 1, n);
+
+    // v = b2*v + (1-b2)*g*g
+    vDSP_vsmul(s->v, 1, &b2, s->v, 1, n);
+    float *g_sq = (float*)malloc(s->n * 4);
+    vDSP_vmul(g, 1, g, 1, g_sq, 1, n);
+    vDSP_vsma(g_sq, 1, &one_minus_b2, s->v, 1, s->v, 1, n);
+
+    // mhat = m / bc1, vhat = v / bc2
+    float *mhat = (float*)malloc(s->n * 4);
+    float *vhat = (float*)malloc(s->n * 4);
+    vDSP_vsmul(s->m, 1, &inv_bc1, mhat, 1, n);
+    vDSP_vsmul(s->v, 1, &inv_bc2, vhat, 1, n);
+
+    // w -= lr * mhat / (sqrt(vhat) + eps)
+    int ni = (int)s->n;
+    vvsqrtf(vhat, vhat, &ni);
+    vDSP_vsadd(vhat, 1, &eps, vhat, 1, n);
+    vDSP_vdiv(vhat, 1, mhat, 1, mhat, 1, n);  // mhat = mhat / (sqrt(vhat) + eps)
+    float neg_lr = -lr;
+    vDSP_vsma(mhat, 1, &neg_lr, w, 1, w, 1, n);
+
+    free(g_sq); free(mhat); free(vhat);
 }
 
 // Logit softcapping: cap * tanh(logits / cap), clamps logits to [-cap, cap]
