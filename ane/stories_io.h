@@ -84,7 +84,7 @@ static void io_write_fp16_at(IOSurfaceRef s, int ch_off, const float *data, int 
 }
 
 // Spatial sizes for dynamic kernels (weights packed after activations in spatial dim)
-#define SDPA_FWD_SP    (SEQ + 3*DIM)       // xnorm + Wq^T + Wk^T + Wv^T
+#define SDPA_FWD_SP    (SEQ + DIM + 2*KV_DIM)  // xnorm + Wq^T + Wk^T + Wv^T (GQA: KV_DIM <= DIM)
 #define WO_FWD_SP      (SEQ + DIM)          // attn_out + Wo^T
 #define FFN_FUSED_SP   (2*SEQ + 3*HIDDEN)   // x2norm + x2 + W1^T + W3^T + W2
 #define FFN_BWD_W2T_SP (SEQ + HIDDEN)       // dffn + W2
@@ -178,14 +178,15 @@ static void *make_request(Kern *k, IOSurfaceRef ioIn) {
 
 // ===== Per-layer weight staging (MHA: Q_DIM=KV_DIM=DIM) =====
 
-// sdpaFwd: [1, DIM, 1, SEQ+3*DIM] — xnorm + Wq^T + Wk^T + Wv^T
+// sdpaFwd: [1, DIM, 1, SEQ+DIM+2*KV_DIM] — xnorm + Wq^T + Wk^T + Wv^T
+// GQA: Wk^T is [DIM, KV_DIM], Wv^T is [DIM, KV_DIM]
 static void stage_sdpa_fwd_weights(IOSurfaceRef s, const float *Wqt, const float *Wkt, const float *Wvt) {
     IOSurfaceLock(s, 0, NULL);
     _Float16 *buf = (_Float16*)IOSurfaceGetBaseAddress(s);
     for (int d = 0; d < DIM; d++) {
-        cvt_f32_f16(buf + d*SDPA_FWD_SP + SEQ,         Wqt + d*DIM, DIM);
-        cvt_f32_f16(buf + d*SDPA_FWD_SP + SEQ+DIM,     Wkt + d*DIM, DIM);
-        cvt_f32_f16(buf + d*SDPA_FWD_SP + SEQ+2*DIM,   Wvt + d*DIM, DIM);
+        cvt_f32_f16(buf + d*SDPA_FWD_SP + SEQ,                Wqt + d*DIM, DIM);
+        cvt_f32_f16(buf + d*SDPA_FWD_SP + SEQ+DIM,            Wkt + d*KV_DIM, KV_DIM);
+        cvt_f32_f16(buf + d*SDPA_FWD_SP + SEQ+DIM+KV_DIM,     Wvt + d*KV_DIM, KV_DIM);
     }
     IOSurfaceUnlock(s, 0, NULL);
 }
@@ -303,11 +304,12 @@ static void write_q_bwd_acts(IOSurfaceRef s, const float *dq) {
     IOSurfaceUnlock(s, 0, NULL);
 }
 
-// kvBwd: [1, DIM, 1, 2*SEQ+2*DIM] — dk + dv + Wk + Wv (originals)
+// kvBwd: [1, KV_DIM, 1, 2*SEQ+2*DIM] — dk + dv + Wk + Wv (originals)
+// GQA: channels=KV_DIM (may be < DIM), spatial=2*SEQ+2*DIM unchanged
 static void stage_kv_bwd_weights(IOSurfaceRef s, const float *Wk, const float *Wv) {
     IOSurfaceLock(s, 0, NULL);
     _Float16 *buf = (_Float16*)IOSurfaceGetBaseAddress(s);
-    for (int d = 0; d < DIM; d++) {
+    for (int d = 0; d < KV_DIM; d++) {
         cvt_f32_f16(buf + d*KV_BWD_SP + 2*SEQ,       Wk + d*DIM, DIM);
         cvt_f32_f16(buf + d*KV_BWD_SP + 2*SEQ + DIM, Wv + d*DIM, DIM);
     }
@@ -316,7 +318,7 @@ static void stage_kv_bwd_weights(IOSurfaceRef s, const float *Wk, const float *W
 static void write_kv_bwd_acts(IOSurfaceRef s, const float *dk, const float *dv) {
     IOSurfaceLock(s, 0, NULL);
     _Float16 *buf = (_Float16*)IOSurfaceGetBaseAddress(s);
-    for (int d = 0; d < DIM; d++) {
+    for (int d = 0; d < KV_DIM; d++) {
         cvt_f32_f16(buf + d*KV_BWD_SP,       dk + d*SEQ, SEQ);
         cvt_f32_f16(buf + d*KV_BWD_SP + SEQ, dv + d*SEQ, SEQ);
     }

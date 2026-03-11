@@ -3,6 +3,7 @@
 #define DIM 768
 #define HIDDEN 2048
 #define HEADS 12
+#define N_KV_HEADS HEADS   // GQA: set < HEADS for grouped-query attention (must divide HEADS evenly)
 #define SEQ 512
 #define NLAYERS 6
 // Optimizer (safe to change between runs)

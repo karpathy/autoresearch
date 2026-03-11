@@ -27,14 +27,20 @@ static bool load_pretrained(LayerWeights *lw, float *rms_final, float *embed, co
         printf("  ERROR: Config mismatch! Expected dim=%d hidden=%d layers=%d\n", DIM, HIDDEN, NLAYERS);
         fclose(f); return false;
     }
+    // GQA check: model must match our N_KV_HEADS config
+    int model_kv_heads = cfg.n_kv_heads > 0 ? cfg.n_kv_heads : cfg.n_heads;
+    if (model_kv_heads != N_KV_HEADS) {
+        printf("  ERROR: Model has n_kv_heads=%d, expected N_KV_HEADS=%d\n", model_kv_heads, N_KV_HEADS);
+        fclose(f); return false;
+    }
     int V = abs(cfg.vocab_size);
     (void)V;
 
     fread(embed, 4, VOCAB * DIM, f);
     for (int L = 0; L < NLAYERS; L++) fread(lw[L].rms_att, 4, DIM, f);
     for (int L = 0; L < NLAYERS; L++) fread(lw[L].Wq, 4, WQ_SZ, f);
-    for (int L = 0; L < NLAYERS; L++) fread(lw[L].Wk, 4, WQ_SZ, f);
-    for (int L = 0; L < NLAYERS; L++) fread(lw[L].Wv, 4, WQ_SZ, f);
+    for (int L = 0; L < NLAYERS; L++) fread(lw[L].Wk, 4, WK_SZ, f);
+    for (int L = 0; L < NLAYERS; L++) fread(lw[L].Wv, 4, WV_SZ, f);
     for (int L = 0; L < NLAYERS; L++) fread(lw[L].Wo, 4, WO_SZ, f);
     for (int L = 0; L < NLAYERS; L++) fread(lw[L].rms_ffn, 4, DIM, f);
     for (int L = 0; L < NLAYERS; L++) fread(lw[L].W1, 4, W1_SZ, f);
@@ -51,10 +57,10 @@ static bool load_pretrained(LayerWeights *lw, float *rms_final, float *embed, co
 static bool compile_dynamic_kernels(DynLayerKernels *dk) {
     NSDictionary *mask_w = @{@"@model_path/weights/mask.bin": @{@"offset":@0, @"data":get_mask_blob()}};
 
-    // SDPA forward: [1, DIM, 1, SDPA_FWD_SP] → [1, 4*DIM, 1, SEQ]
+    // SDPA forward: [1, DIM, 1, SDPA_FWD_SP] → [1, 2*DIM+2*KV_DIM, 1, SEQ]
     printf("  Compiling sdpaFwd...\n");
     dk->sdpaFwd = compile_kern_mil_w(gen_sdpa_fwd_dynamic(), mask_w,
-        DIM*SDPA_FWD_SP*2, 4*DIM*SEQ*2);
+        DIM*SDPA_FWD_SP*2, (2*DIM+2*KV_DIM)*SEQ*2);
     if (!dk->sdpaFwd) return false;
 
     // Wo forward: [1, DIM, 1, SEQ+DIM] → [1, DIM, 1, SEQ]
@@ -87,16 +93,16 @@ static bool compile_dynamic_kernels(DynLayerKernels *dk) {
         DIM*WOT_BWD_SP*2, DIM*SEQ*2);
     if (!dk->wotBwd) return false;
 
-    // SDPA bwd1 (weight-free, has mask): [1, 4*DIM, 1, SEQ] → [1, DIM+2*SCORE_CH, 1, SEQ]
+    // SDPA bwd1 (weight-free, has mask): [1, 2*DIM+2*KV_DIM, 1, SEQ] → [1, KV_DIM+2*SCORE_CH, 1, SEQ]
     printf("  Compiling sdpaBwd1...\n");
     dk->sdpaBwd1 = compile_kern_mil_w(gen_sdpa_bwd1_dynamic(), mask_w,
-        4*DIM*SEQ*2, (DIM+2*SCORE_CH)*SEQ*2);
+        (2*DIM+2*KV_DIM)*SEQ*2, (KV_DIM+2*SCORE_CH)*SEQ*2);
     if (!dk->sdpaBwd1) return false;
 
-    // SDPA bwd2 (weight-free): [1, 2*SCORE_CH+2*DIM, 1, SEQ] → [1, 2*DIM, 1, SEQ]
+    // SDPA bwd2 (weight-free): [1, 2*SCORE_CH+DIM+KV_DIM, 1, SEQ] → [1, DIM+KV_DIM, 1, SEQ]
     printf("  Compiling sdpaBwd2...\n");
     dk->sdpaBwd2 = compile_kern_mil_w(gen_sdpa_bwd2_dynamic(), @{},
-        (2*SCORE_CH+2*DIM)*SEQ*2, 2*DIM*SEQ*2);
+        (2*SCORE_CH+DIM+KV_DIM)*SEQ*2, (DIM+KV_DIM)*SEQ*2);
     if (!dk->sdpaBwd2) return false;
 
     // Q backward: [1, DIM, 1, SEQ+DIM] → [1, DIM, 1, SEQ]
@@ -105,10 +111,10 @@ static bool compile_dynamic_kernels(DynLayerKernels *dk) {
         DIM*Q_BWD_SP*2, DIM*SEQ*2);
     if (!dk->qBwd) return false;
 
-    // KV backward: [1, DIM, 1, 2*SEQ+2*DIM] → [1, DIM, 1, SEQ]
+    // KV backward: [1, KV_DIM, 1, 2*SEQ+2*DIM] → [1, DIM, 1, SEQ]
     printf("  Compiling kvBwd...\n");
     dk->kvBwd = compile_kern_mil_w(gen_kv_bwd_dynamic(), @{},
-        DIM*KV_BWD_SP*2, DIM*SEQ*2);
+        KV_DIM*KV_BWD_SP*2, DIM*SEQ*2);
     if (!dk->kvBwd) return false;
 
     return true;
@@ -128,15 +134,16 @@ static void save_checkpoint(const char *path, int step, int total_steps, float l
     h.lr = lr; h.loss = loss;
     h.cum_compile = 0; h.cum_train = ct; h.cum_wall = cw;
     h.cum_steps = cs; h.cum_batches = 0; h.adam_t = adam_t;
+    h.n_kv_heads = N_KV_HEADS;
     fwrite(&h, sizeof(h), 1, f);
     for (int L = 0; L < NLAYERS; L++) {
-        fwrite(lw[L].Wq,4,WQ_SZ,f); fwrite(lw[L].Wk,4,WQ_SZ,f);
-        fwrite(lw[L].Wv,4,WQ_SZ,f); fwrite(lw[L].Wo,4,WO_SZ,f);
+        fwrite(lw[L].Wq,4,WQ_SZ,f); fwrite(lw[L].Wk,4,WK_SZ,f);
+        fwrite(lw[L].Wv,4,WV_SZ,f); fwrite(lw[L].Wo,4,WO_SZ,f);
         fwrite(lw[L].W1,4,W1_SZ,f); fwrite(lw[L].W2,4,W2_SZ,f); fwrite(lw[L].W3,4,W3_SZ,f);
         fwrite(lw[L].rms_att,4,DIM,f); fwrite(lw[L].rms_ffn,4,DIM,f);
         fwrite(la[L].Wq.m,4,WQ_SZ,f); fwrite(la[L].Wq.v,4,WQ_SZ,f);
-        fwrite(la[L].Wk.m,4,WQ_SZ,f); fwrite(la[L].Wk.v,4,WQ_SZ,f);
-        fwrite(la[L].Wv.m,4,WQ_SZ,f); fwrite(la[L].Wv.v,4,WQ_SZ,f);
+        fwrite(la[L].Wk.m,4,WK_SZ,f); fwrite(la[L].Wk.v,4,WK_SZ,f);
+        fwrite(la[L].Wv.m,4,WV_SZ,f); fwrite(la[L].Wv.v,4,WV_SZ,f);
         fwrite(la[L].Wo.m,4,WO_SZ,f); fwrite(la[L].Wo.v,4,WO_SZ,f);
         fwrite(la[L].W1.m,4,W1_SZ,f); fwrite(la[L].W1.v,4,W1_SZ,f);
         fwrite(la[L].W2.m,4,W2_SZ,f); fwrite(la[L].W2.v,4,W2_SZ,f);
@@ -160,16 +167,22 @@ static bool load_checkpoint(const char *path, int *step, int *total_steps, float
     CkptHdr h;
     fread(&h, sizeof(h), 1, f);
     if (h.magic != 0x424C5A54 || h.version != 2) { fclose(f); return false; }
+    // GQA backward compat: old checkpoints have n_kv_heads=0, treat as MHA
+    int ckpt_kv = (h.n_kv_heads > 0) ? h.n_kv_heads : h.n_heads;
+    if (ckpt_kv != N_KV_HEADS) {
+        printf("Checkpoint n_kv_heads=%d != N_KV_HEADS=%d, cannot load\n", ckpt_kv, N_KV_HEADS);
+        fclose(f); return false;
+    }
     *step = h.step; *total_steps = h.total_steps; *lr = h.lr; *loss = h.loss;
     *ct = h.cum_train; *cw = h.cum_wall; *cs = h.cum_steps; *adam_t = h.adam_t;
     for (int L = 0; L < NLAYERS; L++) {
-        fread(lw[L].Wq,4,WQ_SZ,f); fread(lw[L].Wk,4,WQ_SZ,f);
-        fread(lw[L].Wv,4,WQ_SZ,f); fread(lw[L].Wo,4,WO_SZ,f);
+        fread(lw[L].Wq,4,WQ_SZ,f); fread(lw[L].Wk,4,WK_SZ,f);
+        fread(lw[L].Wv,4,WV_SZ,f); fread(lw[L].Wo,4,WO_SZ,f);
         fread(lw[L].W1,4,W1_SZ,f); fread(lw[L].W2,4,W2_SZ,f); fread(lw[L].W3,4,W3_SZ,f);
         fread(lw[L].rms_att,4,DIM,f); fread(lw[L].rms_ffn,4,DIM,f);
         fread(la[L].Wq.m,4,WQ_SZ,f); fread(la[L].Wq.v,4,WQ_SZ,f);
-        fread(la[L].Wk.m,4,WQ_SZ,f); fread(la[L].Wk.v,4,WQ_SZ,f);
-        fread(la[L].Wv.m,4,WQ_SZ,f); fread(la[L].Wv.v,4,WQ_SZ,f);
+        fread(la[L].Wk.m,4,WK_SZ,f); fread(la[L].Wk.v,4,WK_SZ,f);
+        fread(la[L].Wv.m,4,WV_SZ,f); fread(la[L].Wv.v,4,WV_SZ,f);
         fread(la[L].Wo.m,4,WO_SZ,f); fread(la[L].Wo.v,4,WO_SZ,f);
         fread(la[L].W1.m,4,W1_SZ,f); fread(la[L].W1.v,4,W1_SZ,f);
         fread(la[L].W2.m,4,W2_SZ,f); fread(la[L].W2.v,4,W2_SZ,f);
@@ -273,8 +286,9 @@ int main(int argc, char *argv[]) {
                 float scale_d=1.0f/sqrtf(DIM), scale_h=1.0f/sqrtf(HIDDEN);
                 float res_scale = 1.0f/sqrtf(2.0f*NLAYERS);
                 for (int L=0; L<NLAYERS; L++) {
-                    for(size_t i=0;i<WQ_SZ;i++){lw[L].Wq[i]=scale_d*(2*drand48()-1);lw[L].Wk[i]=scale_d*(2*drand48()-1);}
-                    for(size_t i=0;i<WQ_SZ;i++){lw[L].Wv[i]=scale_d*(2*drand48()-1);}
+                    for(size_t i=0;i<WQ_SZ;i++) lw[L].Wq[i]=scale_d*(2*drand48()-1);
+                    for(size_t i=0;i<WK_SZ;i++) lw[L].Wk[i]=scale_d*(2*drand48()-1);
+                    for(size_t i=0;i<WV_SZ;i++) lw[L].Wv[i]=scale_d*(2*drand48()-1);
                     for(size_t i=0;i<WO_SZ;i++) lw[L].Wo[i]=scale_d*res_scale*(2*drand48()-1);
                     for(size_t i=0;i<W1_SZ;i++) lw[L].W1[i]=scale_h*(2*drand48()-1);
                     for(size_t i=0;i<W2_SZ;i++) lw[L].W2[i]=scale_d*res_scale*(2*drand48()-1);
@@ -317,12 +331,12 @@ int main(int argc, char *argv[]) {
         float *Wqt_buf[NLAYERS], *Wkt_buf[NLAYERS], *Wvt_buf[NLAYERS], *Wot_buf[NLAYERS];
         float *W1t_buf[NLAYERS], *W3t_buf[NLAYERS];
         for (int L=0; L<NLAYERS; L++) {
-            Wqt_buf[L]=(float*)malloc(WQ_SZ*4); Wkt_buf[L]=(float*)malloc(WQ_SZ*4);
-            Wvt_buf[L]=(float*)malloc(WQ_SZ*4); Wot_buf[L]=(float*)malloc(WO_SZ*4);
+            Wqt_buf[L]=(float*)malloc(WQ_SZ*4); Wkt_buf[L]=(float*)malloc(WK_SZ*4);
+            Wvt_buf[L]=(float*)malloc(WV_SZ*4); Wot_buf[L]=(float*)malloc(WO_SZ*4);
             W1t_buf[L]=(float*)malloc(W1_SZ*4); W3t_buf[L]=(float*)malloc(W3_SZ*4);
             transpose_weight(Wqt_buf[L], lw[L].Wq, DIM, DIM);
-            transpose_weight(Wkt_buf[L], lw[L].Wk, DIM, DIM);
-            transpose_weight(Wvt_buf[L], lw[L].Wv, DIM, DIM);
+            transpose_weight(Wkt_buf[L], lw[L].Wk, KV_DIM, DIM);
+            transpose_weight(Wvt_buf[L], lw[L].Wv, KV_DIM, DIM);
             transpose_weight(Wot_buf[L], lw[L].Wo, DIM, DIM);
             transpose_weight(W1t_buf[L], lw[L].W1, HIDDEN, DIM);
             transpose_weight(W3t_buf[L], lw[L].W3, HIDDEN, DIM);
@@ -349,7 +363,7 @@ int main(int argc, char *argv[]) {
             pls[L].ffnBwdW13t_in = make_surface(HIDDEN*FFN_BWD_W13T_SP*2);
             pls[L].wotBwd_in     = make_surface(DIM*WOT_BWD_SP*2);
             pls[L].qBwd_in       = make_surface(DIM*Q_BWD_SP*2);
-            pls[L].kvBwd_in      = make_surface(DIM*KV_BWD_SP*2);
+            pls[L].kvBwd_in      = make_surface(KV_DIM*KV_BWD_SP*2);
 
             plr[L].sdpaFwd   = make_request(dk.sdpaFwd,   pls[L].sdpaFwd_in);
             plr[L].woFwd     = make_request(dk.woFwd,     pls[L].woFwd_in);
@@ -381,8 +395,8 @@ int main(int argc, char *argv[]) {
         float *dx2 = (float*)malloc(SEQ*DIM*4);
         float *dx_attn = (float*)malloc(SEQ*DIM*4);
         float *dq = (float*)malloc(SEQ*DIM*4);
-        float *dk_buf = (float*)malloc(SEQ*DIM*4);
-        float *dv = (float*)malloc(SEQ*DIM*4);
+        float *dk_buf = (float*)malloc(SEQ*KV_DIM*4);
+        float *dv = (float*)malloc(SEQ*KV_DIM*4);
         float *da_buf = (float*)malloc(SEQ*DIM*4);
         float *x_cur = (float*)malloc(SEQ*DIM*4);
         float *x_final = (float*)malloc(SEQ*DIM*4);
@@ -447,14 +461,14 @@ int main(int argc, char *argv[]) {
                 write_sdpa_fwd_acts(pls[L].sdpaFwd_in, xnorm_buf);
                 ane_eval_req(dk.sdpaFwd, plr[L].sdpaFwd);
 
-                // Read SDPA output: [1, 4*DIM, 1, SEQ]
+                // Read SDPA output: [1, 2*DIM+2*KV_DIM, 1, SEQ]
                 IOSurfaceLock(dk.sdpaFwd->ioOut, kIOSurfaceLockReadOnly, NULL);
                 _Float16 *fwd_out = (_Float16*)IOSurfaceGetBaseAddress(dk.sdpaFwd->ioOut);
                 int off = 0;
-                cvt_f16_f32(ac->attn_out, fwd_out + off, DIM*SEQ); off += DIM*SEQ;
-                cvt_f16_f32(ac->Q,        fwd_out + off, DIM*SEQ); off += DIM*SEQ;
-                cvt_f16_f32(ac->K,        fwd_out + off, DIM*SEQ); off += DIM*SEQ;
-                cvt_f16_f32(ac->V,        fwd_out + off, DIM*SEQ);
+                cvt_f16_f32(ac->attn_out, fwd_out + off, DIM*SEQ);    off += DIM*SEQ;
+                cvt_f16_f32(ac->Q,        fwd_out + off, DIM*SEQ);    off += DIM*SEQ;
+                cvt_f16_f32(ac->K,        fwd_out + off, KV_DIM*SEQ); off += KV_DIM*SEQ;
+                cvt_f16_f32(ac->V,        fwd_out + off, KV_DIM*SEQ);
                 IOSurfaceUnlock(dk.sdpaFwd->ioOut, kIOSurfaceLockReadOnly, NULL);
 
                 // Wo forward (ANE): attn_out @ Wo^T → o_out
@@ -586,34 +600,34 @@ int main(int argc, char *argv[]) {
                 });
 
                 // SDPA backward part 1: Q,K,V,da → dV,probs,dp
-                io_write_fp16_at(dk.sdpaBwd1->ioIn, 0,     ac->Q,   DIM, SEQ);
-                io_write_fp16_at(dk.sdpaBwd1->ioIn, DIM,   ac->K,   DIM, SEQ);
-                io_write_fp16_at(dk.sdpaBwd1->ioIn, 2*DIM, ac->V,   DIM, SEQ);
-                io_write_fp16_at(dk.sdpaBwd1->ioIn, 3*DIM, da_buf,  DIM, SEQ);
+                io_write_fp16_at(dk.sdpaBwd1->ioIn, 0,              ac->Q,   DIM, SEQ);
+                io_write_fp16_at(dk.sdpaBwd1->ioIn, DIM,            ac->K,   KV_DIM, SEQ);
+                io_write_fp16_at(dk.sdpaBwd1->ioIn, DIM+KV_DIM,     ac->V,   KV_DIM, SEQ);
+                io_write_fp16_at(dk.sdpaBwd1->ioIn, DIM+2*KV_DIM,   da_buf,  DIM, SEQ);
                 ane_eval(dk.sdpaBwd1);
 
                 // SDPA backward part 2: probs,dp,Q,K → dQ,dK
-                io_copy(dk.sdpaBwd2->ioIn, 0, dk.sdpaBwd1->ioOut, DIM, 2*SCORE_CH, SEQ);
+                io_copy(dk.sdpaBwd2->ioIn, 0, dk.sdpaBwd1->ioOut, KV_DIM, 2*SCORE_CH, SEQ);
                 io_write_fp16_at(dk.sdpaBwd2->ioIn, 2*SCORE_CH,     ac->Q, DIM, SEQ);
-                io_write_fp16_at(dk.sdpaBwd2->ioIn, 2*SCORE_CH+DIM, ac->K, DIM, SEQ);
+                io_write_fp16_at(dk.sdpaBwd2->ioIn, 2*SCORE_CH+DIM, ac->K, KV_DIM, SEQ);
                 ane_eval(dk.sdpaBwd2);
 
                 // Read SDPA backward outputs
                 io_read_fp16(dk.sdpaBwd2->ioOut, dq, 0,   DIM, SEQ);
-                io_read_fp16(dk.sdpaBwd2->ioOut, dk_buf, DIM,  DIM, SEQ);
-                io_read_fp16(dk.sdpaBwd1->ioOut, dv, 0,    DIM, SEQ);
+                io_read_fp16(dk.sdpaBwd2->ioOut, dk_buf, DIM, KV_DIM, SEQ);
+                io_read_fp16(dk.sdpaBwd1->ioOut, dv, 0,    KV_DIM, SEQ);
 
                 // dWq/dWk/dWv async
                 float *capt_dq = (float*)malloc(SEQ*DIM*4); memcpy(capt_dq, dq, SEQ*DIM*4);
-                float *capt_dk = (float*)malloc(SEQ*DIM*4); memcpy(capt_dk, dk_buf, SEQ*DIM*4);
-                float *capt_dv = (float*)malloc(SEQ*DIM*4); memcpy(capt_dv, dv, SEQ*DIM*4);
+                float *capt_dk = (float*)malloc(SEQ*KV_DIM*4); memcpy(capt_dk, dk_buf, SEQ*KV_DIM*4);
+                float *capt_dv = (float*)malloc(SEQ*KV_DIM*4); memcpy(capt_dv, dv, SEQ*KV_DIM*4);
                 float *capt_xn = (float*)malloc(SEQ*DIM*4); memcpy(capt_xn, ac->xnorm, SEQ*DIM*4);
                 dispatch_group_async(dw_grp, dw_q, ^{
                     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, DIM, DIM, SEQ,
                                 1.0f, capt_dq, SEQ, capt_xn, SEQ, 1.0f, gr->Wq, DIM);
-                    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, DIM, DIM, SEQ,
+                    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, KV_DIM, DIM, SEQ,
                                 1.0f, capt_dk, SEQ, capt_xn, SEQ, 1.0f, gr->Wk, DIM);
-                    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, DIM, DIM, SEQ,
+                    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, KV_DIM, DIM, SEQ,
                                 1.0f, capt_dv, SEQ, capt_xn, SEQ, 1.0f, gr->Wv, DIM);
                     free(capt_dq); free(capt_dk); free(capt_dv); free(capt_xn);
                 });
@@ -661,7 +675,9 @@ int main(int argc, char *argv[]) {
                 float gsc = 1.0f / ((float)ACCUM_STEPS * LOSS_SCALE);
                 for (int L=0; L<NLAYERS; L++) {
                     LayerGrads *g = &grads[L];
-                    for(size_t i=0;i<WQ_SZ;i++){g->Wq[i]*=gsc;g->Wk[i]*=gsc;g->Wv[i]*=gsc;g->Wo[i]*=gsc;}
+                    for(size_t i=0;i<WQ_SZ;i++){g->Wq[i]*=gsc; g->Wo[i]*=gsc;}
+                    for(size_t i=0;i<WK_SZ;i++) g->Wk[i]*=gsc;
+                    for(size_t i=0;i<WV_SZ;i++) g->Wv[i]*=gsc;
                     for(size_t i=0;i<W1_SZ;i++) g->W1[i]*=gsc;
                     for(size_t i=0;i<W2_SZ;i++) g->W2[i]*=gsc;
                     for(size_t i=0;i<W3_SZ;i++) g->W3[i]*=gsc;
@@ -713,8 +729,8 @@ int main(int argc, char *argv[]) {
 
                     // Update transposed weight buffers and re-stage
                     transpose_weight(p_Wqt[L], p_lw[L].Wq, DIM, DIM);
-                    transpose_weight(p_Wkt[L], p_lw[L].Wk, DIM, DIM);
-                    transpose_weight(p_Wvt[L], p_lw[L].Wv, DIM, DIM);
+                    transpose_weight(p_Wkt[L], p_lw[L].Wk, KV_DIM, DIM);
+                    transpose_weight(p_Wvt[L], p_lw[L].Wv, KV_DIM, DIM);
                     transpose_weight(p_Wot[L], p_lw[L].Wo, DIM, DIM);
                     transpose_weight(p_W1t[L], p_lw[L].W1, HIDDEN, DIM);
                     transpose_weight(p_W3t[L], p_lw[L].W3, HIDDEN, DIM);
@@ -788,7 +804,7 @@ int main(int argc, char *argv[]) {
         double wall = tb_ms(mach_absolute_time() - t_wall_start);
         total_train_ms += cum_train;
         wall += cum_wall; total_steps_done += cum_steps;
-        double fwd_flops = NLAYERS * (4.0*2*DIM*DIM*SEQ + 2.0*2*DIM*HIDDEN*SEQ + 2.0*HIDDEN*DIM*SEQ);
+        double fwd_flops = NLAYERS * (4.0*DIM*(DIM+KV_DIM)*SEQ + 2.0*2*DIM*HIDDEN*SEQ + 2.0*HIDDEN*DIM*SEQ);
         double sdpa_flops = NLAYERS * 2.0*HEADS*5*SEQ*SEQ*HD;
         double ane_flops = (fwd_flops*2 + sdpa_flops) * total_steps_done;
         double ane_tflops = (total_train_ms > 0) ? ane_flops / (total_train_ms * 1e9) : 0;

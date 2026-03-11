@@ -17,18 +17,22 @@
 // Stories110M config — architecture and optimizer from experiment_config.h
 #include "experiment_config.h"
 #define HD (DIM/HEADS)
+#define KV_DIM (N_KV_HEADS * HD)
+#define HEADS_PER_KV (HEADS / N_KV_HEADS)
 #define VOCAB 32000
 
 // Attention score channels for SDPA backward
 #define SCORE_CH (HEADS*SEQ)
 
-// Weight sizes per layer
+// Weight sizes per layer (GQA: Wk/Wv may be smaller than Wq/Wo)
 #define WQ_SZ (DIM*DIM)
+#define WK_SZ (KV_DIM*DIM)
+#define WV_SZ (KV_DIM*DIM)
 #define WO_SZ (DIM*DIM)
 #define W1_SZ (HIDDEN*DIM)
 #define W2_SZ (DIM*HIDDEN)
 #define W3_SZ (HIDDEN*DIM)
-#define LAYER_PARAMS (4*WQ_SZ + W1_SZ + W2_SZ + W3_SZ + 2*DIM)
+#define LAYER_PARAMS (WQ_SZ + WK_SZ + WV_SZ + WO_SZ + W1_SZ + W2_SZ + W3_SZ + 2*DIM)
 #define TOTAL_PARAMS (NLAYERS * LAYER_PARAMS + DIM + VOCAB*DIM)  // +rms_final+embed
 
 // Per-layer weight and optimizer state
@@ -109,7 +113,8 @@ typedef struct {
     double cum_compile, cum_train, cum_wall;
     int cum_steps, cum_batches;
     int adam_t;
-    int pad[3];         // alignment
+    int n_kv_heads;     // GQA support (0 in old ckpts → treated as n_heads)
+    int pad[2];         // alignment
 } CkptHdr;
 
 // llama2.c model file header
@@ -136,8 +141,8 @@ static void adam_free(AdamState *s) { free(s->m); free(s->v); }
 
 static LayerWeights layer_weights_alloc(void) {
     LayerWeights w;
-    w.Wq=(float*)malloc(WQ_SZ*4); w.Wk=(float*)malloc(WQ_SZ*4);
-    w.Wv=(float*)malloc(WQ_SZ*4); w.Wo=(float*)malloc(WO_SZ*4);
+    w.Wq=(float*)malloc(WQ_SZ*4); w.Wk=(float*)malloc(WK_SZ*4);
+    w.Wv=(float*)malloc(WV_SZ*4); w.Wo=(float*)malloc(WO_SZ*4);
     w.W1=(float*)malloc(W1_SZ*4); w.W2=(float*)malloc(W2_SZ*4); w.W3=(float*)malloc(W3_SZ*4);
     w.rms_att=(float*)malloc(DIM*4); w.rms_ffn=(float*)malloc(DIM*4);
     return w;
@@ -149,7 +154,7 @@ static void layer_weights_free(LayerWeights *w) {
 }
 static LayerAdam layer_adam_alloc(void) {
     LayerAdam a;
-    a.Wq=adam_alloc(WQ_SZ); a.Wk=adam_alloc(WQ_SZ); a.Wv=adam_alloc(WQ_SZ); a.Wo=adam_alloc(WO_SZ);
+    a.Wq=adam_alloc(WQ_SZ); a.Wk=adam_alloc(WK_SZ); a.Wv=adam_alloc(WV_SZ); a.Wo=adam_alloc(WO_SZ);
     a.W1=adam_alloc(W1_SZ); a.W2=adam_alloc(W2_SZ); a.W3=adam_alloc(W3_SZ);
     a.rms_att=adam_alloc(DIM); a.rms_ffn=adam_alloc(DIM);
     return a;
@@ -163,7 +168,7 @@ static LayerActs layer_acts_alloc(void) {
     LayerActs a;
     a.layer_in=(float*)malloc(SEQ*DIM*4);
     a.xnorm=(float*)malloc(SEQ*DIM*4); a.Q=(float*)malloc(SEQ*DIM*4);
-    a.K=(float*)malloc(SEQ*DIM*4); a.V=(float*)malloc(SEQ*DIM*4);
+    a.K=(float*)malloc(SEQ*KV_DIM*4); a.V=(float*)malloc(SEQ*KV_DIM*4);
     a.attn_out=(float*)malloc(SEQ*DIM*4); a.o_out=(float*)malloc(SEQ*DIM*4);
     a.x2=(float*)malloc(SEQ*DIM*4); a.x2norm=(float*)malloc(SEQ*DIM*4);
     a.h1=(float*)malloc(SEQ*HIDDEN*4); a.h3=(float*)malloc(SEQ*HIDDEN*4);
@@ -177,15 +182,15 @@ static void layer_acts_free(LayerActs *a) {
 }
 static LayerGrads layer_grads_alloc(void) {
     LayerGrads g;
-    g.Wq=(float*)calloc(WQ_SZ,4); g.Wk=(float*)calloc(WQ_SZ,4);
-    g.Wv=(float*)calloc(WQ_SZ,4); g.Wo=(float*)calloc(WO_SZ,4);
+    g.Wq=(float*)calloc(WQ_SZ,4); g.Wk=(float*)calloc(WK_SZ,4);
+    g.Wv=(float*)calloc(WV_SZ,4); g.Wo=(float*)calloc(WO_SZ,4);
     g.W1=(float*)calloc(W1_SZ,4); g.W2=(float*)calloc(W2_SZ,4); g.W3=(float*)calloc(W3_SZ,4);
     g.rms_att=(float*)calloc(DIM,4); g.rms_ffn=(float*)calloc(DIM,4);
     return g;
 }
 static void layer_grads_zero(LayerGrads *g) {
-    memset(g->Wq,0,WQ_SZ*4);memset(g->Wk,0,WQ_SZ*4);
-    memset(g->Wv,0,WQ_SZ*4);memset(g->Wo,0,WO_SZ*4);
+    memset(g->Wq,0,WQ_SZ*4);memset(g->Wk,0,WK_SZ*4);
+    memset(g->Wv,0,WV_SZ*4);memset(g->Wo,0,WO_SZ*4);
     memset(g->W1,0,W1_SZ*4);memset(g->W2,0,W2_SZ*4);memset(g->W3,0,W3_SZ*4);
     memset(g->rms_att,0,DIM*4);memset(g->rms_ffn,0,DIM*4);
 }

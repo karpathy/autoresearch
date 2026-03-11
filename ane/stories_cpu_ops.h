@@ -224,8 +224,8 @@ static float clip_gradients(LayerGrads *grads, float *grms_final, float *gembed,
     for (int L = 0; L < NLAYERS; L++) {
         float dot;
         vDSP_dotpr(grads[L].Wq, 1, grads[L].Wq, 1, &dot, (vDSP_Length)WQ_SZ); norm_sq += dot;
-        vDSP_dotpr(grads[L].Wk, 1, grads[L].Wk, 1, &dot, (vDSP_Length)WQ_SZ); norm_sq += dot;
-        vDSP_dotpr(grads[L].Wv, 1, grads[L].Wv, 1, &dot, (vDSP_Length)WQ_SZ); norm_sq += dot;
+        vDSP_dotpr(grads[L].Wk, 1, grads[L].Wk, 1, &dot, (vDSP_Length)WK_SZ); norm_sq += dot;
+        vDSP_dotpr(grads[L].Wv, 1, grads[L].Wv, 1, &dot, (vDSP_Length)WV_SZ); norm_sq += dot;
         vDSP_dotpr(grads[L].Wo, 1, grads[L].Wo, 1, &dot, (vDSP_Length)WO_SZ); norm_sq += dot;
         vDSP_dotpr(grads[L].W1, 1, grads[L].W1, 1, &dot, (vDSP_Length)W1_SZ); norm_sq += dot;
         vDSP_dotpr(grads[L].W2, 1, grads[L].W2, 1, &dot, (vDSP_Length)W2_SZ); norm_sq += dot;
@@ -242,8 +242,8 @@ static float clip_gradients(LayerGrads *grads, float *grms_final, float *gembed,
         float scale = max_norm / total_norm;
         for (int L = 0; L < NLAYERS; L++) {
             vDSP_vsmul(grads[L].Wq, 1, &scale, grads[L].Wq, 1, (vDSP_Length)WQ_SZ);
-            vDSP_vsmul(grads[L].Wk, 1, &scale, grads[L].Wk, 1, (vDSP_Length)WQ_SZ);
-            vDSP_vsmul(grads[L].Wv, 1, &scale, grads[L].Wv, 1, (vDSP_Length)WQ_SZ);
+            vDSP_vsmul(grads[L].Wk, 1, &scale, grads[L].Wk, 1, (vDSP_Length)WK_SZ);
+            vDSP_vsmul(grads[L].Wv, 1, &scale, grads[L].Wv, 1, (vDSP_Length)WV_SZ);
             vDSP_vsmul(grads[L].Wo, 1, &scale, grads[L].Wo, 1, (vDSP_Length)WO_SZ);
             vDSP_vsmul(grads[L].W1, 1, &scale, grads[L].W1, 1, (vDSP_Length)W1_SZ);
             vDSP_vsmul(grads[L].W2, 1, &scale, grads[L].W2, 1, (vDSP_Length)W2_SZ);
