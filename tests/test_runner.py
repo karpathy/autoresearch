@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -7,7 +9,12 @@ import sys
 import os
 
 from ttt_autoresearch.config import TTTAutoResearchConfig
-from ttt_autoresearch.runner import AutoResearchRunner, parse_patch_candidate_for_state, parse_val_bpb
+from ttt_autoresearch.runner import (
+    AutoResearchRunner,
+    _find_top_level_undefined_name,
+    parse_patch_candidate_for_state,
+    parse_val_bpb,
+)
 
 
 class RunnerTests(unittest.TestCase):
@@ -63,6 +70,34 @@ class RunnerTests(unittest.TestCase):
             self.assertAlmostEqual(result.val_bpb, 1.25)
             self.assertTrue((Path(config.run_dir) / "baseline" / "train.py").exists())
 
+    def test_runner_ignores_malformed_metrics_json_when_stdout_has_val_bpb(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "program.md").write_text("program", encoding="utf-8")
+            (root / "prepare.py").write_text("TIME_BUDGET = 1\n", encoding="utf-8")
+            (root / "train.py").write_text("print('ok')\n", encoding="utf-8")
+            fixture = (
+                "from pathlib import Path\n"
+                "print('val_bpb: 0.876543')\n"
+                "Path('metrics.json').write_text('{not-json', encoding='utf-8')\n"
+            )
+            fixtures = root / "tests" / "fixtures"
+            fixtures.mkdir(parents=True)
+            (fixtures / "bad_metrics.py").write_text(fixture, encoding="utf-8")
+            config = TTTAutoResearchConfig(
+                execution_backend="local",
+                timeout_sec=5,
+                baseline_command_override=[sys.executable, "tests/fixtures/bad_metrics.py"],
+            ).normalized(root)
+            runner = AutoResearchRunner(root, config, Path(config.run_dir))
+            bootstrap = runner.build_bootstrap(1.0)
+            result = runner.run_baseline(bootstrap=bootstrap)
+            self.assertEqual(result.status, "success")
+            self.assertAlmostEqual(result.val_bpb, 0.876543)
+            metrics = json.loads(result.metrics_path.read_text(encoding="utf-8"))
+            self.assertAlmostEqual(metrics["val_bpb"], 0.876543)
+            self.assertIn("metrics_json_error", metrics)
+
     def test_preflight_rejects_invalid_batch_divisibility(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -90,6 +125,14 @@ class RunnerTests(unittest.TestCase):
             preflight = runner.preflight_candidate(workspace, candidate)
             self.assertFalse(preflight.ok)
             self.assertEqual(preflight.stage, "batch_divisibility")
+
+    def test_top_level_undefined_name_does_not_treat_nested_bindings_as_module_scope(self) -> None:
+        module = ast.parse(
+            "if False:\n"
+            "    x = 1\n"
+            "print(x)\n"
+        )
+        self.assertEqual(_find_top_level_undefined_name(module), "x")
 
     def test_preflight_rejects_missing_val_bpb_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

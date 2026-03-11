@@ -474,10 +474,16 @@ class AutoResearchRunner:
         if status == "success" and val_bpb is None:
             status = "missing_metric"
 
+        metrics = {"val_bpb": val_bpb}
         if val_bpb is not None and metrics_path.exists():
-            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-        else:
-            metrics = {"val_bpb": val_bpb}
+            try:
+                loaded_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                metrics["metrics_json_error"] = str(exc)
+            else:
+                if isinstance(loaded_metrics, dict):
+                    metrics = loaded_metrics
+                    metrics.setdefault("val_bpb", val_bpb)
         self._write_json(metrics_path, metrics)
 
         return RunResult(
@@ -738,22 +744,7 @@ def _collect_defined_names(statements: list[ast.stmt]) -> set[str]:
     names: set[str] = set()
     for stmt in statements:
         names.update(_names_defined_by_stmt(stmt))
-        for child_block in _child_statement_blocks(stmt):
-            names.update(_collect_defined_names(child_block))
     return names
-
-
-def _child_statement_blocks(stmt: ast.stmt) -> list[list[ast.stmt]]:
-    blocks: list[list[ast.stmt]] = []
-    for attr in ("body", "orelse", "finalbody"):
-        value = getattr(stmt, attr, None)
-        if isinstance(value, list):
-            blocks.append(value)
-    handlers = getattr(stmt, "handlers", None)
-    if handlers:
-        for handler in handlers:
-            blocks.append(handler.body)
-    return blocks
 
 
 def _has_non_block_wrapper_text(response_text: str, blocks: list[re.Match[str]]) -> bool:

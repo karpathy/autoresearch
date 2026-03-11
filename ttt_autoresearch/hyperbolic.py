@@ -103,7 +103,7 @@ class HyperbolicPool:
                 f"  echo 'Controller already running at {remote_pid_path}'",
                 "  exit 1",
                 "fi",
-                'export PATH="$HOME/.local/bin:$PATH"',
+                f'export PATH="{self._remote_uv_bin_dir()}:$HOME/.local/bin:$PATH"',
                 *[f"export {name}={shlex.quote(value)}" for name, value in sorted(forwarded_env.items())],
                 f"cd {shlex.quote(self.config.hyperbolic_repo_root)}",
                 "nohup bash -lc "
@@ -155,23 +155,30 @@ class HyperbolicPool:
 
     def _assert_no_active_remote_runs(self) -> None:
         repo_root = self.config.hyperbolic_repo_root
-        controller_pattern = f"run_ttt_discover.py --config {repo_root}/runs/launches/"
-        train_pattern = f"{repo_root}/.venv/bin/python3 train.py"
         script = "\n".join(
             [
                 "set -euo pipefail",
-                f"controller_matches=$(pgrep -af {shlex.quote(controller_pattern)} || true)",
-                f"train_matches=$(pgrep -af {shlex.quote(train_pattern)} || true)",
-                'if [ -n "$controller_matches" ] || [ -n "$train_matches" ]; then',
+                "matches=$(python3 - <<'PY'\n"
+                "import subprocess\n"
+                f"repo_root = {repo_root!r}\n"
+                "rows = subprocess.run(['ps', '-eo', 'pid=,args='], text=True, capture_output=True, check=True).stdout.splitlines()\n"
+                "hits = []\n"
+                "for row in rows:\n"
+                "    row = row.strip()\n"
+                "    if not row:\n"
+                "        continue\n"
+                "    pid, _, args = row.partition(' ')\n"
+                "    if repo_root not in args:\n"
+                "        continue\n"
+                "    is_controller = 'run_ttt_discover.py' in args and f'{repo_root}/runs/launches/' in args\n"
+                "    is_train = 'train.py' in args and 'run_ttt_discover.py' not in args\n"
+                "    if is_controller or is_train:\n"
+                "        hits.append(row)\n"
+                "print('\\n'.join(hits))\n"
+                "PY\n)",
+                'if [ -n "$matches" ]; then',
                 "  echo 'Detected active AutoResearch processes already running on the Hyperbolic node.'",
-                "  if [ -n \"$controller_matches\" ]; then",
-                "    echo 'Controllers:'",
-                "    echo \"$controller_matches\"",
-                "  fi",
-                "  if [ -n \"$train_matches\" ]; then",
-                "    echo 'Train jobs:'",
-                "    echo \"$train_matches\"",
-                "  fi",
+                "  echo \"$matches\"",
                 "  exit 12",
                 "fi",
             ]
@@ -243,7 +250,9 @@ class HyperbolicPool:
         self._upload_file(self.repo_archive_path, remote_archive)
         repo_root = self.config.hyperbolic_repo_root
         bootstrap_commands = self.config.hyperbolic_bootstrap_commands or [
-            "python3 -m pip install --user --upgrade uv",
+            f'if ! command -v uv >/dev/null 2>&1 && [ ! -x "{self._remote_uv_bin_dir()}/uv" ]; then '
+            "curl -LsSf https://astral.sh/uv/install.sh | sh; "
+            "fi",
             "cd {repo_root} && uv sync",
             "cd {repo_root} && uv run prepare.py --num-shards {prepare_num_shards}",
         ]
@@ -256,7 +265,7 @@ class HyperbolicPool:
         ]
         script_lines = [
             "set -euo pipefail",
-            'export PATH="$HOME/.local/bin:$PATH"',
+            f'export PATH="{self._remote_uv_bin_dir()}:$HOME/.local/bin:$PATH"',
             f"rm -rf {shlex.quote(repo_root)}",
             f"mkdir -p {shlex.quote(repo_root)}",
             f"tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(repo_root)}",
@@ -270,6 +279,14 @@ class HyperbolicPool:
             timeout=self.config.hyperbolic_bootstrap_timeout_sec,
             check=True,
         )
+
+    @staticmethod
+    def _remote_uv_root() -> str:
+        return "$HOME/.local"
+
+    @classmethod
+    def _remote_uv_bin_dir(cls) -> str:
+        return f"{cls._remote_uv_root()}/bin"
 
     def _run_workspace_on_node(
         self,

@@ -34,11 +34,11 @@ gpu_devices:
   - "6"
   - "7"
 execution_backend: hyperbolic
-hyperbolic_ssh_host: 85.234.79.188
+hyperbolic_ssh_host: 85.234.79.51
 hyperbolic_ssh_port: 22
-hyperbolic_ssh_user: ubuntu
+hyperbolic_ssh_user: user
 hyperbolic_ssh_private_key_path: null
-hyperbolic_repo_root: /home/ubuntu/autoresearch
+hyperbolic_repo_root: /home/user/autoresearch
 hyperbolic_prepare_num_shards: 10
 hyperbolic_bootstrap_timeout_sec: 7200
 hyperbolic_bootstrap_commands: null

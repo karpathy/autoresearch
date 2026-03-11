@@ -168,7 +168,7 @@ class RewardTests(unittest.TestCase):
         self.assertEqual(candidate.summary, "search_replace_patch_candidate")
         self.assertEqual(candidate.train_py, "print(1)\n")
 
-    def test_preflight_failed_candidate_is_persisted_to_history_and_manifest(self) -> None:
+    def test_invalid_batch_patch_runs_and_crashes_at_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             original = (
@@ -207,16 +207,16 @@ class RewardTests(unittest.TestCase):
             payload = "<<<<<<< SEARCH\nTOTAL_BATCH_SIZE = 8\n=======\nTOTAL_BATCH_SIZE = 7\n>>>>>>> REPLACE"
             result = evaluator.get_reward(payload, state)
 
-            self.assertEqual(result["metrics"]["candidate_status"], "preflight_failed")
+            self.assertEqual(result["metrics"]["candidate_status"], "crash")
             history_path = Path(config.run_dir) / "history.jsonl"
             history = json.loads(history_path.read_text(encoding="utf-8").strip())
-            self.assertEqual(history["status"], "preflight_failed")
-            self.assertEqual(history["failure_stage"], "batch_divisibility")
+            self.assertEqual(history["status"], "crash")
+            self.assertEqual(history["failure_stage"], "runtime")
             manifest_path = next((Path(config.run_dir) / "candidates").glob("*/rollout_manifest.json"))
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            self.assertEqual(manifest["evaluation"]["status"], "preflight_failed")
-            self.assertEqual(manifest["preflight"]["stage"], "batch_divisibility")
-            self.assertTrue((Path(manifest["preflight_path"])).exists())
+            self.assertEqual(manifest["evaluation"]["status"], "crash")
+            self.assertIn("stdout_path", manifest["evaluation"])
+            self.assertIn("stderr_path", manifest["evaluation"])
 
     def test_concurrent_reward_calls_serialize_inner_evaluations(self) -> None:
         class FakeRunner:

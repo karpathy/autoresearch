@@ -140,14 +140,35 @@ class HyperbolicPoolTests(unittest.TestCase):
         pool.config = config
 
         def fake_run_ssh(command: str, timeout: int, check: bool):
-            if "pgrep -af" in command:
-                return subprocess.CompletedProcess(
-                    args=["ssh"],
-                    returncode=12,
-                    stdout="Detected active AutoResearch processes already running on the Hyperbolic node.\nControllers:\n123 python run_ttt_discover.py",
-                    stderr="",
-                )
-            raise AssertionError("unexpected remote command")
+            return subprocess.CompletedProcess(
+                args=["ssh"],
+                returncode=12,
+                stdout="Detected active AutoResearch processes already running on the Hyperbolic node.\nControllers:\n123 python run_ttt_discover.py",
+                stderr="",
+            )
+
+        pool._run_ssh = fake_run_ssh  # type: ignore[method-assign]
+        with self.assertRaises(HyperbolicError):
+            pool._assert_no_active_remote_runs()
+
+    def test_detached_launch_refuses_alt_train_command_shapes(self) -> None:
+        config = TTTAutoResearchConfig(
+            execution_backend="hyperbolic",
+            hyperbolic_ssh_host="1.2.3.4",
+        ).normalized(Path("."))
+        pool = object.__new__(HyperbolicPool)
+        pool.config = config
+
+        def fake_run_ssh(command: str, timeout: int, check: bool):
+            return subprocess.CompletedProcess(
+                args=["ssh"],
+                returncode=12,
+                stdout=(
+                    "Detected active AutoResearch processes already running on the Hyperbolic node.\n"
+                    "999 uv run python /home/ubuntu/autoresearch/train.py\n"
+                ),
+                stderr="",
+            )
 
         pool._run_ssh = fake_run_ssh  # type: ignore[method-assign]
         with self.assertRaises(HyperbolicError):
