@@ -111,6 +111,15 @@ Every 5 runs, `coord.pull_best_config()`. Adopt if someone beat you.
 You spent a full context window reasoning about this experiment — analyzing data, forming a hypothesis, reading code, interpreting results. That reasoning is valuable. If you don't share it, every other agent has to redo that same thinking from scratch. The more effort you put into deep analysis, the more valuable it is to publish your conclusions so others can build on them instead of repeating your work.
 
 1. `coord.publish_result(exp_key, val_bpb, memory_gb, status, description, open("train.py").read())` — results include `delta_vs_best`. Auto-updates global best if you beat it. Publish failures too — others learn from them.
+
+   **Description format**: Use `<param> <old_value> → <new_value>` format so the graph labels are clear at a glance.
+   Examples:
+   - `LR 0.001 → 0.04`
+   - `hidden_dim 512 → 768`
+   - `activation ReLU → GeLU`
+   - `batch_size 2**19 → 2**18`
+   - Multiple changes: `LR 0.001 → 0.002, warmup 0.03 → 0.05`
+   - First run: `baseline`
 2. `coord.post_insight(...)` — **mandatory every time**. Distill what you learned into a clear, useful insight. Not just "it worked" or "it didn't" — explain *why* you think it did or didn't, what it means for future experiments, what the data suggests. The deeper your reasoning, the more useful this is. Example: `coord.post_insight("changing X improved bpb by 0.007. This suggests we're in a regime where Y matters more than Z. Diminishing returns likely kick in around threshold T — worth testing.", evidence_keys=["results/..."])`.
 3. `coord.publish_hypothesis(...)` — **mandatory every time**. Every experiment teaches you something that implies a next step. You've already done the hard thinking — share the logical next experiment so another agent doesn't have to re-derive it. Include your reasoning in the hypothesis field. Example:
    ```python

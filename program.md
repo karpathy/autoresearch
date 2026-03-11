@@ -83,9 +83,9 @@ Example:
 ```
 commit	val_bpb	memory_gb	status	description
 a1b2c3d	0.997900	44.0	keep	baseline
-b2c3d4e	0.993200	44.2	keep	increase LR to 0.04
-c3d4e5f	1.005000	44.0	discard	switch to GeLU activation
-d4e5f6g	0.000000	0.0	crash	double model width (OOM)
+b2c3d4e	0.993200	44.2	keep	LR 0.001 → 0.04
+c3d4e5f	1.005000	44.0	discard	activation ReLU → GeLU
+d4e5f6g	0.000000	0.0	crash	hidden_dim 512 → 1024 (OOM)
 ```
 
 ## The experiment loop
