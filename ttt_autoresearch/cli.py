@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from pathlib import Path
+import subprocess
 import sys
 
 from ttt_autoresearch.config import TTTAutoResearchConfig, load_config, write_resolved_config
+from ttt_autoresearch.discover_compat import (
+    patch_transformers_kimi_trust_remote_code,
+    patch_ttt_discover_kimi_tokenizer,
+    patch_ttt_discover_no_wandb_bug,
+)
 from ttt_autoresearch.env import AutoResearchDiscoverEnv
+from ttt_autoresearch.hyperbolic import HyperbolicPool
 from ttt_autoresearch.reward import AutoResearchRewardEvaluator
 from ttt_autoresearch.runner import AutoResearchRunner
 
@@ -28,6 +36,28 @@ def main(argv: list[str] | None = None) -> int:
     config_path = _resolve_config_path(args.config, repo_root)
     config = load_config(config_path, repo_root=repo_root)
     config = _apply_overrides(config, args)
+    run_dir = Path(config.run_dir)
+
+    if config.execution_backend == "hyperbolic" and config.hyperbolic_detached_controller:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        launcher = HyperbolicPool(repo_root=repo_root, run_dir=run_dir, config=config)
+        launch_info = launcher.launch_detached_controller()
+        write_resolved_config(run_dir / "resolved_config.json", config)
+        if config.hyperbolic_local_mirror:
+            mirror_info = _start_hyperbolic_mirror(config=config, run_dir=run_dir, launch_info=launch_info)
+            launch_info.update(mirror_info)
+        (run_dir / "hyperbolic_launch.json").write_text(
+            json.dumps(launch_info, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        print(f"Started detached Hyperbolic controller on {config.hyperbolic_ssh_host}.")
+        print(f"Remote run dir: {launch_info['remote_run_dir']}")
+        print(f"Remote log: {launch_info['remote_log_path']}")
+        if config.hyperbolic_local_mirror:
+            print(f"Local mirror: {launch_info['local_mirror_dir']}")
+        return 0
+
+    patch_transformers_kimi_trust_remote_code()
 
     try:
         from ttt_discover.rl.train import Config as RLConfig, main as discover_main
@@ -39,7 +69,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         raise AssertionError from exc
 
-    run_dir = Path(config.run_dir)
+    patch_ttt_discover_no_wandb_bug()
+    patch_ttt_discover_kimi_tokenizer()
+
     runner = AutoResearchRunner(repo_root=repo_root, config=config, run_dir=run_dir)
     try:
         baseline_result = runner.load_existing_baseline_result()
@@ -118,6 +150,49 @@ def _apply_overrides(config: TTTAutoResearchConfig, args: argparse.Namespace) ->
     if args.run_dir:
         updated["run_dir"] = args.run_dir
     return TTTAutoResearchConfig(**updated).normalized(Path(__file__).resolve().parent.parent)
+
+
+def _start_hyperbolic_mirror(config: TTTAutoResearchConfig, run_dir: Path, launch_info: dict[str, str]) -> dict[str, str]:
+    mirror_dir = Path(config.hyperbolic_local_mirror_dir) if config.hyperbolic_local_mirror_dir else run_dir / "mirror"
+    mirror_dir.mkdir(parents=True, exist_ok=True)
+    log_path = run_dir / "hyperbolic_mirror.log"
+    with log_path.open("ab") as handle:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "ttt_autoresearch.hyperbolic_mirror",
+                "--host",
+                str(config.hyperbolic_ssh_host),
+                "--port",
+                str(config.hyperbolic_ssh_port),
+                "--user",
+                str(config.hyperbolic_ssh_user),
+                "--remote-run-dir",
+                launch_info["remote_run_dir"],
+                "--remote-launch-dir",
+                launch_info["remote_launch_dir"],
+                "--remote-exitcode-path",
+                launch_info["remote_exitcode_path"],
+                "--local-dest",
+                str(mirror_dir),
+                "--interval-sec",
+                str(config.hyperbolic_sync_interval_sec),
+                *(
+                    ["--identity-file", config.hyperbolic_ssh_private_key_path]
+                    if config.hyperbolic_ssh_private_key_path
+                    else []
+                ),
+            ],
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    return {
+        "local_mirror_dir": str(mirror_dir),
+        "local_mirror_log_path": str(log_path),
+        "local_mirror_pid": str(process.pid),
+    }
 
 
 if __name__ == "__main__":

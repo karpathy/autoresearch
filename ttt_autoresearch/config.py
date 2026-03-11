@@ -42,14 +42,28 @@ class TTTAutoResearchConfig:
     kl_penalty_coef: float = 0.1
     phase1_max_tokens: int = 26000
     save_every: int = 2
-    wandb_project: str | None = "autoresearch-ttt-discover"
+    wandb_project: str | None = None
     num_cpus_per_task: int = 0
     eval_timeout: int | None = None
     local_model_path: str | None = None
     keep_history: int = 6
-    max_concurrent_evaluations: int = 16
+    max_concurrent_evaluations: int = 8
     gpu_devices: list[str] | None = None
-    execution_backend: str = "runpod"
+    execution_backend: str = "hyperbolic"
+    hyperbolic_ssh_host: str | None = None
+    hyperbolic_ssh_port: int = 22
+    hyperbolic_ssh_user: str = "ubuntu"
+    hyperbolic_ssh_private_key_path: str | None = None
+    hyperbolic_repo_root: str = "/home/ubuntu/autoresearch"
+    hyperbolic_prepare_num_shards: int = 10
+    hyperbolic_bootstrap_timeout_sec: int = 7200
+    hyperbolic_bootstrap_commands: list[str] | None = None
+    hyperbolic_detached_controller: bool = True
+    hyperbolic_remote_run_dir: str | None = None
+    hyperbolic_forward_env_vars: list[str] | None = None
+    hyperbolic_local_mirror: bool = True
+    hyperbolic_sync_interval_sec: int = 30
+    hyperbolic_local_mirror_dir: str | None = None
     runpod_api_key_env: str = "RUNPOD_API_KEY"
     runpod_api_base: str = "https://rest.runpod.io/v1"
     runpod_cloud_type: str = "COMMUNITY"
@@ -77,8 +91,11 @@ class TTTAutoResearchConfig:
         run_dir = _resolve_path(self.run_dir, repo_root) if self.run_dir else repo_root / "runs" / datetime.now().strftime("%Y%m%d_%H%M%S")
         experiment_name = self.experiment_name or run_dir.name
         execution_backend = self.execution_backend.lower()
-        if execution_backend not in {"local", "runpod"}:
-            raise ValueError("execution_backend must be either 'local' or 'runpod'.")
+        if execution_backend not in {"local", "runpod", "hyperbolic"}:
+            raise ValueError("execution_backend must be one of 'local', 'runpod', or 'hyperbolic'.")
+        gpu_devices = _normalize_string_list(self.gpu_devices)
+        if execution_backend == "hyperbolic" and not gpu_devices:
+            gpu_devices = [str(index) for index in range(8)]
         return TTTAutoResearchConfig(
             model_name=self.model_name,
             provider=self.provider,
@@ -106,8 +123,32 @@ class TTTAutoResearchConfig:
             local_model_path=_resolve_optional_path_str(self.local_model_path, repo_root),
             keep_history=self.keep_history,
             max_concurrent_evaluations=max(1, int(self.max_concurrent_evaluations)),
-            gpu_devices=_normalize_string_list(self.gpu_devices),
+            gpu_devices=gpu_devices,
             execution_backend=execution_backend,
+            hyperbolic_ssh_host=self.hyperbolic_ssh_host,
+            hyperbolic_ssh_port=max(1, int(self.hyperbolic_ssh_port)),
+            hyperbolic_ssh_user=self.hyperbolic_ssh_user,
+            hyperbolic_ssh_private_key_path=_resolve_optional_path_str(self.hyperbolic_ssh_private_key_path, repo_root),
+            hyperbolic_repo_root=self.hyperbolic_repo_root.rstrip("/"),
+            hyperbolic_prepare_num_shards=max(2, int(self.hyperbolic_prepare_num_shards)),
+            hyperbolic_bootstrap_timeout_sec=max(300, int(self.hyperbolic_bootstrap_timeout_sec)),
+            hyperbolic_bootstrap_commands=_normalize_command(self.hyperbolic_bootstrap_commands),
+            hyperbolic_detached_controller=bool(self.hyperbolic_detached_controller),
+            hyperbolic_remote_run_dir=self.hyperbolic_remote_run_dir,
+            hyperbolic_forward_env_vars=_normalize_string_list(self.hyperbolic_forward_env_vars)
+            or [
+                "OPENAI_API_KEY",
+                "OPENAI_BASE_URL",
+                "OPENAI_API_BASE",
+                "TINKER_API_KEY",
+                "TINKER_BASE_URL",
+                "TINKER_PROVIDER",
+                "TM_API_KEY",
+                "HF_TOKEN",
+            ],
+            hyperbolic_local_mirror=bool(self.hyperbolic_local_mirror),
+            hyperbolic_sync_interval_sec=max(5, int(self.hyperbolic_sync_interval_sec)),
+            hyperbolic_local_mirror_dir=_resolve_optional_path_str(self.hyperbolic_local_mirror_dir, repo_root),
             runpod_api_key_env=self.runpod_api_key_env,
             runpod_api_base=self.runpod_api_base.rstrip("/"),
             runpod_cloud_type=self.runpod_cloud_type.upper(),
@@ -176,6 +217,8 @@ class BootstrapContext:
 
 def infer_renderer_name(model_name: str) -> str | None:
     lowered = model_name.lower()
+    if "kimi-k2" in lowered or "moonshotai/kimi" in lowered:
+        return "qwen3"
     if "qwen" in lowered:
         if "instruct" in lowered:
             return "qwen3_instruct"

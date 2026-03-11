@@ -22,3 +22,5 @@ dev/
 results.tsv
 runs/
 .pytest_cache/
+prompt.txt
+response.txt

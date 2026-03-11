@@ -7,7 +7,14 @@ from typing import Any
 
 from ttt_autoresearch.config import BootstrapContext
 from ttt_autoresearch.discover_compat import BaseRewardEvaluator
-from ttt_autoresearch.runner import AutoResearchRunner, PatchCandidate, RunResult, parse_patch_candidate
+from ttt_autoresearch.prompt_builder import build_prompt_for_state
+from ttt_autoresearch.runner import (
+    AutoResearchRunner,
+    PatchCandidate,
+    PreflightResult,
+    RunResult,
+    parse_patch_candidate_for_state,
+)
 
 
 _ARTIFACT_LOCK = threading.Lock()
@@ -63,17 +70,36 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
     def get_reward(self, code: str, state: Any) -> dict[str, Any]:
         if self.bootstrap is None or self.runner is None:
             raise RuntimeError("AutoResearchRewardEvaluator is not configured.")
+        prompt = self._prompt_for_state(state)
+        step = getattr(state, "timestep", -1) + 1
+        state_id = getattr(state, "id", "unknown")
 
         try:
-            candidate = parse_patch_candidate(code)
+            candidate = parse_patch_candidate_for_state(code, state.current_train_py)
         except ValueError as exc:
             return self._persist_invalid_candidate(
                 code=code,
+                prompt=prompt,
                 state=state,
                 error_message=f"Invalid candidate payload: {exc}",
             )
 
-        result = self._run_candidate(candidate, state)
+        workspace = self.runner.prepare_candidate_workspace(candidate, step=step)
+        (workspace / "prompt.txt").write_text(prompt, encoding="utf-8")
+        (workspace / "response.txt").write_text(code, encoding="utf-8")
+        preflight = self.runner.preflight_candidate(workspace, candidate)
+        self.runner.write_json_artifact(workspace / "preflight.json", preflight.to_dict())
+        if not preflight.ok:
+            return self._persist_preflight_failed_candidate(
+                candidate=candidate,
+                code=code,
+                prompt=prompt,
+                state=state,
+                workspace=workspace,
+                preflight=preflight,
+            )
+
+        result = self._run_candidate(candidate, state, workspace)
         current_best = self._current_best_from_state(state)
         reward, correctness = reward_for_result(result)
         improved_global_best = False
@@ -87,11 +113,14 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
                     rationale=candidate.rationale,
                 )
             history_entry = {
-                "step": getattr(state, "timestep", -1) + 1,
-                "state_id": getattr(state, "id", "unknown"),
+                "step": step,
+                "state_id": state_id,
                 "status": result.status,
                 "summary": candidate.summary,
                 "rationale": candidate.rationale,
+                "candidate_format": candidate.candidate_format,
+                "patch_block_count": candidate.patch_block_count,
+                "lines_changed": candidate.lines_changed,
                 "reward": reward,
                 "accepted": bool(result.status == "success" and result.val_bpb is not None),
                 "val_bpb": result.val_bpb,
@@ -100,26 +129,41 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
                 "stderr_path": str(result.stderr_path),
                 "workspace_path": str(result.workspace_path),
                 "improved_global_best": improved_global_best,
+                "prompt_path": str(result.workspace_path / "prompt.txt"),
+                "preflight_path": str(result.workspace_path / "preflight.json"),
+                "failure_stage": "runtime" if result.status != "success" else "",
+                "failure_reason": result.status if result.status != "success" else "",
             }
             self.runner.append_history(history_entry)
             self.runner.write_rollout_manifest(
                 result.workspace_path,
                 {
-                    "step": getattr(state, "timestep", -1) + 1,
+                    "step": step,
                     "starting_state": state.to_dict() if hasattr(state, "to_dict") else {
-                        "id": getattr(state, "id", "unknown"),
+                        "id": state_id,
                         "timestep": getattr(state, "timestep", -1),
                     },
                     "candidate": {
                         "summary": candidate.summary,
                         "rationale": candidate.rationale,
                         "train_py": candidate.train_py,
+                        "candidate_format": candidate.candidate_format,
+                        "patch_block_count": candidate.patch_block_count,
+                        "lines_changed": candidate.lines_changed,
                     },
+                    "prompt": prompt,
+                    "prompt_path": str(result.workspace_path / "prompt.txt"),
+                    "raw_response": code,
+                    "raw_response_path": str(result.workspace_path / "response.txt"),
+                    "preflight": preflight.to_dict(),
+                    "preflight_path": str(result.workspace_path / "preflight.json"),
                     "evaluation": result.to_dict(),
                     "reward": reward,
                     "correctness": correctness,
                     "message": self._build_message(candidate, result, current_best, reward),
                     "improved_global_best": improved_global_best,
+                    "failure_stage": "runtime" if result.status != "success" else "",
+                    "failure_reason": result.status if result.status != "success" else "",
                 },
             )
 
@@ -136,16 +180,21 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
             "metrics": {
                 "candidate_summary": candidate.summary,
                 "candidate_rationale": candidate.rationale,
+                "candidate_format": candidate.candidate_format,
+                "patch_block_count": candidate.patch_block_count,
+                "lines_changed": candidate.lines_changed,
                 "candidate_status": result.status,
                 "candidate_val_bpb": result.val_bpb,
                 "workspace_path": str(result.workspace_path),
                 "stdout_path": str(result.stdout_path),
                 "stderr_path": str(result.stderr_path),
                 "improved_global_best": improved_global_best,
+                "prompt": prompt,
+                "preflight": preflight.to_dict(),
             },
         }
 
-    def _persist_invalid_candidate(self, code: str, state: Any, error_message: str) -> dict[str, Any]:
+    def _persist_invalid_candidate(self, code: str, prompt: str, state: Any, error_message: str) -> dict[str, Any]:
         if self.runner is None:
             raise RuntimeError("AutoResearchRewardEvaluator is not configured.")
         step = getattr(state, "timestep", -1) + 1
@@ -155,12 +204,26 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
             workspace = self.runner.create_candidate_artifact_dir(step=step, prefix="invalid")
             response_path = workspace / "response.txt"
             response_path.write_text(code, encoding="utf-8")
+            prompt_path = workspace / "prompt.txt"
+            prompt_path.write_text(prompt, encoding="utf-8")
+            preflight_path = workspace / "preflight.json"
+            self.runner.write_json_artifact(
+                preflight_path,
+                {
+                    "ok": False,
+                    "stage": "invalid_format",
+                    "reason": error_message,
+                    "details": {},
+                },
+            )
             metrics_path = workspace / "metrics.json"
             self.runner.write_json_artifact(
                 metrics_path,
                 {
                     "candidate_status": "invalid_candidate",
                     "error": error_message,
+                    "prompt_path": str(prompt_path),
+                    "candidate_format": "invalid_format",
                 },
             )
             history_entry = {
@@ -169,6 +232,9 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
                 "status": "invalid_candidate",
                 "summary": "",
                 "rationale": "",
+                "candidate_format": "invalid_format",
+                "patch_block_count": 0,
+                "lines_changed": 0,
                 "reward": _FAIL_REWARD,
                 "accepted": False,
                 "val_bpb": None,
@@ -178,6 +244,10 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
                 "workspace_path": str(workspace),
                 "improved_global_best": False,
                 "error": error_message,
+                "prompt_path": str(prompt_path),
+                "preflight_path": str(preflight_path),
+                "failure_stage": "invalid_format",
+                "failure_reason": error_message,
             }
             self.runner.append_history(history_entry)
             self.runner.write_rollout_manifest(
@@ -189,8 +259,20 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
                         "timestep": getattr(state, "timestep", -1),
                     },
                     "candidate": None,
+                    "candidate_format": "invalid_format",
+                    "patch_block_count": 0,
+                    "lines_changed": 0,
+                    "prompt": prompt,
+                    "prompt_path": str(prompt_path),
                     "raw_response_path": str(response_path),
                     "raw_response": code,
+                    "preflight": {
+                        "ok": False,
+                        "stage": "invalid_format",
+                        "reason": error_message,
+                        "details": {},
+                    },
+                    "preflight_path": str(preflight_path),
                     "evaluation": {
                         "status": "invalid_candidate",
                         "workspace_path": str(workspace),
@@ -200,6 +282,8 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
                     "correctness": 0.0,
                     "message": error_message,
                     "improved_global_best": False,
+                    "failure_stage": "invalid_format",
+                    "failure_reason": error_message,
                 },
             )
             return self._failure_payload(
@@ -209,7 +293,101 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
                 status="invalid_candidate",
             )
 
-    def _run_candidate(self, candidate: PatchCandidate, state: Any) -> RunResult:
+    def _persist_preflight_failed_candidate(
+        self,
+        *,
+        candidate: PatchCandidate,
+        code: str,
+        prompt: str,
+        state: Any,
+        workspace: Path,
+        preflight: PreflightResult,
+    ) -> dict[str, Any]:
+        if self.runner is None:
+            raise RuntimeError("AutoResearchRewardEvaluator is not configured.")
+        step = getattr(state, "timestep", -1) + 1
+        state_id = getattr(state, "id", "unknown")
+        current_best = self._current_best_from_state(state)
+        metrics_path = workspace / "metrics.json"
+        with _ARTIFACT_LOCK:
+            self.runner.write_json_artifact(
+                metrics_path,
+                {
+                    "candidate_status": "preflight_failed",
+                    "error": preflight.reason,
+                    "candidate_format": candidate.candidate_format,
+                    "patch_block_count": candidate.patch_block_count,
+                    "lines_changed": candidate.lines_changed,
+                    "preflight_path": str(workspace / "preflight.json"),
+                },
+            )
+            history_entry = {
+                "step": step,
+                "state_id": state_id,
+                "status": "preflight_failed",
+                "summary": candidate.summary,
+                "rationale": candidate.rationale,
+                "candidate_format": candidate.candidate_format,
+                "patch_block_count": candidate.patch_block_count,
+                "lines_changed": candidate.lines_changed,
+                "reward": _FAIL_REWARD,
+                "accepted": False,
+                "val_bpb": None,
+                "parent_val_bpb": current_best,
+                "stdout_path": "",
+                "stderr_path": "",
+                "workspace_path": str(workspace),
+                "improved_global_best": False,
+                "error": preflight.reason,
+                "prompt_path": str(workspace / "prompt.txt"),
+                "preflight_path": str(workspace / "preflight.json"),
+                "failure_stage": preflight.stage,
+                "failure_reason": preflight.reason,
+            }
+            self.runner.append_history(history_entry)
+            self.runner.write_rollout_manifest(
+                workspace,
+                {
+                    "step": step,
+                    "starting_state": state.to_dict() if hasattr(state, "to_dict") else {
+                        "id": state_id,
+                        "timestep": getattr(state, "timestep", -1),
+                    },
+                    "candidate": {
+                        "summary": candidate.summary,
+                        "rationale": candidate.rationale,
+                        "train_py": candidate.train_py,
+                        "candidate_format": candidate.candidate_format,
+                        "patch_block_count": candidate.patch_block_count,
+                        "lines_changed": candidate.lines_changed,
+                    },
+                    "prompt": prompt,
+                    "prompt_path": str(workspace / "prompt.txt"),
+                    "raw_response": code,
+                    "raw_response_path": str(workspace / "response.txt"),
+                    "preflight": preflight.to_dict(),
+                    "preflight_path": str(workspace / "preflight.json"),
+                    "evaluation": {
+                        "status": "preflight_failed",
+                        "workspace_path": str(workspace),
+                        "metrics_path": str(metrics_path),
+                    },
+                    "reward": _FAIL_REWARD,
+                    "correctness": 0.0,
+                    "message": preflight.reason,
+                    "improved_global_best": False,
+                    "failure_stage": preflight.stage,
+                    "failure_reason": preflight.reason,
+                },
+            )
+        return self._failure_payload(
+            reward=_FAIL_REWARD,
+            raw_score=_FAIL_RAW_SCORE,
+            msg=preflight.reason,
+            status="preflight_failed",
+        )
+
+    def _run_candidate(self, candidate: PatchCandidate, state: Any, workspace: Path) -> RunResult:
         if self.bootstrap is None or self.runner is None:
             raise RuntimeError("AutoResearchRewardEvaluator is not configured.")
         if _EVALUATION_SLOTS is None:
@@ -224,7 +402,7 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
                 gpu_device = _GPU_DEVICE_QUEUE.get()
             return self.runner.run_candidate(
                 bootstrap=self.bootstrap,
-                candidate=candidate,
+                workspace=workspace,
                 step=getattr(state, "timestep", -1) + 1,
                 state_id=getattr(state, "id", "unknown"),
                 gpu_device=gpu_device,
@@ -242,6 +420,14 @@ class AutoResearchRewardEvaluator(BaseRewardEvaluator):
             f"status={result.status} parent_val_bpb={current_best:.6f} "
             f"candidate_val_bpb={val_bpb} reward={reward:.6f}"
         )
+
+    def _prompt_for_state(self, state: Any) -> str:
+        if self.bootstrap is None:
+            raise RuntimeError("AutoResearchRewardEvaluator is not configured.")
+        target = self.bootstrap.config.target_val_bpb
+        if target is None:
+            target = self._current_best_from_state(state)
+        return build_prompt_for_state(state, target)
 
     @staticmethod
     def _current_best_from_state(state: Any) -> float:

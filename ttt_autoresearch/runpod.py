@@ -321,7 +321,10 @@ class RunPodPool:
             "set -euo pipefail",
             f"rm -rf {shlex.quote(repo_root)}",
             f"mkdir -p {shlex.quote(repo_root)}",
-            f"tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(repo_root)} --strip-components=1",
+            f"tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(repo_root)}",
+            f"if [ ! -f {shlex.quote(repo_root)}/pyproject.toml ]; then rm -rf {shlex.quote(repo_root)}/* && tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(repo_root)} --strip-components=1; fi",
+            f"test -f {shlex.quote(repo_root)}/pyproject.toml",
+            f"test -f {shlex.quote(repo_root)}/prepare.py",
         ]
         script_lines.extend(rendered)
         self._run_ssh(
@@ -357,7 +360,9 @@ class RunPodPool:
                     "set -uo pipefail",
                     f"rm -rf {shlex.quote(remote_workspace)}",
                     f"mkdir -p {shlex.quote(remote_workspace)}",
-                    f"tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(remote_workspace)} --strip-components=1",
+                    f"tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(remote_workspace)}",
+                    f"if [ ! -f {shlex.quote(remote_workspace)}/train.py ]; then rm -rf {shlex.quote(remote_workspace)}/* && tar -xzf {shlex.quote(remote_archive)} -C {shlex.quote(remote_workspace)} --strip-components=1; fi",
+                    f"test -f {shlex.quote(remote_workspace)}/train.py",
                     f"cd {shlex.quote(remote_workspace)}",
                     *env_lines,
                     f"timeout --kill-after=30s {timeout_sec}s {command_str} > stdout.log 2> stderr.log",
@@ -453,7 +458,7 @@ class RunPodPool:
     def _run_ssh(self, pod: RunPodPod, script: str, timeout: int, check: bool) -> subprocess.CompletedProcess[str]:
         try:
             completed = subprocess.run(
-                self._ssh_base_args(pod) + ["bash", "-lc", script],
+                self._ssh_base_args(pod) + [f"bash -lc {shlex.quote(script)}"],
                 text=True,
                 capture_output=True,
                 timeout=timeout,
@@ -554,6 +559,8 @@ class RunPodPool:
         if not parts:
             return False
         if parts[0] in {".git", "runs", "__pycache__", ".pytest_cache", ".venv"}:
+            return True
+        if rel.name in {"prompt.txt", "response.txt"}:
             return True
         return rel.suffix in {".pyc", ".pyo"}
 

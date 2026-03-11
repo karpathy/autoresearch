@@ -11,6 +11,63 @@ from ttt_autoresearch import cli
 
 
 class CliIntegrationTests(unittest.TestCase):
+    def test_cli_launches_detached_hyperbolic_controller(self) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeLauncher:
+            def __init__(self, repo_root: Path, run_dir: Path, config) -> None:
+                captured["repo_root"] = repo_root
+                captured["run_dir"] = run_dir
+                captured["config"] = config
+
+            def launch_detached_controller(self) -> dict[str, str]:
+                captured["launched"] = True
+                return {
+                    "remote_run_dir": "/home/ubuntu/autoresearch/runs/demo",
+                    "remote_config_path": "/home/ubuntu/autoresearch/runs/launches/demo/remote_config.yaml",
+                    "remote_log_path": "/home/ubuntu/autoresearch/runs/launches/demo/controller.log",
+                    "remote_pid_path": "/home/ubuntu/autoresearch/runs/launches/demo/controller.pid",
+                    "remote_exitcode_path": "/home/ubuntu/autoresearch/runs/launches/demo/controller.exitcode",
+                    "remote_launch_dir": "/home/ubuntu/autoresearch/runs/launches/demo",
+                }
+
+        original_launcher = cli.HyperbolicPool
+        original_mirror = cli._start_hyperbolic_mirror
+        cli.HyperbolicPool = FakeLauncher  # type: ignore[assignment]
+        cli._start_hyperbolic_mirror = lambda config, run_dir, launch_info: {  # type: ignore[assignment]
+            "local_mirror_dir": str(run_dir / "mirror"),
+            "local_mirror_log_path": str(run_dir / "hyperbolic_mirror.log"),
+            "local_mirror_pid": "12345",
+        }
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp_path = Path(tmpdir)
+                run_dir = tmp_path / "runs" / "hyperbolic-demo"
+                config_path = tmp_path / "config.yaml"
+                config_path.write_text(
+                    "\n".join(
+                        [
+                            "model_name: openai/gpt-oss-120b",
+                            "renderer_name: gpt_oss_high_reasoning",
+                            "execution_backend: hyperbolic",
+                            "hyperbolic_ssh_host: 1.2.3.4",
+                            f"run_dir: {run_dir}",
+                        ]
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                exit_code = cli.main(["--config", str(config_path)])
+                self.assertEqual(exit_code, 0)
+                self.assertTrue(captured.get("launched"))
+                self.assertTrue((run_dir / "hyperbolic_launch.json").exists())
+                self.assertTrue((run_dir / "resolved_config.json").exists())
+                launch = (run_dir / "hyperbolic_launch.json").read_text(encoding="utf-8")
+                self.assertIn("local_mirror_dir", launch)
+        finally:
+            cli.HyperbolicPool = original_launcher  # type: ignore[assignment]
+            cli._start_hyperbolic_mirror = original_mirror  # type: ignore[assignment]
+
     def test_resolve_config_path_falls_back_to_repo_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)

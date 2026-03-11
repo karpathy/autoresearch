@@ -14,12 +14,13 @@ dependencies = [
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
     "ttt-discover @ git+https://github.com/test-time-training/discover@5df1a0ee9b04272ca33de0101ae64dd499e63f29",
-    "torch==2.9.1",
+    "torch==2.9.1; sys_platform == 'darwin'",
+    "torch==2.9.1; sys_platform != 'darwin'",
 ]
 
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu128" },
+    { index = "pytorch-cu128", marker = "sys_platform != 'darwin'" },
 ]
 
 [[tool.uv.index]]

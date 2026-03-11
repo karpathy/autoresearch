@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ast
+import builtins
 from dataclasses import asdict, dataclass
+import difflib
 from pathlib import Path
 import json
 import os
@@ -13,11 +16,20 @@ import uuid
 from typing import Any
 
 from ttt_autoresearch.config import BootstrapContext, TTTAutoResearchConfig
+from ttt_autoresearch.hyperbolic import HyperbolicPool
 from ttt_autoresearch.runpod import RunPodPool
 
 
 VAL_BPB_RE = re.compile(r"^val_bpb:\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)", re.MULTILINE)
-ALLOWED_CANDIDATE_KEYS = {"summary", "rationale", "train_py"}
+SEARCH_REPLACE_BLOCK_RE = re.compile(
+    r"<<<<<<< SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>> REPLACE",
+    re.DOTALL,
+)
+VAL_BPB_PRINT_RE = re.compile(r"print\(\s*f?[\"']val_bpb:\s*", re.MULTILINE)
+FORWARD_WITH_REDUCTION_RE = re.compile(r"def\s+forward\s*\([^)]*\breduction\s*=", re.MULTILINE)
+_KNOWN_PREPARE_CONSTANTS = {"MAX_SEQ_LEN": 2048}
+MAX_PATCH_BLOCKS = 3
+MAX_LINES_CHANGED = 160
 
 
 @dataclass(slots=True)
@@ -25,6 +37,25 @@ class PatchCandidate:
     summary: str
     rationale: str
     train_py: str
+    candidate_format: str
+    patch_block_count: int
+    lines_changed: int
+
+
+@dataclass(slots=True)
+class PreflightResult:
+    ok: bool
+    stage: str
+    reason: str
+    details: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ok": self.ok,
+            "stage": self.stage,
+            "reason": self.reason,
+            "details": self.details,
+        }
 
 
 @dataclass(slots=True)
@@ -49,26 +80,64 @@ class RunResult:
 
 
 def parse_patch_candidate(candidate_json: str) -> PatchCandidate:
-    try:
-        payload = json.loads(candidate_json)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Candidate must be valid JSON: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise ValueError("Candidate payload must be a JSON object.")
-    unknown_keys = set(payload) - ALLOWED_CANDIDATE_KEYS
-    if unknown_keys:
-        raise ValueError(f"Candidate may only contain {sorted(ALLOWED_CANDIDATE_KEYS)}. Found {sorted(unknown_keys)}.")
-    missing = [key for key in ("summary", "rationale", "train_py") if key not in payload]
-    if missing:
-        raise ValueError(f"Candidate is missing required keys: {missing}.")
-    summary = payload["summary"]
-    rationale = payload["rationale"]
-    train_py = payload["train_py"]
-    if not all(isinstance(value, str) for value in (summary, rationale, train_py)):
-        raise ValueError("Candidate fields summary, rationale, and train_py must all be strings.")
-    if not train_py.strip():
-        raise ValueError("train_py must contain the full replacement file.")
-    return PatchCandidate(summary=summary.strip(), rationale=rationale.strip(), train_py=train_py)
+    return parse_patch_candidate_for_state(candidate_json, "")
+
+
+def parse_patch_candidate_for_state(candidate_json: str, current_train_py: str) -> PatchCandidate:
+    stripped = candidate_json.strip()
+    if not stripped:
+        raise ValueError("Candidate must not be empty.")
+
+    updated_train_py, patch_block_count, extracted = apply_search_replace_patch(stripped, current_train_py)
+    lines_changed = count_lines_changed(current_train_py, updated_train_py)
+    if lines_changed == 0:
+        raise ValueError("Patch did not change train.py.")
+    return PatchCandidate(
+        summary="search_replace_patch_candidate",
+        rationale="model returned search/replace patch",
+        train_py=updated_train_py,
+        candidate_format="search_replace_patch_extracted" if extracted else "search_replace_patch",
+        patch_block_count=patch_block_count,
+        lines_changed=lines_changed,
+    )
+
+
+def apply_search_replace_patch(patch_text: str, current_train_py: str) -> tuple[str, int, bool]:
+    blocks = list(SEARCH_REPLACE_BLOCK_RE.finditer(patch_text))
+    if not blocks:
+        raise ValueError("Candidate must contain one or more SEARCH/REPLACE patch blocks.")
+    if len(blocks) > MAX_PATCH_BLOCKS:
+        raise ValueError(f"Candidate must contain at most {MAX_PATCH_BLOCKS} SEARCH/REPLACE blocks.")
+
+    updated = current_train_py
+    for match in blocks:
+        search_text = match.group(1)
+        replace_text = match.group(2)
+        if not search_text:
+            raise ValueError("SEARCH block must not be empty.")
+        occurrences = updated.count(search_text)
+        if occurrences == 0:
+            raise ValueError("SEARCH block did not match the current train.py.")
+        if occurrences > 1:
+            raise ValueError("SEARCH block matched multiple locations. Make the patch more specific.")
+        updated = updated.replace(search_text, replace_text, 1)
+
+    extracted = _has_non_block_wrapper_text(patch_text, blocks)
+    return updated, len(blocks), extracted
+
+
+def count_lines_changed(previous_text: str, updated_text: str) -> int:
+    changed = 0
+    for line in difflib.unified_diff(
+        previous_text.splitlines(),
+        updated_text.splitlines(),
+        lineterm="",
+    ):
+        if line.startswith(("---", "+++", "@@")):
+            continue
+        if line.startswith(("+", "-")):
+            changed += 1
+    return changed
 
 
 def parse_val_bpb(stdout: str) -> float | None:
@@ -83,6 +152,7 @@ class AutoResearchRunner:
         self.repo_root = repo_root
         self.config = config
         self.run_dir = run_dir
+        self._hyperbolic_pool: HyperbolicPool | None = None
         self._runpod_pool: RunPodPool | None = None
         self.run_dir.mkdir(parents=True, exist_ok=True)
         (self.run_dir / "baseline").mkdir(exist_ok=True)
@@ -137,18 +207,111 @@ class AutoResearchRunner:
         self._write_json(self.run_dir / "baseline.json", result.to_dict())
         return result
 
+    def prepare_candidate_workspace(
+        self,
+        candidate: PatchCandidate,
+        step: int,
+        *,
+        prefix: str = "candidate",
+    ) -> Path:
+        workspace = self.run_dir / "candidates" / f"{step:04d}_{prefix}_{uuid.uuid4().hex[:8]}"
+        self._copy_repo(workspace)
+        (workspace / "train.py").write_text(candidate.train_py, encoding="utf-8")
+        (workspace / "applied_train.py").write_text(candidate.train_py, encoding="utf-8")
+        return workspace
+
+    def preflight_candidate(self, workspace: Path, candidate: PatchCandidate) -> PreflightResult:
+        train_path = workspace / "train.py"
+        source = train_path.read_text(encoding="utf-8")
+        if candidate.patch_block_count > MAX_PATCH_BLOCKS:
+            return PreflightResult(
+                ok=False,
+                stage="edit_scope",
+                reason=f"Candidate used {candidate.patch_block_count} patch blocks; limit is {MAX_PATCH_BLOCKS}.",
+                details={"patch_block_count": candidate.patch_block_count, "max_patch_blocks": MAX_PATCH_BLOCKS},
+            )
+        if candidate.lines_changed > MAX_LINES_CHANGED:
+            return PreflightResult(
+                ok=False,
+                stage="edit_scope",
+                reason=f"Candidate changed {candidate.lines_changed} lines; limit is {MAX_LINES_CHANGED}.",
+                details={"lines_changed": candidate.lines_changed, "max_lines_changed": MAX_LINES_CHANGED},
+            )
+        try:
+            module = ast.parse(source, filename=str(train_path))
+        except SyntaxError as exc:
+            return PreflightResult(
+                ok=False,
+                stage="syntax",
+                reason="train.py does not parse as Python",
+                details={
+                    "lineno": exc.lineno,
+                    "offset": exc.offset,
+                    "text": exc.text,
+                    "message": exc.msg,
+                },
+            )
+
+        undefined_name = _find_top_level_undefined_name(module)
+        if undefined_name is not None:
+            return PreflightResult(
+                ok=False,
+                stage="top_level_names",
+                reason=f"Top-level code references undefined name {undefined_name!r}.",
+                details={"name": undefined_name},
+            )
+
+        if not VAL_BPB_PRINT_RE.search(source):
+            return PreflightResult(
+                ok=False,
+                stage="summary_output",
+                reason="train.py no longer prints a final val_bpb summary line.",
+                details={"required_pattern": "print(... val_bpb: ...)"},
+            )
+
+        if not FORWARD_WITH_REDUCTION_RE.search(source):
+            return PreflightResult(
+                ok=False,
+                stage="forward_signature",
+                reason="train.py no longer defines a forward(...) with a reduction parameter.",
+                details={"required_pattern": "def forward(... reduction=...)"},
+            )
+
+        divisibility = _check_batch_divisibility(module)
+        if not divisibility.ok:
+            return divisibility
+
+        compiled = subprocess.run(
+            [sys.executable, "-m", "py_compile", str(train_path)],
+            cwd=workspace,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if compiled.returncode != 0:
+            return PreflightResult(
+                ok=False,
+                stage="py_compile",
+                reason="python -m py_compile failed.",
+                details={"stdout": compiled.stdout, "stderr": compiled.stderr},
+            )
+
+        return PreflightResult(
+            ok=True,
+            stage="ok",
+            reason="Preflight checks passed.",
+            details=divisibility.details,
+        )
+
     def run_candidate(
         self,
         bootstrap: BootstrapContext,
-        candidate: PatchCandidate,
+        workspace: Path,
         step: int,
         state_id: str,
         gpu_device: str | None = None,
     ) -> RunResult:
-        workspace = self.run_dir / "candidates" / f"{step:04d}_{uuid.uuid4().hex[:8]}"
-        self._copy_repo(workspace)
-        (workspace / "train.py").write_text(candidate.train_py, encoding="utf-8")
-        result = self._execute_workspace(
+        return self._execute_workspace(
             workspace=workspace,
             command_template=self.config.candidate_command_override,
             bootstrap=bootstrap,
@@ -156,7 +319,6 @@ class AutoResearchRunner:
             state_id=state_id,
             gpu_device=gpu_device,
         )
-        return result
 
     def create_candidate_artifact_dir(self, step: int, prefix: str = "candidate") -> Path:
         label = prefix.replace(" ", "_")
@@ -215,6 +377,9 @@ class AutoResearchRunner:
         return path
 
     def close(self) -> None:
+        if self._hyperbolic_pool is not None:
+            self._hyperbolic_pool.close()
+            self._hyperbolic_pool = None
         if self._runpod_pool is not None:
             self._runpod_pool.close()
             self._runpod_pool = None
@@ -239,7 +404,7 @@ class AutoResearchRunner:
     ) -> RunResult:
         command = self._resolve_command(command_template, workspace, bootstrap, label, state_id)
         env = bootstrap.subprocess_env() if bootstrap else dict(os.environ)
-        if gpu_device is not None and self.config.execution_backend == "local":
+        if gpu_device is not None and self.config.execution_backend in {"local", "hyperbolic"}:
             env["CUDA_VISIBLE_DEVICES"] = gpu_device
         stdout_path = workspace / "stdout.log"
         stderr_path = workspace / "stderr.log"
@@ -247,6 +412,24 @@ class AutoResearchRunner:
         start = time.time()
         if self.config.execution_backend == "runpod":
             pool = self._get_runpod_pool()
+            remote_result = pool.execute_workspace(
+                workspace=workspace,
+                command=command,
+                env=env,
+                timeout_sec=self.config.timeout_sec,
+                label=label,
+            )
+            stdout = remote_result.stdout
+            stderr = remote_result.stderr
+            returncode = remote_result.returncode
+            elapsed_sec = remote_result.elapsed_sec
+            if returncode == 124:
+                status = "timeout"
+                returncode = None
+            else:
+                status = "success" if returncode == 0 else "crash"
+        elif self.config.execution_backend == "hyperbolic":
+            pool = self._get_hyperbolic_pool()
             remote_result = pool.execute_workspace(
                 workspace=workspace,
                 command=command,
@@ -314,6 +497,11 @@ class AutoResearchRunner:
             self._runpod_pool = RunPodPool(repo_root=self.repo_root, run_dir=self.run_dir, config=self.config)
         return self._runpod_pool
 
+    def _get_hyperbolic_pool(self) -> HyperbolicPool:
+        if self._hyperbolic_pool is None:
+            self._hyperbolic_pool = HyperbolicPool(repo_root=self.repo_root, run_dir=self.run_dir, config=self.config)
+        return self._hyperbolic_pool
+
     def _read_val_bpb(self, stdout: str, metrics_path: Path) -> float | None:
         direct = parse_val_bpb(stdout)
         if direct is not None:
@@ -371,3 +559,212 @@ class AutoResearchRunner:
             if candidate.exists():
                 return candidate.read_text(encoding="utf-8")
         raise FileNotFoundError("Could not locate baseline train.py in either the run directory or repo root.")
+
+
+def _check_batch_divisibility(module: ast.Module) -> PreflightResult:
+    env: dict[str, int] = dict(_KNOWN_PREPARE_CONSTANTS)
+    tracked = {"TOTAL_BATCH_SIZE", "DEVICE_BATCH_SIZE", "MAX_SEQ_LEN", "tokens_per_fwdbwd"}
+
+    for stmt in module.body:
+        if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+            continue
+        target = stmt.targets[0]
+        if not isinstance(target, ast.Name) or target.id not in tracked:
+            continue
+        value = _safe_eval_int_expr(stmt.value, env)
+        if value is not None:
+            env[target.id] = value
+
+    missing = [name for name in ("TOTAL_BATCH_SIZE", "DEVICE_BATCH_SIZE", "MAX_SEQ_LEN") if name not in env]
+    if missing:
+        return PreflightResult(
+            ok=False,
+            stage="batch_divisibility",
+            reason=f"Could not statically resolve required batch constants: {missing}.",
+            details={"resolved": env},
+        )
+
+    tokens_per_fwdbwd = env.get("tokens_per_fwdbwd", env["DEVICE_BATCH_SIZE"] * env["MAX_SEQ_LEN"])
+    if tokens_per_fwdbwd <= 0:
+        return PreflightResult(
+            ok=False,
+            stage="batch_divisibility",
+            reason="tokens_per_fwdbwd must be positive.",
+            details={"resolved": env},
+        )
+    if env["TOTAL_BATCH_SIZE"] % tokens_per_fwdbwd != 0:
+        return PreflightResult(
+            ok=False,
+            stage="batch_divisibility",
+            reason="TOTAL_BATCH_SIZE is not divisible by DEVICE_BATCH_SIZE * MAX_SEQ_LEN.",
+            details={
+                "TOTAL_BATCH_SIZE": env["TOTAL_BATCH_SIZE"],
+                "DEVICE_BATCH_SIZE": env["DEVICE_BATCH_SIZE"],
+                "MAX_SEQ_LEN": env["MAX_SEQ_LEN"],
+                "tokens_per_fwdbwd": tokens_per_fwdbwd,
+            },
+        )
+
+    return PreflightResult(
+        ok=True,
+        stage="batch_divisibility",
+        reason="Batch-size divisibility check passed.",
+        details={
+            "TOTAL_BATCH_SIZE": env["TOTAL_BATCH_SIZE"],
+            "DEVICE_BATCH_SIZE": env["DEVICE_BATCH_SIZE"],
+            "MAX_SEQ_LEN": env["MAX_SEQ_LEN"],
+            "tokens_per_fwdbwd": tokens_per_fwdbwd,
+            "grad_accum_steps": env["TOTAL_BATCH_SIZE"] // tokens_per_fwdbwd,
+        },
+    )
+
+
+def _safe_eval_int_expr(node: ast.AST, env: dict[str, int]) -> int | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return int(node.value)
+    if isinstance(node, ast.Name):
+        return env.get(node.id)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        operand = _safe_eval_int_expr(node.operand, env)
+        if operand is None:
+            return None
+        return operand if isinstance(node.op, ast.UAdd) else -operand
+    if isinstance(node, ast.BinOp):
+        left = _safe_eval_int_expr(node.left, env)
+        right = _safe_eval_int_expr(node.right, env)
+        if left is None or right is None:
+            return None
+        if isinstance(node.op, ast.Add):
+            return left + right
+        if isinstance(node.op, ast.Sub):
+            return left - right
+        if isinstance(node.op, ast.Mult):
+            return left * right
+        if isinstance(node.op, ast.FloorDiv):
+            return left // right if right != 0 else None
+        if isinstance(node.op, ast.Div):
+            return left // right if right != 0 and left % right == 0 else None
+        if isinstance(node.op, ast.Mod):
+            return left % right if right != 0 else None
+        if isinstance(node.op, ast.Pow):
+            return left ** right
+    return None
+
+
+def _find_top_level_undefined_name(module: ast.Module) -> str | None:
+    defined = set(dir(builtins)) | {
+        "__name__",
+        "__file__",
+        "__package__",
+        "__spec__",
+        "__builtins__",
+    }
+    defined.update(_collect_defined_names(module.body))
+
+    for stmt in module.body:
+        for name in _top_level_loaded_names(stmt):
+            if name not in defined:
+                return name
+    return None
+
+
+def _top_level_loaded_names(stmt: ast.stmt) -> set[str]:
+    loaded: set[str] = set()
+
+    def visit(node: ast.AST) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for decorator in node.decorator_list:
+                visit(decorator)
+            for default in node.args.defaults:
+                visit(default)
+            for default in node.args.kw_defaults:
+                if default is not None:
+                    visit(default)
+            if node.returns is not None:
+                visit(node.returns)
+            return
+        if isinstance(node, ast.ClassDef):
+            for decorator in node.decorator_list:
+                visit(decorator)
+            for base in node.bases:
+                visit(base)
+            for keyword in node.keywords:
+                visit(keyword.value)
+            return
+        if isinstance(node, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            return
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            loaded.add(node.id)
+        for child in ast.iter_child_nodes(node):
+            visit(child)
+
+    visit(stmt)
+    return loaded
+
+
+def _names_defined_by_stmt(stmt: ast.stmt) -> set[str]:
+    names: set[str] = set()
+
+    def add_target(target: ast.AST) -> None:
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+            return
+        if isinstance(target, (ast.Tuple, ast.List)):
+            for elt in target.elts:
+                add_target(elt)
+
+    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        names.add(stmt.name)
+    elif isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+        targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+        for target in targets:
+            add_target(target)
+    elif isinstance(stmt, (ast.For, ast.AsyncFor)):
+        add_target(stmt.target)
+    elif isinstance(stmt, ast.With):
+        for item in stmt.items:
+            if item.optional_vars is not None:
+                add_target(item.optional_vars)
+    elif isinstance(stmt, ast.Import):
+        for alias in stmt.names:
+            names.add(alias.asname or alias.name.split(".")[0])
+    elif isinstance(stmt, ast.ImportFrom):
+        for alias in stmt.names:
+            names.add(alias.asname or alias.name)
+    return names
+
+
+def _collect_defined_names(statements: list[ast.stmt]) -> set[str]:
+    names: set[str] = set()
+    for stmt in statements:
+        names.update(_names_defined_by_stmt(stmt))
+        for child_block in _child_statement_blocks(stmt):
+            names.update(_collect_defined_names(child_block))
+    return names
+
+
+def _child_statement_blocks(stmt: ast.stmt) -> list[list[ast.stmt]]:
+    blocks: list[list[ast.stmt]] = []
+    for attr in ("body", "orelse", "finalbody"):
+        value = getattr(stmt, attr, None)
+        if isinstance(value, list):
+            blocks.append(value)
+    handlers = getattr(stmt, "handlers", None)
+    if handlers:
+        for handler in handlers:
+            blocks.append(handler.body)
+    return blocks
+
+
+def _has_non_block_wrapper_text(response_text: str, blocks: list[re.Match[str]]) -> bool:
+    pieces: list[str] = []
+    cursor = 0
+    for match in blocks:
+        pieces.append(response_text[cursor:match.start()])
+        cursor = match.end()
+    pieces.append(response_text[cursor:])
+    wrapper = "".join(pieces).strip()
+    if not wrapper:
+        return False
+    wrapper = wrapper.replace("```", "").strip()
+    return bool(wrapper)

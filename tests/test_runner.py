@@ -7,13 +7,34 @@ import sys
 import os
 
 from ttt_autoresearch.config import TTTAutoResearchConfig
-from ttt_autoresearch.runner import AutoResearchRunner, parse_patch_candidate, parse_val_bpb
+from ttt_autoresearch.runner import AutoResearchRunner, parse_patch_candidate_for_state, parse_val_bpb
 
 
 class RunnerTests(unittest.TestCase):
-    def test_parse_candidate_rejects_unknown_keys(self) -> None:
+    def test_parse_candidate_rejects_legacy_json(self) -> None:
         with self.assertRaises(ValueError):
-            parse_patch_candidate('{"summary":"s","rationale":"r","train_py":"x","prepare_py":"bad"}')
+            parse_patch_candidate_for_state('{"summary":"s","rationale":"r","train_py":"x"}', "x")
+
+    def test_parse_candidate_rejects_raw_python(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_patch_candidate_for_state("print(1)\n", "print(0)\n")
+
+    def test_parse_candidate_accepts_search_replace_patch(self) -> None:
+        candidate = parse_patch_candidate_for_state(
+            "<<<<<<< SEARCH\nprint(0)\n=======\nprint(1)\n>>>>>>> REPLACE",
+            "print(0)\n",
+        )
+        self.assertEqual(candidate.candidate_format, "search_replace_patch")
+        self.assertEqual(candidate.patch_block_count, 1)
+        self.assertEqual(candidate.train_py, "print(1)\n")
+
+    def test_parse_candidate_extracts_patch_from_wrapper_text(self) -> None:
+        candidate = parse_patch_candidate_for_state(
+            "Here is the patch\n<<<<<<< SEARCH\nprint(0)\n=======\nprint(1)\n>>>>>>> REPLACE\nDone.",
+            "print(0)\n",
+        )
+        self.assertEqual(candidate.candidate_format, "search_replace_patch_extracted")
+        self.assertEqual(candidate.train_py, "print(1)\n")
 
     def test_parse_val_bpb(self) -> None:
         stdout = "---\nval_bpb:          0.997900\n"
@@ -41,6 +62,92 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(result.status, "success")
             self.assertAlmostEqual(result.val_bpb, 1.25)
             self.assertTrue((Path(config.run_dir) / "baseline" / "train.py").exists())
+
+    def test_preflight_rejects_invalid_batch_divisibility(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "program.md").write_text("program", encoding="utf-8")
+            (root / "prepare.py").write_text("TIME_BUDGET = 1\n", encoding="utf-8")
+            original = (
+                "from prepare import MAX_SEQ_LEN\n"
+                "TOTAL_BATCH_SIZE = 8\n"
+                "DEVICE_BATCH_SIZE = 2\n"
+                "tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN\n"
+                "assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0\n"
+                "class GPT:\n"
+                "    def forward(self, idx, targets=None, reduction='mean'):\n"
+                "        return 0\n"
+                "print(f\"val_bpb:          {1.0:.6f}\")\n"
+            )
+            (root / "train.py").write_text(original, encoding="utf-8")
+            config = TTTAutoResearchConfig(execution_backend="local").normalized(root)
+            runner = AutoResearchRunner(root, config, Path(config.run_dir))
+            candidate = parse_patch_candidate_for_state(
+                "<<<<<<< SEARCH\nTOTAL_BATCH_SIZE = 8\n=======\nTOTAL_BATCH_SIZE = 7\n>>>>>>> REPLACE",
+                original,
+            )
+            workspace = runner.prepare_candidate_workspace(candidate, step=0)
+            preflight = runner.preflight_candidate(workspace, candidate)
+            self.assertFalse(preflight.ok)
+            self.assertEqual(preflight.stage, "batch_divisibility")
+
+    def test_preflight_rejects_missing_val_bpb_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "program.md").write_text("program", encoding="utf-8")
+            (root / "prepare.py").write_text("TIME_BUDGET = 1\n", encoding="utf-8")
+            original = (
+                "from prepare import MAX_SEQ_LEN\n"
+                "TOTAL_BATCH_SIZE = 8\n"
+                "DEVICE_BATCH_SIZE = 1\n"
+                "tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN\n"
+                "assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0\n"
+                "class GPT:\n"
+                "    def forward(self, idx, targets=None, reduction='mean'):\n"
+                "        return 0\n"
+                "print('val_bpb:          1.0')\n"
+            )
+            (root / "train.py").write_text(original, encoding="utf-8")
+            config = TTTAutoResearchConfig(execution_backend="local").normalized(root)
+            runner = AutoResearchRunner(root, config, Path(config.run_dir))
+            candidate = parse_patch_candidate_for_state(
+                "<<<<<<< SEARCH\nprint('val_bpb:          1.0')\n=======\nprint('done')\n>>>>>>> REPLACE",
+                original,
+            )
+            workspace = runner.prepare_candidate_workspace(candidate, step=0)
+            preflight = runner.preflight_candidate(workspace, candidate)
+            self.assertFalse(preflight.ok)
+            self.assertEqual(preflight.stage, "summary_output")
+
+    def test_preflight_rejects_overly_large_patch_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "program.md").write_text("program", encoding="utf-8")
+            (root / "prepare.py").write_text("TIME_BUDGET = 1\n", encoding="utf-8")
+            original = (
+                "from prepare import MAX_SEQ_LEN\n"
+                "TOTAL_BATCH_SIZE = 2048\n"
+                "DEVICE_BATCH_SIZE = 1\n"
+                "tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN\n"
+                "assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0\n"
+                "class GPT:\n"
+                "    def forward(self, idx, targets=None, reduction='mean'):\n"
+                "        return 0\n"
+                "print(f\"val_bpb:          {1.0:.6f}\")\n"
+            )
+            (root / "train.py").write_text(original, encoding="utf-8")
+            config = TTTAutoResearchConfig(execution_backend="local").normalized(root)
+            runner = AutoResearchRunner(root, config, Path(config.run_dir))
+            search_block = "print(f\"val_bpb:          {1.0:.6f}\")\n"
+            replacement = "".join(f"print({idx})\n" for idx in range(250))
+            candidate = parse_patch_candidate_for_state(
+                f"<<<<<<< SEARCH\n{search_block}=======\n{replacement}>>>>>>> REPLACE",
+                original,
+            )
+            workspace = runner.prepare_candidate_workspace(candidate, step=0)
+            preflight = runner.preflight_candidate(workspace, candidate)
+            self.assertFalse(preflight.ok)
+            self.assertEqual(preflight.stage, "edit_scope")
 
     def test_build_bootstrap_prefers_stored_baseline_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -108,16 +215,26 @@ class RunnerTests(unittest.TestCase):
             ).normalized(root)
             self.assertEqual(config.renderer_name, "gpt_oss_high_reasoning")
 
+    def test_kimi_model_is_primary_supported_renderer(self) -> None:
+        config = TTTAutoResearchConfig(
+            model_name="moonshotai/Kimi-K2.5",
+            execution_backend="local",
+        ).normalized(Path("."))
+        self.assertEqual(config.renderer_name, "qwen3")
+
     def test_group_defaults_reflect_medium_preset(self) -> None:
         config = TTTAutoResearchConfig().normalized(Path("."))
         self.assertEqual(config.model_name, "openai/gpt-oss-120b")
-        self.assertEqual(config.execution_backend, "runpod")
+        self.assertEqual(config.execution_backend, "hyperbolic")
         self.assertEqual(config.max_steps, 12)
         self.assertEqual(config.groups_per_step, 2)
         self.assertEqual(config.samples_per_step, 8)
-        self.assertEqual(config.max_concurrent_evaluations, 16)
+        self.assertEqual(config.max_concurrent_evaluations, 8)
         self.assertEqual(config.renderer_name, "gpt_oss_high_reasoning")
-        self.assertEqual(config.runpod_gpu_type_ids, ["NVIDIA H100 PCIe"])
+        self.assertEqual(config.gpu_devices, ["0", "1", "2", "3", "4", "5", "6", "7"])
+        self.assertIsNone(config.wandb_project)
+        self.assertIn("HF_TOKEN", config.hyperbolic_forward_env_vars)
+        self.assertNotIn("WANDB_API_KEY", config.hyperbolic_forward_env_vars)
 
     def test_gpu_devices_are_normalized(self) -> None:
         config = TTTAutoResearchConfig(gpu_devices=[0, 3, 7]).normalized(Path("."))

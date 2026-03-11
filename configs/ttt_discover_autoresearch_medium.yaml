@@ -18,35 +18,27 @@ lora_rank: 32
 kl_penalty_coef: 0.1
 phase1_max_tokens: 26000
 save_every: 2
-wandb_project: autoresearch-ttt-discover
+wandb_project: null
 num_cpus_per_task: 0
 eval_timeout: 2700
 local_model_path: null
 keep_history: 6
-max_concurrent_evaluations: 16
-gpu_devices: null
-execution_backend: runpod
-runpod_api_key_env: RUNPOD_API_KEY
-runpod_api_base: https://rest.runpod.io/v1
-runpod_cloud_type: COMMUNITY
-runpod_interruptible: true
-runpod_gpu_type_ids:
-  - NVIDIA H100 PCIe
-runpod_template_id: null
-runpod_image_name: runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
-runpod_name_prefix: autoresearch-ttt
-runpod_support_public_ip: true
-runpod_ports:
-  - 22/tcp
-runpod_container_disk_gb: 50
-runpod_volume_gb: 0
-runpod_volume_mount_path: /workspace
-runpod_ssh_user: root
-runpod_ssh_private_key_path: null
-runpod_repo_root: /workspace/autoresearch
-runpod_prepare_num_shards: 10
-runpod_bootstrap_timeout_sec: 7200
-runpod_retry_limit: 3
-runpod_poll_interval_sec: 5
-runpod_bootstrap_commands: null
-runpod_terminate_on_close: true
+max_concurrent_evaluations: 8
+gpu_devices:
+  - "0"
+  - "1"
+  - "2"
+  - "3"
+  - "4"
+  - "5"
+  - "6"
+  - "7"
+execution_backend: hyperbolic
+hyperbolic_ssh_host: null
+hyperbolic_ssh_port: 22
+hyperbolic_ssh_user: ubuntu
+hyperbolic_ssh_private_key_path: null
+hyperbolic_repo_root: /home/ubuntu/autoresearch
+hyperbolic_prepare_num_shards: 10
+hyperbolic_bootstrap_timeout_sec: 7200
+hyperbolic_bootstrap_commands: null

@@ -86,3 +86,124 @@ except ImportError:
             self.eval_timeout = getattr(config, "eval_timeout", 0)
             self.num_cpus_per_task = getattr(config, "num_cpus_per_task", 0)
 
+
+def patch_ttt_discover_no_wandb_bug() -> None:
+    """Pad discover's multiplex logger so W&B-optional runs do not crash.
+
+    Upstream do_sync_training incorrectly checks ``len(loggers) >= 2`` and then
+    indexes ``loggers[2]``. When W&B is disabled, setup_logging only creates two
+    loggers, so the first train step crashes. We pad the logger list with no-op
+    loggers until index 2 is always safe.
+    """
+
+    try:
+        from ttt_discover.tinker_utils import ml_log
+    except ImportError:
+        return
+
+    if getattr(ml_log, "_autoresearch_no_wandb_patch", False):
+        return
+
+    class _NullLogger(ml_log.Logger):
+        def log_hparams(self, config: Any) -> None:
+            return None
+
+        def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
+            return None
+
+    original_setup_logging = ml_log.setup_logging
+
+    def patched_setup_logging(*args: Any, **kwargs: Any):
+        logger = original_setup_logging(*args, **kwargs)
+        if hasattr(logger, "loggers"):
+            while len(logger.loggers) < 3:
+                logger.loggers.append(_NullLogger())
+        return logger
+
+    ml_log.setup_logging = patched_setup_logging
+    ml_log._autoresearch_no_wandb_patch = True
+
+
+def patch_ttt_discover_kimi_tokenizer() -> None:
+    """Teach upstream discover tokenizers to trust_remote_code for Kimi K2.5.
+
+    Upstream currently special-cases only ``moonshotai/Kimi-K2-Thinking`` in some
+    tokenizer paths. ``moonshotai/Kimi-K2.5`` requires the same trust_remote_code
+    handling, otherwise detached runs die on an interactive prompt.
+    """
+
+    def _wrap_get_tokenizer(module: Any, sentinel_name: str) -> None:
+        if getattr(module, sentinel_name, False):
+            return
+
+        original_get_tokenizer = module.get_tokenizer
+
+        def patched_get_tokenizer(model_name: str):
+            if model_name == "moonshotai/Kimi-K2.5":
+                import os
+                from transformers.models.auto.tokenization_auto import AutoTokenizer
+
+                if os.path.isdir(model_name):
+                    return AutoTokenizer.from_pretrained(
+                        model_name,
+                        use_fast=True,
+                        local_files_only=True,
+                        trust_remote_code=True,
+                    )
+                return AutoTokenizer.from_pretrained(
+                    model_name,
+                    use_fast=True,
+                    trust_remote_code=True,
+                )
+            return original_get_tokenizer(model_name)
+
+        module.get_tokenizer = patched_get_tokenizer
+        setattr(module, sentinel_name, True)
+
+    try:
+        from ttt_discover.tinker_utils import misc_utils
+    except ImportError:
+        misc_utils = None
+    if misc_utils is not None:
+        _wrap_get_tokenizer(misc_utils, "_autoresearch_kimi_patch")
+
+    try:
+        from ttt_discover.tinker_utils import renderers
+    except ImportError:
+        renderers = None
+    if renderers is not None:
+        _wrap_get_tokenizer(renderers, "_autoresearch_kimi_patch")
+
+    try:
+        from ttt_discover.tinker_utils import dataset_builder
+    except ImportError:
+        dataset_builder = None
+    if dataset_builder is not None and misc_utils is not None:
+        dataset_builder.get_tokenizer = misc_utils.get_tokenizer
+
+
+def patch_transformers_kimi_trust_remote_code() -> None:
+    """Force trust_remote_code=True for Kimi K2.5 tokenizer loads.
+
+    This catches code paths that bypass discover's helper and call the
+    Transformers auto-tokenizer directly.
+    """
+
+    try:
+        from transformers.models.auto.tokenization_auto import AutoTokenizer
+    except ImportError:
+        return
+
+    if getattr(AutoTokenizer, "_autoresearch_kimi_trust_patch", False):
+        return
+
+    original_from_pretrained = AutoTokenizer.from_pretrained
+
+    def patched_from_pretrained(pretrained_model_name_or_path: Any, *args: Any, **kwargs: Any):
+        model_name = str(pretrained_model_name_or_path)
+        if model_name == "moonshotai/Kimi-K2.5":
+            kwargs.setdefault("trust_remote_code", True)
+        return original_from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+    AutoTokenizer.from_pretrained = patched_from_pretrained
+    AutoTokenizer._autoresearch_kimi_trust_patch = True

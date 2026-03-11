@@ -7,9 +7,9 @@ from typing import Any, ClassVar
 
 from ttt_autoresearch.config import BootstrapContext
 from ttt_autoresearch.discover_compat import Environment, State, VerifyResult
-from ttt_autoresearch.prompt_builder import build_rollout_prompt
+from ttt_autoresearch.prompt_builder import build_prompt_for_state
 from ttt_autoresearch.reward import AutoResearchRewardEvaluator
-from ttt_autoresearch.runner import parse_patch_candidate
+from ttt_autoresearch.runner import parse_patch_candidate_for_state
 
 class AutoResearchState(State):
     def __init__(
@@ -164,7 +164,7 @@ class AutoResearchDiscoverEnv(Environment):
         return False
 
     def _get_code_languages(self) -> list[str]:
-        return ["json"]
+        return ["python"]
 
     def _should_keep_code_separators(self) -> bool:
         return False
@@ -177,25 +177,11 @@ class AutoResearchDiscoverEnv(Environment):
         target = self.bootstrap.config.target_val_bpb
         if target is None:
             target = state.current_best_val_bpb
-        state_ctx = state.to_prompt(target, metric_name="val_bpb", maximize=False, language="python")
-        return build_rollout_prompt(
-            state_ctx=state_ctx,
-            construction_section=(
-                "You may want to start your search from the current training script shown above.\n"
-                "This is the current starting point selected by the search procedure.\n"
-                "You are encouraged to explore meaningfully different directions if the current approach appears saturated."
-            ),
-            code_section=(
-                "Reason about how you could further improve this training script under the fixed 5-minute training budget.\n"
-                "Try different algorithmic ideas, architecture changes, optimizer and schedule changes, batching changes, or other training heuristics.\n"
-                "Moderate increases in VRAM are acceptable if they lead to meaningful gains.\n"
-                "Unless you make a meaningful improvement in `val_bpb`, you will not be rewarded."
-            ),
-        )
+        return build_prompt_for_state(state, target)
 
     def check_format(self, parsed_code: str) -> bool:
         try:
-            parse_patch_candidate(parsed_code)
+            parse_patch_candidate_for_state(parsed_code, self.initial_state.current_train_py)
         except ValueError:
             return False
         return True
@@ -204,7 +190,7 @@ class AutoResearchDiscoverEnv(Environment):
         if not self.check_format(parsed_code):
             return VerifyResult(
                 reward=0.0,
-                msg="Invalid candidate JSON.",
+                msg="Invalid candidate train.py patch payload.",
                 correctness=0.0,
                 raw_score=float(self.initial_state.current_best_val_bpb),
                 result_construction=[],
@@ -225,7 +211,7 @@ class AutoResearchDiscoverEnv(Environment):
         )
 
     def _create_next_state(self, step_idx: int, parsed_code: str, outs: VerifyResult) -> AutoResearchState:
-        candidate = parse_patch_candidate(parsed_code)
+        candidate = parse_patch_candidate_for_state(parsed_code, self.initial_state.current_train_py)
         parent_best = self.initial_state.current_best_val_bpb
         new_best = min(parent_best, outs.raw_score) if outs.raw_score is not None else parent_best
         return AutoResearchState(

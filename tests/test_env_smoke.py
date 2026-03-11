@@ -11,6 +11,20 @@ from ttt_autoresearch.env import AutoResearchDiscoverEnv, AutoResearchState
 from ttt_autoresearch.reward import AutoResearchRewardEvaluator
 from ttt_autoresearch.runner import AutoResearchRunner
 
+MINIMAL_VALID_TRAIN_PY = """from prepare import MAX_SEQ_LEN
+TOTAL_BATCH_SIZE = 2048
+DEVICE_BATCH_SIZE = 1
+tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN
+assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0
+
+class GPT:
+    def forward(self, idx, targets=None, reduction='mean'):
+        return 0
+
+# val_bpb: 1.100000
+print(f"val_bpb:          {1.1:.6f}")
+"""
+
 
 class EnvSmokeTests(unittest.TestCase):
     def test_state_prompt_shows_before_after_without_construction(self) -> None:
@@ -34,7 +48,7 @@ class EnvSmokeTests(unittest.TestCase):
             root = Path(tmpdir)
             (root / "program.md").write_text("Focus on val_bpb.", encoding="utf-8")
             (root / "prepare.py").write_text("TIME_BUDGET = 1\n", encoding="utf-8")
-            (root / "train.py").write_text("# val_bpb: 1.100000\n", encoding="utf-8")
+            (root / "train.py").write_text(MINIMAL_VALID_TRAIN_PY, encoding="utf-8")
             fixtures = root / "tests" / "fixtures"
             fixtures.mkdir(parents=True)
             fixture_src = Path(__file__).parent / "fixtures" / "fake_train.py"
@@ -76,11 +90,13 @@ class EnvSmokeTests(unittest.TestCase):
             self.assertNotIn("LOOP FOREVER", prompt)
             self.assertNotIn("results.tsv", prompt)
             self.assertNotIn("git reset", prompt)
-            self.assertTrue(env.check_format('{"summary":"s","rationale":"r","train_py":"# val_bpb: 0.900000\\n"}'))
+            self.assertIn("TOTAL_BATCH_SIZE % (DEVICE_BATCH_SIZE * MAX_SEQ_LEN) == 0", prompt)
+            payload = "<<<<<<< SEARCH\n# val_bpb: 1.100000\n=======\n# val_bpb: 0.900000\n>>>>>>> REPLACE"
+            self.assertTrue(env.check_format(payload))
 
-            verify = asyncio.run(env.check_answer('{"summary":"s","rationale":"r","train_py":"# val_bpb: 0.900000\\n"}', 0))
+            verify = asyncio.run(env.check_answer(payload, 0))
             self.assertGreater(verify.reward, 0.0)
-            next_state = env._create_next_state(0, '{"summary":"s","rationale":"r","train_py":"# val_bpb: 0.900000\\n"}', verify)
+            next_state = env._create_next_state(0, payload, verify)
             self.assertAlmostEqual(next_state.current_best_val_bpb, 0.9)
 
 

@@ -4,13 +4,13 @@
 
 This repo is a focused fork of [karpathy/autoresearch](https://github.com/karpathy/autoresearch) that replaces the outer experiment loop with [TTT-Discover](https://github.com/test-time-training/discover).
 
-The checked-in default is now a practical unattended setup:
+The checked-in defaults now support two primary outer-loop modes:
 
-- **Outer loop:** Tinker + `openai/gpt-oss-120b`
-- **Renderer:** `gpt_oss_high_reasoning`
-- **Inner loop:** RunPod `H100 PCIe` spot workers
+- **Kimi mode:** Tinker + `moonshotai/Kimi-K2.5` with `qwen3`
+- **GPT-OSS mode:** Tinker + `openai/gpt-oss-120b` with `gpt_oss_high_reasoning`
+- **Inner loop:** one Hyperbolic on-demand node with `8x H100`
 - **Main preset:** `2 groups x 8 rollouts x 12 steps`
-- **Spot failover:** if a worker pod is preempted, the current rollout is retried on a replacement pod automatically
+- **Launch mode:** detached remote controller so the run survives your local machine disconnecting
 
 The core objective stays the same as the original AutoResearch repo: improve [`train.py`](train.py) to lower `val_bpb`.
 
@@ -22,7 +22,7 @@ This project builds on:
 - [Learning to Discover at Test Time](https://arxiv.org/abs/2601.16175)
 - [test-time-training/discover](https://github.com/test-time-training/discover)
 
-The RL recipe stays with upstream `discover`. This repo provides the AutoResearch-specific environment, reward, runner, RunPod execution backend, and practical launch workflow.
+The RL recipe stays with upstream `discover`. This repo provides the AutoResearch-specific environment, reward, runner, Hyperbolic execution/launch backend, and practical launch workflow.
 
 ## How The System Works
 
@@ -34,45 +34,73 @@ There are two loops:
    - The score is `val_bpb`, and lower is better.
 
 2. **Outer loop**
-   - TTT-Discover samples full-file replacements for `train.py`.
+   - TTT-Discover samples strict SEARCH/REPLACE patches against the current working `train.py`.
    - Each candidate is evaluated by the inner loop.
    - Reward is a direct transformed task score: `1 / (1e-8 + val_bpb)`.
    - Failed or invalid candidates receive `0.0` reward.
    - Upstream `discover` updates the outer model online.
 
-The checked-in workflow keeps the outer controller on a stable machine and uses RunPod spot instances only for the inner evaluations. That is what lets the run continue unattended if a spot worker disappears.
+Before any H100 evaluation, every candidate now goes through a CPU-side preflight:
+
+- patch-only parsing
+- AST / `py_compile` validation
+- batch-divisibility checks
+- final `val_bpb` summary preservation
+- `forward(... reduction=...)` compatibility checks
+
+Only preflight-passing candidates reach the GPU evaluator.
+
+The checked-in workflow launches the entire controller onto the Hyperbolic node itself. After launch, the outer loop and all inner evaluations keep running on the remote machine even if your laptop sleeps, disconnects, or closes.
 
 ## What “Unattended” Means Here
 
 This repo is designed so that:
 
-- the controller process running [`run_ttt_discover.py`](run_ttt_discover.py) stays alive on a stable machine
-- inner evaluations are dispatched to RunPod spot pods
-- if a pod is preempted during a rollout, the runner provisions a replacement pod
-- the interrupted rollout is retried from scratch on the replacement pod
+- you start the run once from your local machine
+- the repo bootstraps a Hyperbolic `8x H100` node over SSH
+- it uploads a remote config and launches `run_ttt_discover.py` under `nohup` on that machine
+- the remote controller runs the outer loop and the inner `train.py` evaluations locally on the node’s 8 GPUs
 - the run continues until the configured `groups_per_step x samples_per_step x max_steps` budget is completed
 
-Important boundary:
+The important implication is that the remote node is now the source of truth for checkpoints and artifacts. Your local machine is only used to kick the run off.
 
-- the controller process itself is **not** spot-resilient
-- only the **inner worker pool** is spot-resilient
+The launcher also starts a local background mirror process by default:
 
-So the outer process should run on your laptop, workstation, or another non-preemptible box. The H100 spot instances are only for the expensive inner `train.py` jobs.
+- while your laptop is online, it continuously pulls the full remote run directory back to `runs/<name>/mirror/`
+- when the remote controller exits, it performs one final sync
+- if your laptop is offline, the mirror pauses implicitly and the remote node remains the source of truth
 
-## Current Default
+## Primary Model Modes
 
-The default config at [`configs/ttt_discover_autoresearch.yaml`](configs/ttt_discover_autoresearch.yaml) is the recommended medium run:
+### Kimi K2.5
 
-- `model_name: openai/gpt-oss-120b`
-- `renderer_name: gpt_oss_high_reasoning`
-- `target_val_bpb: 0.85`
-- `execution_backend: runpod`
+The default config at [`configs/ttt_discover_autoresearch.yaml`](configs/ttt_discover_autoresearch.yaml) uses:
+
+- `model_name: moonshotai/Kimi-K2.5`
+- `renderer_name: qwen3`
 - `groups_per_step: 2`
 - `samples_per_step: 8`
 - `max_steps: 12`
-- `max_concurrent_evaluations: 16`
-- `runpod_gpu_type_ids: ["NVIDIA H100 PCIe"]`
-- `runpod_interruptible: true`
+
+### GPT-OSS 120B
+
+The shipped medium/large presets use:
+
+- `model_name: openai/gpt-oss-120b`
+- `renderer_name: gpt_oss_high_reasoning`
+
+### Shared Practical Defaults
+
+Both primary model modes use the same practical unattended search shape:
+
+- `target_val_bpb: 0.85`
+- `execution_backend: hyperbolic`
+- `groups_per_step: 2`
+- `samples_per_step: 8`
+- `max_steps: 12`
+- `max_concurrent_evaluations: 8`
+- `gpu_devices: ["0", "1", "2", "3", "4", "5", "6", "7"]`
+- `hyperbolic_detached_controller: true`
 
 That means:
 
@@ -81,6 +109,7 @@ That means:
 - `192` rollout evaluations total
 - `1` extra baseline run before RL starts
 - `193` total inner jobs
+- evaluations run in two waves per outer step on a single `8x H100` node
 
 ## Presets
 
@@ -92,7 +121,7 @@ File: [`configs/ttt_discover_autoresearch_small.yaml`](configs/ttt_discover_auto
 
 - `2 x 4 x 12`
 - `96` RL rollouts
-- `8` concurrent RunPod workers
+- `8` concurrent GPU slots on the Hyperbolic node
 
 ### Medium
 
@@ -100,7 +129,7 @@ File: [`configs/ttt_discover_autoresearch_medium.yaml`](configs/ttt_discover_aut
 
 - `2 x 8 x 12`
 - `192` RL rollouts
-- `16` concurrent RunPod workers
+- `8` concurrent GPU slots on the Hyperbolic node
 
 This is the recommended main mode and matches the default config.
 
@@ -110,53 +139,66 @@ File: [`configs/ttt_discover_autoresearch_large.yaml`](configs/ttt_discover_auto
 
 - `2 x 8 x 20`
 - `320` RL rollouts
-- `16` concurrent RunPod workers
+- `8` concurrent GPU slots on the Hyperbolic node
 
 Use this only after the medium run is stable.
 
-## RunPod Backend
+## Hyperbolic Backend
 
 The inner-loop executor now supports two backends:
 
 - `local`
-- `runpod`
+- `hyperbolic`
 
-The `runpod` backend does the following:
+The `hyperbolic` backend does two different things depending on where the controller is running:
 
-1. Creates up to `max_concurrent_evaluations` spot pods.
-2. Waits for SSH on each pod.
-3. Bootstraps the pod by:
-   - uploading the repo snapshot
-   - installing `uv`
-   - running `uv sync`
-   - running `uv run prepare.py --num-shards 10`
-4. Uploads each candidate workspace to a worker pod.
-5. Runs the inner command remotely.
-6. Pulls back `stdout.log`, `stderr.log`, and metrics.
-7. Deletes the pods automatically when the run finishes.
+1. **Detached controller launch**
+   - connects to your Hyperbolic node over SSH
+   - uploads the repo snapshot
+   - runs `uv sync`
+   - runs `uv run prepare.py --num-shards 10`
+   - writes a remote config with `execution_backend: local`
+   - starts the full TTT controller under `nohup`
 
-If a pod disappears during upload, bootstrap, or execution, the worker is retired, a replacement is created, and the interrupted rollout is retried.
+2. **Inner evaluations on the remote node**
+   - the remote controller pins rollouts to `CUDA_VISIBLE_DEVICES=0..7`
+   - each rollout runs in an isolated workspace
+   - logs, metrics, and manifests are saved under the remote `run_dir`
 
 ## Prerequisites
 
 You need:
 
-- Linux or macOS for the controller machine
+- Linux or macOS for the launch machine
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/)
 - a Tinker-enabled account for the outer loop
-- a RunPod account with:
-  - API access
-  - an SSH public key registered in the account
-  - access to H100 spot instances
+- a Hyperbolic account with:
+  - one running on-demand `8x H100` node
+  - an SSH public key registered on the account
+  - the node’s SSH host / IP
+  - enough credits to keep the machine alive for the full run
 
 Environment:
 
 ```bash
-export RUNPOD_API_KEY=...
+export OPENAI_API_KEY=...
 ```
 
-You also need whatever Tinker credentials your local `ttt-discover` installation expects.
+Or equivalently:
+
+```bash
+export TINKER_API_KEY=...
+export OPENAI_API_KEY="$TINKER_API_KEY"
+```
+
+Optional for Kimi runs on fresh nodes:
+
+```bash
+export HF_TOKEN=...
+```
+
+`HF_TOKEN` is not required for correctness. It only reduces Hugging Face rate-limit and cold-start friction when the Kimi tokenizer/custom code is downloaded on a fresh machine.
 
 ## Quick Start
 
@@ -172,6 +214,16 @@ Or explicitly choose the medium preset:
 ```bash
 uv run python run_ttt_discover.py --config configs/ttt_discover_autoresearch_medium.yaml
 ```
+
+When the launch succeeds, the script prints the remote run directory and remote controller log path, and it writes the same metadata to `hyperbolic_launch.json` in the local launch directory.
+
+The launcher also refuses to start if another detached AutoResearch controller or `train.py` process is already active on the same Hyperbolic node. This prevents overlapping runs from silently OOMing each other.
+
+It also starts a local mirror process and records:
+
+- `local_mirror_dir`
+- `local_mirror_log_path`
+- `local_mirror_pid`
 
 ## Cost And Runtime Shape
 
@@ -190,63 +242,68 @@ That means the default medium run has:
 
 ### Example Medium Budget
 
-Using your current spot numbers:
+With a single `8x H100` node, the total GPU-hours are the same `17.47`, but they are spread across the 8 GPUs on that machine.
 
-- `H100 PCIe spot: $1.25/hr`
-- `H100 SXM spot: $1.75/hr`
+If your node price is `P` dollars per GPU-hour, the GPU line item is approximately:
 
-The medium run works out to:
+- `17.47 x P`
 
-- `H100 PCIe`: about `$21.84`
-- `H100 SXM`: about `$30.57`
+If Hyperbolic bills a full `8x H100` node at a flat hourly rate `N`, the same run costs approximately:
+
+- `(2.5 to 3.5 hours) x N`
 
 Tinker is the smaller cost bucket here. The exact amount depends on current Tinker pricing and token usage, but for this repo it is materially smaller than the H100 rental line item.
 
 ### Wall Clock
 
-Total GPU-hours are roughly fixed, so more pods mostly reduce elapsed time, not total spend.
+Approximate medium-run wall clock on one `8x H100` node:
 
-Approximate medium-run wall clock:
-
-- `1 H100`: about `18-20h`
-- `8 H100s`: about `2.5-3h`
-- `16 H100s`: about `1.3-1.8h`
+- about `2.5-3.5h`
 
 ## Model And Renderer
 
-The checked-in default is:
+One first-class outer-loop mode is:
+
+```yaml
+model_name: moonshotai/Kimi-K2.5
+renderer_name: qwen3
+```
+
+The other first-class outer-loop mode is:
 
 ```yaml
 model_name: openai/gpt-oss-120b
 renderer_name: gpt_oss_high_reasoning
 ```
 
-This is intentional:
+This dual support is intentional:
 
-- it matches the strongest paper-aligned model family more closely than the older Qwen default
-- it is already supported by the renderer mapping in [`ttt_autoresearch/config.py`](ttt_autoresearch/config.py)
-- it is the intended outer-loop model for the default RunPod workflow
+- Kimi K2.5 and GPT-OSS-120B are both treated as primary outer-loop modes
+- both are explicitly supported by the renderer mapping and tokenizer compatibility patches
+- both use the same strict patch-only rollout/evaluation pipeline
 
 Other models still work, but if the model family is not recognized automatically you must set `renderer_name` explicitly.
 
 ## Important Config Knobs
 
-The main knobs for unattended RunPod execution are:
+The main knobs for unattended Hyperbolic execution are:
 
 - `execution_backend`
-  - use `runpod` for remote spot workers
+  - use `hyperbolic` to launch a detached remote controller
   - use `local` for direct local GPU execution
 - `max_concurrent_evaluations`
-  - number of worker pods for `runpod`
+  - number of simultaneous inner evaluations on the remote node
   - number of local simultaneous inner runs for `local`
-- `runpod_gpu_type_ids`
-  - default is `["NVIDIA H100 PCIe"]`
-- `runpod_interruptible`
-  - leave this `true` for spot behavior
-- `runpod_bootstrap_commands`
-  - optional override if you want to use a custom image or template
-- `runpod_retry_limit`
-  - how many times to reprovision and retry an interrupted rollout before surfacing a failure
+- `hyperbolic_ssh_host`
+  - SSH host or IP for your Hyperbolic node
+- `hyperbolic_ssh_user`
+  - defaults to `ubuntu`
+- `hyperbolic_ssh_private_key_path`
+  - optional explicit SSH private key path
+- `hyperbolic_detached_controller`
+  - default `true`; launches the whole controller remotely under `nohup`
+- `gpu_devices`
+  - defaults to all eight GPUs on the remote node
 
 ## Fixed Prompt Target
 
@@ -271,7 +328,7 @@ prepare.py                  Fixed data prep and runtime utilities
 train.py                    Inner training program edited by the outer model
 program.md                  Human-authored research instructions/context
 run_ttt_discover.py         Main TTT-Discover entrypoint
-ttt_autoresearch/           Adapter layer for environment, reward, runner, RunPod, config
+ttt_autoresearch/           Adapter layer for environment, reward, runner, Hyperbolic, config
 configs/                    Practical preset YAML configs
 tests/                      Smoke and unit coverage for the adapter
 ```
@@ -287,9 +344,9 @@ Each run writes artifacts under `runs/<timestamp>/`:
 - `best/metrics.json`
 - `candidates/`
 - `discover_log/`
-- `runpod_pool.json`
+- `hyperbolic_launch.json`
 
-`runpod_pool.json` records the worker pod metadata for the current run so you can inspect what was provisioned.
+`hyperbolic_launch.json` records the remote launch metadata for the detached Hyperbolic controller, including the remote run directory and remote log path.
 
 The important resume/checkpoint files are:
 
@@ -313,11 +370,19 @@ The important resume/checkpoint files are:
   - parsed metrics sidecar for that rollout
 - `candidates/<step>_<id>/rollout_manifest.json`
   - self-contained rollout record with the starting state, candidate payload, evaluation result, reward, and promotion outcome
+- `candidates/<step>_<id>/prompt.txt`
+  - exact prompt sent to the outer model for that rollout
+- `candidates/<step>_<id>/response.txt`
+  - raw model response for that rollout
 - invalid or malformed model outputs are also persisted under `candidates/` with a `rollout_manifest.json`, `metrics.json`, and raw `response.txt`
 - `discover_log/checkpoints.jsonl`
   - upstream TTT-Discover checkpoint index
 - `discover_log/`
   - LoRA/training state and sampler checkpoints used for resume
+- `hyperbolic_launch.json`
+  - local launch metadata, including the remote run dir and local mirror info
+- `mirror/`
+  - best-effort local mirror of the remote run directory while your laptop is reachable
 
 ## Resuming A Stopped Run
 
@@ -357,7 +422,7 @@ Important resume rule:
 
 ## Local Mode Still Exists
 
-If you want to run without RunPod, set:
+If you want to run without Hyperbolic, set:
 
 ```yaml
 execution_backend: local
@@ -374,17 +439,18 @@ What is covered in tests:
 - candidate parsing
 - CLI wiring into upstream `discover`
 - local concurrency gating
-- RunPod retry logic for interrupted workers
-- runner cleanup behavior
+- Hyperbolic detached launch wiring
+- Hyperbolic runner/backend cleanup behavior
+- malformed candidate persistence and rollout manifests
 
 What is still operationally environment-dependent:
 
-- real RunPod API credentials
-- SSH access from the controller to the worker pods
+- SSH access from your launch machine to the Hyperbolic node
+- a working Hyperbolic `8x H100` node with enough disk and credits
 - real Tinker credentials and provider setup
-- long-run stability on your specific account and spot market
+- long-run stability on your specific Hyperbolic account and node
 
-So the repo is structurally ready for unattended Tinker + RunPod operation, but the final production proof is still a real run on your account.
+So the repo is structurally ready for unattended Tinker + Hyperbolic operation, but the final production proof is still a real run on your account.
 
 ## License
 
