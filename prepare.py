@@ -258,6 +258,7 @@ def _document_batches(split, tokenizer_batch_size=128):
     val_path = os.path.join(DATA_DIR, VAL_FILENAME)
     if split == "train":
         parquet_paths = [p for p in parquet_paths if p != val_path]
+        assert len(parquet_paths) > 0, "No training shards found."
     else:
         parquet_paths = [val_path]
     epoch = 1
