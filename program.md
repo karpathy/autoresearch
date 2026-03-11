@@ -38,6 +38,21 @@ Each experiment runs on a single GPU. The training script runs for a **fixed tim
 
 **The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
 
+## Available Tools (Phase 2)
+
+You have access to two hyperparameter optimization skills that can complement your manual experimentation:
+
+- **`/bayesian-optimize`**: Run Bayesian (TPE) optimization to efficiently explore hyperparameter space. Good for finding promising regions quickly with limited trials.
+- **`/genetic-optimize`**: Run Genetic (CMA-ES) optimization for evolutionary search. Good for refining configurations in smooth objective landscapes.
+
+These tools run multiple trials automatically and return the best configuration found. You can use them strategically:
+- Run optimization early to identify promising hyperparameter regions
+- Use them when manual experimentation plateaus
+- Validate your manual findings with automated search
+- Combine insights from both manual and automated approaches
+
+**You decide** when and how to use these tools. They are optional — you can continue with pure manual experimentation if you prefer, or use them strategically as part of your research workflow.
+
 ## Output format
 
 Once the script finishes it prints a summary like this:
