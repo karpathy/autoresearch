@@ -128,14 +128,17 @@ def text_iterator(max_chars=1_000_000_000, doc_cap=10_000):
     nchars = 0
     for filepath in parquet_paths:
         pf = pq.ParquetFile(filepath)
-        for rg_idx in range(pf.num_row_groups):
-            rg = pf.read_row_group(rg_idx)
-            for text in rg.column("text").to_pylist():
-                doc = text[:doc_cap] if len(text) > doc_cap else text
-                nchars += len(doc)
-                yield doc
-                if nchars >= max_chars:
-                    return
+        try:
+            for rg_idx in range(pf.num_row_groups):
+                rg = pf.read_row_group(rg_idx)
+                for text in rg.column("text").to_pylist():
+                    doc = text[:doc_cap] if len(text) > doc_cap else text
+                    nchars += len(doc)
+                    yield doc
+                    if nchars >= max_chars:
+                        return
+        finally:
+            pf.close()
 
 
 def train_tokenizer():
@@ -265,11 +268,14 @@ def _document_batches(split, tokenizer_batch_size=128):
     while True:
         for filepath in parquet_paths:
             pf = pq.ParquetFile(filepath)
-            for rg_idx in range(pf.num_row_groups):
-                rg = pf.read_row_group(rg_idx)
-                batch = rg.column('text').to_pylist()
-                for i in range(0, len(batch), tokenizer_batch_size):
-                    yield batch[i:i+tokenizer_batch_size], epoch
+            try:
+                for rg_idx in range(pf.num_row_groups):
+                    rg = pf.read_row_group(rg_idx)
+                    batch = rg.column('text').to_pylist()
+                    for i in range(0, len(batch), tokenizer_batch_size):
+                        yield batch[i:i+tokenizer_batch_size], epoch
+            finally:
+                pf.close()
         epoch += 1
 
 
