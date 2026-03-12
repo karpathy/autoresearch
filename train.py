@@ -274,112 +274,116 @@ def main():
     n_params = count_model_params(model)
     print(f"  Model parameters: {n_params}")
 
-    # --- Grid search: try single features first, then combinations ---
-    print("Phase 1: Testing individual mean-reversion signals...")
-    best_sharpe = -999
-    best_config = None
+    # --- Comprehensive grid search ---
+    # Use actual evaluate_model to score top candidates (slower but accurate)
+    print("Phase 1: Single feature scan...")
+    candidates = []  # list of (proxy_score, feat_idx, sign, scale, vol_thresh)
+    scales = np.arange(0.001, 0.020, 0.0005)
 
-    for feat_idx, name in [(0, "1h"), (1, "4h"), (2, "12h"), (3, "24h"), (4, "72h"), (5, "168h")]:
-        for sign in [-1, +1]:  # -1 = mean reversion, +1 = momentum
-            for scale in [0.001, 0.002, 0.003, 0.005, 0.008, 0.01, 0.015, 0.02]:
+    for feat_idx in range(6):
+        for sign in [-1, +1]:
+            for scale in scales:
                 preds = sign * features[:, feat_idx] * scale
                 sharpe, max_dd, n_trades = _quick_backtest(preds, close)
-                # Only consider if enough trades and not catastrophic
-                if n_trades >= 30 and abs(max_dd) < 0.25:
-                    if sharpe > best_sharpe:
-                        best_sharpe = sharpe
-                        best_config = (feat_idx, name, sign, scale, sharpe, max_dd, n_trades)
-
-    if best_config:
-        feat_idx, name, sign, scale, sharpe, max_dd, n_trades = best_config
-        print(f"  Best single: {name} sign={sign:+d} scale={scale:.3f} "
-              f"sharpe={sharpe:.4f} dd={max_dd:.1%} trades={n_trades}")
-    else:
-        print("  No single feature achieves dd < 25%! Trying with relaxed constraint...")
-        # Try with relaxed drawdown
-        for feat_idx, name in [(0, "1h"), (1, "4h"), (2, "12h"), (3, "24h"), (4, "72h"), (5, "168h")]:
-            for sign in [-1, +1]:
-                for scale in [0.001, 0.002, 0.003, 0.005, 0.008, 0.01, 0.015, 0.02]:
-                    preds = sign * features[:, feat_idx] * scale
-                    sharpe, max_dd, n_trades = _quick_backtest(preds, close)
-                    if n_trades >= 30:
-                        # Score with drawdown penalty
-                        score = sharpe * min(1.0, 0.25 / max(abs(max_dd), 0.01))
-                        if score > best_sharpe:
-                            best_sharpe = score
-                            best_config = (feat_idx, name, sign, scale, sharpe, max_dd, n_trades)
-        if best_config:
-            feat_idx, name, sign, scale, sharpe, max_dd, n_trades = best_config
-            print(f"  Best (relaxed): {name} sign={sign:+d} scale={scale:.3f} "
-                  f"sharpe={sharpe:.4f} dd={max_dd:.1%} trades={n_trades}")
-
-    # Phase 2: Try vol gating on the best single signal
-    if best_config:
-        print("Phase 2: Adding vol gating to best signal...")
-        feat_idx_best = best_config[0]
-        sign_best = best_config[2]
-        best_gated_score = best_sharpe
-        best_gated = None
-
-        for scale in [0.001, 0.002, 0.003, 0.005, 0.008, 0.01]:
-            for vol_thresh in np.arange(-1.5, 2.0, 0.25):
-                gate = 1.0 / (1.0 + np.exp((features[:, IDX_VOL24] - vol_thresh) * 3.0))
-                preds = sign_best * features[:, feat_idx_best] * scale * gate
-                sharpe, max_dd, n_trades = _quick_backtest(preds, close)
-
                 if n_trades >= 30:
-                    if abs(max_dd) < 0.25:
-                        score = sharpe
-                    else:
-                        score = sharpe * 0.25 / abs(max_dd)
+                    score = sharpe * min(1.0, 0.25 / max(abs(max_dd), 0.01))
+                    candidates.append((score, feat_idx, sign, scale, 3.0))  # 3.0 = no gating
 
-                    if score > best_gated_score:
-                        best_gated_score = score
-                        best_gated = (scale, vol_thresh, sharpe, max_dd, n_trades)
+    # Phase 1b: Vol gating on top single features
+    print("Phase 2: Vol gating on top candidates...")
+    top_singles = sorted(candidates, reverse=True)[:10]  # top 10 singles
+    for _, feat_idx, sign, scale, _ in top_singles:
+        for vol_thresh in np.arange(-1.0, 2.5, 0.25):
+            gate = 1.0 / (1.0 + np.exp((features[:, IDX_VOL24] - vol_thresh) * 3.0))
+            preds = sign * features[:, feat_idx] * scale * gate
+            sharpe, max_dd, n_trades = _quick_backtest(preds, close)
+            if n_trades >= 30:
+                score = sharpe * min(1.0, 0.25 / max(abs(max_dd), 0.01))
+                candidates.append((score, feat_idx, sign, scale, vol_thresh))
 
-        if best_gated:
-            scale, vol_thresh, sharpe, max_dd, n_trades = best_gated
-            print(f"  Best gated: scale={scale:.3f} vol_thresh={vol_thresh:.2f} "
-                  f"sharpe={sharpe:.4f} dd={max_dd:.1%} trades={n_trades}")
+    # Phase 2: Two-feature combinations
+    print("Phase 3: Two-feature combinations...")
+    combo_scales = [0.001, 0.002, 0.003, 0.005]
+    for i in range(6):
+        for j in range(i + 1, 6):
+            for si in [-1, +1]:
+                for sj in [-1, +1]:
+                    for sc_i in combo_scales:
+                        for sc_j in combo_scales:
+                            preds = si * features[:, i] * sc_i + sj * features[:, j] * sc_j
+                            sharpe, max_dd, n_trades = _quick_backtest(preds, close)
+                            if n_trades >= 30:
+                                score = sharpe * min(1.0, 0.25 / max(abs(max_dd), 0.01))
+                                # Store as special format with negative feat_idx
+                                candidates.append((score, -(i * 10 + j), si, sc_i, sj * sc_j))
 
-            # Set model parameters
-            w = torch.zeros(6)
-            w[feat_idx_best] = sign_best * scale
-            with torch.no_grad():
-                model.weights.copy_(w)
-                model.vol_thresh.fill_(vol_thresh)
+    # Sort and pick the best
+    candidates.sort(reverse=True)
+    print(f"  Total candidates: {len(candidates)}")
+    print(f"  Top 5 proxy scores: {[f'{c[0]:.4f}' for c in candidates[:5]]}")
+
+    # Now use evaluate_model on top candidates to find the actual best
+    print("Phase 4: Verifying top candidates with actual evaluator...")
+    best_actual_score = -999
+    best_predict_fn = None
+    best_actual_desc = ""
+
+    for rank, cand in enumerate(candidates[:20]):
+        proxy_score, feat_id, sign, scale, extra = cand
+
+        if feat_id >= 0:
+            # Single feature
+            vol_thresh = extra
+
+            def make_fn(fi, s, sc, vt):
+                def fn(feats):
+                    sig = s * feats[:, fi] * sc
+                    if vt < 2.5:
+                        gate = 1.0 / (1.0 + np.exp((feats[:, IDX_VOL24] - vt) * 3.0))
+                        return sig * gate
+                    return sig
+                return fn
+
+            pred_fn = make_fn(feat_id, sign, scale, vol_thresh)
+            desc = f"feat{feat_id} s={sign:+d} sc={scale:.4f} vt={vol_thresh:.2f}"
         else:
-            print("  No improvement with gating, using ungated best")
-            w = torch.zeros(6)
-            w[best_config[0]] = best_config[2] * best_config[3]
-            with torch.no_grad():
-                model.weights.copy_(w)
-                model.vol_thresh.fill_(3.0)  # effectively no gating
+            # Two features
+            i = (-feat_id) // 10
+            j = (-feat_id) % 10
+            sc_j = extra  # sign * scale for j
+
+            def make_fn2(fi, fj, si, sc_i, sc_j_val):
+                def fn(feats):
+                    return si * feats[:, fi] * sc_i + feats[:, fj] * sc_j_val
+                return fn
+
+            pred_fn = make_fn2(i, j, sign, scale, sc_j)
+            desc = f"feat{i}+feat{j}"
+
+        train_preds = pred_fn(features)
+        result = evaluate_model(train_preds, train_timestamps, n_params, split="train")
+        actual_score = result["score"]
+
+        if actual_score > best_actual_score:
+            best_actual_score = actual_score
+            best_predict_fn = pred_fn
+            best_actual_desc = desc
+            print(f"  #{rank}: {desc} proxy={proxy_score:.4f} actual={actual_score:.4f} "
+                  f"sharpe={result['sharpe']:.4f} dd={result['max_drawdown']:.1%} trades={result['n_trades']}")
+
+    training_seconds = time.time() - total_start
+    print(f"\n  Best actual: {best_actual_desc} score={best_actual_score:.4f}")
+
+    global _predict_fn
+    _predict_fn = best_predict_fn
+    _trained_model = model
 
     training_seconds = time.time() - total_start
     print(f"Search complete in {training_seconds:.1f}s")
 
-    _trained_model = model
-
-    # --- Store best config for numpy prediction ---
-    _best_feat_idx = best_config[0] if best_config else 4
-    _best_sign = best_config[2] if best_config else -1
-    _best_scale = best_gated[0] if best_gated else (best_config[3] if best_config else 0.002)
-    _best_vol_thresh_np = best_gated[1] if best_gated else 3.0
-
-    global _predict_fn
-
-    def _predict_numpy(feats):
-        """Compute predictions in float64 numpy to match grid search exactly."""
-        signal = _best_sign * feats[:, _best_feat_idx] * _best_scale
-        gate = 1.0 / (1.0 + np.exp((feats[:, IDX_VOL24] - _best_vol_thresh_np) * 3.0))
-        return signal * gate
-
-    _predict_fn = _predict_numpy
-
-    # --- Evaluate on train split ---
+    # --- Evaluate on train split using actual best ---
     print("Evaluating on training data...")
-    all_preds = _predict_numpy(features)
+    all_preds = best_predict_fn(features)
 
     print(f"  Pred stats: mean={np.mean(all_preds):.6f}, std={np.std(all_preds):.6f}")
     print(f"  Preds > 0.005: {np.sum(all_preds > 0.005)}, Preds < -0.005: {np.sum(all_preds < -0.005)}")
@@ -393,7 +397,7 @@ def main():
     val_features = _normalize(val_features, fit=False)
     val_features = np.nan_to_num(val_features, nan=0.0)
 
-    val_preds = _predict_numpy(val_features)
+    val_preds = best_predict_fn(val_features)
 
     val_result = evaluate_model(val_preds, val_timestamps, n_params, split="val")
 
