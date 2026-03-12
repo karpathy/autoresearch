@@ -31,17 +31,13 @@ MAX_LOOKBACK = 168  # maximum lookback window (1 week)
 
 
 def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """Compute features from OHLCV data.
-
-    Returns:
-        features: (N, n_features) array where N = len(df) - MAX_LOOKBACK.
-        timestamps: (N,) array of pd.Timestamp aligned with features.
-    """
+    """Compute features from OHLCV data."""
     close = df["close"].values.astype(np.float64)
+    high = df["high"].values.astype(np.float64)
+    low = df["low"].values.astype(np.float64)
     volume = df["volume"].values.astype(np.float64)
     ts = df["timestamp"].values
 
-    # Hourly returns (for lookback and volatility calculations)
     hourly_returns = np.zeros(len(close))
     hourly_returns[1:] = close[1:] / close[:-1] - 1.0
 
@@ -63,7 +59,6 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     vol_series = pd.Series(volume)
     vol_24 = vol_series.rolling(24, min_periods=24).mean().values
     vol_168 = vol_series.rolling(168, min_periods=168).mean().values
-    # Avoid division by zero
     vol_ratio = np.where(vol_168 > 0, vol_24 / vol_168, 1.0)
     feature_cols.append(vol_ratio)
 
@@ -72,9 +67,22 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     feature_cols.append(np.sin(2 * np.pi * hours / 24))
     feature_cols.append(np.cos(2 * np.pi * hours / 24))
 
+    # 5. RSI-like momentum (14-period and 48-period)
+    for period in [14, 48]:
+        gains = np.where(hourly_returns > 0, hourly_returns, 0.0)
+        losses = np.where(hourly_returns < 0, -hourly_returns, 0.0)
+        avg_gain = pd.Series(gains).rolling(period, min_periods=period).mean().values
+        avg_loss = pd.Series(losses).rolling(period, min_periods=period).mean().values
+        rsi = np.where(avg_loss > 0, avg_gain / (avg_gain + avg_loss), 0.5)
+        feature_cols.append(rsi)
+
+    # 6. High-low range ratio (volatility proxy)
+    hl_range = (high - low) / np.where(close > 0, close, 1.0)
+    hl_24 = pd.Series(hl_range).rolling(24, min_periods=24).mean().values
+    feature_cols.append(hl_24)
+
     features = np.column_stack(feature_cols)
 
-    # Trim to valid rows (after max lookback)
     valid_start = MAX_LOOKBACK
     features = features[valid_start:]
     timestamps = ts[valid_start:]
@@ -83,10 +91,7 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
 
 def compute_targets(df: pd.DataFrame) -> np.ndarray:
-    """Compute 24-hour forward returns: close[t+24]/close[t] - 1.
-
-    Returns array of same length as df. Last FORWARD_HOURS entries are NaN.
-    """
+    """Compute 24-hour forward returns."""
     close = df["close"].values.astype(np.float64)
     n = len(close)
     targets = np.full(n, np.nan)
@@ -98,20 +103,23 @@ def compute_targets(df: pd.DataFrame) -> np.ndarray:
 # Model
 # ---------------------------------------------------------------------------
 
-N_FEATURES = len(RETURN_LOOKBACKS) + len(VOLATILITY_WINDOWS) + 1 + 2  # 11 features
+N_FEATURES = len(RETURN_LOOKBACKS) + len(VOLATILITY_WINDOWS) + 1 + 2 + 2 + 1  # 14 features
 
 
 class ForwardReturnModel(nn.Module):
-    """Simple feedforward network: n_features -> 32 -> 16 -> 1"""
+    """Feedforward network with batch norm."""
 
     def __init__(self, n_features: int = N_FEATURES):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_features, 32),
+            nn.Linear(n_features, 64),
+            nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Linear(32, 16),
+            nn.Dropout(0.1),
+            nn.Linear(64, 32),
+            nn.BatchNorm1d(32),
             nn.ReLU(),
-            nn.Linear(16, 1),
+            nn.Linear(32, 1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -119,7 +127,6 @@ class ForwardReturnModel(nn.Module):
 
 
 def count_model_params(model: nn.Module | None = None) -> int:
-    """Return total trainable parameter count."""
     if model is None:
         model = ForwardReturnModel()
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -134,12 +141,11 @@ _feat_std: np.ndarray | None = None
 
 
 def _normalize(features: np.ndarray, fit: bool = False) -> np.ndarray:
-    """Z-score normalize features. If fit=True, compute and store stats."""
     global _feat_mean, _feat_std
     if fit:
         _feat_mean = np.nanmean(features, axis=0)
         _feat_std = np.nanstd(features, axis=0)
-        _feat_std[_feat_std < 1e-8] = 1.0  # avoid division by zero
+        _feat_std[_feat_std < 1e-8] = 1.0
     return (features - _feat_mean) / _feat_std
 
 
@@ -151,15 +157,8 @@ _trained_model: nn.Module | None = None
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """Generate predictions on arbitrary OHLCV data.
-
-    Used by prepare.py for holdout evaluation. Requires that the model
-    has already been trained (i.e., train.py has been run).
-    """
     features, timestamps = compute_features(df)
     features = _normalize(features, fit=False)
-
-    # Replace any remaining NaN with 0
     features = np.nan_to_num(features, nan=0.0)
 
     model = _trained_model
@@ -184,7 +183,6 @@ def main():
 
     total_start = time.time()
 
-    # Device selection: MPS (Apple Silicon) > CUDA > CPU
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         device = torch.device("mps")
     elif torch.cuda.is_available():
@@ -202,10 +200,8 @@ def main():
     features, timestamps = compute_features(train_df)
     targets = compute_targets(train_df)
 
-    # Align: targets need same trimming as features (MAX_LOOKBACK from start)
     targets = targets[MAX_LOOKBACK:]
 
-    # Drop rows where targets are NaN (last FORWARD_HOURS rows)
     valid = ~np.isnan(targets)
     features = features[valid]
     targets = targets[valid]
@@ -213,9 +209,12 @@ def main():
 
     # Normalize features (fit on training data)
     features = _normalize(features, fit=True)
-
-    # Replace any remaining NaN with 0
     features = np.nan_to_num(features, nan=0.0)
+
+    # Clip extreme target outliers (beyond 3 std)
+    target_std = np.std(targets)
+    target_mean = np.mean(targets)
+    targets = np.clip(targets, target_mean - 3 * target_std, target_mean + 3 * target_std)
 
     print(f"  Training samples: {len(features)}, Features: {features.shape[1]}")
 
@@ -224,14 +223,15 @@ def main():
     n_params = count_model_params(model)
     print(f"  Model parameters: {n_params}")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    loss_fn = nn.MSELoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200, eta_min=1e-5)
+    loss_fn = nn.HuberLoss(delta=0.01)  # Robust to outliers in returns
 
     # --- Create DataLoader ---
     X_tensor = torch.tensor(features, dtype=torch.float32)
     y_tensor = torch.tensor(targets, dtype=torch.float32)
     dataset = TensorDataset(X_tensor, y_tensor)
-    loader = DataLoader(dataset, batch_size=512, shuffle=True, drop_last=False)
+    loader = DataLoader(dataset, batch_size=1024, shuffle=True, drop_last=False)
 
     # --- Train ---
     print(f"Training for up to {TIME_BUDGET}s...")
@@ -253,6 +253,7 @@ def main():
 
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
             epoch_loss += loss.item()
@@ -260,6 +261,8 @@ def main():
 
             if time.time() - train_start >= TIME_BUDGET:
                 break
+
+        scheduler.step()
 
         if epoch % 10 == 0 or epoch == 1:
             avg_loss = epoch_loss / max(n_batches, 1)
