@@ -55,13 +55,13 @@
       {% endwith %}
       <div class="mt-5 rounded-xl border border-slate-800 bg-slate-950/80 p-4 text-sm text-slate-300">
         <p class="font-medium text-white">Baseline branches</p>
-        <p class="mt-1 text-xs text-slate-500">Per-branch metrics (last val_bpb, promoted seed). Workflow-managed, read-only: component_system/baseline_branches.json (per-branch mapping), component_system/baseline_metrics.json (baseline run metrics).</p>
+        <p class="mt-1 text-xs text-slate-500">Per-branch best val_bpb from baseline_metrics.json. Workflow-managed, read-only: component_system/baseline_branches.json (per-branch mapping), component_system/baseline_metrics.json (baseline run metrics).</p>
         {% if dashboard.baseline_metrics_by_branch %}
         <dl class="mt-3 space-y-2">
           {% for branch, m in dashboard.baseline_metrics_by_branch.items() %}
           <div class="flex justify-between gap-4">
             <dt class="text-slate-500 font-mono-id">{{ branch }}</dt>
-            <dd>val_bpb {{ "%.6f"|format(m.get('last_val_bpb')) if m.get('last_val_bpb') is not none else "—" }} · {{ m.get('promoted_branch') or "—" }}{% if m.get('commit_sha') %} · <code class="text-xs">{{ m.get('commit_sha')[:7] }}</code>{% endif %}</dd>
+            <dd>val_bpb {{ "%.6f"|format(m.get('best_val_bpb')) if m.get('best_val_bpb') is not none else "—" }} · {{ m.get('promoted_branch') or "—" }}{% if m.get('commit_sha') %} · <code class="text-xs">{{ m.get('commit_sha')[:7] }}</code>{% endif %}</dd>
           </div>
           {% endfor %}
         </dl>

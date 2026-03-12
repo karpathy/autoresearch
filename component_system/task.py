@@ -285,14 +285,21 @@ def save_baseline_branch_map(mapping: dict[str, str]) -> None:
     _write_json(BASELINE_BRANCHES_PATH, mapping)
 
 
-def load_baseline_metrics() -> dict[str, dict[str, Any]]:
-    """Load baseline_branch -> { last_val_bpb, promoted_branch, promoted_at, promoted_idea, commit_sha }."""
+def load_baseline_metrics() -> dict[str, list[dict[str, Any]]]:
+    """Load baseline_branch -> list of promotion/measurement records. Each record: val_bpb, promoted_branch?, promoted_idea?, promoted_at?, commit_sha?."""
     ensure_queue_layout()
-    return _read_json(BASELINE_METRICS_PATH, {})
+    raw = _read_json(BASELINE_METRICS_PATH, {})
+    result: dict[str, list[dict[str, Any]]] = {}
+    for branch, value in raw.items():
+        if isinstance(value, list):
+            result[branch] = value
+        else:
+            result[branch] = []
+    return result
 
 
-def save_baseline_metrics(metrics_by_branch: dict[str, dict[str, Any]]) -> None:
-    """Persist per-branch baseline metrics."""
+def save_baseline_metrics(metrics_by_branch: dict[str, list[dict[str, Any]]]) -> None:
+    """Persist per-branch baseline metrics (branch -> list of records)."""
     ensure_queue_layout()
     _write_json(BASELINE_METRICS_PATH, metrics_by_branch)
 

@@ -71,6 +71,8 @@ class SeedRecord(BaseModel):
     latest_metrics: dict[str, Any] = Field(default_factory=dict)
     plan: PlanIdea | None = None
     last_error: str | None = None
+    """Baseline val_bpb at sync-before-P time; used for positive/negative/neutral judgement in DCA."""
+    former_val_bpb: float | None = None
 
 
 class DashboardColumn(BaseModel):

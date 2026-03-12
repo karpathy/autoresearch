@@ -3,7 +3,7 @@
   <article class="rounded-xl border border-slate-800 bg-slate-900/80 p-3">
     <div class="flex items-center justify-between gap-3">
       <div>
-        <p class="text-sm font-medium text-white">{% if run.stage.value == 'p' %}Plan{% else %}{{ run.stage.value|upper }}{% endif %} · {{ run.status.value }}</p>
+        <p class="text-sm font-medium text-white">{% if run.stage.value == 'p' %}Plan{% else %}{{ run.stage.value|upper }}{% endif %} · {{ run.status.value }}{% if run.created_at %} <span class="font-normal text-slate-400">{{ run.created_at|format_ts }}</span>{% endif %}</p>
         <p class="mt-1 text-xs text-slate-500">{{ run.run_id }}</p>
       </div>
       <div class="flex items-center gap-2">

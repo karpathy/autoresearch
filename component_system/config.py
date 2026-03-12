@@ -13,7 +13,7 @@ TRAINING_STEP_MODULE = "component_system.components.trainer"
 # Promotion threshold: improve val_bpb by at least this much to promote
 PROMOTION_THRESHOLD = 0.001
 
-# Worktree root relative to project (string for display/config compatibility)
+# Worktree root relative to project
 WORKTREE_ROOT = "component_system/history/worktrees"
 
 # Default branch name suggested in UI when no branches exist (not a global baseline)

@@ -42,9 +42,63 @@ SUMMARY_MARKERS = {
 
 BASELINE_SEED_ID = "__baseline__"
 
+# Short display labels for timeline (kind -> one-line text). Events not in this map use message as-is (truncated if long).
+TIMELINE_SHORT_MESSAGES = {
+    "seed.created": "Seed created",
+    "seed.updated": "Seed updated",
+    "seed.worktree_ready": "Worktree ready",
+    "ralph.enabled": "Ralph loop enabled",
+    "ralph.disabled": "Ralph loop disabled",
+    "p.queued": "Plan queued",
+    "p.started": "Plan started",
+    "p.completed": "Plan completed",
+    "p.failed": "Plan failed",
+    "dca.queued": "DCA queued",
+    "dca.started": "DCA started",
+    "dca.completed": "DCA completed",
+    "dca.merge_failed": "Merge into baseline failed",
+    "p.sync_resolution_queued": "Sync failed; merge resolution queued",
+    "p.sync_resolution_done": "Sync resolution done; Plan re-queued",
+    "dca.failed": "DCA failed",
+    "direct_code.failed": "Direct code failed",
+}
+
+
+def _timeline_display_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return events in reverse order (newest first), deduplicated by (kind, message), with concise display text."""
+    if not events:
+        return []
+    reversed_list = list(reversed(events))
+    seen: set[tuple[str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for e in reversed_list:
+        kind = e.get("kind", "")
+        message = e.get("message", "")
+        key = (kind, message)
+        if key in seen:
+            continue
+        seen.add(key)
+        display = TIMELINE_SHORT_MESSAGES.get(kind)
+        if display is not None:
+            # Keep commit_sha / target_branch in a short suffix when present
+            parts = [display]
+            if e.get("commit_sha"):
+                parts.append(f"commit: {e.get('commit_sha', '')[:7]}")
+            if e.get("target_branch"):
+                parts.append(f"→ {e.get('target_branch')}")
+            display = " · ".join(parts)
+        else:
+            display = message if len(message) <= 80 else message[:77] + "..."
+        out.append({**e, "display_message": display})
+    return out
+
 
 class GitCommandError(RuntimeError):
     pass
+
+
+class SyncResolutionQueued(RuntimeError):
+    """Raised when P run cannot start because worktree sync with baseline failed; a sync-resolution DCA task was queued."""
 
 
 class GitService:
@@ -107,8 +161,6 @@ class GitService:
             c in "abcdef0123456789" for c in branch[5:]
         ):
             return True
-        if branch.startswith("seed/"):
-            return True  # legacy candidate branches, e.g. seed/seed-e57b95
         return False
 
     def setup_error(self) -> str | None:
@@ -206,6 +258,18 @@ class GitService:
             return
         self._run_git("reset", "--hard", ref, cwd=worktree_path)
 
+    def sync_seed_worktree_with_baseline(self, seed: SeedRecord) -> None:
+        """Merge the baseline branch into the seed branch in the seed worktree.
+        Call before each P run so the worktree has the latest baseline."""
+        if seed.seed_id == BASELINE_SEED_ID:
+            return
+        if not seed.worktree_path:
+            return
+        worktree_path = Path(seed.worktree_path)
+        if not worktree_path.is_dir():
+            return
+        self._run_git("merge", "--no-edit", seed.baseline_branch, cwd=worktree_path)
+
     def promote_seed_branch(
         self, seed: SeedRecord, target_branch: str | None = None
     ) -> str:
@@ -256,7 +320,7 @@ class WorkflowService:
         return str(WORKTREE_ROOT / BASELINE_SEED_ID)
 
     def _normalize_seed_runtime_state(self, seed: SeedRecord) -> SeedRecord:
-        """Clean up legacy persisted seed state that no longer matches runtime rules."""
+        """Ensure baseline seed worktree_path matches the canonical path."""
         if seed.seed_id != BASELINE_SEED_ID:
             return seed
         expected_worktree = self._baseline_worktree_path()
@@ -372,7 +436,7 @@ class WorkflowService:
     def _release_seeds_waiting_for_baseline(self, branch: str) -> None:
         """Release seeds that were waiting for baseline result on the given branch."""
         branch_metrics = self.metrics_repo.get_for_branch(branch)
-        if not branch_metrics or branch_metrics.get("last_val_bpb") is None:
+        if not branch_metrics or branch_metrics.get("best_val_bpb") is None:
             return
         waiting_seeds = sorted(self.seed_repo.list(), key=lambda item: item.created_at)
         for seed in waiting_seeds:
@@ -529,19 +593,19 @@ class WorkflowService:
 
     def ensure_baseline_result(self) -> None:
         """
-        If there is no baseline result (last_val_bpb) for the baseline seed's branch, ensure a baseline seed exists and
+        If there is no baseline result (best_val_bpb) for the baseline seed's branch, ensure a baseline seed exists and
         queue its DCA so the first run establishes the baseline. Idempotent; safe to call
         before queue_p for any user seed.
         """
         seed = self._get_or_create_baseline_seed()
         branch_metrics = self.metrics_repo.get_for_branch(seed.baseline_branch)
-        if branch_metrics and branch_metrics.get("last_val_bpb") is not None:
+        if branch_metrics and branch_metrics.get("best_val_bpb") is not None:
             return
         if seed.status in (SeedStatus.dca_queued, SeedStatus.adapting, SeedStatus.running):
             return
         if seed.status in (SeedStatus.passed, SeedStatus.failed, SeedStatus.promoted):
             branch_metrics = self.metrics_repo.get_for_branch(seed.baseline_branch)
-            if branch_metrics and branch_metrics.get("last_val_bpb") is not None:
+            if branch_metrics and branch_metrics.get("best_val_bpb") is not None:
                 return
         setup_error = self.git_service.setup_error()
         if setup_error is not None:
@@ -602,24 +666,30 @@ class WorkflowService:
     def queue_p(self, seed_id: str) -> StageRun | None:
         seed = self.require_seed(seed_id)
         branch_metrics = self.metrics_repo.get_for_branch(seed.baseline_branch) if seed_id != BASELINE_SEED_ID else None
-        has_baseline = branch_metrics is not None and branch_metrics.get("last_val_bpb") is not None
+        has_baseline = branch_metrics is not None and branch_metrics.get("best_val_bpb") is not None
         if seed_id != BASELINE_SEED_ID and not has_baseline:
             self.ensure_baseline_result()
             branch_metrics = self.metrics_repo.get_for_branch(seed.baseline_branch)
-            has_baseline = branch_metrics is not None and branch_metrics.get("last_val_bpb") is not None
+            has_baseline = branch_metrics is not None and branch_metrics.get("best_val_bpb") is not None
             if not has_baseline:
-                if not (seed.status is SeedStatus.queued and seed.latest_run_id is None):
-                    seed.status = SeedStatus.queued
-                    seed.updated_at = now_ts()
-                    seed.latest_run_id = None
-                    seed.last_error = None
-                    self.seed_repo.save(seed)
-                    self.seed_repo.append_event(
-                        seed.seed_id,
-                        "p.waiting_for_baseline",
-                        "Baseline run is still in progress; Plan will queue after baseline finishes.",
-                    )
-                return None
+                baseline_seed = self.seed_repo.get(BASELINE_SEED_ID)
+                # Only wait for baseline when the baseline seed is for this branch (e.g. master).
+                # For another branch (e.g. dev), no baseline run is queued for it, so allow planning;
+                # the first DCA completion on this branch will establish baseline metrics.
+                if baseline_seed is not None and baseline_seed.baseline_branch == seed.baseline_branch:
+                    if not (seed.status is SeedStatus.queued and seed.latest_run_id is None):
+                        seed.status = SeedStatus.queued
+                        seed.updated_at = now_ts()
+                        seed.latest_run_id = None
+                        seed.last_error = None
+                        self.seed_repo.save(seed)
+                        self.seed_repo.append_event(
+                            seed.seed_id,
+                            "p.waiting_for_baseline",
+                            "Baseline run is still in progress; Plan will queue after baseline finishes.",
+                        )
+                    return None
+                # Branch has no baseline and is not the baseline seed's branch: proceed with planning.
         setup_error = self.git_service.setup_error()
         if setup_error is not None:
             raise RuntimeError(setup_error)
@@ -707,6 +777,67 @@ class WorkflowService:
         write_task("dca", payload, task_id=run.task_id)
         return run
 
+    def queue_sync_resolution(self, seed_id: str) -> StageRun:
+        """Queue a merge-resolution run to resolve 'merge baseline into seed' in the seed worktree (e.g. after sync failed before P)."""
+        seed = self.require_seed(seed_id)
+        if seed.seed_id == BASELINE_SEED_ID:
+            raise RuntimeError("Sync resolution is not used for the baseline seed.")
+        setup_error = self.git_service.setup_error_for_branches(seed.baseline_branch)
+        if setup_error is not None:
+            raise RuntimeError(setup_error)
+        run = StageRun(
+            run_id=new_run_id("dca"),
+            seed_id=seed.seed_id,
+            stage=StageName.dca,
+            status=RunStatus.queued,
+            task_id=new_run_id("task-dca"),
+            created_at=now_ts(),
+            updated_at=now_ts(),
+        )
+        seed.status = SeedStatus.dca_queued
+        seed.updated_at = now_ts()
+        seed.latest_run_id = run.run_id
+        seed.last_error = None
+        self.seed_repo.save(seed)
+        self.run_repo.save(run)
+        self.seed_repo.append_event(
+            seed.seed_id,
+            "p.sync_resolution_queued",
+            "Worktree sync with baseline failed; queued merge-resolution to resolve and re-run Plan.",
+        )
+        payload = {
+            "seed_id": seed.seed_id,
+            "run_id": run.run_id,
+            "prompt": seed.prompt,
+            "worktree_path": seed.worktree_path,
+            "baseline_branch": seed.baseline_branch,
+            "sync_resolution": True,
+        }
+        write_task("dca", payload, task_id=run.task_id)
+        return run
+
+    def finish_sync_resolution(self, seed_id: str, run_id: str) -> None:
+        """Mark sync-resolution run completed and re-queue Plan for the seed."""
+        seed = self.require_seed(seed_id)
+        run = self.require_run(run_id)
+        run.status = RunStatus.succeeded
+        run.updated_at = now_ts()
+        self.run_repo.save(run)
+        seed.status = SeedStatus.queued
+        seed.updated_at = now_ts()
+        self.seed_repo.save(seed)
+        self.seed_repo.append_event(
+            seed.seed_id,
+            "p.sync_resolution_done",
+            "Sync resolution completed; Plan re-queued.",
+            run_id=run_id,
+        )
+        self._enqueue_plan_run(
+            seed,
+            event_kind="p.queued",
+            event_message="Re-queued Plan after sync resolution.",
+        )
+
     def require_seed(self, seed_id: str) -> SeedRecord:
         seed = self.seed_repo.get(seed_id)
         if seed is None:
@@ -752,6 +883,21 @@ class WorkflowService:
             if setup_error is not None:
                 raise RuntimeError(setup_error)
             seed = self.ensure_seed_worktree_ready(seed.seed_id)
+            # Sync seed worktree with baseline branch before P so Plan runs from latest baseline.
+            try:
+                self.git_service.sync_seed_worktree_with_baseline(seed)
+            except GitCommandError as sync_err:
+                self.queue_sync_resolution(seed.seed_id)
+                raise SyncResolutionQueued(
+                    f"Worktree sync with baseline failed: {sync_err}. Queued merge-resolution."
+                ) from sync_err
+            # Record baseline val_bpb at sync time for positive/negative/neutral judgement in DCA.
+            branch_metrics = self.metrics_repo.get_for_branch(seed.baseline_branch)
+            former = branch_metrics.get("best_val_bpb") if branch_metrics else None
+            if run.summary is None:
+                run.summary = {}
+            run.summary["former_val_bpb"] = former
+            seed.former_val_bpb = float(former) if former is not None else None
             if seed.worktree_path:
                 worktree_path = Path(seed.worktree_path)
                 if worktree_path.is_dir():
@@ -825,6 +971,26 @@ class WorkflowService:
         if task_path is not None and task_path.exists():
             move_to_error(task_path)
 
+    def _ralph_try_restore_worktree(self, seed: SeedRecord, ref: str | None) -> None:
+        """Reset seed worktree to ref (e.g. commit before P) and log result. No-op if ref missing or baseline seed."""
+        if not ref or not str(ref).strip() or seed.seed_id == BASELINE_SEED_ID:
+            return
+        try:
+            self.git_service.reset_seed_branch_to(seed, ref)
+            self.seed_repo.append_event(
+                seed.seed_id,
+                "ralph.worktree_restored",
+                "Restored seed worktree to commit before P for next Plan.",
+                commit_sha=ref,
+            )
+        except GitCommandError as exc:
+            self.seed_repo.append_event(
+                seed.seed_id,
+                "ralph.worktree_restore_failed",
+                f"Could not restore seed worktree to commit before P: {exc}",
+                commit_sha=ref,
+            )
+
     def mark_run_failed(
         self,
         seed_id: str,
@@ -862,6 +1028,7 @@ class WorkflowService:
             and task_payload.get("merge_resolution") is not True
             and task_payload.get("metrics_recovery") is not True
         ):
+            self._ralph_try_restore_worktree(seed, run.summary.get("commit_sha_before_p"))
             try:
                 self.queue_p(seed.seed_id)
                 self.seed_repo.append_event(
@@ -981,11 +1148,13 @@ class WorkflowService:
         seed = self.require_seed(seed_id)
         run = self.require_run(run_id)
         branch_metrics = self.metrics_repo.get_for_branch(seed.baseline_branch)
-        last_val_bpb = float(branch_metrics["last_val_bpb"]) if branch_metrics and branch_metrics.get("last_val_bpb") is not None else None
+        best_val_bpb = float(branch_metrics["best_val_bpb"]) if branch_metrics and branch_metrics.get("best_val_bpb") is not None else None
+        # Use baseline at sync-before-P time (former_val_bpb) when available; else branch best for baseline seed.
+        baseline_for_signal = seed.former_val_bpb if (seed.former_val_bpb is not None and seed.seed_id != BASELINE_SEED_ID) else best_val_bpb
         output_text = self.combine_output(stdout, stderr)
         summary = self.extract_summary(output_text, StageName.dca) or {}
         metrics = self.extract_dca_metrics(output_text, summary)
-        signal = self.evaluate_signal(metrics, last_val_bpb, PROMOTION_THRESHOLD)
+        signal = self.evaluate_signal(metrics, baseline_for_signal, PROMOTION_THRESHOLD)
         commit_sha = summary.get("commit_sha")
         if not (isinstance(commit_sha, str) and commit_sha.strip()):
             try:
@@ -997,8 +1166,10 @@ class WorkflowService:
         run.log_path = log_path
         run.stderr_log_path = stderr_log_path
         run.prompt_path = prompt_path
-        # Preserve runner-set keys (e.g. commit_sha_before_p) so negative-signal restore can run
-        preserved = {k: run.summary[k] for k in ("commit_sha_before_p",) if run.summary and k in run.summary}
+        # Preserve runner-set keys (e.g. commit_sha_before_p, former_val_bpb) for restore and comparison.
+        preserved = {k: run.summary[k] for k in ("commit_sha_before_p", "former_val_bpb") if run.summary and k in run.summary}
+        if seed.former_val_bpb is not None and "former_val_bpb" not in preserved:
+            preserved["former_val_bpb"] = seed.former_val_bpb
         run.summary = summary | {"commit_sha": commit_sha} | preserved
         run.metrics = metrics
         run.signal = signal
@@ -1020,12 +1191,17 @@ class WorkflowService:
                 source_stdout_log_path=log_path,
                 source_stderr_log_path=stderr_log_path,
             )
+            if (
+                seed.ralph_loop_enabled
+                and seed.seed_id != BASELINE_SEED_ID
+            ):
+                self._ralph_try_restore_worktree(seed, run.summary.get("commit_sha_before_p"))
             return run
         seed.latest_metrics = metrics
         seed.latest_signal = signal
         terminal_status = self._status_from_dca_signal(signal)
         merge_commit_sha = None  # set when seed branch is successfully merged into baseline
-        if seed.seed_id == BASELINE_SEED_ID and last_val_bpb is None:
+        if seed.seed_id == BASELINE_SEED_ID and best_val_bpb is None:
             if "val_bpb" not in metrics:
                 seed.status = SeedStatus.failed
                 event_message = (
@@ -1046,10 +1222,7 @@ class WorkflowService:
             target_branch = self._first_user_seed_baseline_branch() or seed.baseline_branch
             # Only positive_signal is merged into the per-seed baseline branch; record baseline value otherwise.
             if signal != "positive_signal":
-                self.metrics_repo.update_for_branch(
-                    target_branch,
-                    {"last_val_bpb": metrics["val_bpb"]},
-                )
+                self.metrics_repo.append_baseline_run(target_branch, metrics["val_bpb"])
                 seed.status = terminal_status
                 self.run_repo.save(run)
                 self.seed_repo.save(seed)
@@ -1063,10 +1236,10 @@ class WorkflowService:
                 return run
             try:
                 merge_commit_sha = self.git_service.promote_seed_branch(seed, target_branch=target_branch)
-                self.metrics_repo.update_for_branch(
+                self.metrics_repo.append_promotion_for_branch(
                     target_branch,
                     {
-                        "last_val_bpb": metrics["val_bpb"],
+                        "val_bpb": metrics["val_bpb"],
                         "promoted_branch": seed.seed_id,
                         "promoted_idea": "Initial baseline adaptation",
                         "promoted_at": summary.get("completed_at"),
@@ -1119,13 +1292,14 @@ class WorkflowService:
                         metrics=metrics,
                     )
                     return run
-                self.metrics_repo.update_for_branch(
+                self.metrics_repo.append_promotion_for_branch(
                     target_branch,
                     {
-                        "last_val_bpb": metrics["val_bpb"],
+                        "val_bpb": metrics["val_bpb"],
                         "promoted_branch": seed.seed_id,
                         "promoted_idea": "Initial baseline adaptation",
                         "promoted_at": summary.get("completed_at"),
+                        "commit_sha": None,
                     },
                 )
                 seed.status = SeedStatus.passed
@@ -1141,12 +1315,13 @@ class WorkflowService:
                 self._release_seeds_waiting_for_baseline(target_branch)
                 return run
         if terminal_status is SeedStatus.promoted:
+            # Merge seed into baseline first on positive signal; then update metrics/state.
             try:
                 merge_commit_sha = self.git_service.promote_seed_branch(seed)
-                self.metrics_repo.update_for_branch(
+                self.metrics_repo.append_promotion_for_branch(
                     seed.baseline_branch,
                     {
-                        "last_val_bpb": metrics["val_bpb"],
+                        "val_bpb": metrics["val_bpb"],
                         "promoted_branch": seed.seed_id,
                         "promoted_idea": seed.plan.title if seed.plan else seed.prompt[:80],
                         "promoted_at": summary.get("completed_at"),
@@ -1247,23 +1422,7 @@ class WorkflowService:
             and not metrics_recovery
             and seed.seed_id != BASELINE_SEED_ID
         ):
-            ref = run.summary.get("commit_sha_before_p")
-            if ref:
-                try:
-                    self.git_service.reset_seed_branch_to(seed, ref)
-                    self.seed_repo.append_event(
-                        seed.seed_id,
-                        "ralph.worktree_restored",
-                        "Restored seed worktree to commit before P for next Plan.",
-                        commit_sha=ref,
-                    )
-                except GitCommandError as exc:
-                    self.seed_repo.append_event(
-                        seed.seed_id,
-                        "ralph.worktree_restore_failed",
-                        f"Could not restore seed worktree to commit before P: {exc}",
-                        commit_sha=ref,
-                    )
+            self._ralph_try_restore_worktree(seed, run.summary.get("commit_sha_before_p"))
         if seed.ralph_loop_enabled:
             try:
                 self.queue_p(seed.seed_id)
@@ -1376,11 +1535,12 @@ class WorkflowService:
             seed.updated_at = now_ts()
             self.seed_repo.save(seed)
         self._reconcile_seed_status_signal(seed)
+        raw_events = self.seed_repo.events(seed_id)
         return {
             "seed": seed,
             "can_edit_prompt": self.can_edit_seed_prompt(seed),
             "runs": self.run_repo.list(seed_id),
-            "events": self.seed_repo.events(seed_id),
+            "events": _timeline_display_events(raw_events),
             "baseline_metrics_for_branch": self.metrics_repo.get_for_branch(seed.baseline_branch),
             "setup_error": self.git_service.setup_error_for_branches(seed.baseline_branch),
         }
@@ -1470,15 +1630,15 @@ class WorkflowService:
     @staticmethod
     def evaluate_signal(
         metrics: dict[str, float | int],
-        last_val_bpb: float | None,
+        baseline_val_bpb: float | None,
         promotion_threshold: float = PROMOTION_THRESHOLD,
     ) -> str:
         val_bpb = metrics.get("val_bpb")
         if val_bpb is None:
             return "error"
-        if last_val_bpb is None:
+        if baseline_val_bpb is None:
             return "positive_signal"
-        delta = float(last_val_bpb) - float(val_bpb)
+        delta = float(baseline_val_bpb) - float(val_bpb)
         if delta >= promotion_threshold:
             return "positive_signal"
         if delta <= -promotion_threshold:

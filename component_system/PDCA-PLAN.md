@@ -46,6 +46,9 @@ AUTORESEARCH_P_SUMMARY_BEGIN
 AUTORESEARCH_P_SUMMARY_END
 ```
 
+## Runner / worktree
+Before each P run, the runner syncs the seed worktree with its baseline branch (merge baseline into seed) so P always starts from the latest baseline.
+
 ## Steps
 1. Read `results.tsv` if present.
 2. Refine prompt ? one concrete idea ? one isolated improvement; name target component.
