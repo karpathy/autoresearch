@@ -109,24 +109,31 @@ N_FEATURES = len(RETURN_LOOKBACKS) + len(VOLATILITY_WINDOWS) + 1 + 2 + 2 + 1  # 
 IDX_24H_RETURN = 3  # 24h lookback return
 
 
-class ForwardReturnModel(nn.Module):
-    """Single learnable parameter: scale for mean-reversion signal.
+IDX_24H_VOL = 6  # 24h volatility (index in feature array)
+IDX_168H_VOL = 7  # 168h volatility
 
-    Uses -1 * (24h return) * scale as the prediction.
-    Only 1 parameter, so basically zero overfitting risk.
+
+class ForwardReturnModel(nn.Module):
+    """Mean-reversion with volatility gating.
+
+    prediction = -24h_return * scale * vol_gate
+    vol_gate = 1 when vol is low, 0 when vol is high
     """
 
     def __init__(self, n_features: int = N_FEATURES):
         super().__init__()
-        # Single scale parameter, initialized to a small value
         self.scale = nn.Parameter(torch.tensor(0.005))
-        # Dummy to satisfy n_features interface
+        self.vol_threshold = nn.Parameter(torch.tensor(0.0))  # z-scored threshold
         self._n_features = n_features
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Mean reversion: negative of 24h return, scaled
+        # Mean reversion signal
         signal = -x[:, IDX_24H_RETURN] * self.scale
-        return signal
+        # Volatility gate: reduce signal when vol is high
+        # Use sigmoid for smooth gating: gate → 0 when vol >> threshold
+        vol = x[:, IDX_24H_VOL]
+        gate = torch.sigmoid(-(vol - self.vol_threshold) * 2.0)
+        return signal * gate
 
 
 def count_model_params(model: nn.Module | None = None) -> int:
@@ -228,42 +235,58 @@ def main():
     X_tensor = torch.tensor(features, dtype=torch.float32, device=device)
     y_tensor = torch.tensor(targets, dtype=torch.float32, device=device)
 
-    print("Grid searching optimal scale...")
+    print("Grid searching optimal scale and vol_threshold...")
     best_score = -999
     best_scale = 0.005
-    signal = -features[:, IDX_24H_RETURN]  # mean reversion signal (numpy)
+    best_vol_thresh = 0.0
+    signal = -features[:, IDX_24H_RETURN]
+    vol = features[:, IDX_24H_VOL]
+    close = train_df["close"].values[MAX_LOOKBACK:][valid]
+    price_returns = np.zeros(len(close))
+    price_returns[1:] = close[1:] / close[:-1] - 1.0
 
     for scale in np.arange(0.001, 0.030, 0.001):
-        preds = signal * scale
-        # Quick backtest proxy: compute Sharpe-like metric
-        # Positions: +1 if pred > 0.005, -1 if pred < -0.005, else 0
-        positions = np.zeros_like(preds)
-        positions[preds > 0.005] = 1.0
-        positions[preds < -0.005] = -1.0
+        for vol_thresh in np.arange(-1.0, 2.0, 0.25):
+            gate = 1.0 / (1.0 + np.exp((vol - vol_thresh) * 2.0))
+            preds = signal * scale * gate
 
-        # Compute returns
-        close = train_df["close"].values[MAX_LOOKBACK:][valid]
-        price_returns = np.zeros(len(close))
-        price_returns[1:] = close[1:] / close[:-1] - 1.0
+            positions = np.zeros_like(preds)
+            positions[preds > 0.005] = 1.0
+            positions[preds < -0.005] = -1.0
 
-        port_returns = positions[:-1] * price_returns[1:]
+            port_returns_arr = positions[:-1] * price_returns[1:]
 
-        if np.std(port_returns) > 0:
-            sharpe = np.mean(port_returns) / np.std(port_returns) * np.sqrt(8760)
-        else:
-            sharpe = 0
+            # Also compute max drawdown approximation
+            equity = np.cumprod(1.0 + port_returns_arr)
+            peak = np.maximum.accumulate(equity)
+            dd = (equity - peak) / peak
+            max_dd = np.min(dd)
 
-        n_trades_approx = np.sum(np.diff(positions) != 0)
+            if np.std(port_returns_arr) > 0:
+                sharpe = np.mean(port_returns_arr) / np.std(port_returns_arr) * np.sqrt(8760)
+            else:
+                sharpe = 0
 
-        if sharpe > best_score and n_trades_approx > 30:
-            best_score = sharpe
-            best_scale = scale
+            n_trades_approx = np.sum(np.diff(positions) != 0)
 
-    print(f"  Best scale: {best_scale:.3f}, approx Sharpe: {best_score:.4f}")
+            # Score: Sharpe, but penalize if drawdown > 25% or < 30 trades
+            score = sharpe
+            if abs(max_dd) > 0.25:
+                score *= 0.25 / abs(max_dd)  # soft drawdown penalty
+            if n_trades_approx < 30:
+                score = -999
 
-    # Set the scale parameter
+            if score > best_score:
+                best_score = score
+                best_scale = scale
+                best_vol_thresh = vol_thresh
+
+    print(f"  Best scale: {best_scale:.3f}, vol_thresh: {best_vol_thresh:.2f}, score: {best_score:.4f}")
+
+    # Set the parameters
     with torch.no_grad():
         model.scale.fill_(best_scale)
+        model.vol_threshold.fill_(best_vol_thresh)
 
     # Also do gradient-based fine-tuning of the scale
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
