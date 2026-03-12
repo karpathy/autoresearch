@@ -55,4 +55,3 @@ Response:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SWARM_GPU_IDS` | auto-detect | Comma-separated GPU IDs (e.g., "0,1,2") |
-| `DEVICE_BACKEND` | auto-detect | `cuda` or `mps` |

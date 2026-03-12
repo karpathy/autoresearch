@@ -3,7 +3,7 @@
 GPU dispatcher. stdio_bus worker, JSON-RPC 2.0 over NDJSON.
 Usage: echo '{"jsonrpc":"2.0","id":1,"method":"status","params":{}}' | python3 dispatcher.py
 """
-import json, os, platform, subprocess, sys, threading
+import json, os, subprocess, sys, threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -19,8 +19,6 @@ def _detect_gpus():
     return [0]
 
 GPU_IDS = _detect_gpus()
-BACKEND = os.environ.get("DEVICE_BACKEND", "mps" if platform.system() == "Darwin" else "cuda")
-TRAIN = "train_mps.py" if BACKEND == "mps" else "train.py"
 
 state = {"best": float('inf'), "total": 0, "active": 0, "results": []}
 state_lock = threading.Lock()
@@ -34,11 +32,11 @@ def _parse_output(stdout, key):
     return next((float(l.split(":")[1]) for l in stdout.split("\n") if l.startswith(f"{key}:")), 0.0)
 
 def run_experiment(gpu_id, agent_id, branch):
-    env = os.environ | ({"CUDA_VISIBLE_DEVICES": str(gpu_id)} if BACKEND == "cuda" else {})
+    env = os.environ | {"CUDA_VISIBLE_DEVICES": str(gpu_id)}
     log(f"[GPU {gpu_id}] Start {agent_id}")
     base = {"agent_id": agent_id, "gpu_id": gpu_id, "timestamp": datetime.now().isoformat(), "branch": branch}
     try:
-        r = subprocess.run(["uv", "run", TRAIN], capture_output=True, text=True, timeout=600, env=env)
+        r = subprocess.run(["uv", "run", "train.py"], capture_output=True, text=True, timeout=600, env=env)
         val_bpb = _parse_output(r.stdout, "val_bpb")
         mem = _parse_output(r.stdout, "peak_vram_mb")
         commit = subprocess.run(["git", "rev-parse", "--short=7", "HEAD"],
@@ -91,7 +89,7 @@ def handle(method, params):
     return None
 
 def main():
-    log(f"Dispatcher | {BACKEND} | GPUs: {GPU_IDS}")
+    log(f"Dispatcher | GPUs: {GPU_IDS}")
     for line in sys.stdin:
         if not (line := line.strip()): continue
         try: msg = json.loads(line)
