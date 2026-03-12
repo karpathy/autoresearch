@@ -1,5 +1,5 @@
 """
-Autotrader baseline model. Predicts BTC/USD 24-hour forward returns.
+Autotrader model. Predicts BTC/USD 24-hour forward returns.
 
 This file is the ONLY file the autonomous agent modifies.
 Usage: uv run train.py
@@ -27,7 +27,7 @@ from prepare import (
 
 RETURN_LOOKBACKS = [1, 4, 12, 24, 72, 168]
 VOLATILITY_WINDOWS = [24, 168]
-MAX_LOOKBACK = 168  # maximum lookback window (1 week)
+MAX_LOOKBACK = 168
 
 
 def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
@@ -100,30 +100,29 @@ def compute_targets(df: pd.DataFrame) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Model
+# Model — Identity wrapper (passes through a fixed feature as prediction)
 # ---------------------------------------------------------------------------
 
-N_FEATURES = len(RETURN_LOOKBACKS) + len(VOLATILITY_WINDOWS) + 1 + 2 + 2 + 1  # 14 features
+N_FEATURES = len(RETURN_LOOKBACKS) + len(VOLATILITY_WINDOWS) + 1 + 2 + 2 + 1  # 14
+
+# Feature index for 168h return (the 6th feature, index 5)
+MOMENTUM_FEATURE_IDX = 5  # 168h return
+MOMENTUM_SCALE = 0.1  # scale factor to control trade frequency
 
 
 class ForwardReturnModel(nn.Module):
-    """Feedforward network with batch norm."""
+    """Learned weighted combination of momentum features."""
 
     def __init__(self, n_features: int = N_FEATURES):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(n_features, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(64, 32),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.Linear(32, 1),
-        )
+        # Just a single linear layer — learns optimal feature weights
+        self.linear = nn.Linear(n_features, 1, bias=True)
+        # Initialize with small weights
+        nn.init.uniform_(self.linear.weight, -0.01, 0.01)
+        nn.init.zeros_(self.linear.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x).squeeze(-1)
+        return self.linear(x).squeeze(-1)
 
 
 def count_model_params(model: nn.Module | None = None) -> int:
@@ -175,6 +174,28 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
 
 # ---------------------------------------------------------------------------
+# Custom Loss: Sharpe-inspired directional loss
+# ---------------------------------------------------------------------------
+
+class DirectionalLoss(nn.Module):
+    """Loss that rewards correct direction of prediction.
+
+    Combines MSE with a penalty for wrong-direction predictions.
+    """
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        # MSE component (small weight - just for magnitude guidance)
+        mse = torch.mean((pred - target) ** 2)
+
+        # Directional component: penalize when sign(pred) != sign(target)
+        # Use soft sign agreement: pred * target > 0 means same direction
+        direction_agreement = pred * target
+        # Penalize disagreements more than rewarding agreements
+        direction_loss = -torch.mean(torch.tanh(direction_agreement * 100))
+
+        return 0.1 * mse + direction_loss
+
+
+# ---------------------------------------------------------------------------
 # Main Training Loop
 # ---------------------------------------------------------------------------
 
@@ -207,11 +228,10 @@ def main():
     targets = targets[valid]
     train_timestamps = timestamps[valid]
 
-    # Normalize features (fit on training data)
     features = _normalize(features, fit=True)
     features = np.nan_to_num(features, nan=0.0)
 
-    # Clip extreme target outliers (beyond 3 std)
+    # Clip extreme target outliers
     target_std = np.std(targets)
     target_mean = np.mean(targets)
     targets = np.clip(targets, target_mean - 3 * target_std, target_mean + 3 * target_std)
@@ -223,15 +243,15 @@ def main():
     n_params = count_model_params(model)
     print(f"  Model parameters: {n_params}")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200, eta_min=1e-5)
-    loss_fn = nn.HuberLoss(delta=0.01)  # Robust to outliers in returns
+    # Train with directional loss and heavy L2 to keep weights small
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-2)
+    loss_fn = DirectionalLoss()
 
     # --- Create DataLoader ---
     X_tensor = torch.tensor(features, dtype=torch.float32)
     y_tensor = torch.tensor(targets, dtype=torch.float32)
     dataset = TensorDataset(X_tensor, y_tensor)
-    loader = DataLoader(dataset, batch_size=1024, shuffle=True, drop_last=False)
+    loader = DataLoader(dataset, batch_size=2048, shuffle=True, drop_last=False)
 
     # --- Train ---
     print(f"Training for up to {TIME_BUDGET}s...")
@@ -253,7 +273,7 @@ def main():
 
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
             optimizer.step()
 
             epoch_loss += loss.item()
@@ -262,9 +282,7 @@ def main():
             if time.time() - train_start >= TIME_BUDGET:
                 break
 
-        scheduler.step()
-
-        if epoch % 10 == 0 or epoch == 1:
+        if epoch % 50 == 0 or epoch == 1:
             avg_loss = epoch_loss / max(n_batches, 1)
             elapsed = time.time() - train_start
             print(f"  Epoch {epoch:4d} | loss={avg_loss:.6f} | {elapsed:.1f}s")
@@ -279,6 +297,11 @@ def main():
     model.eval()
     with torch.no_grad():
         all_preds = model(X_tensor.to(device)).cpu().numpy()
+
+    # Print prediction stats for debugging
+    print(f"  Pred stats: mean={np.mean(all_preds):.6f}, std={np.std(all_preds):.6f}, "
+          f"min={np.min(all_preds):.6f}, max={np.max(all_preds):.6f}")
+    print(f"  Preds > 0.005: {np.sum(all_preds > 0.005)}, Preds < -0.005: {np.sum(all_preds < -0.005)}")
 
     train_result = evaluate_model(all_preds, train_timestamps, n_params, split="train")
 
