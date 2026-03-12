@@ -480,7 +480,8 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
     worktree_dir = Path(agent_cwd)
 
     # Worktree runs must stay entirely within the copied seed workspace to avoid external_directory requests.
-    if worktree_dir.resolve() != PROJECT_ROOT.resolve():
+    in_worktree = worktree_dir.resolve() != PROJECT_ROOT.resolve()
+    if in_worktree:
         context_protocol = "  - component_system/protocol.md"
         docs = "\n".join(f"  - component_system/{doc}" for doc in STAGE_DOCS[stage])
         task_block = (
@@ -493,12 +494,14 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
             "Use only paths relative to your current working directory. "
             "Do not request access to absolute paths, parent-directory paths, or files outside the worktree.\n"
         )
+        scope_note = "Do not edit files outside the worktree unless the prompt explicitly requires it.\n\n"
     else:
         context_protocol = "  - component_system/protocol.md"
         docs = "\n".join(f"  - component_system/{doc}" for doc in STAGE_DOCS[stage])
         task_path_rel = f"  - {rel_task}"
         task_block = f"Task file:\n{task_path_rel}\n\nTask content:\n{task_json}\n\n"
         worktree_note = "Your working directory is the project root.\n"
+        scope_note = "Do not edit files outside your current directory (project root) unless the prompt explicitly requires it.\n\n"
 
     required_context = (
         "Required context (read first; paths relative to your cwd):\n"
@@ -517,26 +520,43 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
         f"{baseline_files_note}"
         f"{task_block}"
         f"{worktree_note}"
-        "Do not edit files outside the worktree unless the prompt explicitly requires it.\n\n"
+        f"{scope_note}"
     )
 
     if stage == "p":
+        if in_worktree:
+            p_workflow = (
+                "Workflow:\n"
+                "1. Refine the seed prompt into a concrete implementation idea.\n"
+                "2. Implement the first generated version of that idea in the provided worktree.\n"
+                "3. Create a git commit in the seed branch (current branch in the worktree).\n"
+                "4. Print a JSON summary between these exact markers:\n"
+                "AUTORESEARCH_P_SUMMARY_BEGIN\n"
+                '{"idea":"...","target_component":"model|optimizer|trainer","description":"...","source_refs":["..."],"commit_sha":"...","completed_at":"YYYY-MM-DD HH:MM:SS"}\n'
+                "AUTORESEARCH_P_SUMMARY_END\n"
+                "One branch per seed: you are already on the seed branch in the worktree.\n"
+                "Do not merge branches; only the DCA stage may trigger a merge into baseline.\n"
+            )
+        else:
+            p_workflow = (
+                "Workflow:\n"
+                "1. Refine the seed prompt into a concrete implementation idea.\n"
+                "2. Implement the first generated version of that idea in the current directory (project root).\n"
+                "3. Create a git commit on the current branch.\n"
+                "4. Print a JSON summary between these exact markers:\n"
+                "AUTORESEARCH_P_SUMMARY_BEGIN\n"
+                '{"idea":"...","target_component":"model|optimizer|trainer","description":"...","source_refs":["..."],"commit_sha":"...","completed_at":"YYYY-MM-DD HH:MM:SS"}\n'
+                "AUTORESEARCH_P_SUMMARY_END\n"
+                "One branch per seed: you are in the project root; use the current branch for your commit.\n"
+                "Do not merge branches; only the DCA stage may trigger a merge into baseline.\n"
+            )
         return header + (
             "You are the P stage.\n\n"
             "## Read results.tsv first (avoid idea duplication)\n"
             "Before choosing a hypothesis, read `results.tsv` in your cwd if it exists. "
             "Use it to avoid proposing ideas already tried or discarded; only repeat an idea if you have a clear new angle (e.g. different implementation or target component). "
             "See component_system/PDCA-PLAN.md for full guidance.\n\n"
-            "Workflow:\n"
-            "1. Refine the seed prompt into a concrete implementation idea.\n"
-            "2. Implement the first generated version of that idea in the provided worktree.\n"
-            "3. Create a git commit in the seed branch (current branch in the worktree).\n"
-            "4. Print a JSON summary between these exact markers:\n"
-            "AUTORESEARCH_P_SUMMARY_BEGIN\n"
-            '{"idea":"...","target_component":"model|optimizer|trainer","description":"...","source_refs":["..."],"commit_sha":"...","completed_at":"YYYY-MM-DD HH:MM:SS"}\n'
-            "AUTORESEARCH_P_SUMMARY_END\n"
-            "One branch per seed: you are already on the seed branch in the worktree.\n"
-            "Do not merge branches; only the DCA stage may trigger a merge into baseline.\n"
+            f"{p_workflow}"
         )
     if stage == "dca":
         sync_resolution = task.get("sync_resolution") is True
@@ -737,7 +757,7 @@ def _worker(stage: str, lane: str = "any") -> None:
                             merge_resolution=task.get("merge_resolution") is True,
                         )
                         if not run.summary.get("metrics_recovery_queued"):
-                            description = run.summary.get("notes") or run.summary.get("idea") or seed_id
+                            description = run.summary.get("idea") or run.summary.get("notes") or seed_id
                             _append_results_tsv(seed_id, run.metrics, run.signal or "error", str(description))
                             _regenerate_progress_png()
                         if salvaged_dca:

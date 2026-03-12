@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 import re
+import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from component_system.config import DEFAULT_BASELINE_BRANCH, PROMOTION_THRESHOLD
 from component_system.domain.models import (
@@ -246,6 +247,14 @@ class GitService:
     def commit_sha(self, ref: str) -> str:
         return self._run_git("rev-parse", "--short", ref)
 
+    def _current_branch(self, cwd: Path | None = None) -> str | None:
+        """Return the current branch name, or None if detached HEAD."""
+        try:
+            branch = self._run_git("branch", "--show-current", cwd=cwd)
+            return branch.strip() or None
+        except GitCommandError:
+            return None
+
     def head_sha_at(self, cwd: Path) -> str:
         """Return the short commit SHA of HEAD in the given worktree directory."""
         return self._run_git("rev-parse", "--short", "HEAD", cwd=cwd)
@@ -279,25 +288,77 @@ class GitService:
     ) -> str:
         """Merge the seed's branch (seed_id) into the target branch. Only DCA Action may call this; Plan must never merge.
         If target_branch is None, use seed.baseline_branch (e.g. for normal seed promotion). For __baseline__ completion,
-        pass the first user seed's selected branch so the merge goes there instead of a fixed config value."""
+        pass the first user seed's selected branch so the merge goes there instead of a fixed config value.
+        When the target branch is already checked out (e.g. master in the main repo), we merge in place to avoid
+        'cannot force update the branch used by worktree' from creating a second worktree on the same branch."""
         merge_into = target_branch if target_branch is not None else seed.baseline_branch
+        repo_root = self.repo_root()
+        current = self._current_branch(cwd=repo_root)
+
+        def do_merge(cwd: Path | None) -> None:
+            self._run_git("merge", "--no-edit", seed.seed_id, cwd=cwd)
+
+        def merge_already_up_to_date(cwd: Path | None) -> bool:
+            try:
+                self._run_git(
+                    "merge-base", "--is-ancestor", seed.seed_id, "HEAD", cwd=cwd
+                )
+                return True
+            except GitCommandError:
+                return False
+
+        if current == merge_into:
+            # Target branch is already checked out (e.g. main repo on master). Merge in place.
+            try:
+                do_merge(cwd=repo_root)
+            except GitCommandError as merge_err:
+                if merge_already_up_to_date(cwd=repo_root):
+                    return self.commit_sha(merge_into)
+                raise merge_err
+            return self.commit_sha(merge_into)
+
+        # Target is not current branch: use a temporary worktree with a temp branch so we don't
+        # try to check out the same branch in two worktrees (Git forbids that).
         baseline_worktree = WORKTREE_ROOT / "baseline"
+        temp_branch = f"__promote_{merge_into}__"
         if baseline_worktree.exists():
             try:
                 self._run_git("worktree", "remove", "--force", str(baseline_worktree))
             except GitCommandError:
                 pass
+            if baseline_worktree.exists():
+                shutil.rmtree(baseline_worktree, ignore_errors=True)
         self._run_git(
             "worktree",
             "add",
             "--force",
             "-B",
-            merge_into,
+            temp_branch,
             str(baseline_worktree),
             merge_into,
+            cwd=repo_root,
         )
-        self._run_git("merge", "--no-edit", seed.seed_id, cwd=baseline_worktree)
-        return self.commit_sha(merge_into)
+        try:
+            try:
+                do_merge(cwd=baseline_worktree)
+            except GitCommandError as merge_err:
+                if merge_already_up_to_date(cwd=baseline_worktree):
+                    result_sha = self._run_git("rev-parse", "HEAD", cwd=baseline_worktree)
+                    self._run_git("branch", "-f", merge_into, result_sha, cwd=repo_root)
+                    return self.commit_sha(merge_into)
+                raise merge_err
+            result_sha = self._run_git("rev-parse", "HEAD", cwd=baseline_worktree)
+            self._run_git("branch", "-f", merge_into, result_sha, cwd=repo_root)
+            return self.commit_sha(merge_into)
+        finally:
+            try:
+                self._run_git("worktree", "remove", "--force", str(baseline_worktree))
+            except GitCommandError:
+                pass
+            try:
+                self._run_git("branch", "-D", temp_branch)
+            except GitCommandError:
+                pass
 
 
 class WorkflowService:
@@ -1245,6 +1306,13 @@ class WorkflowService:
                 )
                 return run
             target_branch = self._first_user_seed_baseline_branch() or seed.baseline_branch
+            _idea = summary.get("idea") or summary.get("notes")
+            if isinstance(_idea, str) and _idea.strip():
+                baseline_promoted_idea = _idea[:80]
+            elif _idea:
+                baseline_promoted_idea = str(_idea)[:80]
+            else:
+                baseline_promoted_idea = "Initial baseline adaptation"
             # Only positive_signal is merged into the per-seed baseline branch; record baseline value otherwise.
             if signal != "positive_signal":
                 self.metrics_repo.append_baseline_run(target_branch, metrics["val_bpb"])
@@ -1259,6 +1327,32 @@ class WorkflowService:
                     metrics=metrics,
                 )
                 return run
+            # Merge-resolution DCA: agent already ran merge (or "Already up to date"). Treat as pass; do not run promote_seed_branch again.
+            if merge_resolution:
+                effective_sha = self._commit_sha_for_branch(target_branch)
+                self.metrics_repo.append_promotion_for_branch(
+                    target_branch,
+                    {
+                        "val_bpb": metrics["val_bpb"],
+                        "promoted_branch": seed.seed_id,
+                        "promoted_idea": baseline_promoted_idea,
+                        "promoted_at": summary.get("completed_at"),
+                        "commit_sha": effective_sha,
+                    },
+                )
+                seed.status = SeedStatus.passed
+                self.run_repo.save(run)
+                self.seed_repo.save(seed)
+                self.seed_repo.append_event(
+                    seed.seed_id,
+                    "dca.completed",
+                    f"Merge resolution DCA completed; __baseline__ merged or already up to date with {target_branch}.",
+                    signal=signal,
+                    metrics=metrics,
+                    commit_sha=effective_sha,
+                )
+                self._release_seeds_waiting_for_baseline(target_branch)
+                return run
             try:
                 merge_commit_sha = self.git_service.promote_seed_branch(seed, target_branch=target_branch)
                 effective_sha = (
@@ -1271,7 +1365,7 @@ class WorkflowService:
                     {
                         "val_bpb": metrics["val_bpb"],
                         "promoted_branch": seed.seed_id,
-                        "promoted_idea": "Initial baseline adaptation",
+                        "promoted_idea": baseline_promoted_idea,
                         "promoted_at": summary.get("completed_at"),
                         "commit_sha": effective_sha,
                     },
@@ -1328,7 +1422,7 @@ class WorkflowService:
                     {
                         "val_bpb": metrics["val_bpb"],
                         "promoted_branch": seed.seed_id,
-                        "promoted_idea": "Initial baseline adaptation",
+                        "promoted_idea": baseline_promoted_idea,
                         "promoted_at": summary.get("completed_at"),
                         "commit_sha": effective_sha,
                     },
@@ -1347,13 +1441,9 @@ class WorkflowService:
                 return run
         if terminal_status is SeedStatus.promoted:
             # Merge seed into baseline first on positive signal; then update metrics/state.
-            try:
-                merge_commit_sha = self.git_service.promote_seed_branch(seed)
-                effective_sha = (
-                    merge_commit_sha
-                    if (isinstance(merge_commit_sha, str) and merge_commit_sha.strip())
-                    else self._commit_sha_for_branch(seed.baseline_branch)
-                )
+            # Merge-resolution DCA: agent already ran merge (or "Already up to date"). Treat as pass; do not run promote_seed_branch again.
+            if merge_resolution:
+                effective_sha = self._commit_sha_for_branch(seed.baseline_branch)
                 self.metrics_repo.append_promotion_for_branch(
                     seed.baseline_branch,
                     {
@@ -1365,71 +1455,91 @@ class WorkflowService:
                     },
                 )
                 seed.status = terminal_status
-                event_message = "DCA succeeded and seed branch was promoted into baseline."
-            except GitCommandError as merge_err:
-                tried_sha = commit_sha or ""
+                event_message = "Merge resolution DCA completed; seed merged or already up to date with baseline."
+            else:
                 try:
-                    tried_sha = self.git_service.commit_sha(seed.seed_id)
-                except GitCommandError:
-                    pass
-                self.seed_repo.append_event(
-                    seed.seed_id,
-                    "dca.merge_failed",
-                    (
-                        f"Merge into baseline failed: {merge_err}. Queued a new DCA run to resolve conflicts."
-                        if not merge_resolution
-                        else f"Merge into baseline failed again after a conflict-resolution DCA: {merge_err}. "
-                        "Ralph can proceed with the next Plan run."
-                    ),
-                    commit_sha=tried_sha or None,
-                    target_branch=seed.baseline_branch,
-                )
-                if not merge_resolution:
-                    self.queue_dca(
-                        seed.seed_id,
-                        merge_resolution=True,
-                        last_metrics=metrics,
-                        last_summary=summary,
+                    merge_commit_sha = self.git_service.promote_seed_branch(seed)
+                    effective_sha = (
+                        merge_commit_sha
+                        if (isinstance(merge_commit_sha, str) and merge_commit_sha.strip())
+                        else self._commit_sha_for_branch(seed.baseline_branch)
                     )
-                    seed.status = SeedStatus.dca_queued
+                    self.metrics_repo.append_promotion_for_branch(
+                        seed.baseline_branch,
+                        {
+                            "val_bpb": metrics["val_bpb"],
+                            "promoted_branch": seed.seed_id,
+                            "promoted_idea": seed.plan.title if seed.plan else seed.prompt[:80],
+                            "promoted_at": summary.get("completed_at"),
+                            "commit_sha": effective_sha,
+                        },
+                    )
+                    seed.status = terminal_status
+                    event_message = "DCA succeeded and seed branch was promoted into baseline."
+                except GitCommandError as merge_err:
+                    tried_sha = commit_sha or ""
+                    try:
+                        tried_sha = self.git_service.commit_sha(seed.seed_id)
+                    except GitCommandError:
+                        pass
+                    self.seed_repo.append_event(
+                        seed.seed_id,
+                        "dca.merge_failed",
+                        (
+                            f"Merge into baseline failed: {merge_err}. Queued a new DCA run to resolve conflicts."
+                            if not merge_resolution
+                            else f"Merge into baseline failed again after a conflict-resolution DCA: {merge_err}. "
+                            "Ralph can proceed with the next Plan run."
+                        ),
+                        commit_sha=tried_sha or None,
+                        target_branch=seed.baseline_branch,
+                    )
+                    if not merge_resolution:
+                        self.queue_dca(
+                            seed.seed_id,
+                            merge_resolution=True,
+                            last_metrics=metrics,
+                            last_summary=summary,
+                        )
+                        seed.status = SeedStatus.dca_queued
+                        seed.updated_at = now_ts()
+                        self.seed_repo.save(seed)
+                        self.run_repo.save(run)
+                        self.seed_repo.append_event(
+                            seed.seed_id,
+                            "dca.completed",
+                            "DCA run completed but merge failed; conflict-resolution DCA queued.",
+                            signal=signal,
+                            metrics=metrics,
+                        )
+                        return run
+                    # Resolution run also failed to merge; avoid infinite resolution loop and continue Ralph.
+                    seed.status = SeedStatus.generated
                     seed.updated_at = now_ts()
                     self.seed_repo.save(seed)
                     self.run_repo.save(run)
                     self.seed_repo.append_event(
                         seed.seed_id,
                         "dca.completed",
-                        "DCA run completed but merge failed; conflict-resolution DCA queued.",
+                        "Conflict-resolution DCA completed but merge still failed; proceeding to next Plan run.",
                         signal=signal,
                         metrics=metrics,
                     )
+                    if seed.ralph_loop_enabled:
+                        try:
+                            self.queue_p(seed.seed_id)
+                            self.seed_repo.append_event(
+                                seed.seed_id,
+                                "ralph.requeued",
+                                "Ralph loop queued the next Plan run after unresolved merge conflict.",
+                            )
+                        except (RuntimeError, GitCommandError) as exc:
+                            self.seed_repo.append_event(
+                                seed.seed_id,
+                                "ralph.requeue_failed",
+                                f"Ralph loop could not queue the next Plan run after unresolved merge conflict: {exc}",
+                            )
                     return run
-                # Resolution run also failed to merge; avoid infinite resolution loop and continue Ralph.
-                seed.status = SeedStatus.generated
-                seed.updated_at = now_ts()
-                self.seed_repo.save(seed)
-                self.run_repo.save(run)
-                self.seed_repo.append_event(
-                    seed.seed_id,
-                    "dca.completed",
-                    "Conflict-resolution DCA completed but merge still failed; proceeding to next Plan run.",
-                    signal=signal,
-                    metrics=metrics,
-                )
-                if seed.ralph_loop_enabled:
-                    try:
-                        self.queue_p(seed.seed_id)
-                        self.seed_repo.append_event(
-                            seed.seed_id,
-                            "ralph.requeued",
-                            "Ralph loop queued the next Plan run after unresolved merge conflict.",
-                        )
-                    except (RuntimeError, GitCommandError) as exc:
-                        self.seed_repo.append_event(
-                            seed.seed_id,
-                            "ralph.requeue_failed",
-                            f"Ralph loop could not queue the next Plan run after unresolved merge conflict: {exc}",
-                        )
-                return run
         elif terminal_status is SeedStatus.failed:
             seed.status = terminal_status
             event_message = (
