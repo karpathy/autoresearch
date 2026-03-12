@@ -620,7 +620,7 @@ pub struct TrainConfig {
 impl Default for TrainConfig {
     fn default() -> Self {
         Self {
-            device_batch_size: 128,
+            device_batch_size: 64,
             total_batch_size: 524288,
             load_checkpoint: None,
             diagnostic_steps: None,

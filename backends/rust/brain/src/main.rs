@@ -39,7 +39,7 @@ fn main() -> Result<()> {
     let cooldown_steps: usize = std::env::var("COOLDOWN_STEPS")
         .ok().and_then(|s| s.parse().ok()).unwrap_or(500);
     let batch_size: usize = std::env::var("BATCH_SIZE")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(128);
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(64);
     let num_train_shards: Option<usize> = std::env::var("NUM_TRAIN_SHARDS")
         .ok().and_then(|s| s.parse().ok());
     let total_batch: usize = std::env::var("TOTAL_BATCH")
@@ -83,7 +83,7 @@ fn main() -> Result<()> {
         checkpoint_dir: std::env::var("CHECKPOINT_DIR")
             .unwrap_or_else(|_| format!("{home}/.cache/autoresearch/checkpoints")),
         eval_interval: std::env::var("EVAL_EVERY").ok().and_then(|s| s.parse().ok()).unwrap_or(25),
-        checkpoint_interval: 50,
+        checkpoint_interval: std::env::var("CHECKPOINT_EVERY").ok().and_then(|s| s.parse().ok()).unwrap_or(100),
         load_checkpoint,
         diagnostic_steps,
         num_train_shards,
