@@ -9,6 +9,9 @@
 <div
   id="seed-detail"
   data-seed-detail-url-template="{{ request.url_for('seed_detail_partial', seed_id='__SEED_ID__') }}"
+  data-seed-versions-url-template="{{ request.url_for('seed_versions', seed_id='__SEED_ID__') }}"
+  data-seed-runs-url-template="{{ request.url_for('seed_runs_partial', seed_id='__SEED_ID__') }}"
+  data-seed-timeline-url-template="{{ request.url_for('seed_timeline_partial', seed_id='__SEED_ID__') }}"
 >
   {% include "partials/seed_detail.html" %}
 </div>

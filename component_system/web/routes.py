@@ -92,8 +92,46 @@ def seed_detail_partial(request: Request, seed_id: str) -> HTMLResponse:
         "dashboard": dashboard,
         "selected_seed_id": seed_id,
         "oob": True,
+        "daemon_status": get_daemon_status(),
     }
     return _render(request, "partials/seed_detail_response.html", context)
+
+
+@router.get("/api/seeds/{seed_id}/versions")
+def seed_versions(request: Request, seed_id: str) -> dict[str, str]:
+    workflow = _workflow(request)
+    try:
+        return workflow.seed_detail_versions(seed_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/partials/seeds/{seed_id}/runs", response_class=HTMLResponse)
+def seed_runs_partial(request: Request, seed_id: str) -> HTMLResponse:
+    workflow = _workflow(request)
+    try:
+        detail = workflow.seed_detail(seed_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _render(
+        request,
+        "partials/seed_runs_inner.html",
+        {"seed": detail["seed"], "runs": detail["runs"]},
+    )
+
+
+@router.get("/partials/seeds/{seed_id}/timeline", response_class=HTMLResponse)
+def seed_timeline_partial(request: Request, seed_id: str) -> HTMLResponse:
+    workflow = _workflow(request)
+    try:
+        detail = workflow.seed_detail(seed_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _render(
+        request,
+        "partials/seed_timeline_inner.html",
+        {"seed": detail["seed"], "events": detail["events"]},
+    )
 
 
 @router.get("/api/runs/{run_id}/prompt")
@@ -174,7 +212,7 @@ def seed_detail_page(request: Request, seed_id: str) -> HTMLResponse:
         detail = workflow.seed_detail(seed_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return _render(request, "seed_detail_page.html", detail)
+    return _render(request, "seed_detail_page.html", {**detail, "daemon_status": get_daemon_status()})
 
 
 @router.post("/actions/seeds", response_class=HTMLResponse)
@@ -267,6 +305,7 @@ def update_seed_prompt(request: Request, seed_id: str, prompt: str = Form(...)) 
             "dashboard": dashboard,
             "selected_seed_id": seed_id,
             "oob": True,
+            "daemon_status": get_daemon_status(),
         }
         return _render(request, "partials/seed_detail_response.html", context)
 

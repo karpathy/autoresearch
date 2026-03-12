@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -15,10 +16,20 @@ WEB_ROOT = Path(__file__).resolve().parent
 TEMPLATE_ROOT = WEB_ROOT / "templates"
 STATIC_ROOT = WEB_ROOT / "static"
 
+
+def _static_version() -> str:
+    """Cache-busting version from app.js mtime so browsers load fresh static assets after changes."""
+    app_js = STATIC_ROOT / "app.js"
+    if app_js.exists():
+        return str(int(app_js.stat().st_mtime))
+    return str(int(time.time()))
+
+
 def create_app() -> FastAPI:
     ensure_queue_layout()
     app = FastAPI(title="Component System", version="0.1.0")
     app.state.workflow = default_workflow_service()
+    app.state.static_version = _static_version()
     app.state.templates = Jinja2Templates(directory=str(TEMPLATE_ROOT))
     app.mount("/static", StaticFiles(directory=str(STATIC_ROOT)), name="static")
     app.include_router(router, prefix="/component-system")

@@ -1,0 +1,16 @@
+{% if events %}
+  {% for event in events %}
+  <article class="min-w-0 rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-3">
+    <p class="min-w-0 break-words text-sm font-medium text-white">{{ event.message }}</p>
+    {% if event.commit_sha %}
+    <p class="mt-1 text-xs font-mono text-slate-400">commit: {{ event.commit_sha }}</p>
+    {% endif %}
+    {% if event.target_branch %}
+    <p class="mt-0.5 text-xs text-slate-400">target branch: {{ event.target_branch }}</p>
+    {% endif %}
+    <p class="mt-2 text-xs text-slate-500"><span class="uppercase tracking-[0.2em]">{{ event.kind }}</span> · {{ event.created_at_human }}</p>
+  </article>
+  {% endfor %}
+{% else %}
+<p class="text-sm text-slate-500">No events yet.</p>
+{% endif %}

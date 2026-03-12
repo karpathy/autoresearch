@@ -32,6 +32,7 @@ from component_system.task import (
     ensure_queue_layout,
     LOG_ROOT,
     move_to_done,
+    move_to_error,
     read_task,
     restore_in_progress_tasks,
 )
@@ -46,6 +47,9 @@ _shutdown = False
 WORKFLOW = WorkflowService()
 
 DEFAULT_TIMEOUTS = {"p": 900, "dca": 3600, "direct": 3600}
+
+# Canonical DCA entrypoint run: require ≥600s so training can complete. Agent must set command/tool timeout ≥ this.
+DCA_CANONICAL_RUN_TIMEOUT_SECONDS = 600
 
 STAGE_DOCS = {
     "p": ["PDCA-PLAN.md"],
@@ -96,13 +100,14 @@ def _is_root_venv_active() -> bool:
 
 
 def _dca_command_guidance() -> tuple[str, str]:
+    timeout_prefix = f"timeout {DCA_CANONICAL_RUN_TIMEOUT_SECONDS}"
     if _is_root_venv_active():
         return (
-            "uv run --active component_system/entrypoint.py",
+            f"{timeout_prefix} uv run --active component_system/entrypoint.py",
             "Root .venv is active; use --active to reuse it from the worktree.",
         )
     return (
-        "uv run component_system/entrypoint.py",
+        f"{timeout_prefix} uv run component_system/entrypoint.py",
         "No active root .venv detected; fallback avoids --active so uv can run normally.",
     )
 
@@ -497,8 +502,8 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
                 "You must retry until the run completes successfully and you can report real metrics. Do not report empty metrics and stop.\n"
                 "If training fails with CUDA out of memory (OOM): the default batch size is for H100. Reduce device_batch_size (and if needed total_batch_size) in component_system/components/trainer.py (TrainingSettings) so training fits in available VRAM, then rerun until the baseline run completes. Only trivial execution fixes (e.g. batch size) are allowed; do not change model architecture or training logic.\n"
                 "If you modified any files (e.g. batch size for OOM), you must commit those changes on the baseline branch before reporting. An uncommitted worktree causes the follow-up merge to fail.\n"
-                f"Run the canonical command: {dca_cmd}\n"
-                f"({dca_note})\n"
+                f"Run the canonical command (≥{DCA_CANONICAL_RUN_TIMEOUT_SECONDS}s): {dca_cmd}\n"
+                f"({dca_note}) When you invoke this command, set your command/tool timeout to at least {DCA_CANONICAL_RUN_TIMEOUT_SECONDS} seconds so the process is not killed early.\n"
                 "Report the final result in JSON between these exact markers once training has completed successfully. Include the current commit SHA in the summary (commit any changes first).\n"
                 "AUTORESEARCH_DCA_SUMMARY_BEGIN\n"
                 '{"checks":["baseline_measurement"],"notes":"Measured the current baseline in the dedicated baseline worktree.","completed_at":"YYYY-MM-DD HH:MM:SS","commit_sha":"...","metrics":{"val_bpb":1.239972,"training_seconds":300.1,"total_seconds":360.4,"startup_seconds":25.8,"peak_vram_mb":11967.8,"mfu_percent":2.15,"total_tokens_M":140.5,"num_steps":268,"num_params_M":11.5,"depth":4}}\n'
@@ -513,8 +518,8 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
             "The task \"prompt\" is for context only; do not treat it as a goal to achieve in this stage.\n\n"
             "Workflow:\n"
             "1. Adapt or fix the generated code in the seed worktree until it runs.\n"
-            f"2. Run the canonical command: {dca_cmd}\n"
-            f"   ({dca_note})\n"
+            f"2. Run the canonical command (≥{DCA_CANONICAL_RUN_TIMEOUT_SECONDS}s): {dca_cmd}\n"
+            f"   ({dca_note}) When you invoke this command, set your command/tool timeout to at least {DCA_CANONICAL_RUN_TIMEOUT_SECONDS} seconds so the process is not killed early.\n"
             "3. If it fails for a simple reason, fix and rerun.\n"
             "4. Create a git commit in the seed branch for your changes.\n"
             "5. Report the final result in JSON between these exact markers. Include the current commit SHA in the summary.\n"
@@ -586,18 +591,25 @@ def _regenerate_progress_png() -> None:
         traceback.print_exc()
 
 
-def _worker(stage: str) -> None:
-    print(f"[daemon] worker-{stage.upper()} started")
+def _worker(stage: str, lane: str = "any") -> None:
+    worker_name = stage.upper() if lane == "any" else f"{stage.upper()}-{lane.upper()}"
+    print(f"[daemon] worker-{worker_name} started")
+    def eligible(payload: dict) -> bool:
+        return bool(WORKFLOW.is_seed_eligible_for_stage(payload.get("seed_id"), stage))
+
     while not _shutdown:
-        task_path = claim_pending(stage)
+        task_path = claim_pending(stage, lane=lane, eligible_fn=eligible)
         if task_path is None:
             time.sleep(POLL_INTERVAL)
             continue
 
         try:
             task = read_task(task_path)
-            seed_id = task["seed_id"]
-            run_id = task["run_id"]
+            seed_id = task.get("seed_id")
+            run_id = task.get("run_id")
+            if not seed_id or not run_id:
+                move_to_error(task_path)
+                continue
             started_seed = None
             if stage == "direct":
                 started_seed, _ = WORKFLOW.mark_direct_code_run_started(seed_id, run_id)
@@ -700,31 +712,36 @@ def _worker(stage: str) -> None:
                 print(f"[{stage.upper()}] task {task['task_id']} failed")
         except Exception as exc:
             traceback.print_exc()
+            if not task_path.exists():
+                continue
             try:
                 task = read_task(task_path)
-                prompt_path_str = None
+                seed_id = task.get("seed_id")
                 run_id = task.get("run_id")
+                if not seed_id or not run_id:
+                    continue
+                prompt_path_str = None
                 if run_id:
                     p_path = LOG_DIR / f"{run_id}.prompt.txt"
                     if p_path.exists():
                         prompt_path_str = str(p_path)
                 if stage == "direct":
                     WORKFLOW.mark_direct_code_run_failed(
-                        task["seed_id"],
-                        task["run_id"],
+                        seed_id,
+                        run_id,
                         str(exc),
                         task_path=task_path,
                         prompt_path=prompt_path_str,
                     )
                 else:
                     WORKFLOW.mark_run_failed(
-                        task["seed_id"], task["run_id"], str(exc),
+                        seed_id, run_id, str(exc),
                         task_path=task_path, prompt_path=prompt_path_str,
                     )
             except Exception:
                 traceback.print_exc()
 
-    print(f"[daemon] worker-{stage.upper()} stopped")
+    print(f"[daemon] worker-{worker_name} stopped")
 
 
 def main() -> None:
@@ -743,15 +760,20 @@ def main() -> None:
         )
     daemon_heartbeat()
     agent = os.environ.get("PDCA_AGENT", "claude")
-    print(f"[daemon] starting component-system daemon — agent={agent}, workers=P/DCA/DIRECT")
+    print(f"[daemon] starting component-system daemon — agent={agent}, workers=P/DCA-GPU/DCA-AUX/DIRECT")
 
     pools: list[ThreadPoolExecutor] = []
-    for stage in ("p", "dca", "direct"):
-        worker_count = 2 if stage == "p" else 1
-        pool = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix=f"pdca-{stage}")
+    stage_specs = (
+        ("p", "any", 2, "pdca-p"),
+        ("dca", "gpu", 1, "pdca-dca-gpu"),
+        ("dca", "aux", 1, "pdca-dca-aux"),
+        ("direct", "any", 1, "pdca-direct"),
+    )
+    for stage, lane, worker_count, prefix in stage_specs:
+        pool = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix=prefix)
         pools.append(pool)
         for _ in range(worker_count):
-            pool.submit(_worker, stage)
+            pool.submit(_worker, stage, lane)
 
     last_heartbeat = time.monotonic()
     try:

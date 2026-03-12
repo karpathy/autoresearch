@@ -22,6 +22,12 @@ function applySelectedSeed(seedId) {
 
 let dashboardPollInFlight = false;
 let seedDetailPollInFlight = false;
+let seedVersionsPollInFlight = false;
+const lastSeedVersions = {};
+const savedScrollPositions = { runs: null, timeline: null };
+const INTERACTION_DEBOUNCE_MS = 3000;
+let lastRunsInteraction = 0;
+let lastTimelineInteraction = 0;
 
 function seedDetailUrl(seedId) {
   const detail = document.getElementById("seed-detail");
@@ -29,6 +35,27 @@ function seedDetailUrl(seedId) {
   if (!template || !seedId) {
     return null;
   }
+  return template.replace("__SEED_ID__", encodeURIComponent(seedId));
+}
+
+function seedVersionsUrl(seedId) {
+  const detail = document.getElementById("seed-detail");
+  const template = detail?.dataset.seedVersionsUrlTemplate;
+  if (!template || !seedId) return null;
+  return template.replace("__SEED_ID__", encodeURIComponent(seedId));
+}
+
+function seedRunsUrl(seedId) {
+  const detail = document.getElementById("seed-detail");
+  const template = detail?.dataset.seedRunsUrlTemplate;
+  if (!template || !seedId) return null;
+  return template.replace("__SEED_ID__", encodeURIComponent(seedId));
+}
+
+function seedTimelineUrl(seedId) {
+  const detail = document.getElementById("seed-detail");
+  const template = detail?.dataset.seedTimelineUrlTemplate;
+  if (!template || !seedId) return null;
   return template.replace("__SEED_ID__", encodeURIComponent(seedId));
 }
 
@@ -91,15 +118,81 @@ function pollSeedDetail() {
   });
 }
 
+function applyRunsPartial(seedId) {
+  const listEl = document.getElementById("seed-runs-list");
+  const paneEl = document.getElementById("seed-runs-scroll-pane");
+  const url = seedRunsUrl(seedId);
+  if (!listEl || !url) return Promise.resolve();
+  savedScrollPositions.runs = paneEl ? paneEl.scrollTop : null;
+  return htmx.ajax("GET", url, { target: "#seed-runs-list", swap: "innerHTML" });
+}
+
+function applyTimelinePartial(seedId) {
+  const listEl = document.getElementById("seed-timeline-list");
+  const paneEl = document.getElementById("seed-timeline-scroll-pane");
+  const url = seedTimelineUrl(seedId);
+  if (!listEl || !url) return Promise.resolve();
+  savedScrollPositions.timeline = paneEl ? paneEl.scrollTop : null;
+  return htmx.ajax("GET", url, { target: "#seed-timeline-list", swap: "innerHTML" });
+}
+
+function pollSeedDetailSections() {
+  const seedId = selectedSeedIdFromUrl();
+  if (!seedId || isLogViewerOpen()) return;
+  const versionsUrl = seedVersionsUrl(seedId);
+  if (!versionsUrl || seedVersionsPollInFlight) return;
+  seedVersionsPollInFlight = true;
+  fetch(versionsUrl)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => {
+      if (!data) return;
+      const prev = lastSeedVersions[seedId] || {};
+      const runsChanged = data.runs_version !== prev.runs_version;
+      const timelineChanged = data.timeline_version !== prev.timeline_version;
+      lastSeedVersions[seedId] = {
+        runs_version: data.runs_version,
+        timeline_version: data.timeline_version,
+      };
+      const now = Date.now();
+      const runsIdle = now - lastRunsInteraction >= INTERACTION_DEBOUNCE_MS;
+      const timelineIdle = now - lastTimelineInteraction >= INTERACTION_DEBOUNCE_MS;
+      const promises = [];
+      if (runsChanged && runsIdle) promises.push(applyRunsPartial(seedId));
+      if (timelineChanged && timelineIdle) promises.push(applyTimelinePartial(seedId));
+      return Promise.all(promises);
+    })
+    .finally(() => {
+      seedVersionsPollInFlight = false;
+    });
+}
+
+function attachScrollPaneInteractionGuards() {
+  const runsPane = document.getElementById("seed-runs-scroll-pane");
+  const timelinePane = document.getElementById("seed-timeline-scroll-pane");
+  function onRunsActivity() {
+    lastRunsInteraction = Date.now();
+  }
+  function onTimelineActivity() {
+    lastTimelineInteraction = Date.now();
+  }
+  runsPane?.addEventListener("scroll", onRunsActivity, { passive: true });
+  runsPane?.addEventListener("mouseenter", onRunsActivity);
+  runsPane?.addEventListener("focusin", onRunsActivity);
+  timelinePane?.addEventListener("scroll", onTimelineActivity, { passive: true });
+  timelinePane?.addEventListener("mouseenter", onTimelineActivity);
+  timelinePane?.addEventListener("focusin", onTimelineActivity);
+}
+
 function pollDashboard() {
-  if (document.hidden) {
-    return;
-  }
-  if (isLogViewerOpen()) {
-    return;
-  }
+  if (document.hidden) return;
+  if (isLogViewerOpen()) return;
   pollDashboardBoard();
-  pollSeedDetail();
+  const seedId = selectedSeedIdFromUrl();
+  if (seedId && document.getElementById("seed-runs-list")) {
+    pollSeedDetailSections();
+  } else if (seedId && !document.getElementById("seed-runs-list")) {
+    pollSeedDetail();
+  }
 }
 
 document.body.addEventListener("htmx:beforeRequest", (event) => {
@@ -123,8 +216,28 @@ document.body.addEventListener("click", (event) => {
 
 document.body.addEventListener("htmx:afterSettle", (event) => {
   const target = event.detail?.target;
-  if (target && target.id === "seed-detail") {
+  if (!target) return;
+  if (target.id === "seed-detail") {
     applySelectedSeed(selectedSeedIdFromUrl());
+    attachScrollPaneInteractionGuards();
+    return;
+  }
+  if (target.id === "seed-runs-list") {
+    const pane = document.getElementById("seed-runs-scroll-pane");
+    if (pane && savedScrollPositions.runs != null) {
+      pane.scrollTop = savedScrollPositions.runs;
+      savedScrollPositions.runs = null;
+    }
+    initializeLogStreams(target.closest("#seed-detail") || document);
+    return;
+  }
+  if (target.id === "seed-timeline-list") {
+    const pane = document.getElementById("seed-timeline-scroll-pane");
+    if (pane && savedScrollPositions.timeline != null) {
+      pane.scrollTop = savedScrollPositions.timeline;
+      savedScrollPositions.timeline = null;
+    }
+    return;
   }
 });
 
@@ -133,6 +246,7 @@ window.addEventListener("popstate", () => {
 });
 
 applySelectedSeed(selectedSeedIdFromUrl());
+attachScrollPaneInteractionGuards();
 window.setInterval(pollDashboard, 5000);
 
 const logStreamIntervals = new Map();

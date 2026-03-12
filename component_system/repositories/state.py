@@ -29,7 +29,7 @@ class BaselineBranchMapRepository:
 
 
 class BaselineMetricsRepository:
-    """Per-baseline-branch metrics (last_val_bpb, promoted_*, etc.)."""
+    """Per-baseline-branch metrics (last_val_bpb, promoted_*, commit_sha, etc.)."""
 
     def get_all(self) -> dict[str, dict[str, Any]]:
         return load_baseline_metrics()

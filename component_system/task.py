@@ -7,7 +7,7 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Literal
 
 COMPONENT_SYSTEM_ROOT = Path(__file__).resolve().parent
 HISTORY_ROOT = COMPONENT_SYSTEM_ROOT / "history"
@@ -128,6 +128,10 @@ def read_task(path: Path) -> dict[str, Any]:
 def move_to_done(path: Path) -> Path:
     ensure_queue_layout()
     dest = DONE_DIR / path.name
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Task file already moved: {path}; possible duplicate daemon or double completion."
+        )
     if dest.exists():
         dest.unlink()
     path.rename(dest)
@@ -150,12 +154,31 @@ def list_pending(stage: str) -> list[Path]:
     return sorted(STAGE_DIRS[stage].glob("*.json"))
 
 
-def claim_pending(stage: str) -> Path | None:
-    """Atomically claim the oldest pending task for a stage."""
+def _is_aux_dca_task(payload: dict[str, Any]) -> bool:
+    return payload.get("metrics_recovery") is True or payload.get("merge_resolution") is True
+
+
+def claim_pending(
+    stage: str,
+    lane: Literal["any", "gpu", "aux"] = "any",
+    eligible_fn: Callable[[dict[str, Any]], bool] | None = None,
+) -> Path | None:
+    """Atomically claim the oldest pending task for a stage/lane. If eligible_fn is set, only claim tasks for which it returns True (avoids P/DCA races)."""
     ensure_queue_layout()
     if stage not in STAGE_DIRS:
         raise KeyError(f"Unknown stage {stage!r}")
+    if lane not in {"any", "gpu", "aux"}:
+        raise KeyError(f"Unknown lane {lane!r}")
     for path in sorted(STAGE_DIRS[stage].glob("*.json")):
+        payload = _read_json(path, {})
+        if eligible_fn is not None and not eligible_fn(payload):
+            continue
+        if stage == "dca" and lane != "any":
+            is_aux = _is_aux_dca_task(payload)
+            if lane == "aux" and not is_aux:
+                continue
+            if lane == "gpu" and is_aux:
+                continue
         claimed_path = IN_PROGRESS_DIR / path.name
         try:
             path.rename(claimed_path)
@@ -263,7 +286,7 @@ def save_baseline_branch_map(mapping: dict[str, str]) -> None:
 
 
 def load_baseline_metrics() -> dict[str, dict[str, Any]]:
-    """Load baseline_branch -> { last_val_bpb, promoted_branch, promoted_at, promoted_idea }."""
+    """Load baseline_branch -> { last_val_bpb, promoted_branch, promoted_at, promoted_idea, commit_sha }."""
     ensure_queue_layout()
     return _read_json(BASELINE_METRICS_PATH, {})
 

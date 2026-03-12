@@ -31,6 +31,7 @@ from component_system.task import (
     now_ts,
     new_run_id,
     new_seed_id,
+    read_task,
     write_task,
 )
 
@@ -641,7 +642,7 @@ class WorkflowService:
         source_stderr_log_path: str | None = None,
         last_metrics: dict[str, Any] | None = None,
         last_summary: dict[str, Any] | None = None,
-        restore_ref: str | None = None,
+        commit_sha_before_p: str | None = None,
     ) -> StageRun:
         seed = self.require_seed(seed_id)
         if not metrics_recovery and seed.status in {SeedStatus.draft, SeedStatus.queued, SeedStatus.planning}:
@@ -662,9 +663,9 @@ class WorkflowService:
         if seed.seed_id != BASELINE_SEED_ID:
             try:
                 # Ref to restore worktree to on negative signal (commit before P when from finish_p_run, else baseline).
-                run.summary["restore_ref"] = (
-                    restore_ref
-                    if restore_ref is not None
+                run.summary["commit_sha_before_p"] = (
+                    commit_sha_before_p
+                    if commit_sha_before_p is not None
                     else self.git_service.commit_sha(seed.baseline_branch)
                 )
             except GitCommandError:
@@ -717,6 +718,22 @@ class WorkflowService:
         if run is None:
             raise KeyError(f"Unknown run_id={run_id}")
         return run
+
+    def is_seed_eligible_for_stage(self, seed_id: str | None, stage: str) -> bool:
+        """True if this seed is in a state that allows the given stage to run (used at claim time to avoid P/DCA races)."""
+        if not seed_id:
+            return False
+        seed = self.seed_repo.get(seed_id)
+        if seed is None:
+            return False
+        seed = self._normalize_seed_runtime_state(seed)
+        if stage == "p":
+            return seed.status not in (SeedStatus.adapting, SeedStatus.running, SeedStatus.dca_queued)
+        if stage == "dca":
+            return seed.status is not SeedStatus.planning
+        if stage == "direct":
+            return True
+        return False
 
     def mark_run_started(self, seed_id: str, run_id: str) -> tuple[SeedRecord, StageRun]:
         seed = self.require_seed(seed_id)
@@ -820,6 +837,9 @@ class WorkflowService:
     ) -> None:
         seed = self.require_seed(seed_id)
         run = self.require_run(run_id)
+        task_payload: dict[str, Any] = {}
+        if task_path is not None and task_path.exists():
+            task_payload = read_task(task_path)
         run.status = RunStatus.failed
         run.updated_at = now_ts()
         run.error = error
@@ -835,6 +855,26 @@ class WorkflowService:
         self.run_repo.save(run)
         self.seed_repo.save(seed)
         self.seed_repo.append_event(seed.seed_id, f"{run.stage.value}.failed", error, run_id=run_id)
+        if (
+            run.stage is StageName.dca
+            and seed.ralph_loop_enabled
+            and seed.seed_id != BASELINE_SEED_ID
+            and task_payload.get("merge_resolution") is not True
+            and task_payload.get("metrics_recovery") is not True
+        ):
+            try:
+                self.queue_p(seed.seed_id)
+                self.seed_repo.append_event(
+                    seed.seed_id,
+                    "ralph.requeued",
+                    "Ralph loop queued the next Plan run after failed DCA.",
+                )
+            except (RuntimeError, GitCommandError) as exc:
+                self.seed_repo.append_event(
+                    seed.seed_id,
+                    "ralph.requeue_failed",
+                    f"Ralph loop could not queue the next Plan run after failed DCA: {exc}",
+                )
         if task_path is not None and task_path.exists():
             move_to_error(task_path)
 
@@ -916,7 +956,7 @@ class WorkflowService:
         )
         self.queue_dca(
             seed.seed_id,
-            restore_ref=run.summary.get("commit_sha_before_p"),
+            commit_sha_before_p=run.summary.get("commit_sha_before_p"),
         )
         return run
 
@@ -957,7 +997,9 @@ class WorkflowService:
         run.log_path = log_path
         run.stderr_log_path = stderr_log_path
         run.prompt_path = prompt_path
-        run.summary = summary | {"commit_sha": commit_sha}
+        # Preserve runner-set keys (e.g. commit_sha_before_p) so negative-signal restore can run
+        preserved = {k: run.summary[k] for k in ("commit_sha_before_p",) if run.summary and k in run.summary}
+        run.summary = summary | {"commit_sha": commit_sha} | preserved
         run.metrics = metrics
         run.signal = signal
         seed.updated_at = now_ts()
@@ -1028,6 +1070,7 @@ class WorkflowService:
                         "promoted_branch": seed.seed_id,
                         "promoted_idea": "Initial baseline adaptation",
                         "promoted_at": summary.get("completed_at"),
+                        "commit_sha": merge_commit_sha,
                     },
                 )
                 seed.status = SeedStatus.passed
@@ -1099,6 +1142,7 @@ class WorkflowService:
                 return run
         if terminal_status is SeedStatus.promoted:
             try:
+                merge_commit_sha = self.git_service.promote_seed_branch(seed)
                 self.metrics_repo.update_for_branch(
                     seed.baseline_branch,
                     {
@@ -1106,9 +1150,9 @@ class WorkflowService:
                         "promoted_branch": seed.seed_id,
                         "promoted_idea": seed.plan.title if seed.plan else seed.prompt[:80],
                         "promoted_at": summary.get("completed_at"),
+                        "commit_sha": merge_commit_sha,
                     },
                 )
-                merge_commit_sha = self.git_service.promote_seed_branch(seed)
                 seed.status = terminal_status
                 event_message = "DCA succeeded and seed branch was promoted into baseline."
             except GitCommandError as merge_err:
@@ -1120,29 +1164,60 @@ class WorkflowService:
                 self.seed_repo.append_event(
                     seed.seed_id,
                     "dca.merge_failed",
-                    f"Merge into baseline failed: {merge_err}. Queued a new DCA run to resolve conflicts.",
+                    (
+                        f"Merge into baseline failed: {merge_err}. Queued a new DCA run to resolve conflicts."
+                        if not merge_resolution
+                        else f"Merge into baseline failed again after a conflict-resolution DCA: {merge_err}. "
+                        "Ralph can proceed with the next Plan run."
+                    ),
                     commit_sha=tried_sha or None,
                     target_branch=seed.baseline_branch,
                 )
-                self.queue_dca(
-                    seed.seed_id,
-                    merge_resolution=True,
-                    last_metrics=metrics,
-                    last_summary=summary,
-                )
-                seed.status = SeedStatus.dca_queued
+                if not merge_resolution:
+                    self.queue_dca(
+                        seed.seed_id,
+                        merge_resolution=True,
+                        last_metrics=metrics,
+                        last_summary=summary,
+                    )
+                    seed.status = SeedStatus.dca_queued
+                    seed.updated_at = now_ts()
+                    self.seed_repo.save(seed)
+                    self.run_repo.save(run)
+                    self.seed_repo.append_event(
+                        seed.seed_id,
+                        "dca.completed",
+                        "DCA run completed but merge failed; conflict-resolution DCA queued.",
+                        signal=signal,
+                        metrics=metrics,
+                    )
+                    return run
+                # Resolution run also failed to merge; avoid infinite resolution loop and continue Ralph.
+                seed.status = SeedStatus.generated
                 seed.updated_at = now_ts()
                 self.seed_repo.save(seed)
                 self.run_repo.save(run)
                 self.seed_repo.append_event(
-                    seed.seed_id, "dca.completed", "DCA run completed but merge failed; conflict-resolution DCA queued.", signal=signal, metrics=metrics
+                    seed.seed_id,
+                    "dca.completed",
+                    "Conflict-resolution DCA completed but merge still failed; proceeding to next Plan run.",
+                    signal=signal,
+                    metrics=metrics,
                 )
                 if seed.ralph_loop_enabled:
                     try:
                         self.queue_p(seed.seed_id)
-                        self.seed_repo.append_event(seed.seed_id, "ralph.requeued", "Ralph loop queued the next Plan run.")
+                        self.seed_repo.append_event(
+                            seed.seed_id,
+                            "ralph.requeued",
+                            "Ralph loop queued the next Plan run after unresolved merge conflict.",
+                        )
                     except (RuntimeError, GitCommandError) as exc:
-                        self.seed_repo.append_event(seed.seed_id, "ralph.requeue_failed", f"Ralph loop could not queue the next Plan run: {exc}")
+                        self.seed_repo.append_event(
+                            seed.seed_id,
+                            "ralph.requeue_failed",
+                            f"Ralph loop could not queue the next Plan run after unresolved merge conflict: {exc}",
+                        )
                 return run
         elif terminal_status is SeedStatus.failed:
             seed.status = terminal_status
@@ -1172,7 +1247,7 @@ class WorkflowService:
             and not metrics_recovery
             and seed.seed_id != BASELINE_SEED_ID
         ):
-            ref = run.summary.get("restore_ref") or run.summary.get("baseline_commit_at_dca_start")
+            ref = run.summary.get("commit_sha_before_p")
             if ref:
                 try:
                     self.git_service.reset_seed_branch_to(seed, ref)
@@ -1308,6 +1383,26 @@ class WorkflowService:
             "events": self.seed_repo.events(seed_id),
             "baseline_metrics_for_branch": self.metrics_repo.get_for_branch(seed.baseline_branch),
             "setup_error": self.git_service.setup_error_for_branches(seed.baseline_branch),
+        }
+
+    def seed_detail_versions(self, seed_id: str) -> dict[str, str]:
+        """Return version fingerprints for runs and timeline so the client can skip refresh when unchanged."""
+        self.require_seed(seed_id)
+        runs = self.run_repo.list(seed_id)
+        events = self.seed_repo.events(seed_id)
+        runs_version = (
+            ",".join(f"{r.run_id}:{r.status.value}:{r.updated_at}" for r in runs)
+            if runs
+            else "0"
+        )
+        timeline_version = (
+            ",".join(str(e.get("created_at", "")) for e in events[-20:])
+            if events
+            else "0"
+        )
+        return {
+            "runs_version": runs_version,
+            "timeline_version": timeline_version,
         }
 
     def extract_summary(self, output_text: str, stage: StageName) -> dict[str, object] | None:

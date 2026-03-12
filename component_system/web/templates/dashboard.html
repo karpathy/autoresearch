@@ -61,7 +61,7 @@
           {% for branch, m in dashboard.baseline_metrics_by_branch.items() %}
           <div class="flex justify-between gap-4">
             <dt class="text-slate-500 font-mono-id">{{ branch }}</dt>
-            <dd>val_bpb {{ "%.6f"|format(m.get('last_val_bpb')) if m.get('last_val_bpb') is not none else "—" }} · {{ m.get('promoted_branch') or "—" }}</dd>
+            <dd>val_bpb {{ "%.6f"|format(m.get('last_val_bpb')) if m.get('last_val_bpb') is not none else "—" }} · {{ m.get('promoted_branch') or "—" }}{% if m.get('commit_sha') %} · <code class="text-xs">{{ m.get('commit_sha')[:7] }}</code>{% endif %}</dd>
           </div>
           {% endfor %}
         </dl>
@@ -97,6 +97,9 @@
       <div
         id="seed-detail"
         data-seed-detail-url-template="{{ request.url_for('seed_detail_partial', seed_id='__SEED_ID__') }}"
+        data-seed-versions-url-template="{{ request.url_for('seed_versions', seed_id='__SEED_ID__') }}"
+        data-seed-runs-url-template="{{ request.url_for('seed_runs_partial', seed_id='__SEED_ID__') }}"
+        data-seed-timeline-url-template="{{ request.url_for('seed_timeline_partial', seed_id='__SEED_ID__') }}"
       >
         {% if detail %}
           {% with
@@ -104,7 +107,8 @@
             runs=detail.runs,
             events=detail.events,
             baseline_metrics_for_branch=detail.baseline_metrics_for_branch,
-            setup_error=detail.setup_error
+            setup_error=detail.setup_error,
+            daemon_status=dashboard.daemon_status
           %}
             {% include "partials/seed_detail.html" %}
           {% endwith %}

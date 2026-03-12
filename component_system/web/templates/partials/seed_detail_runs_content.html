@@ -1,0 +1,148 @@
+{% if runs and seed.status.value in ['queued', 'planning'] %}
+<p class="mt-2 text-xs text-sky-300/90">Runs stay <strong>queued</strong> until the daemon is running. Start: <code class="font-mono-id">uv run component_system/run.py</code></p>
+{% endif %}
+{% if runs %}
+  {% for run in runs %}
+  <article class="rounded-xl border border-slate-800 bg-slate-900/80 p-3">
+    <div class="flex items-center justify-between gap-3">
+      <div>
+        <p class="text-sm font-medium text-white">{% if run.stage.value == 'p' %}Plan{% else %}{{ run.stage.value|upper }}{% endif %} · {{ run.status.value }}</p>
+        <p class="mt-1 text-xs text-slate-500">{{ run.run_id }}</p>
+      </div>
+      <div class="flex items-center gap-2">
+        {% if run.signal %}
+        <span class="rounded-full bg-slate-800 px-2 py-1 text-[11px] uppercase tracking-wide text-slate-300">{{ run.signal }}</span>
+        {% endif %}
+        <button
+          class="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:border-slate-600 hover:bg-slate-900"
+          type="button"
+          x-on:click="
+            activeRunId = activeRunId === '{{ run.run_id }}' ? null : '{{ run.run_id }}';
+            if (activeRunId) {
+              localStorage.setItem('seed-active-run-{{ seed.seed_id }}', activeRunId);
+            } else {
+              localStorage.removeItem('seed-active-run-{{ seed.seed_id }}');
+            }
+          "
+        >
+          <span x-text="activeRunId === '{{ run.run_id }}' ? 'Hide log' : 'View log'"></span>
+        </button>
+      </div>
+    </div>
+    {% if run.metrics %}
+    <dl class="mt-3 grid gap-2 sm:grid-cols-3 text-xs text-slate-400">
+      {% for key, value in run.metrics.items() %}
+      <div class="rounded-lg bg-slate-950 px-3 py-2">
+        <dt>{{ key }}</dt>
+        <dd class="mt-1 text-sm text-white">{{ value }}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+    {% endif %}
+  </article>
+  <template x-if="activeRunId === '{{ run.run_id }}'">
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4">
+      <div class="flex h-[88vh] w-[96vw] max-w-[1500px] flex-col rounded-xl border border-slate-700 bg-slate-950 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+          <div>
+            <p class="font-medium text-white">Run log · {{ run.run_id }}</p>
+            <p class="text-xs text-slate-500">{{ run.stage.value|upper }} · {{ run.status.value }}</p>
+          </div>
+          <button
+            class="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-slate-600 hover:bg-slate-900"
+            type="button"
+            x-on:click="
+              activeRunId = null;
+              localStorage.removeItem('seed-active-run-{{ seed.seed_id }}');
+            "
+          >
+            Close
+          </button>
+        </div>
+        <div class="p-4">
+          <div class="mb-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2">
+            <div class="truncate">stdout: {{ run.log_path or "pending" }}</div>
+            <div class="truncate">stderr: {{ run.stderr_log_path or "pending" }}</div>
+          </div>
+          <div class="mb-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+            <span class="status-pill status-{{ run.status.value }}">{{ run.status.value }}</span>
+            <span data-log-status data-run-id="{{ run.run_id }}">
+              {% if run.status.value in ['running', 'queued'] %}Streaming...{% else %}Completed{% endif %}
+            </span>
+          </div>
+          <div class="run-log-grid h-[72vh]">
+            <div class="run-log-pane">
+              <div class="mb-1 flex items-center justify-between">
+                <p class="text-[11px] uppercase tracking-wide text-slate-500">Prompt</p>
+                <button
+                  class="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:border-slate-600 hover:bg-slate-900 disabled:opacity-50"
+                  type="button"
+                  data-prompt-copy
+                  data-run-id="{{ run.run_id }}"
+                  disabled
+                >
+                  Copy
+                </button>
+              </div>
+              <pre
+                class="run-log-pre"
+                data-prompt-content
+                data-run-id="{{ run.run_id }}"
+              ></pre>
+            </div>
+            <div class="run-log-pane">
+              <div class="mb-1 flex items-center justify-between">
+                <p class="text-[11px] uppercase tracking-wide text-slate-500">stdout</p>
+                <button
+                  class="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:border-slate-600 hover:bg-slate-900 disabled:opacity-50"
+                  type="button"
+                  data-log-copy
+                  data-run-id="{{ run.run_id }}"
+                  data-stream="stdout"
+                  disabled
+                >
+                  Copy
+                </button>
+              </div>
+              <pre
+                class="run-log-pre"
+                data-log-stream
+                data-run-id="{{ run.run_id }}"
+                data-run-status="{{ run.status.value }}"
+                data-stream="stdout"
+              ></pre>
+            </div>
+            <div class="run-log-pane">
+              <div class="mb-1 flex items-center justify-between">
+                <p class="text-[11px] uppercase tracking-wide text-slate-500">stderr</p>
+                <button
+                  class="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:border-slate-600 hover:bg-slate-900 disabled:opacity-50"
+                  type="button"
+                  data-log-copy
+                  data-run-id="{{ run.run_id }}"
+                  data-stream="stderr"
+                  disabled
+                >
+                  Copy
+                </button>
+              </div>
+              <pre
+                class="run-log-pre"
+                data-log-stream
+                data-run-id="{{ run.run_id }}"
+                data-run-status="{{ run.status.value }}"
+                data-stream="stderr"
+              ></pre>
+            </div>
+          </div>
+          {% if run.error %}
+          <p class="mt-2 text-rose-300">{{ run.error }}</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </template>
+  {% endfor %}
+{% else %}
+<p class="text-sm text-slate-500">No runs yet. Use <strong>Run Plan</strong> to start.</p>
+{% endif %}

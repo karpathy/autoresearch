@@ -22,10 +22,10 @@ The intended control flow is:
 1. Read this file and the required context files.
 2. Ensure the queue and state layout exist.
 3. Create or refine a seed from a human prompt.
-4. Queue that seed into `component_system/history/queue/p/`.
-5. Start the resident daemon with `uv run component_system/run.py`.
-6. Let the daemon workers execute P and DCA through file-based handoff.
-7. Monitor the daemon, queue, and logs instead of roleplaying stage work yourself.
+4. Queue the seed for P.
+5. Start the daemon: `uv run component_system/run.py`.
+6. Let daemon workers execute P and DCA via file-based handoff.
+7. Monitor the daemon, queue, and logs; do not simulate stages in-session.
 
 Manual execution of an individual stage is only for the agent process that was
 invoked by the daemon for that specific task.
@@ -81,10 +81,7 @@ Read in this order:
 4. `component_system/entrypoint.py` for the canonical execution path
 5. `component_system/config.py` for promotion threshold and static binding
 
-Baseline reference files (workflow-managed; read-only): `component_system/baseline_branches.json` (per-branch baseline mapping), `component_system/baseline_metrics.json` (baseline run metrics). The workflow writes these; only read them for context.
-
-For interactive bootstrap, also inspect the current queue/state situation,
-especially recent items in `queue/done/` and the latest baseline information.
+Baseline files (workflow-managed; read-only): `baseline_branches.json`, `baseline_metrics.json`. For interactive bootstrap, inspect recent `queue/done/` and baseline state.
 
 ## Workspace and Path Rules
 
@@ -110,18 +107,7 @@ is the seed worktree. In that mode:
 
 ## Baseline-First Rule
 
-The first meaningful measurement in a fresh component-system run is the
-baseline result.
-
-- If `baseline_metrics.json` has no `last_val_bpb` for the baseline branch, the system should establish a
-  baseline run before evaluating ordinary seeds.
-- The baseline seed is a "no changes" measurement of the currently bound
-  component modules.
-- Treat that first baseline result as the reference point for later promotion
-  decisions.
-
-This mirrors the root-project rule that the first run should establish the
-baseline before experimenting.
+Establish baseline before evaluating seeds: if `baseline_metrics.json` has no `last_val_bpb`, run the baseline (no-changes) measurement first. Use that result as the reference for promotion.
 
 ```mermaid
 flowchart TD
@@ -187,14 +173,9 @@ The canonical component-system execution path is:
 uv run component_system/entrypoint.py
 ```
 
-When the DCA agent runs this (e.g. in a sandbox or tool), the run needs **at least 600 seconds** (first step ~150s + training budget 300s + buffer); use e.g. `timeout 600 uv run ...` so the execution environment does not kill the process early.
+Allow **at least 600 seconds** when DCA runs this (e.g. `timeout 600 uv run ...`).
 
-The DCA agent must report a structured JSON summary between the required
-markers, including a `metrics` object. The runner uses that structured report
-first and only falls back to parsing stdout/stderr when the JSON metrics are
-missing. If the initial DCA summary still lacks metrics, the system queues a
-follow-up recovery DCA that inspects the saved logs before declaring failure.
-The canonical metrics are:
+DCA must report a structured JSON summary (including `metrics`). Runner uses it first; falls back to stdout/stderr parsing if missing. No metrics → recovery DCA inspects logs. Canonical metrics:
 
 ```text
 ---
@@ -250,55 +231,32 @@ Use the same judgment standard as the original autoresearch loop:
 
 ## Bootstrap Procedure for Interactive Sessions
 
-When a human starts a fresh interactive session and asks you to use this
-component system, do this:
-
-1. Read `baseline_branches.json`, `baseline_metrics.json`, and recent queue/state outputs.
-2. Ensure the queue/state/worktree layout exists.
-3. Create an initial seed from the human prompt.
-4. Queue P for that seed.
-5. Start `uv run component_system/run.py`.
-6. Monitor the daemon and logs instead of manually executing P and DCA yourself.
+1. Read baseline files and recent queue/state.
+2. Ensure queue/state/worktree layout exists.
+3. Create a seed from the human prompt and queue it for P.
+4. Start `uv run component_system/run.py` and monitor; do not run P/DCA manually.
 
 ## Operating Loop
 
-Once the daemon is running, the queue-driven loop is:
-
-1. A seed is persisted under `state/seeds/` and queued to `queue/p/`.
-2. P creates or refreshes the seed worktree from baseline, generates code, and
-   commits on the seed branch.
-3. The daemon automatically queues DCA.
-4. DCA adapts, checks, runs, evaluates, and either promotes or archives the seed.
-5. The system persists runs and events under `state/` and continues with the
-   next available work.
-
-The system is intended to behave like an autonomous researcher: keep moving,
-measure results, retain wins, discard losses, and continue until explicitly
-stopped.
+1. Seed persisted in `state/seeds/`, queued to `queue/p/`.
+2. P refreshes worktree, generates code, commits on seed branch.
+3. Daemon queues DCA.
+4. DCA adapts, runs, evaluates; promotes or archives.
+5. State persisted under `state/`; daemon continues with next work.
 
 ## State and Logging
 
-The durable record of the workflow lives in files:
+- `component_system/history/state/seeds/`, `component_system/history/state/runs/`, `component_system/history/state/events/` — seed and run state.
+- `component_system/history/queue/done/`, `component_system/history/queue/error/` — completed and failed tasks.
+- `component_system/history/logs/` — agent stdout/stderr.
 
-- `state/seeds/` stores seed definitions and status.
-- `state/runs/` stores stage-run metadata and run outcomes.
-- `state/events/` stores seed event histories.
-- `queue/done/` archives completed tasks.
-- `queue/error/` captures failed tasks.
-- `logs/` stores stdout/stderr from agent invocations.
-
-Do not rely on chat context as the source of truth when the filesystem state
-already records the workflow.
+Use filesystem state as source of truth, not chat context.
 
 ## Daemon
 
-The resident daemon in `component_system/run.py` manages two single-threaded
-worker pools that poll `queue/{p,dca}/` continuously. Each worker dispatches a
-task to an external code agent, which reads files, modifies code in a git
-worktree, runs the canonical entrypoint, and prints structured summaries for
-the runner to persist.
+`run.py` runs two single-threaded workers polling `component_system/history/queue/p/` and `component_system/history/queue/dca/`. Workers dispatch to an external code agent; the agent reads files, edits the worktree, runs the entrypoint, and prints structured summaries.
 
-Start the daemon with:
+Start:
 
 ```bash
 # Default backend
@@ -329,4 +287,4 @@ environment:
 
 ### Logs
 
-Agent stdout/stderr for every invocation is saved to `component_system/history/logs/`.
+Agent stdout/stderr → `component_system/history/logs/`.
