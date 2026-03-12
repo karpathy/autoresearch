@@ -213,7 +213,10 @@ if __name__ == "__main__":
     with torch.device("meta"):
         model = GPT(config)
     model.to_empty(device=device)
-    model.load_state_dict(torch.load("model_weights.pt"))
+    state_dict = torch.load("model_weights.pt")
+    # weights saved from torch.compile'd model have "_orig_mod." prefix — strip it
+    state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
+    model.load_state_dict(state_dict)
     model = torch.compile(model, dynamic=False)
     prompt = "Hello, world!"
     output = generate_text(model, tokenizer, prompt, max_new_tokens=32)
