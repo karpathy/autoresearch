@@ -107,14 +107,16 @@ N_FEATURES = len(RETURN_LOOKBACKS) + len(VOLATILITY_WINDOWS) + 1 + 2 + 2 + 1  # 
 
 
 class ForwardReturnModel(nn.Module):
-    """Linear model with learned feature weights."""
+    """Linear model with output clipping."""
 
     def __init__(self, n_features: int = N_FEATURES):
         super().__init__()
         self.linear = nn.Linear(n_features, 1, bias=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.linear(x).squeeze(-1)
+        raw = self.linear(x).squeeze(-1)
+        # Hard clip predictions to [-0.03, 0.03] to prevent extreme positions
+        return torch.clamp(raw, -0.03, 0.03)
 
 
 def count_model_params(model: nn.Module | None = None) -> int:
@@ -124,7 +126,7 @@ def count_model_params(model: nn.Module | None = None) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Normalization
+# Normalization — Winsorized z-score to handle outliers
 # ---------------------------------------------------------------------------
 
 _feat_mean: np.ndarray | None = None
@@ -137,7 +139,10 @@ def _normalize(features: np.ndarray, fit: bool = False) -> np.ndarray:
         _feat_mean = np.nanmean(features, axis=0)
         _feat_std = np.nanstd(features, axis=0)
         _feat_std[_feat_std < 1e-8] = 1.0
-    return (features - _feat_mean) / _feat_std
+    result = (features - _feat_mean) / _feat_std
+    # Winsorize to [-3, 3] to prevent outlier features from dominating
+    result = np.clip(result, -3.0, 3.0)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -201,38 +206,19 @@ def main():
     features = _normalize(features, fit=True)
     features = np.nan_to_num(features, nan=0.0)
 
+    # Clip targets too — we don't care about predicting extreme moves accurately
+    targets = np.clip(targets, -0.03, 0.03)
+
     print(f"  Training samples: {len(features)}, Features: {features.shape[1]}")
-
-    # --- First, test raw momentum strategies to find what works ---
-    # Test: use -1 * (24h return) as prediction (mean reversion)
-    # Feature index 3 = 24h return (after normalization)
-    # Test a few simple strategies on train data to pick best direction
-
-    # Strategy: negative 72h return (mean reversion on medium term)
-    # Feature 4 = 72h return, Feature 5 = 168h return
-    for feat_idx, feat_name, sign in [
-        (3, "24h_return", -1),   # mean reversion
-        (3, "24h_return", +1),   # momentum
-        (4, "72h_return", -1),   # mean reversion
-        (4, "72h_return", +1),   # momentum
-        (5, "168h_return", -1),  # mean reversion
-        (5, "168h_return", +1),  # momentum
-    ]:
-        test_preds = sign * features[:, feat_idx] * 0.01  # small scale
-        n_above = np.sum(test_preds > 0.005)
-        n_below = np.sum(test_preds < -0.005)
-        # Quick directional accuracy check
-        agree = np.mean(np.sign(test_preds) == np.sign(targets))
-        print(f"  {feat_name} sign={sign:+d}: long={n_above}, short={n_below}, dir_acc={agree:.3f}")
 
     # --- Setup model ---
     model = ForwardReturnModel(n_features=features.shape[1]).to(device)
     n_params = count_model_params(model)
     print(f"  Model parameters: {n_params}")
 
-    # Use Huber loss with very strong weight decay
-    optimizer = torch.optim.SGD(model.parameters(), lr=1e-4, weight_decay=1e-1)
-    loss_fn = nn.HuberLoss(delta=0.005)
+    # SGD with strong momentum and moderate L2 for smooth convergence
+    optimizer = torch.optim.SGD(model.parameters(), lr=1e-5, weight_decay=5e-2, momentum=0.9)
+    loss_fn = nn.MSELoss()
 
     # --- Create DataLoader ---
     X_tensor = torch.tensor(features, dtype=torch.float32)
@@ -240,15 +226,13 @@ def main():
     dataset = TensorDataset(X_tensor, y_tensor)
     loader = DataLoader(dataset, batch_size=len(features), shuffle=False, drop_last=False)
 
-    # --- Train (very few epochs for linear model — converges fast) ---
+    # --- Train ---
     print(f"Training for up to {TIME_BUDGET}s...")
     train_start = time.time()
     epoch = 0
 
     while time.time() - train_start < TIME_BUDGET:
         epoch += 1
-        epoch_loss = 0.0
-        n_batches = 0
         model.train()
 
         for X_batch, y_batch in loader:
@@ -262,21 +246,16 @@ def main():
             loss.backward()
             optimizer.step()
 
-            epoch_loss += loss.item()
-            n_batches += 1
-
             if time.time() - train_start >= TIME_BUDGET:
                 break
 
-        if epoch % 100 == 0 or epoch == 1:
-            avg_loss = epoch_loss / max(n_batches, 1)
+        if epoch % 200 == 0 or epoch == 1:
+            with torch.no_grad():
+                preds_check = model(X_tensor.to(device)).cpu().numpy()
+            n_long = np.sum(preds_check > 0.005)
+            n_short = np.sum(preds_check < -0.005)
             elapsed = time.time() - train_start
-
-            # Check model weights
-            w = model.linear.weight.data.cpu().numpy().flatten()
-            b = model.linear.bias.data.cpu().numpy().item()
-            print(f"  Epoch {epoch:4d} | loss={avg_loss:.6f} | bias={b:.6f} | {elapsed:.1f}s")
-            print(f"    weights: {np.array2string(w, precision=4, separator=', ')}")
+            print(f"  Epoch {epoch:4d} | loss={loss.item():.6f} | long={n_long} short={n_short} | {elapsed:.1f}s")
 
     training_seconds = time.time() - train_start
     print(f"Training complete: {epoch} epochs in {training_seconds:.1f}s")
@@ -289,8 +268,7 @@ def main():
     with torch.no_grad():
         all_preds = model(X_tensor.to(device)).cpu().numpy()
 
-    print(f"  Pred stats: mean={np.mean(all_preds):.6f}, std={np.std(all_preds):.6f}, "
-          f"min={np.min(all_preds):.6f}, max={np.max(all_preds):.6f}")
+    print(f"  Pred stats: mean={np.mean(all_preds):.6f}, std={np.std(all_preds):.6f}")
     print(f"  Preds > 0.005: {np.sum(all_preds > 0.005)}, Preds < -0.005: {np.sum(all_preds < -0.005)}")
 
     train_result = evaluate_model(all_preds, train_timestamps, n_params, split="train")
