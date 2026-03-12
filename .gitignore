@@ -28,3 +28,4 @@ component_system/history/
 component_system/baseline_branches.json
 component_system/baseline_metrics.json
 *.log
+.ipynb_checkpoints/

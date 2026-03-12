@@ -7,7 +7,7 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Literal
 
 COMPONENT_SYSTEM_ROOT = Path(__file__).resolve().parent
 HISTORY_ROOT = COMPONENT_SYSTEM_ROOT / "history"
@@ -26,6 +26,7 @@ STAGE_DIRS = {
     "dca": QUEUE_ROOT / "dca",
     "direct": QUEUE_ROOT / "direct",
 }
+IN_PROGRESS_DIR = QUEUE_ROOT / "in_progress"
 DONE_DIR = QUEUE_ROOT / "done"
 ERROR_DIR = QUEUE_ROOT / "error"
 DAEMON_HEARTBEAT_PATH = STATE_ROOT / "daemon_heartbeat.json"
@@ -80,6 +81,7 @@ def ensure_queue_layout() -> None:
     HISTORY_ROOT.mkdir(parents=True, exist_ok=True)
     for d in STAGE_DIRS.values():
         d.mkdir(parents=True, exist_ok=True)
+    IN_PROGRESS_DIR.mkdir(parents=True, exist_ok=True)
     DONE_DIR.mkdir(parents=True, exist_ok=True)
     ERROR_DIR.mkdir(parents=True, exist_ok=True)
     SEEDS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -126,6 +128,10 @@ def read_task(path: Path) -> dict[str, Any]:
 def move_to_done(path: Path) -> Path:
     ensure_queue_layout()
     dest = DONE_DIR / path.name
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Task file already moved: {path}; possible duplicate daemon or double completion."
+        )
     if dest.exists():
         dest.unlink()
     path.rename(dest)
@@ -146,6 +152,60 @@ def list_pending(stage: str) -> list[Path]:
     if stage not in STAGE_DIRS:
         raise KeyError(f"Unknown stage {stage!r}")
     return sorted(STAGE_DIRS[stage].glob("*.json"))
+
+
+def _is_aux_dca_task(payload: dict[str, Any]) -> bool:
+    return payload.get("metrics_recovery") is True or payload.get("merge_resolution") is True
+
+
+def claim_pending(
+    stage: str,
+    lane: Literal["any", "gpu", "aux"] = "any",
+    eligible_fn: Callable[[dict[str, Any]], bool] | None = None,
+) -> Path | None:
+    """Atomically claim the oldest pending task for a stage/lane. If eligible_fn is set, only claim tasks for which it returns True (avoids P/DCA races)."""
+    ensure_queue_layout()
+    if stage not in STAGE_DIRS:
+        raise KeyError(f"Unknown stage {stage!r}")
+    if lane not in {"any", "gpu", "aux"}:
+        raise KeyError(f"Unknown lane {lane!r}")
+    for path in sorted(STAGE_DIRS[stage].glob("*.json")):
+        payload = _read_json(path, {})
+        if eligible_fn is not None and not eligible_fn(payload):
+            continue
+        if stage == "dca" and lane != "any":
+            is_aux = _is_aux_dca_task(payload)
+            if lane == "aux" and not is_aux:
+                continue
+            if lane == "gpu" and is_aux:
+                continue
+        claimed_path = IN_PROGRESS_DIR / path.name
+        try:
+            path.rename(claimed_path)
+            return claimed_path
+        except FileNotFoundError:
+            continue
+        except OSError:
+            # Another worker likely claimed the task first.
+            continue
+    return None
+
+
+def restore_in_progress_tasks() -> dict[str, int]:
+    """Move stranded in-progress tasks back to their stage queue."""
+    ensure_queue_layout()
+    restored = {stage: 0 for stage in STAGE_DIRS}
+    for path in sorted(IN_PROGRESS_DIR.glob("*.json")):
+        payload = _read_json(path, {})
+        stage = payload.get("stage")
+        if stage not in STAGE_DIRS:
+            continue
+        dest = STAGE_DIRS[stage] / path.name
+        if dest.exists():
+            dest.unlink()
+        path.rename(dest)
+        restored[stage] += 1
+    return restored
 
 
 def seed_path(seed_id: str) -> Path:
@@ -225,14 +285,21 @@ def save_baseline_branch_map(mapping: dict[str, str]) -> None:
     _write_json(BASELINE_BRANCHES_PATH, mapping)
 
 
-def load_baseline_metrics() -> dict[str, dict[str, Any]]:
-    """Load baseline_branch -> { last_val_bpb, promoted_branch, promoted_at, promoted_idea }."""
+def load_baseline_metrics() -> dict[str, list[dict[str, Any]]]:
+    """Load baseline_branch -> list of promotion/measurement records. Each record: val_bpb, promoted_branch?, promoted_idea?, promoted_at?, commit_sha?."""
     ensure_queue_layout()
-    return _read_json(BASELINE_METRICS_PATH, {})
+    raw = _read_json(BASELINE_METRICS_PATH, {})
+    result: dict[str, list[dict[str, Any]]] = {}
+    for branch, value in raw.items():
+        if isinstance(value, list):
+            result[branch] = value
+        else:
+            result[branch] = []
+    return result
 
 
-def save_baseline_metrics(metrics_by_branch: dict[str, dict[str, Any]]) -> None:
-    """Persist per-branch baseline metrics."""
+def save_baseline_metrics(metrics_by_branch: dict[str, list[dict[str, Any]]]) -> None:
+    """Persist per-branch baseline metrics (branch -> list of records)."""
     ensure_queue_layout()
     _write_json(BASELINE_METRICS_PATH, metrics_by_branch)
 

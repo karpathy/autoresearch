@@ -21,18 +21,25 @@ from pathlib import Path
 from typing import Any
 
 from component_system.domain.models import StageName
-from component_system.services.workflow import BASELINE_SEED_ID, WorkflowService
+from component_system.services.workflow import (
+    BASELINE_SEED_ID,
+    DuplicateRunStartError,
+    SyncResolutionQueued,
+    WorkflowService,
+)
 from component_system.task import (
     BASELINE_BRANCHES_PATH,
     BASELINE_METRICS_PATH,
     COMPONENT_SYSTEM_ROOT,
+    claim_pending,
     DAEMON_HEARTBEAT_PATH,
-    ensure_queue_layout,
     daemon_heartbeat,
-    list_pending,
+    ensure_queue_layout,
     LOG_ROOT,
     move_to_done,
+    move_to_error,
     read_task,
+    restore_in_progress_tasks,
 )
 
 PROJECT_ROOT = COMPONENT_SYSTEM_ROOT.parent
@@ -45,6 +52,9 @@ _shutdown = False
 WORKFLOW = WorkflowService()
 
 DEFAULT_TIMEOUTS = {"p": 900, "dca": 3600, "direct": 3600}
+
+# Canonical DCA entrypoint run: require ≥900s so training can complete. Agent must set command/tool timeout ≥ this.
+DCA_CANONICAL_RUN_TIMEOUT_SECONDS = 900
 
 STAGE_DOCS = {
     "p": ["PDCA-PLAN.md"],
@@ -65,7 +75,7 @@ def _signal_handler(_sig: int, _frame: Any) -> None:
 
 
 def _get_timeout(stage: str) -> int:
-    return int(os.environ.get(f"PDCA_TIMEOUT_{stage.upper()}", DEFAULT_TIMEOUTS.get(stage, 600)))
+    return int(os.environ.get(f"PDCA_TIMEOUT_{stage.upper()}", DEFAULT_TIMEOUTS.get(stage, 900)))
 
 
 def _build_log_paths(run_id: str) -> tuple[Path, Path]:
@@ -95,14 +105,15 @@ def _is_root_venv_active() -> bool:
 
 
 def _dca_command_guidance() -> tuple[str, str]:
+    timeout_prefix = f"timeout {DCA_CANONICAL_RUN_TIMEOUT_SECONDS}"
     if _is_root_venv_active():
         return (
-            "uv run --active component_system/entrypoint.py",
+            f"{timeout_prefix} uv run --active component_system/entrypoint.py",
             "Root .venv is active; use --active to reuse it from the worktree.",
         )
     return (
-        "uv run component_system/entrypoint.py",
-        "No active root .venv detected; fallback avoids --active so uv can run normally.",
+        f"{timeout_prefix} uv run component_system/entrypoint.py",
+        "No active root .venv; uv run without --active.",
     )
 
 
@@ -119,7 +130,7 @@ def _build_direct_code_prompt(prompt: str) -> str:
 def _stream_pipe_to_file(pipe: Any, handle: Any, chunks: list[str]) -> None:
     try:
         while True:
-            piece = pipe.read(16)
+            piece = pipe.readline()
             if not piece:
                 break
             chunks.append(piece)
@@ -259,6 +270,8 @@ def _invoke_agent(
     if config["via"] == "stdin":
         popen_kwargs["stdin"] = subprocess.PIPE
     else:
+        # Use DEVNULL so the agent never reads from parent's stdin (avoids EBADF under nohup/redirects).
+        popen_kwargs["stdin"] = subprocess.DEVNULL
         cmd.append(prompt)
 
     print(f"[{stage.upper()}] invoking {agent_name} (timeout={timeout}s)")
@@ -321,6 +334,64 @@ def _invoke_agent(
     return process.returncode, stdout, stderr, stdout_path, stderr_path
 
 
+def _build_metrics_recovery_prompt(task: dict[str, Any]) -> str:
+    """Lightweight prompt for metrics-recovery DCA: no protocol/docs, just task, log paths, report shape."""
+    task_json = json.dumps(task, indent=2)
+    source_run_id = task.get("source_run_id", "unknown")
+    stdout_log = task.get("source_stdout_log_path", "missing")
+    stderr_log = task.get("source_stderr_log_path", "missing")
+    report_json = json.dumps({
+        "checks": ["log_metrics_recovery"],
+        "notes": "Recovered metrics from saved logs.",
+        "completed_at": "YYYY-MM-DD HH:MM:SS",
+        "commit_sha": "",
+        "metrics": {
+            "val_bpb": 1.24,
+            "training_seconds": 300.1,
+            "total_seconds": 360.4,
+            "startup_seconds": 25.8,
+            "peak_vram_mb": 11967.8,
+            "mfu_percent": 2.15,
+            "total_tokens_M": 140.5,
+            "num_steps": 268,
+            "num_params_M": 11.5,
+            "depth": 4,
+        },
+    }, indent=2)
+    return (
+        "METRICS RECOVERY (focused task). Do not read protocol or stage docs.\n\n"
+        "Task (inline):\n"
+        f"{task_json}\n\n"
+        "Do not rerun training. Do not edit code. Do not create a commit.\n\n"
+        f"Inspect logs for source run {source_run_id!r}:\n"
+        f"  stdout: {stdout_log}\n"
+        f"  stderr: {stderr_log}\n\n"
+        "Recover canonical metrics from those logs if present, then print the summary block below. "
+        "If unrecoverable, use empty \"metrics\": {} and explain in notes.\n\n"
+        "AUTORESEARCH_DCA_SUMMARY_BEGIN\n"
+        f"{report_json}\n"
+        "AUTORESEARCH_DCA_SUMMARY_END\n"
+    )
+
+
+def _build_sync_resolution_prompt(task: dict[str, Any]) -> str:
+    """Prompt for sync-resolution: merge baseline into seed in the seed worktree, resolve conflicts, commit."""
+    baseline_branch = task.get("baseline_branch", "master")
+    seed_id = task.get("seed_id", "")
+    return (
+        "SYNC RESOLUTION (merge baseline into seed). You are in the seed worktree; the current branch is the seed branch.\n\n"
+        "The run could not sync this worktree with the baseline branch because the merge had conflicts.\n\n"
+        "Steps:\n"
+        f"1. Merge the baseline branch into the current branch: git merge {baseline_branch!r}\n"
+        "2. Resolve any conflicts, then commit the merge (e.g. git add . && git commit -m 'Merge baseline into seed').\n"
+        "3. Do not run the training entrypoint.\n"
+        "4. Print the following block so the runner can confirm success:\n\n"
+        "AUTORESEARCH_DCA_SUMMARY_BEGIN\n"
+        '{"checks":["sync_resolution"],"notes":"Merged baseline into seed; conflicts resolved.","completed_at":"YYYY-MM-DD HH:MM:SS","commit_sha":"<git rev-parse --short HEAD>","metrics":{}}\n'
+        "AUTORESEARCH_DCA_SUMMARY_END\n"
+    )
+
+
 def _build_merge_resolution_prompt(task: dict[str, Any]) -> str:
     """Lightweight prompt for merge-resolution DCA: no protocol/docs, just commit, merge, report."""
     task_json = json.dumps(task, indent=2)
@@ -359,23 +430,27 @@ def _build_merge_resolution_prompt(task: dict[str, Any]) -> str:
             "4. Print the DCA summary block below (same metrics as the previous run). Include the current commit SHA (after committing the merge) in the DCA summary JSON.\n\n"
         )
     else:
-        # Normal seed: merge the baseline branch (__baseline__) INTO the seed worktree so the seed is up to date.
+        # Normal seed: we need to merge the SEED branch INTO the baseline branch (so baseline gets the seed's changes).
+        # Do NOT merge baseline into seed — that is the wrong direction. Work in the project root on the baseline branch.
         if worktree_path:
             cwd_note = (
                 "Your working directory is the project root. "
-                f"The seed worktree is at {worktree_path!r}; run git commands from that directory (e.g. cd there first).\n\n"
+                f"The seed worktree is at {worktree_path!r} (use it only to commit any pending changes on the seed branch).\n\n"
             )
         else:
             cwd_note = (
                 "Your working directory is the project root. "
-                f"The seed worktree is at component_system/history/worktrees/{seed_id!r}; run git commands from that directory for the merge.\n\n"
+                f"The seed worktree is at component_system/history/worktrees/{seed_id!r} (use it only to commit any pending changes).\n\n"
             )
         steps = (
             "Steps:\n"
-            "1. Commit any uncommitted changes in the seed worktree (e.g. batch-size or other fixes).\n"
-            f"2. In the seed worktree, merge the baseline branch into the current branch: git merge {BASELINE_SEED_ID!r}. Resolve any conflicts, then commit the merge.\n"
+            "1. Commit any uncommitted changes in the seed worktree so the seed branch is complete.\n"
+            f"2. In the project root (main repo): checkout the baseline branch, then merge the seed branch into it:\n"
+            f"   git checkout {target_branch!r}\n"
+            f"   git merge {seed_id!r}\n"
+            "   Resolve any conflicts, then commit the merge. The result must be: the baseline branch contains the seed's changes (merge direction: seed → baseline).\n"
             "3. Do not run the training entrypoint; the experiment already completed and metrics exist.\n"
-            "4. Print the DCA summary block below (same metrics as the previous run). Include the current commit SHA (after committing the merge) in the DCA summary JSON.\n\n"
+            "4. Print the DCA summary block below (same metrics as the previous run). Use the merge commit SHA from the baseline branch (after the merge, from project root: git rev-parse HEAD).\n\n"
         )
 
     return (
@@ -393,7 +468,7 @@ def _build_merge_resolution_prompt(task: dict[str, Any]) -> str:
 def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
     """Build the agent prompt for a stage. Prompt types (by weight):
     - P: full header (protocol, stage doc, baseline files, task) + P workflow. Heavy.
-    - DCA metrics_recovery: full header + log-recovery instructions. Heavy.
+    - DCA metrics_recovery: lightweight; task + log paths, report shape (no protocol/docs). Light.
     - DCA merge_resolution: lightweight; task + commit, merge, report (no protocol/docs). Light.
     - DCA baseline_measurement: full header + baseline retry/OOM/commit/run. Heavy.
     - DCA normal: full header + adapt/run/commit/report. Heavy.
@@ -464,37 +539,25 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
             "Do not merge branches; only the DCA stage may trigger a merge into baseline.\n"
         )
     if stage == "dca":
+        sync_resolution = task.get("sync_resolution") is True
         merge_resolution = task.get("merge_resolution") is True
         metrics_recovery = task.get("metrics_recovery") is True
+        if sync_resolution:
+            return _build_sync_resolution_prompt(task)
         if merge_resolution:
             return _build_merge_resolution_prompt(task)
+        if metrics_recovery:
+            return _build_metrics_recovery_prompt(task)
         dca_cmd, dca_note = _dca_command_guidance()
         baseline_measurement = task.get("seed_id") == "__baseline__"
         conflict_block = ""
-        if metrics_recovery:
-            source_run_id = task.get("source_run_id", "unknown")
-            stdout_log = task.get("source_stdout_log_path", "missing")
-            stderr_log = task.get("source_stderr_log_path", "missing")
-            return header + (
-                "METRICS RECOVERY: The previous DCA run completed, but the runner could not confirm metrics from its final report.\n"
-                "Do not rerun training. Do not edit code. Do not create a commit.\n"
-                f"Inspect the saved logs for source run {source_run_id!r}:\n"
-                f"- stdout log: {stdout_log}\n"
-                f"- stderr log: {stderr_log}\n"
-                "Recover the canonical metrics from those logs if they are present, then print the final JSON summary.\n"
-                "Use this exact shape:\n"
-                "AUTORESEARCH_DCA_SUMMARY_BEGIN\n"
-                '{"checks":["log_metrics_recovery"],"notes":"Recovered metrics from saved logs.","completed_at":"YYYY-MM-DD HH:MM:SS","commit_sha":"","metrics":{"val_bpb":1.239972,"training_seconds":300.1,"total_seconds":360.4,"startup_seconds":25.8,"peak_vram_mb":11967.8,"mfu_percent":2.15,"total_tokens_M":140.5,"num_steps":268,"num_params_M":11.5,"depth":4}}\n'
-                "AUTORESEARCH_DCA_SUMMARY_END\n"
-                "If you still cannot recover metrics, print the same object with an empty metrics object and explain why in notes.\n"
-            )
         if baseline_measurement:
             return header + conflict_block + (
                 "BASELINE MEASUREMENT: establish the first reference metrics in the dedicated baseline worktree.\n"
                 "You must retry until the run completes successfully and you can report real metrics. Do not report empty metrics and stop.\n"
                 "If training fails with CUDA out of memory (OOM): the default batch size is for H100. Reduce device_batch_size (and if needed total_batch_size) in component_system/components/trainer.py (TrainingSettings) so training fits in available VRAM, then rerun until the baseline run completes. Only trivial execution fixes (e.g. batch size) are allowed; do not change model architecture or training logic.\n"
                 "If you modified any files (e.g. batch size for OOM), you must commit those changes on the baseline branch before reporting. An uncommitted worktree causes the follow-up merge to fail.\n"
-                f"Run the canonical command: {dca_cmd}\n"
+                f"Run the canonical command (≥{DCA_CANONICAL_RUN_TIMEOUT_SECONDS}s): `{dca_cmd} > training.log 2>&1`. Set your command/tool timeout to at least {DCA_CANONICAL_RUN_TIMEOUT_SECONDS} seconds. After the run, inspect training.log to confirm completion and recover or verify metrics.\n"
                 f"({dca_note})\n"
                 "Report the final result in JSON between these exact markers once training has completed successfully. Include the current commit SHA in the summary (commit any changes first).\n"
                 "AUTORESEARCH_DCA_SUMMARY_BEGIN\n"
@@ -504,9 +567,13 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
             )
         return header + conflict_block + (
             "You are the DCA stage.\n"
+            "Do not put forward new ideas or optimize for better metrics. Your only goal is to make the P-stage code run and report the result. "
+            '"Adapt or fix" means: fix bugs, import/runtime errors, OOM (e.g. reduce batch size), and config/path issues only. '
+            "Do not change model architecture, optimizer logic, hyperparameters, or training logic to improve results. "
+            "The task \"prompt\" is for context only; do not treat it as a goal to achieve in this stage.\n\n"
             "Workflow:\n"
             "1. Adapt or fix the generated code in the seed worktree until it runs.\n"
-            f"2. Run the canonical command: {dca_cmd}\n"
+            f"2. Run the canonical command (≥{DCA_CANONICAL_RUN_TIMEOUT_SECONDS}s): `{dca_cmd} > training.log 2>&1` (or `... 2>&1 | tee training.log` to also see output). Set your command/tool timeout to at least {DCA_CANONICAL_RUN_TIMEOUT_SECONDS} seconds. After the run, inspect training.log to confirm completion and recover or verify metrics.\n"
             f"   ({dca_note})\n"
             "3. If it fails for a simple reason, fix and rerun.\n"
             "4. Create a git commit in the seed branch for your changes.\n"
@@ -579,19 +646,25 @@ def _regenerate_progress_png() -> None:
         traceback.print_exc()
 
 
-def _worker(stage: str) -> None:
-    print(f"[daemon] worker-{stage.upper()} started")
+def _worker(stage: str, lane: str = "any") -> None:
+    worker_name = stage.upper() if lane == "any" else f"{stage.upper()}-{lane.upper()}"
+    print(f"[daemon] worker-{worker_name} started")
+    def eligible(payload: dict) -> bool:
+        return bool(WORKFLOW.is_seed_eligible_for_stage(payload.get("seed_id"), stage))
+
     while not _shutdown:
-        pending = list_pending(stage)
-        if not pending:
+        task_path = claim_pending(stage, lane=lane, eligible_fn=eligible)
+        if task_path is None:
             time.sleep(POLL_INTERVAL)
             continue
 
-        task_path = pending[0]
         try:
             task = read_task(task_path)
-            seed_id = task["seed_id"]
-            run_id = task["run_id"]
+            seed_id = task.get("seed_id")
+            run_id = task.get("run_id")
+            if not seed_id or not run_id:
+                move_to_error(task_path)
+                continue
             started_seed = None
             if stage == "direct":
                 started_seed, _ = WORKFLOW.mark_direct_code_run_started(seed_id, run_id)
@@ -607,10 +680,10 @@ def _worker(stage: str) -> None:
             worktree_path = task.get("worktree_path")
             if started_seed is not None and started_seed.worktree_path is not None:
                 worktree_path = started_seed.worktree_path
-            # Merge-resolution DCA runs from project root so the agent can operate on repo and worktrees
+            # Merge-resolution and metrics_recovery DCA run from project root; sync_resolution runs in seed worktree
             if stage == "dca" and (
                 task.get("merge_resolution") is True or task.get("metrics_recovery") is True
-            ):
+            ) and task.get("sync_resolution") is not True:
                 worktree_path = None
 
             if worktree_path:
@@ -649,28 +722,31 @@ def _worker(stage: str) -> None:
                         prompt_path=prompt_path_str,
                     )
                 else:
-                    run = WORKFLOW.finish_dca_run(
-                        seed_id,
-                        run_id,
-                        stdout,
-                        stderr=stderr,
-                        log_path=str(stdout_log_path) if stdout_log_path else None,
-                        stderr_log_path=str(stderr_log_path) if stderr_log_path else None,
-                        prompt_path=prompt_path_str,
-                        metrics_recovery=task.get("metrics_recovery") is True,
-                        merge_resolution=task.get("merge_resolution") is True,
-                    )
-                    if not run.summary.get("metrics_recovery_queued"):
-                        description = run.summary.get("notes") or run.summary.get("idea") or seed_id
-                        _append_results_tsv(seed_id, run.metrics, run.signal or "error", str(description))
-                        _regenerate_progress_png()
-                    if salvaged_dca:
-                        WORKFLOW.seed_repo.append_event(
+                    if task.get("sync_resolution") is True:
+                        WORKFLOW.finish_sync_resolution(seed_id, run_id)
+                    else:
+                        run = WORKFLOW.finish_dca_run(
                             seed_id,
-                            "dca.salvaged",
-                            f"DCA output contained final metrics, so the run was accepted despite agent exit code {exit_code}.",
-                            run_id=run_id,
+                            run_id,
+                            stdout,
+                            stderr=stderr,
+                            log_path=str(stdout_log_path) if stdout_log_path else None,
+                            stderr_log_path=str(stderr_log_path) if stderr_log_path else None,
+                            prompt_path=prompt_path_str,
+                            metrics_recovery=task.get("metrics_recovery") is True,
+                            merge_resolution=task.get("merge_resolution") is True,
                         )
+                        if not run.summary.get("metrics_recovery_queued"):
+                            description = run.summary.get("notes") or run.summary.get("idea") or seed_id
+                            _append_results_tsv(seed_id, run.metrics, run.signal or "error", str(description))
+                            _regenerate_progress_png()
+                        if salvaged_dca:
+                            WORKFLOW.seed_repo.append_event(
+                                seed_id,
+                                "dca.salvaged",
+                                f"DCA output contained final metrics, so the run was accepted despite agent exit code {exit_code}.",
+                                run_id=run_id,
+                            )
                 move_to_done(task_path)
                 print(f"[{stage.upper()}] task {task['task_id']} done")
             else:
@@ -692,33 +768,48 @@ def _worker(stage: str) -> None:
                         task_path=task_path, prompt_path=prompt_path_str,
                     )
                 print(f"[{stage.upper()}] task {task['task_id']} failed")
+        except SyncResolutionQueued:
+            # Sync with baseline failed; sync-resolution DCA was queued. Move P task to error so we don't retry it.
+            if task_path.exists():
+                move_to_error(task_path)
+            continue
+        except DuplicateRunStartError:
+            # Run was already started (e.g. restored in-progress task). Move task to error to avoid double run.
+            if task_path.exists():
+                move_to_error(task_path)
+            continue
         except Exception as exc:
             traceback.print_exc()
+            if not task_path.exists():
+                continue
             try:
                 task = read_task(task_path)
-                prompt_path_str = None
+                seed_id = task.get("seed_id")
                 run_id = task.get("run_id")
+                if not seed_id or not run_id:
+                    continue
+                prompt_path_str = None
                 if run_id:
                     p_path = LOG_DIR / f"{run_id}.prompt.txt"
                     if p_path.exists():
                         prompt_path_str = str(p_path)
                 if stage == "direct":
                     WORKFLOW.mark_direct_code_run_failed(
-                        task["seed_id"],
-                        task["run_id"],
+                        seed_id,
+                        run_id,
                         str(exc),
                         task_path=task_path,
                         prompt_path=prompt_path_str,
                     )
                 else:
                     WORKFLOW.mark_run_failed(
-                        task["seed_id"], task["run_id"], str(exc),
+                        seed_id, run_id, str(exc),
                         task_path=task_path, prompt_path=prompt_path_str,
                     )
             except Exception:
                 traceback.print_exc()
 
-    print(f"[daemon] worker-{stage.upper()} stopped")
+    print(f"[daemon] worker-{worker_name} stopped")
 
 
 def main() -> None:
@@ -728,15 +819,29 @@ def main() -> None:
         signal.signal(signal.SIGTERM, _signal_handler)
 
     ensure_queue_layout()
+    restored = restore_in_progress_tasks()
+    total_restored = sum(restored.values())
+    if total_restored:
+        print(
+            "[daemon] restored in_progress tasks "
+            f"(p={restored['p']}, dca={restored['dca']}, direct={restored['direct']})"
+        )
     daemon_heartbeat()
     agent = os.environ.get("PDCA_AGENT", "claude")
-    print(f"[daemon] starting component-system daemon — agent={agent}, workers=P/DCA/DIRECT")
+    print(f"[daemon] starting component-system daemon — agent={agent}, workers=P/DCA-GPU/DCA-AUX/DIRECT")
 
     pools: list[ThreadPoolExecutor] = []
-    for stage in ("p", "dca", "direct"):
-        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"pdca-{stage}")
+    stage_specs = (
+        ("p", "any", 2, "pdca-p"),
+        ("dca", "gpu", 1, "pdca-dca-gpu"),
+        ("dca", "aux", 1, "pdca-dca-aux"),
+        ("direct", "any", 1, "pdca-direct"),
+    )
+    for stage, lane, worker_count, prefix in stage_specs:
+        pool = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix=prefix)
         pools.append(pool)
-        pool.submit(_worker, stage)
+        for _ in range(worker_count):
+            pool.submit(_worker, stage, lane)
 
     last_heartbeat = time.monotonic()
     try:

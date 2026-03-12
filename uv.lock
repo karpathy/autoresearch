@@ -89,7 +89,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arxiv" },
+    { name = "arxiv", specifier = ">=2.4.1" },
     { name = "fastapi", specifier = ">=0.116.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "kernels", specifier = ">=0.11.7" },

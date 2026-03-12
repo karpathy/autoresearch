@@ -8,8 +8,8 @@
     <script defer src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js"></script>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script defer src="https://unpkg.com/ansi_up@6.0.2/ansi_up.js"></script>
-    <link href="{{ request.url_for('static', path='app.css') }}" rel="stylesheet">
-    <script defer src="{{ request.url_for('static', path='app.js') }}"></script>
+    <link href="{{ request.url_for('static', path='app.css') }}?v={{ request.app.state.static_version }}" rel="stylesheet">
+    <script defer src="{{ request.url_for('static', path='app.js') }}?v={{ request.app.state.static_version }}"></script>
   </head>
   <body class="flex min-h-screen flex-col bg-slate-950 text-slate-100">
     <header class="shrink-0 border-b border-slate-800 bg-slate-900/95">

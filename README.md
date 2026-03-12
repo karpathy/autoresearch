@@ -8,13 +8,15 @@ The idea: give an AI agent a small but real LLM training setup and let it experi
 
 ## How it works
 
-The repo is deliberately kept small and only really has a three files that matter:
+The repo is deliberately kept small and only really has three files that matter:
 
 - **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
 - **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
 - **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
 
 By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
+
+If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/status/2030720614752039185) looks pretty good for a lot more context.
 
 ## Quick start
 
@@ -47,41 +49,7 @@ Hi have a look at program.md and let's kick off a new experiment! let's do the s
 
 The `program.md` file is essentially a super lightweight "skill".
 
-### Component-system workflow
-
-The component system runs a continuous **Seed → P → DCA** loop. A resident daemon manages two workers (P and DCA) that poll a file-based queue and dispatch each stage to an external code agent (Claude Code, Codex, or OpenCode).
-
-**1. Start the web dashboard** (optional, but recommended for monitoring):
-
-```bash
-uv run uvicorn component_system.web.app:app --reload
-```
-
-Open http://127.0.0.1:8000 — the dashboard lives at `/component-system`. Use `--host 0.0.0.0` or `--port 8080` as needed.
-
-**2. Start the daemon:**
-
-```bash
-# Default: uses Claude Code
-uv run component_system/run.py
-
-# Or choose a different agent backend
-PDCA_AGENT=codex    uv run component_system/run.py
-PDCA_AGENT=opencode uv run component_system/run.py
-```
-
-**3. Bootstrap via a coding agent.** Do *not* tell the agent to execute PDCA stages manually. Instead, give it a prompt like:
-
-```text
-Understand this project and follow component_system/protocol.md.
-Do not execute PDCA stages manually in this session.
-Instead, bootstrap the component system by creating an initial seed
-and queuing it to component_system/queue/p/, then confirm the daemon
-(uv run component_system/run.py) is running so the P and DCA workers
-can process stages automatically.
-```
-
-Once bootstrapped, seeds flow through `queue/p/` → P worker → `queue/dca/` → DCA worker → `state/` automatically. Results and promotions are tracked in `state/` and visible in the web dashboard.
+For the component-system workflow, see `component_system/README.md`.
 
 ## Project structure
 
