@@ -1,0 +1,9 @@
+commit	val_bpb	memory_gb	status	description
+__baseline__	1.170151	18.54	KEEP	Measured the current baseline in the dedicated baseline worktree.
+__baseline__	1.170151	18.54	KEEP	Measured the current baseline in the dedicated baseline worktree.
+seed-868a41	1.255963	18.67	DISCARD	seed-868a41
+seed-9b1192	1.245404	18.67	DISCARD	No adaptation needed. P-stage SwiGLU activation replacement ran successfully without errors.
+seed-edcd01	1.161624	18.54	KEEP	No adaptations or fixes needed - entrypoint ran successfully on first attempt
+seed-fc880f	1.201537	18.5	DISCARD	Fixed RMSNorm parameter handling in optimizer setup. The issue was that RMSNorm layers have 1D weight parameters, but they were being passed to the Muon optimizer which expects 2D matrices. Separated 1D scalar params (RMSNorm weights, ve_gate weights) to use AdamW instead of Muon. Also added the final ln_f weight to the optimizer groups which was previously missing.
+seed-edcd01	1.22585	11.57	DISCARD	Disabled model compilation (compile_model=False) to fix missing setuptools runtime error, and reduced device_batch_size from 32 to 16 to fix OOM error
+seed-edcd01			DISCARD	Cannot recover metrics: previous run was a merge resolution task that failed due to unresolved conflicts. No training was executed. Logs show merge conflicts in multiple files (.gitignore, README.md, protocol.md, run.py, workflow.py, task.py) but no training output or metrics.

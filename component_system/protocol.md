@@ -107,7 +107,7 @@ is the seed worktree. In that mode:
 
 ## Baseline-First Rule
 
-Establish baseline before evaluating seeds: if `baseline_metrics.json` has no `last_val_bpb`, run the baseline (no-changes) measurement first. Use that result as the reference for promotion.
+Establish baseline before evaluating seeds: if `baseline_metrics.json` has no baseline result for the branch (no records), run the baseline (no-changes) measurement first. Use that result as the reference for promotion.
 
 ```mermaid
 flowchart TD
@@ -173,7 +173,7 @@ The canonical component-system execution path is:
 uv run component_system/entrypoint.py
 ```
 
-Allow **at least 600 seconds** when DCA runs this (e.g. `timeout 600 uv run ...`).
+Allow **at least 900 seconds** when DCA runs this (e.g. `timeout 900 uv run ...`).
 
 DCA must report a structured JSON summary (including `metrics`). Runner uses it first; falls back to stdout/stderr parsing if missing. No metrics → recovery DCA inspects logs. Canonical metrics:
 

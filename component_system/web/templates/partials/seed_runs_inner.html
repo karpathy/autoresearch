@@ -2,11 +2,14 @@
   {% for run in runs %}
   <article class="rounded-xl border border-slate-800 bg-slate-900/80 p-3">
     <div class="flex items-center justify-between gap-3">
-      <div>
+      <div class="min-w-0 flex-1">
+        {% if run.created_at %}
+        <p class="section-label">{{ run.created_at|format_ts }}</p>
+        {% endif %}
         <p class="text-sm font-medium text-white">{% if run.stage.value == 'p' %}Plan{% else %}{{ run.stage.value|upper }}{% endif %} · {{ run.status.value }}</p>
-        <p class="mt-1 text-xs text-slate-500">{{ run.run_id }}</p>
+        <p class="mt-1 text-xs text-slate-500 font-mono-id">{{ run.run_id }}</p>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 shrink-0">
         {% if run.signal %}
         <span class="rounded-full bg-slate-800 px-2 py-1 text-[11px] uppercase tracking-wide text-slate-300">{{ run.signal }}</span>
         {% endif %}
@@ -26,6 +29,22 @@
         </button>
       </div>
     </div>
+    {% if run.stage.value == 'p' and run.summary and (run.summary.get('idea') or run.summary.get('description')) %}
+    <div class="mt-3 space-y-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
+      {% if run.summary.get('idea') %}
+      <div>
+        <p class="section-label">Idea</p>
+        <p class="mt-1 text-white">{{ run.summary.get('idea', '') }}</p>
+      </div>
+      {% endif %}
+      {% if run.summary.get('description') %}
+      <div>
+        <p class="section-label">Description</p>
+        <p class="mt-1 whitespace-pre-wrap leading-6 text-slate-300">{{ run.summary.get('description', '') }}</p>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
     {% if run.metrics %}
     <dl class="mt-3 grid gap-2 sm:grid-cols-3 text-xs text-slate-400">
       {% for key, value in run.metrics.items() %}

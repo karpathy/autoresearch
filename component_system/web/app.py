@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -31,6 +32,16 @@ def create_app() -> FastAPI:
     app.state.workflow = default_workflow_service()
     app.state.static_version = _static_version()
     app.state.templates = Jinja2Templates(directory=str(TEMPLATE_ROOT))
+
+    def _format_ts(ts: float | None) -> str:
+        if ts is None:
+            return ""
+        try:
+            return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        except (TypeError, OSError):
+            return ""
+
+    app.state.templates.env.filters["format_ts"] = _format_ts
     app.mount("/static", StaticFiles(directory=str(STATIC_ROOT)), name="static")
     app.include_router(router, prefix="/component-system")
 

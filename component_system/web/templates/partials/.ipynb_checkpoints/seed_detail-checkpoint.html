@@ -1,0 +1,326 @@
+<section
+  class="rounded-2xl border border-slate-800 bg-slate-900/95 p-5 shadow-sm"
+  x-data="{ activeRunId: localStorage.getItem('seed-active-run-{{ seed.seed_id }}') || null, eventsOpen: true }"
+  x-bind:data-log-viewer-open="activeRunId ? 'true' : 'false'"
+  x-on:keydown.escape.window="
+    activeRunId = null;
+    localStorage.removeItem('seed-active-run-{{ seed.seed_id }}');
+  "
+>
+  <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div class="min-w-0 flex-1">
+      <p class="section-label">Seed detail</p>
+      <h2 class="mt-1 font-mono-id text-xl font-semibold text-white">{{ seed.seed_id }}</h2>
+      {% if can_edit_prompt %}
+      <form
+        class="mt-3 space-y-2"
+        hx-post="{{ request.url_for('update_seed_prompt', seed_id=seed.seed_id) }}"
+        hx-target="#seed-detail"
+        hx-swap="innerHTML"
+        method="post"
+      >
+        <label class="block text-xs font-medium uppercase tracking-[0.2em] text-slate-500" for="seed_prompt_{{ seed.seed_id }}">Seed prompt (editable before Plan starts)</label>
+        <textarea
+          class="min-h-24 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none ring-0 placeholder:text-slate-500 focus:border-sky-500"
+          id="seed_prompt_{{ seed.seed_id }}"
+          name="prompt"
+          required
+        >{{ seed.prompt }}</textarea>
+        <button class="rounded-lg border border-slate-600 px-3 py-1.5 text-sm font-medium text-slate-200 transition hover:border-slate-500 hover:bg-slate-800" type="submit">
+          Save prompt
+        </button>
+      </form>
+      {% else %}
+      <p class="mt-3 max-w-3xl text-sm leading-6 text-slate-300">{{ seed.prompt }}</p>
+      {% endif %}
+    </div>
+    <div class="flex flex-wrap gap-2 shrink-0">
+      {% if seed.ralph_loop_enabled %}
+      <form hx-post="{{ request.url_for('stop_ralph_loop', seed_id=seed.seed_id) }}" hx-swap="none" method="post">
+        <button class="rounded-lg border border-fuchsia-500/70 px-4 py-2 text-sm font-medium text-fuchsia-200 transition hover:border-fuchsia-400 hover:bg-fuchsia-500/10 focus:outline-none focus:ring-2 focus:ring-fuchsia-400 focus:ring-offset-2 focus:ring-offset-slate-900" type="submit">
+          Stop Ralph Loop
+        </button>
+      </form>
+      {% else %}
+      <form hx-post="{{ request.url_for('start_ralph_loop', seed_id=seed.seed_id) }}" hx-swap="none" method="post">
+        <button class="rounded-lg bg-fuchsia-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-fuchsia-400 focus:outline-none focus:ring-2 focus:ring-fuchsia-400 focus:ring-offset-2 focus:ring-offset-slate-900" type="submit">
+          Start Ralph Loop
+        </button>
+      </form>
+      {% endif %}
+      <form hx-post="{{ request.url_for('queue_p', seed_id=seed.seed_id) }}" hx-swap="none" method="post">
+        <button class="rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-2 focus:ring-offset-slate-900" type="submit">
+          Run Plan
+        </button>
+      </form>
+      <form hx-post="{{ request.url_for('queue_dca', seed_id=seed.seed_id) }}" hx-swap="none" method="post">
+        <button class="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-slate-500 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900" type="submit">
+          Run Do-Check-Action
+        </button>
+      </form>
+    </div>
+  </div>
+
+  {% if setup_error %}
+  <div class="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-200">
+    {{ setup_error }}
+  </div>
+  {% endif %}
+
+  <div class="mt-6 grid gap-4 lg:grid-cols-3">
+    <div class="rounded-xl border border-slate-800 bg-slate-950/80 p-4">
+      <div class="flex items-center justify-between gap-2">
+        <p class="section-label">Status</p>
+        <span class="status-pill status-{{ seed.status.value }} shrink-0">{{ seed.status.value|replace('_', ' ')|title }}</span>
+      </div>
+      <p class="mt-2 text-sm text-slate-400">Ralph loop: {% if seed.ralph_loop_enabled %}<span class="text-fuchsia-300">enabled</span>{% else %}<span class="empty-value">disabled</span>{% endif %}</p>
+      <p class="mt-2 text-sm text-slate-400">Latest signal: {% if seed.latest_signal %}<span>{{ seed.latest_signal }}</span>{% else %}<span class="empty-value">—</span>{% endif %}</p>
+    </div>
+    <div class="rounded-xl border border-slate-800 bg-slate-950/80 p-4">
+      <p class="section-label">Branches</p>
+      <dl class="mt-3 space-y-2 text-sm text-slate-300">
+        <div class="flex justify-between gap-3"><dt class="text-slate-500">Baseline</dt><dd class="font-mono-id break-all">{{ seed.baseline_branch }}</dd></div>
+        <div class="flex justify-between gap-3"><dt class="text-slate-500">Branch</dt><dd class="font-mono-id break-all">{{ seed.seed_id }}</dd></div>
+      </dl>
+    </div>
+    <div class="rounded-xl border border-slate-800 bg-slate-950/80 p-4">
+      <p class="section-label">Worktrees</p>
+      <dl class="mt-3 space-y-2 break-all text-sm text-slate-300">
+        <div><dt class="text-slate-500">Seed worktree</dt><dd class="mt-1 font-mono-id empty-value">{{ seed.worktree_path or "—" }}</dd></div>
+      </dl>
+    </div>
+  </div>
+
+  <div class="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.2fr),minmax(0,0.8fr)]">
+    <div class="min-w-0 space-y-4">
+      <div class="rounded-xl border border-slate-800 bg-slate-950/80 p-4">
+        <h3 class="font-medium text-white">Plan</h3>
+        {% if seed.plan %}
+        <div class="mt-3 space-y-3 text-sm text-slate-300">
+          <div>
+            <p class="section-label">Idea</p>
+            <p class="mt-1 text-white">{{ seed.plan.title }}</p>
+          </div>
+          <div>
+            <p class="section-label">Target component</p>
+            <p class="mt-1 font-mono-id text-white">{{ seed.plan.target_component }}</p>
+          </div>
+          <div>
+            <p class="section-label">Description</p>
+            <p class="mt-1 whitespace-pre-wrap leading-6 text-slate-300">{{ seed.plan.description }}</p>
+          </div>
+          {% if seed.plan.commit_sha %}
+          <div>
+            <p class="section-label">Generated commit</p>
+            <p class="mt-1 font-mono-id text-white">{{ seed.plan.commit_sha }}</p>
+          </div>
+          {% endif %}
+        </div>
+        {% else %}
+        <p class="mt-3 text-sm text-slate-500">No plan yet. Click <strong>Run Plan</strong> to queue the task; the plan is generated when the <strong>daemon</strong> runs it.</p>
+        {% endif %}
+      </div>
+
+      <div class="rounded-xl border border-slate-800 bg-slate-950/80 p-4">
+        <div class="flex items-center justify-between">
+          <h3 class="font-medium text-white">Runs</h3>
+        </div>
+        {% if runs and seed.status.value in ['queued', 'planning'] %}
+        <p class="mt-2 text-xs text-sky-300/90">Runs stay <strong>queued</strong> until the daemon is running. Start: <code class="font-mono-id">uv run component_system/run.py</code></p>
+        {% endif %}
+        <div class="scroll-pane scroll-pane-detail mt-3 space-y-3 pr-1">
+          {% if runs %}
+            {% for run in runs %}
+            <article class="rounded-xl border border-slate-800 bg-slate-900/80 p-3">
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <p class="text-sm font-medium text-white">{% if run.stage.value == 'p' %}Plan{% else %}{{ run.stage.value|upper }}{% endif %} · {{ run.status.value }}</p>
+                  <p class="mt-1 text-xs text-slate-500">{{ run.run_id }}</p>
+                </div>
+                <div class="flex items-center gap-2">
+                  {% if run.signal %}
+                  <span class="rounded-full bg-slate-800 px-2 py-1 text-[11px] uppercase tracking-wide text-slate-300">{{ run.signal }}</span>
+                  {% endif %}
+                  <button
+                    class="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:border-slate-600 hover:bg-slate-900"
+                    type="button"
+                    x-on:click="
+                      activeRunId = activeRunId === '{{ run.run_id }}' ? null : '{{ run.run_id }}';
+                      if (activeRunId) {
+                        localStorage.setItem('seed-active-run-{{ seed.seed_id }}', activeRunId);
+                      } else {
+                        localStorage.removeItem('seed-active-run-{{ seed.seed_id }}');
+                      }
+                    "
+                  >
+                    <span x-text="activeRunId === '{{ run.run_id }}' ? 'Hide log' : 'View log'"></span>
+                  </button>
+                </div>
+              </div>
+              {% if run.metrics %}
+              <dl class="mt-3 grid gap-2 sm:grid-cols-3 text-xs text-slate-400">
+                {% for key, value in run.metrics.items() %}
+                <div class="rounded-lg bg-slate-950 px-3 py-2">
+                  <dt>{{ key }}</dt>
+                  <dd class="mt-1 text-sm text-white">{{ value }}</dd>
+                </div>
+                {% endfor %}
+              </dl>
+              {% endif %}
+            </article>
+            <template x-if="activeRunId === '{{ run.run_id }}'">
+              <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4">
+                <div class="flex h-[88vh] w-[96vw] max-w-[1500px] flex-col rounded-xl border border-slate-700 bg-slate-950 shadow-2xl">
+                  <div class="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+                    <div>
+                      <p class="font-medium text-white">Run log · {{ run.run_id }}</p>
+                      <p class="text-xs text-slate-500">{{ run.stage.value|upper }} · {{ run.status.value }}</p>
+                    </div>
+                    <button
+                      class="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-slate-600 hover:bg-slate-900"
+                      type="button"
+                      x-on:click="
+                        activeRunId = null;
+                        localStorage.removeItem('seed-active-run-{{ seed.seed_id }}');
+                      "
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div class="p-4">
+                    <div class="mb-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-2">
+                      <div class="truncate">stdout: {{ run.log_path or "pending" }}</div>
+                      <div class="truncate">stderr: {{ run.stderr_log_path or "pending" }}</div>
+                    </div>
+                    <div class="mb-2 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                      <span class="status-pill status-{{ run.status.value }}">{{ run.status.value }}</span>
+                      <span data-log-status data-run-id="{{ run.run_id }}">
+                        {% if run.status.value in ['running', 'queued'] %}Streaming...{% else %}Completed{% endif %}
+                      </span>
+                    </div>
+                    <div class="run-log-grid h-[72vh]">
+                      <div class="run-log-pane">
+                        <div class="mb-1 flex items-center justify-between">
+                          <p class="text-[11px] uppercase tracking-wide text-slate-500">Prompt</p>
+                          <button
+                            class="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:border-slate-600 hover:bg-slate-900 disabled:opacity-50"
+                            type="button"
+                            data-prompt-copy
+                            data-run-id="{{ run.run_id }}"
+                            disabled
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <pre
+                          class="run-log-pre"
+                          data-prompt-content
+                          data-run-id="{{ run.run_id }}"
+                        ></pre>
+                      </div>
+                      <div class="run-log-pane">
+                        <div class="mb-1 flex items-center justify-between">
+                          <p class="text-[11px] uppercase tracking-wide text-slate-500">stdout</p>
+                          <button
+                            class="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:border-slate-600 hover:bg-slate-900 disabled:opacity-50"
+                            type="button"
+                            data-log-copy
+                            data-run-id="{{ run.run_id }}"
+                            data-stream="stdout"
+                            disabled
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <pre
+                          class="run-log-pre"
+                          data-log-stream
+                          data-run-id="{{ run.run_id }}"
+                          data-run-status="{{ run.status.value }}"
+                          data-stream="stdout"
+                        ></pre>
+                      </div>
+                      <div class="run-log-pane">
+                        <div class="mb-1 flex items-center justify-between">
+                          <p class="text-[11px] uppercase tracking-wide text-slate-500">stderr</p>
+                          <button
+                            class="rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:border-slate-600 hover:bg-slate-900 disabled:opacity-50"
+                            type="button"
+                            data-log-copy
+                            data-run-id="{{ run.run_id }}"
+                            data-stream="stderr"
+                            disabled
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <pre
+                          class="run-log-pre"
+                          data-log-stream
+                          data-run-id="{{ run.run_id }}"
+                          data-run-status="{{ run.status.value }}"
+                          data-stream="stderr"
+                        ></pre>
+                      </div>
+                    </div>
+                    {% if run.error %}
+                    <p class="mt-2 text-rose-300">{{ run.error }}</p>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+            </template>
+            {% endfor %}
+          {% else %}
+          <p class="text-sm text-slate-500">No runs yet. Use <strong>Run Plan</strong> to start.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="min-w-0 space-y-4">
+      <div class="rounded-xl border border-slate-800 bg-slate-950/80 p-4">
+        <h3 class="font-medium text-white">Latest Metrics</h3>
+        {% if seed.latest_metrics %}
+        <dl class="mt-3 grid gap-2 sm:grid-cols-2 text-sm text-slate-300">
+          {% for key, value in seed.latest_metrics.items() %}
+          <div class="rounded-lg bg-slate-900 px-3 py-3">
+            <dt class="section-label">{{ key }}</dt>
+            <dd class="mt-1 font-mono-id text-white">{{ value }}</dd>
+          </div>
+          {% endfor %}
+        </dl>
+        {% else %}
+        <p class="mt-3 text-sm text-slate-500">Metrics appear here after Do-Check-Action runs the training entrypoint.</p>
+        {% endif %}
+      </div>
+
+      <div class="rounded-xl border border-slate-800 bg-slate-950/80 p-4">
+        <div class="flex items-center justify-between">
+          <h3 class="font-medium text-white">Timeline</h3>
+          <button class="text-sm text-sky-400 hover:text-sky-300 transition" type="button" x-on:click="eventsOpen = !eventsOpen">
+            <span x-text="eventsOpen ? 'Hide events' : 'Show events'"></span>
+          </button>
+        </div>
+        <div class="scroll-pane scroll-pane-detail mt-3 space-y-3 pr-1" x-show="eventsOpen">
+          {% if events %}
+            {% for event in events %}
+            <article class="min-w-0 rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-3">
+              <p class="min-w-0 break-words text-sm font-medium text-white">{{ event.message }}</p>
+              {% if event.commit_sha %}
+              <p class="mt-1 text-xs font-mono text-slate-400">commit: {{ event.commit_sha }}</p>
+              {% endif %}
+              {% if event.target_branch %}
+              <p class="mt-0.5 text-xs text-slate-400">target branch: {{ event.target_branch }}</p>
+              {% endif %}
+              <p class="mt-2 text-xs text-slate-500"><span class="uppercase tracking-[0.2em]">{{ event.kind }}</span> · {{ event.created_at_human }}</p>
+            </article>
+            {% endfor %}
+          {% else %}
+          <p class="text-sm text-slate-500">No events yet.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

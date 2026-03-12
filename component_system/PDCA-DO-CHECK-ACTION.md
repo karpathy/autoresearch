@@ -23,7 +23,7 @@ Retry until the run succeeds and you report real metrics. No empty metrics.
 ## Workflow
 1. Work in the seed worktree (one branch per seed).
 2. Adapt/fix until it runs (runtime only: bugs, OOM, imports, config; no model/hyperparameter/training-logic changes for better metrics).
-3. Run canonical command (**≥600s**): `timeout 600 uv run --active component_system/entrypoint.py`. **Must set command/tool timeout ≥600s running this command** when invoking this run (so the process is not killed early).
+3. Run canonical command (**≥900s**): `timeout 900 uv run --active component_system/entrypoint.py > training.log 2>&1` (or `... 2>&1 | tee training.log` to also see output). **Must set command/tool timeout ≥900s**. After the run, inspect `training.log` to confirm completion and recover or verify metrics.
 4. On bug/OOM: fix and rerun; for baseline, retry until success.
 5. Commit on seed branch before reporting.
 6. Print DCA summary block with `commit_sha` in JSON.
@@ -47,17 +47,17 @@ If no final metrics, use `"metrics": {}`. Runner extracts from stdout/stderr: `v
 | `val_bpb` drops >= 0.001 vs baseline | `positive_signal` |
 | `val_bpb` rises >= 0.001 vs baseline | `negative_signal` |
 | difference < 0.001 | `neutral` |
-| no historical baseline `last_val_bpb` | `positive_signal` (first recording) |
+| no historical baseline (best_val_bpb) | `positive_signal` (first recording) |
 | metrics missing or training error | `error` |
 
 The threshold is defined in `component_system/config.py` (`PROMOTION_THRESHOLD`).
 
 ## Action: Promotion Rules
 
-Only DCA may trigger a merge into baseline; P must not. Runner records `commit_sha`; on positive signal the workflow merges seed → baseline. Merge conflict → system queues merge-resolution DCA.
+Only DCA may trigger a merge into baseline; P must not. Runner records `commit_sha`; on positive signal the workflow merges seed into baseline first, then updates metrics/state. Merge conflict → system queues merge-resolution DCA.
 
 ### Promotion (`positive_signal`)
-1. System merges seed into baseline (you do not run merge).
+1. System merges seed into baseline first (you do not run merge).
 2. Workflow updates `baseline_metrics.json` / `baseline_branches.json`.
 3. Metadata in seed/run state.
 
