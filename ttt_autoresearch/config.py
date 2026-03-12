@@ -26,7 +26,7 @@ class TTTAutoResearchConfig:
     model_name: str = "openai/gpt-oss-120b"
     provider: str | None = None
     api_base: str | None = None
-    target_val_bpb: float | None = 0.85
+    target_val_bpb: float | None = 0.97
     max_steps: int = 12
     groups_per_step: int = 2
     samples_per_step: int = 8

@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--target-val-bpb",
         type=float,
-        default=0.85,
+        default=0.97,
         help="Target val_bpb used to build the prompt.",
     )
     parser.add_argument(

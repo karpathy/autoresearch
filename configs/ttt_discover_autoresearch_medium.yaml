@@ -1,7 +1,7 @@
 model_name: openai/gpt-oss-120b
 provider: null
 api_base: null
-target_val_bpb: 0.85
+target_val_bpb: 0.97
 max_steps: 12
 groups_per_step: 2
 samples_per_step: 8

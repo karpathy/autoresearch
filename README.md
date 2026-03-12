@@ -93,7 +93,7 @@ The shipped medium/large presets use:
 
 Both primary model modes use the same practical unattended search shape:
 
-- `target_val_bpb: 0.85`
+- `target_val_bpb: 0.97`
 - `execution_backend: hyperbolic`
 - `groups_per_step: 2`
 - `samples_per_step: 8`
@@ -310,14 +310,14 @@ The main knobs for unattended Hyperbolic execution are:
 The checked-in presets use:
 
 ```yaml
-target_val_bpb: 0.85
+target_val_bpb: 0.97
 ```
 
 This is a prompt-side benchmark target, not a reward cap.
 
-- the model is shown the current starting state and the gap to `0.85`
+- the model is shown the current starting state and the gap to `0.97`
 - the RL reward still comes from the actual achieved `val_bpb`
-- if a rollout beats `0.85`, it is still rewarded more for going even lower
+- if a rollout beats `0.97`, it is still rewarded more for going even lower
 
 This mirrors how upstream `discover` environments use fixed benchmark targets in the prompt while computing reward from the evaluated task score.
 
