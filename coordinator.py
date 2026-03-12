@@ -118,7 +118,7 @@ def detect_vram_gb() -> Optional[float]:
     try:
         import torch
         if torch.cuda.is_available():
-            return torch.cuda.get_device_properties(0).total_mem / (1024 ** 3)
+            return torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
     except Exception:
         pass
     return None
@@ -634,7 +634,9 @@ class Coordinator:
             return False
         try:
             # Sanity: same rules as global best
-            if val_bpb <= 0 or val_bpb < 0.5:
+            if val_bpb <= 0:
+                return False
+            if val_bpb < 0.5:
                 return False
 
             meta_key = f"@{HUB_ORG}/best/tier/{tier}/metadata"
@@ -696,7 +698,7 @@ class Coordinator:
                     "base64": True,
                 }]})
 
-            improvement = (previous_best_bpb - val_bpb) if previous_best_bpb else 0
+            improvement = (previous_best_bpb - val_bpb) if previous_best_bpb is not None else 0
             self._log(f"NEW TIER BEST ({tier})! val_bpb={val_bpb:.6f} (improved {improvement:.4f})")
             return True
 
