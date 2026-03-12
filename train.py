@@ -348,7 +348,7 @@ def main():
     val_features_early = _normalize(val_features_early, fit=False)
     val_features_early = np.nan_to_num(val_features_early, nan=0.0)
 
-    for rank, cand in enumerate(candidates[:30]):
+    for rank, cand in enumerate(candidates[:100]):
         proxy_score, feat_id, sign, scale, extra = cand
 
         if feat_id >= 0:
