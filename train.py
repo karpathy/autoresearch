@@ -100,26 +100,33 @@ def compute_targets(df: pd.DataFrame) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Model
+# Model — Mean-reversion with learned scale
 # ---------------------------------------------------------------------------
 
 N_FEATURES = len(RETURN_LOOKBACKS) + len(VOLATILITY_WINDOWS) + 1 + 2 + 2 + 1  # 14
 
+# Feature indices (after normalization)
+IDX_24H_RETURN = 3  # 24h lookback return
+
 
 class ForwardReturnModel(nn.Module):
-    """Linear model with output clipping."""
+    """Single learnable parameter: scale for mean-reversion signal.
+
+    Uses -1 * (24h return) * scale as the prediction.
+    Only 1 parameter, so basically zero overfitting risk.
+    """
 
     def __init__(self, n_features: int = N_FEATURES):
         super().__init__()
-        self.linear = nn.Linear(n_features, 1, bias=True)
+        # Single scale parameter, initialized to a small value
+        self.scale = nn.Parameter(torch.tensor(0.005))
+        # Dummy to satisfy n_features interface
+        self._n_features = n_features
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        raw = self.linear(x).squeeze(-1)
-        return torch.clamp(raw, -0.03, 0.03)
-
-    def predict(self, x: torch.Tensor) -> torch.Tensor:
-        """Negated output for evaluation — exploits anti-correlation."""
-        return -self.forward(x)
+        # Mean reversion: negative of 24h return, scaled
+        signal = -x[:, IDX_24H_RETURN] * self.scale
+        return signal
 
 
 def count_model_params(model: nn.Module | None = None) -> int:
@@ -129,7 +136,7 @@ def count_model_params(model: nn.Module | None = None) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Normalization — Winsorized z-score to handle outliers
+# Normalization — Winsorized z-score
 # ---------------------------------------------------------------------------
 
 _feat_mean: np.ndarray | None = None
@@ -143,7 +150,6 @@ def _normalize(features: np.ndarray, fit: bool = False) -> np.ndarray:
         _feat_std = np.nanstd(features, axis=0)
         _feat_std[_feat_std < 1e-8] = 1.0
     result = (features - _feat_mean) / _feat_std
-    # Winsorize to [-3, 3] to prevent outlier features from dominating
     result = np.clip(result, -3.0, 3.0)
     return result
 
@@ -168,7 +174,7 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     model.eval()
     with torch.no_grad():
         X = torch.tensor(features, dtype=torch.float32, device=device)
-        preds = model.predict(X).cpu().numpy()
+        preds = model(X).cpu().numpy()
 
     return preds, timestamps
 
@@ -198,7 +204,6 @@ def main():
     # --- Compute features and targets ---
     features, timestamps = compute_features(train_df)
     targets = compute_targets(train_df)
-
     targets = targets[MAX_LOOKBACK:]
 
     valid = ~np.isnan(targets)
@@ -209,8 +214,8 @@ def main():
     features = _normalize(features, fit=True)
     features = np.nan_to_num(features, nan=0.0)
 
-    # Clip targets too — we don't care about predicting extreme moves accurately
-    targets = np.clip(targets, -0.03, 0.03)
+    # Clip targets
+    targets = np.clip(targets, -0.05, 0.05)
 
     print(f"  Training samples: {len(features)}, Features: {features.shape[1]}")
 
@@ -219,49 +224,75 @@ def main():
     n_params = count_model_params(model)
     print(f"  Model parameters: {n_params}")
 
-    # SGD with strong momentum and moderate L2 for smooth convergence
-    optimizer = torch.optim.SGD(model.parameters(), lr=1e-5, weight_decay=5e-2, momentum=0.9)
-    loss_fn = nn.MSELoss()
+    # Grid search over scale values to find optimal (only 1 param)
+    X_tensor = torch.tensor(features, dtype=torch.float32, device=device)
+    y_tensor = torch.tensor(targets, dtype=torch.float32, device=device)
 
-    # --- Create DataLoader ---
-    X_tensor = torch.tensor(features, dtype=torch.float32)
-    y_tensor = torch.tensor(targets, dtype=torch.float32)
-    dataset = TensorDataset(X_tensor, y_tensor)
-    loader = DataLoader(dataset, batch_size=len(features), shuffle=False, drop_last=False)
+    print("Grid searching optimal scale...")
+    best_score = -999
+    best_scale = 0.005
+    signal = -features[:, IDX_24H_RETURN]  # mean reversion signal (numpy)
 
-    # --- Train ---
-    print(f"Training for up to {TIME_BUDGET}s...")
+    for scale in np.arange(0.001, 0.030, 0.001):
+        preds = signal * scale
+        # Quick backtest proxy: compute Sharpe-like metric
+        # Positions: +1 if pred > 0.005, -1 if pred < -0.005, else 0
+        positions = np.zeros_like(preds)
+        positions[preds > 0.005] = 1.0
+        positions[preds < -0.005] = -1.0
+
+        # Compute returns
+        close = train_df["close"].values[MAX_LOOKBACK:][valid]
+        price_returns = np.zeros(len(close))
+        price_returns[1:] = close[1:] / close[:-1] - 1.0
+
+        port_returns = positions[:-1] * price_returns[1:]
+
+        if np.std(port_returns) > 0:
+            sharpe = np.mean(port_returns) / np.std(port_returns) * np.sqrt(8760)
+        else:
+            sharpe = 0
+
+        n_trades_approx = np.sum(np.diff(positions) != 0)
+
+        if sharpe > best_score and n_trades_approx > 30:
+            best_score = sharpe
+            best_scale = scale
+
+    print(f"  Best scale: {best_scale:.3f}, approx Sharpe: {best_score:.4f}")
+
+    # Set the scale parameter
+    with torch.no_grad():
+        model.scale.fill_(best_scale)
+
+    # Also do gradient-based fine-tuning of the scale
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    loss_fn = nn.HuberLoss(delta=0.01)
+
+    print(f"Fine-tuning scale for up to {TIME_BUDGET}s...")
     train_start = time.time()
     epoch = 0
 
     while time.time() - train_start < TIME_BUDGET:
         epoch += 1
         model.train()
+        pred = model(X_tensor)
+        loss = loss_fn(pred, y_tensor)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-        for X_batch, y_batch in loader:
-            X_batch = X_batch.to(device)
-            y_batch = y_batch.to(device)
-
-            pred = model(X_batch)
-            loss = loss_fn(pred, y_batch)
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            if time.time() - train_start >= TIME_BUDGET:
-                break
-
-        if epoch % 200 == 0 or epoch == 1:
-            with torch.no_grad():
-                preds_check = model(X_tensor.to(device)).cpu().numpy()
-            n_long = np.sum(preds_check > 0.005)
-            n_short = np.sum(preds_check < -0.005)
+        if epoch % 500 == 0 or epoch == 1:
+            scale_val = model.scale.item()
             elapsed = time.time() - train_start
-            print(f"  Epoch {epoch:4d} | loss={loss.item():.6f} | long={n_long} short={n_short} | {elapsed:.1f}s")
+            print(f"  Epoch {epoch:4d} | loss={loss.item():.6f} | scale={scale_val:.6f} | {elapsed:.1f}s")
+
+        if time.time() - train_start >= TIME_BUDGET:
+            break
 
     training_seconds = time.time() - train_start
     print(f"Training complete: {epoch} epochs in {training_seconds:.1f}s")
+    print(f"  Final scale: {model.scale.item():.6f}")
 
     _trained_model = model
 
@@ -269,7 +300,7 @@ def main():
     print("Evaluating on training data...")
     model.eval()
     with torch.no_grad():
-        all_preds = model.predict(X_tensor.to(device)).cpu().numpy()
+        all_preds = model(X_tensor).cpu().numpy()
 
     print(f"  Pred stats: mean={np.mean(all_preds):.6f}, std={np.std(all_preds):.6f}")
     print(f"  Preds > 0.005: {np.sum(all_preds > 0.005)}, Preds < -0.005: {np.sum(all_preds < -0.005)}")
@@ -285,7 +316,7 @@ def main():
 
     with torch.no_grad():
         X_val = torch.tensor(val_features, dtype=torch.float32, device=device)
-        val_preds = model.predict(X_val).cpu().numpy()
+        val_preds = model(X_val).cpu().numpy()
 
     val_result = evaluate_model(val_preds, val_timestamps, n_params, split="val")
 
