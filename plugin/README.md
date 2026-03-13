@@ -19,8 +19,8 @@ Complete Claude Code plugin for hyperparameter optimization with 6 algorithms co
 # Add the marketplace
 /plugin marketplace add lejinvarghese/autoresearch
 
-# Install the plugin (note: from plugin/ subdirectory)
-/plugin install autoresearch-optimization@lejinvarghese-autoresearch
+# Install the plugin
+/plugin install autoresearch-optimization@autoresearch-plugins
 ```
 
 ### Local Installation (for development)

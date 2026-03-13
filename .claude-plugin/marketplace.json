@@ -1,0 +1,33 @@
+{
+  "name": "autoresearch-plugins",
+  "owner": {
+    "name": "Lejin Varghese",
+    "email": "lejinvarghese@users.noreply.github.com"
+  },
+  "metadata": {
+    "description": "Optimization tools and Optuna integration for hyperparameter tuning",
+    "homepage": "https://github.com/lejinvarghese/autoresearch"
+  },
+  "plugins": [
+    {
+      "name": "autoresearch-optimization",
+      "source": "./plugin",
+      "description": "Complete optimization framework with 6 algorithms: Bayesian (TPE/GP), CMA-ES, NSGA-II/III, QMC, Hybrid strategies, and result analysis",
+      "version": "1.0.0",
+      "author": {
+        "name": "Lejin Varghese",
+        "email": "lejinvarghese@users.noreply.github.com"
+      },
+      "keywords": [
+        "optimization",
+        "hyperparameter-tuning",
+        "bayesian",
+        "tpe",
+        "cma-es",
+        "nsga",
+        "multi-objective",
+        "optuna"
+      ]
+    }
+  ]
+}
