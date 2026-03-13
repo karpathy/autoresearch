@@ -21,3 +21,8 @@ dev/
 
 # Results file
 results.tsv
+
+
+# Sandbox
+sandbox
+.idea
