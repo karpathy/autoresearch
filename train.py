@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import Ridge
+from sklearn.ensemble import GradientBoostingRegressor
 
 from prepare import (
     FORWARD_HOURS,
@@ -151,14 +151,16 @@ _trained_model = None
 
 
 def count_model_params(model=None) -> int:
-    """Return parameter count for the model."""
+    """Return approximate parameter count for the GBR model."""
     if model is None:
         model = _trained_model
     if model is None:
         return 0
-    if hasattr(model, 'coef_'):
-        return len(model.coef_) + 1  # weights + bias
-    return 0
+    n_params = 0
+    for estimators in model.estimators_:
+        for tree in estimators:
+            n_params += tree.tree_.node_count
+    return n_params
 
 
 # ---------------------------------------------------------------------------
@@ -204,8 +206,8 @@ def _apply_regime_filter(preds: np.ndarray, df: pd.DataFrame) -> np.ndarray:
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     """Generate predictions on arbitrary OHLCV data."""
     features, timestamps = compute_features(df)
+    vol = compute_vol_168(df)
     features = np.nan_to_num(features, nan=0.0)
-    features = _normalize(features, fit=False)
 
     model = _trained_model
     if model is None:
@@ -246,16 +248,26 @@ def main():
     # Winsorize targets at ±5% to reduce influence of extreme returns
     targets = np.clip(targets, -0.05, 0.05)
 
+    # GBR is invariant to feature scaling — skip normalization to avoid
+    # distribution mismatch between train/val periods.
     features = np.nan_to_num(features, nan=0.0)
-    features = _normalize(features, fit=True)
 
     print(f"  Training samples: {len(features)}, Features: {features.shape[1]}")
 
-    # --- Train Ridge ---
-    print(f"Training Ridge...")
+    # --- Train GBR ---
+    print(f"Training GBR...")
     train_start = time.time()
 
-    model = Ridge(alpha=100.0)
+    model = GradientBoostingRegressor(
+        n_estimators=400,
+        max_depth=2,
+        learning_rate=0.01,
+        subsample=0.8,
+        min_samples_leaf=100,
+        max_features=0.8,
+        loss="squared_error",
+        random_state=42,
+    )
     model.fit(features, targets)
 
     training_seconds = time.time() - train_start
@@ -277,7 +289,6 @@ def main():
     val_df = load_val_data()
     val_features, val_timestamps = compute_features(val_df)
     val_features = np.nan_to_num(val_features, nan=0.0)
-    val_features = _normalize(val_features, fit=False)
 
     val_preds = model.predict(val_features) * PRED_SCALE
 
