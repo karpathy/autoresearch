@@ -49,6 +49,12 @@ Hi have a look at program.md and let's kick off a new experiment! let's do the s
 
 The `program.md` file is essentially a super lightweight "skill".
 
+### Codex note
+
+Codex currently may stop early in interactive autoresearch sessions even though `program.md` says to keep looping forever. If you are using Codex and it exits after only a handful of experiments, see [issue #57](https://github.com/karpathy/autoresearch/issues/57) for the current status and workarounds.
+
+The least-bad workaround people are using today is to resume the same Codex session from a lightweight supervisor instead of starting a brand new run each time, for example with `codex exec resume <session_id> "have a look at program.md and continue the experiment loop"`.
+
 ## Project structure
 
 ```
