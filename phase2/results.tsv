@@ -1,0 +1,25 @@
+commit	val_bpb	memory_gb	status	description
+6f61894	1.451763	2.1	keep	baseline (Karpathy's H100 hyperparams, RTX 2060 memory adjustments)
+	1.441536	2.1	keep	increase MATRIX_LR to 0.05
+	1.442374	2.1	discard	increase EMBEDDING_LR to 0.7
+	1.434839	2.1	keep	increase MATRIX_LR to 0.06
+	1.433120	2.1	keep	increase MATRIX_LR to 0.07
+	1.431848	2.1	keep	increase MATRIX_LR to 0.08
+	1.440129	2.1	discard	increase MATRIX_LR to 0.09 (too high)
+	1.427186	2.1	keep	reduce WARMDOWN_RATIO to 0.4
+	1.424071	2.1	keep	reduce WARMDOWN_RATIO to 0.3
+	1.425834	2.1	discard	reduce WARMDOWN_RATIO to 0.2 (too low)
+	1.426083	2.1	discard	reduce WEIGHT_DECAY to 0.15
+	1.423438	2.1	keep	increase EMBEDDING_LR to 0.65
+	1.426238	2.1	discard	increase EMBEDDING_LR to 0.7 (too high)
+	1.424068	2.1	discard	increase SCALAR_LR to 0.6
+	1.435396	2.1	discard	fine-tune MATRIX_LR to 0.075
+	1.424232	2.1	keep	apply best focused Bayesian config
+	1.423339	2.1	keep	hybrid config averaging Bayesian and Genetic
+	1.425422	2.1	discard	apply best focused Genetic config (variance)
+	1.422086	2.1	keep	reduce EMBEDDING_LR to 0.60
+	1.423747	2.1	discard	reduce EMBEDDING_LR to 0.58 (too low)
+	1.420612	2.1	keep	reduce WEIGHT_DECAY to 0.18
+	1.420809	2.1	discard	increase WARMDOWN_RATIO to 0.33
+	1.428374	2.1	discard	reduce WEIGHT_DECAY to 0.17 (too low)
+	1.421479	2.1	discard	increase MATRIX_LR to 0.082

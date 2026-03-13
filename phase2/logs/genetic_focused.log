@@ -1,309 +1,0 @@
-[I 2026-03-12 20:02:53,762] A new study created in RDB with name: genetic_cmaes
-
-################################################################################
-# Phase 1: GENETIC Optimization
-# Trials: 15
-# Output: experiments/genetic_focused_20260312_200253
-################################################################################
-
-  0%|          | 0/15 [00:00<?, ?it/s]                                        0%|          | 0/15 [08:55<?, ?it/s]Best trial: 0. Best value: 1.4249:   0%|          | 0/15 [08:55<?, ?it/s]Best trial: 0. Best value: 1.4249:   7%|▋         | 1/15 [08:55<2:04:52, 535.18s/it]                                                                                    Best trial: 0. Best value: 1.4249:   7%|▋         | 1/15 [17:45<2:04:52, 535.18s/it]Best trial: 0. Best value: 1.4249:   7%|▋         | 1/15 [17:45<2:04:52, 535.18s/it]Best trial: 0. Best value: 1.4249:  13%|█▎        | 2/15 [17:45<1:55:20, 532.37s/it]                                                                                    Best trial: 0. Best value: 1.4249:  13%|█▎        | 2/15 [26:38<1:55:20, 532.37s/it]Best trial: 2. Best value: 1.42329:  13%|█▎        | 2/15 [26:38<1:55:20, 532.37s/it]Best trial: 2. Best value: 1.42329:  20%|██        | 3/15 [26:38<1:46:29, 532.46s/it]                                                                                     Best trial: 2. Best value: 1.42329:  20%|██        | 3/15 [35:26<1:46:29, 532.46s/it]Best trial: 2. Best value: 1.42329:  20%|██        | 3/15 [35:26<1:46:29, 532.46s/it]Best trial: 2. Best value: 1.42329:  27%|██▋       | 4/15 [35:26<1:37:18, 530.76s/it]                                                                                     Best trial: 2. Best value: 1.42329:  27%|██▋       | 4/15 [44:14<1:37:18, 530.76s/it]Best trial: 4. Best value: 1.41882:  27%|██▋       | 4/15 [44:14<1:37:18, 530.76s/it]Best trial: 4. Best value: 1.41882:  33%|███▎      | 5/15 [44:14<1:28:19, 529.91s/it]                                                                                     Best trial: 4. Best value: 1.41882:  33%|███▎      | 5/15 [53:03<1:28:19, 529.91s/it]Best trial: 4. Best value: 1.41882:  33%|███▎      | 5/15 [53:03<1:28:19, 529.91s/it]Best trial: 4. Best value: 1.41882:  40%|████      | 6/15 [53:03<1:19:24, 529.41s/it]                                                                                     Best trial: 4. Best value: 1.41882:  40%|████      | 6/15 [1:01:51<1:19:24, 529.41s/it]Best trial: 4. Best value: 1.41882:  40%|████      | 6/15 [1:01:51<1:19:24, 529.41s/it]Best trial: 4. Best value: 1.41882:  47%|████▋     | 7/15 [1:01:51<1:10:33, 529.17s/it]                                                                                       Best trial: 4. Best value: 1.41882:  47%|████▋     | 7/15 [1:10:40<1:10:33, 529.17s/it]Best trial: 4. Best value: 1.41882:  47%|████▋     | 7/15 [1:10:40<1:10:33, 529.17s/it]Best trial: 4. Best value: 1.41882:  53%|█████▎    | 8/15 [1:10:40<1:01:42, 528.87s/it]                                                                                       Best trial: 4. Best value: 1.41882:  53%|█████▎    | 8/15 [1:19:28<1:01:42, 528.87s/it]Best trial: 4. Best value: 1.41882:  53%|█████▎    | 8/15 [1:19:28<1:01:42, 528.87s/it]Best trial: 4. Best value: 1.41882:  60%|██████    | 9/15 [1:19:28<52:52, 528.77s/it]                                                                                       Best trial: 4. Best value: 1.41882:  60%|██████    | 9/15 [1:28:17<52:52, 528.77s/it]Best trial: 4. Best value: 1.41882:  60%|██████    | 9/15 [1:28:17<52:52, 528.77s/it]Best trial: 4. Best value: 1.41882:  67%|██████▋   | 10/15 [1:28:17<44:03, 528.67s/it]                                                                                      
-================================================================================
-Method: genetic | Trial 1/15
-Optuna Trial #0
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.6249080237694725,
-  "matrix_lr": 0.09352142919229749,
-  "weight_decay": 0.24639878836228102,
-  "warmdown_ratio": 0.31973169683940733
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.424899
-
-[I 2026-03-12 20:11:48,941] Trial 0 finished with value: 1.424899 and parameters: {'embedding_lr': 0.6249080237694725, 'matrix_lr': 0.09352142919229749, 'weight_decay': 0.24639878836228102, 'warmdown_ratio': 0.31973169683940733}. Best is trial 0 with value: 1.424899.
-
-================================================================================
-Method: genetic | Trial 2/15
-Optuna Trial #1
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.643742182843853,
-  "matrix_lr": 0.07599079345769216,
-  "weight_decay": 0.1743316370977709,
-  "warmdown_ratio": 0.2520103947143009
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.428756
-
-[I 2026-03-12 20:20:39,341] Trial 1 finished with value: 1.428756 and parameters: {'embedding_lr': 0.643742182843853, 'matrix_lr': 0.07599079345769216, 'weight_decay': 0.1743316370977709, 'warmdown_ratio': 0.2520103947143009}. Best is trial 0 with value: 1.424899.
-
-================================================================================
-Method: genetic | Trial 3/15
-Optuna Trial #2
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.6479043899047691,
-  "matrix_lr": 0.07527783423838268,
-  "weight_decay": 0.2367745616444063,
-  "warmdown_ratio": 0.25546661368007906
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.423293
-
-[I 2026-03-12 20:29:31,910] Trial 2 finished with value: 1.423293 and parameters: {'embedding_lr': 0.6479043899047691, 'matrix_lr': 0.07527783423838268, 'weight_decay': 0.2367745616444063, 'warmdown_ratio': 0.25546661368007906}. Best is trial 2 with value: 1.423293.
-
-================================================================================
-Method: genetic | Trial 4/15
-Optuna Trial #3
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.6923504056475303,
-  "matrix_lr": 0.08163254849055084,
-  "weight_decay": 0.17923543343976261,
-  "warmdown_ratio": 0.2964718653883764
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.426799
-
-[I 2026-03-12 20:38:20,069] Trial 3 finished with value: 1.426799 and parameters: {'embedding_lr': 0.6923504056475303, 'matrix_lr': 0.08163254849055084, 'weight_decay': 0.17923543343976261, 'warmdown_ratio': 0.2964718653883764}. Best is trial 2 with value: 1.423293.
-
-================================================================================
-Method: genetic | Trial 5/15
-Optuna Trial #4
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.5529489033606748,
-  "matrix_lr": 0.08061956125930934,
-  "weight_decay": 0.19137739889637723,
-  "warmdown_ratio": 0.2819884758191076
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.418820
-
-[I 2026-03-12 20:47:08,471] Trial 4 finished with value: 1.41882 and parameters: {'embedding_lr': 0.5529489033606748, 'matrix_lr': 0.08061956125930934, 'weight_decay': 0.19137739889637723, 'warmdown_ratio': 0.2819884758191076}. Best is trial 4 with value: 1.41882.
-
-================================================================================
-Method: genetic | Trial 6/15
-Optuna Trial #5
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.6793741245507247,
-  "matrix_lr": 0.07364162237798276,
-  "weight_decay": 0.25271013390133035,
-  "warmdown_ratio": 0.34498840493660726
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.423919
-
-[I 2026-03-12 20:55:56,921] Trial 5 finished with value: 1.423919 and parameters: {'embedding_lr': 0.6793741245507247, 'matrix_lr': 0.07364162237798276, 'weight_decay': 0.25271013390133035, 'warmdown_ratio': 0.34498840493660726}. Best is trial 4 with value: 1.41882.
-
-================================================================================
-Method: genetic | Trial 7/15
-Optuna Trial #6
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.6869301119521016,
-  "matrix_lr": 0.07486853704502688,
-  "weight_decay": 0.14285251665710078,
-  "warmdown_ratio": 0.29216380951293863
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.423947
-
-[I 2026-03-12 21:04:45,597] Trial 6 finished with value: 1.423947 and parameters: {'embedding_lr': 0.6869301119521016, 'matrix_lr': 0.07486853704502688, 'weight_decay': 0.14285251665710078, 'warmdown_ratio': 0.29216380951293863}. Best is trial 4 with value: 1.41882.
-
-================================================================================
-Method: genetic | Trial 8/15
-Optuna Trial #7
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.6792179471628836,
-  "matrix_lr": 0.07398825207681993,
-  "weight_decay": 0.16359743762499457,
-  "warmdown_ratio": 0.27258160718417
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.421962
-
-[I 2026-03-12 21:13:33,814] Trial 7 finished with value: 1.421962 and parameters: {'embedding_lr': 0.6792179471628836, 'matrix_lr': 0.07398825207681993, 'weight_decay': 0.16359743762499457, 'warmdown_ratio': 0.27258160718417}. Best is trial 4 with value: 1.41882.
-
-================================================================================
-Method: genetic | Trial 9/15
-Optuna Trial #8
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.6949815837827392,
-  "matrix_lr": 0.08516521737986682,
-  "weight_decay": 0.2119266221409815,
-  "warmdown_ratio": 0.2533917736814675
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.443309
-
-[I 2026-03-12 21:22:22,373] Trial 8 finished with value: 1.443309 and parameters: {'embedding_lr': 0.6949815837827392, 'matrix_lr': 0.08516521737986682, 'weight_decay': 0.2119266221409815, 'warmdown_ratio': 0.2533917736814675}. Best is trial 4 with value: 1.41882.
-
-================================================================================
-Method: genetic | Trial 10/15
-Optuna Trial #9
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.6141260843896038,
-  "matrix_lr": 0.08030511567689903,
-  "weight_decay": 0.19333529428695492,
-  "warmdown_ratio": 0.28045718762722205
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.441151
-
-[I 2026-03-12 21:31:10,814] Trial 9 finished with value: 1.441151 and parameters: {'embedding_lr': 0.6141260843896038, 'matrix_lr': 0.08030511567689903, 'weight_decay': 0.19333529428695492, 'warmdown_ratio': 0.28045718762722205}. Best is trial 4 with value: 1.41882.
-
-================================================================================
-Method: genetic | Trial 11/15
-Optuna Trial #10
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.6292837964310155,
-  "matrix_lr": 0.08235836997488775,
-  "weight_decay": 0.2303636417392646,
-  "warmdown_ratio": 0.2989374985784726
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.419478
-
-Best trial: 4. Best value: 1.41882:  67%|██████▋   | 10/15 [1:37:04<44:03, 528.67s/it]Best trial: 4. Best value: 1.41882:  67%|██████▋   | 10/15 [1:37:04<44:03, 528.67s/it]Best trial: 4. Best value: 1.41882:  73%|███████▎  | 11/15 [1:37:04<35:13, 528.29s/it]                                                                                      Best trial: 4. Best value: 1.41882:  73%|███████▎  | 11/15 [1:45:53<35:13, 528.29s/it]Best trial: 4. Best value: 1.41882:  73%|███████▎  | 11/15 [1:45:53<35:13, 528.29s/it]Best trial: 4. Best value: 1.41882:  80%|████████  | 12/15 [1:45:53<26:25, 528.39s/it]                                                                                      Best trial: 4. Best value: 1.41882:  80%|████████  | 12/15 [1:54:41<26:25, 528.39s/it]Best trial: 4. Best value: 1.41882:  80%|████████  | 12/15 [1:54:41<26:25, 528.39s/it]Best trial: 4. Best value: 1.41882:  87%|████████▋ | 13/15 [1:54:41<17:36, 528.45s/it]                                                                                      Best trial: 4. Best value: 1.41882:  87%|████████▋ | 13/15 [2:03:30<17:36, 528.45s/it]Best trial: 4. Best value: 1.41882:  87%|████████▋ | 13/15 [2:03:30<17:36, 528.45s/it]Best trial: 4. Best value: 1.41882:  93%|█████████▎| 14/15 [2:03:30<08:48, 528.45s/it]                                                                                      Best trial: 4. Best value: 1.41882:  93%|█████████▎| 14/15 [2:12:19<08:48, 528.45s/it]Best trial: 4. Best value: 1.41882:  93%|█████████▎| 14/15 [2:12:19<08:48, 528.45s/it]Best trial: 4. Best value: 1.41882: 100%|██████████| 15/15 [2:12:19<00:00, 528.59s/it]Best trial: 4. Best value: 1.41882: 100%|██████████| 15/15 [2:12:19<00:00, 529.27s/it]
-[I 2026-03-12 21:39:58,238] Trial 10 finished with value: 1.419478 and parameters: {'embedding_lr': 0.6292837964310155, 'matrix_lr': 0.08235836997488775, 'weight_decay': 0.2303636417392646, 'warmdown_ratio': 0.2989374985784726}. Best is trial 4 with value: 1.41882.
-
-================================================================================
-Method: genetic | Trial 12/15
-Optuna Trial #11
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.6382991432451566,
-  "matrix_lr": 0.07773920242151086,
-  "weight_decay": 0.248675726573948,
-  "warmdown_ratio": 0.200263256642261
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.439840
-
-[I 2026-03-12 21:48:46,872] Trial 11 finished with value: 1.43984 and parameters: {'embedding_lr': 0.6382991432451566, 'matrix_lr': 0.07773920242151086, 'weight_decay': 0.248675726573948, 'warmdown_ratio': 0.200263256642261}. Best is trial 4 with value: 1.41882.
-
-================================================================================
-Method: genetic | Trial 13/15
-Optuna Trial #12
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.602980431206852,
-  "matrix_lr": 0.07636025856079452,
-  "weight_decay": 0.2528294195019879,
-  "warmdown_ratio": 0.29107053505613556
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.420768
-
-[I 2026-03-12 21:57:35,458] Trial 12 finished with value: 1.420768 and parameters: {'embedding_lr': 0.602980431206852, 'matrix_lr': 0.07636025856079452, 'weight_decay': 0.2528294195019879, 'warmdown_ratio': 0.29107053505613556}. Best is trial 4 with value: 1.41882.
-
-================================================================================
-Method: genetic | Trial 14/15
-Optuna Trial #13
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.7260382786074642,
-  "matrix_lr": 0.08174431642335324,
-  "weight_decay": 0.21220081937954854,
-  "warmdown_ratio": 0.28588619774274454
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.437682
-
-[I 2026-03-12 22:06:23,911] Trial 13 finished with value: 1.437682 and parameters: {'embedding_lr': 0.7260382786074642, 'matrix_lr': 0.08174431642335324, 'weight_decay': 0.21220081937954854, 'warmdown_ratio': 0.28588619774274454}. Best is trial 4 with value: 1.41882.
-
-================================================================================
-Method: genetic | Trial 15/15
-Optuna Trial #14
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.6036824848784637,
-  "matrix_lr": 0.07501372389271754,
-  "weight_decay": 0.20909451015155908,
-  "warmdown_ratio": 0.2324420900224026
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.420499
-
-[I 2026-03-12 22:15:12,806] Trial 14 finished with value: 1.420499 and parameters: {'embedding_lr': 0.6036824848784637, 'matrix_lr': 0.07501372389271754, 'weight_decay': 0.20909451015155908, 'warmdown_ratio': 0.2324420900224026}. Best is trial 4 with value: 1.41882.
-
-################################################################################
-# GENETIC Optimization Complete!
-#
-# Total time: 7939.0s (132.3 min)
-# Completed trials: 15/15
-# Failed trials: 0
-# Best val_bpb: 1.418820
-# Best params:
-#   embedding_lr: 0.5529489033606748
-#   matrix_lr: 0.08061956125930934
-#   weight_decay: 0.19137739889637723
-#   warmdown_ratio: 0.2819884758191076
-################################################################################
-

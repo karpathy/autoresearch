@@ -1,229 +1,0 @@
-[I 2026-03-11 20:22:34,649] A new study created in RDB with name: genetic_cmaes
-
-################################################################################
-# Phase 1: GENETIC Optimization
-# Trials: 10
-# Output: experiments/genetic_run_20260311_202233
-################################################################################
-
-  0%|          | 0/10 [00:00<?, ?it/s]                                        0%|          | 0/10 [08:08<?, ?it/s]Best trial: 0. Best value: 1.44896:   0%|          | 0/10 [08:08<?, ?it/s]Best trial: 0. Best value: 1.44896:  10%|█         | 1/10 [08:08<1:13:20, 488.96s/it]                                                                                     Best trial: 0. Best value: 1.44896:  10%|█         | 1/10 [08:09<1:13:20, 488.96s/it]                                                                                     Best trial: 0. Best value: 1.44896:  10%|█         | 1/10 [08:09<1:13:20, 488.96s/it]                                                                                     Best trial: 0. Best value: 1.44896:  10%|█         | 1/10 [17:05<1:13:20, 488.96s/it]Best trial: 1. Best value: 1.43071:  10%|█         | 1/10 [17:05<1:13:20, 488.96s/it]Best trial: 1. Best value: 1.43071:  20%|██        | 2/10 [17:05<1:08:56, 517.11s/it]                                                                                     Best trial: 1. Best value: 1.43071:  20%|██        | 2/10 [17:05<1:08:56, 517.11s/it]                                                                                     Best trial: 1. Best value: 1.43071:  20%|██        | 2/10 [17:05<1:08:56, 517.11s/it]                                                                                     Best trial: 1. Best value: 1.43071:  20%|██        | 2/10 [25:47<1:08:56, 517.11s/it]Best trial: 1. Best value: 1.43071:  20%|██        | 2/10 [25:47<1:08:56, 517.11s/it]Best trial: 1. Best value: 1.43071:  30%|███       | 3/10 [25:47<1:00:33, 519.11s/it]                                                                                     Best trial: 1. Best value: 1.43071:  30%|███       | 3/10 [25:47<1:00:33, 519.11s/it]                                                                                     Best trial: 1. Best value: 1.43071:  30%|███       | 3/10 [25:47<1:00:33, 519.11s/it]                                                                                     Best trial: 1. Best value: 1.43071:  30%|███       | 3/10 [25:59<1:00:33, 519.11s/it]Best trial: 1. Best value: 1.43071:  30%|███       | 3/10 [25:59<1:00:33, 519.11s/it]Best trial: 1. Best value: 1.43071:  40%|████      | 4/10 [25:59<31:54, 319.14s/it]                                                                                     Best trial: 1. Best value: 1.43071:  40%|████      | 4/10 [25:59<31:54, 319.14s/it]                                                                                   Best trial: 1. Best value: 1.43071:  40%|████      | 4/10 [25:59<31:54, 319.14s/it]                                                                                   Best trial: 1. Best value: 1.43071:  40%|████      | 4/10 [32:33<31:54, 319.14s/it]Best trial: 1. Best value: 1.43071:  40%|████      | 4/10 [32:33<31:54, 319.14s/it]Best trial: 1. Best value: 1.43071:  50%|█████     | 5/10 [32:33<28:50, 346.18s/it]                                                                                   
-================================================================================
-Method: genetic | Trial 1/10
-Optuna Trial #0
-Params: {
-  "depth": 3,
-  "device_batch_size": 2,
-  "total_batch_size": 16384,
-  "embedding_lr": 0.7348118405270447,
-  "matrix_lr": 0.039913058785616795,
-  "weight_decay": 0.35403628889802274,
-  "warmdown_ratio": 0.016467595436641957
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.448959
-
-[I 2026-03-11 20:30:43,611] Trial 0 finished with value: 1.448959 and parameters: {'depth': 3, 'device_batch_size': 2, 'total_batch_size': 16384, 'embedding_lr': 0.7348118405270447, 'matrix_lr': 0.039913058785616795, 'weight_decay': 0.35403628889802274, 'warmdown_ratio': 0.016467595436641957}. Best is trial 0 with value: 1.448959.
-[W 2026-03-11 20:30:43,654] The parameter `device_batch_size` in Trial#1 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-[W 2026-03-11 20:30:43,657] The parameter `total_batch_size` in Trial#1 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-
-================================================================================
-Method: genetic | Trial 2/10
-Optuna Trial #1
-Params: {
-  "depth": 4,
-  "device_batch_size": 2,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.2324661814960508,
-  "matrix_lr": 0.018199186417410244,
-  "weight_decay": 0.25954543544681624,
-  "warmdown_ratio": 0.2973265483910836
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.430710
-
-[I 2026-03-11 20:39:40,416] Trial 1 finished with value: 1.43071 and parameters: {'depth': 4, 'device_batch_size': 2, 'total_batch_size': 65536, 'embedding_lr': 0.2324661814960508, 'matrix_lr': 0.018199186417410244, 'weight_decay': 0.25954543544681624, 'warmdown_ratio': 0.2973265483910836}. Best is trial 1 with value: 1.43071.
-[W 2026-03-11 20:39:40,458] The parameter `device_batch_size` in Trial#2 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-[W 2026-03-11 20:39:40,462] The parameter `total_batch_size` in Trial#2 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-
-================================================================================
-Method: genetic | Trial 3/10
-Optuna Trial #2
-Params: {
-  "depth": 4,
-  "device_batch_size": 2,
-  "total_batch_size": 16384,
-  "embedding_lr": 0.22008704257523434,
-  "matrix_lr": 0.01893795448306003,
-  "weight_decay": 0.2732383999235339,
-  "warmdown_ratio": 0.5470982465776253
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.446939
-
-[I 2026-03-11 20:48:21,924] Trial 2 finished with value: 1.446939 and parameters: {'depth': 4, 'device_batch_size': 2, 'total_batch_size': 16384, 'embedding_lr': 0.22008704257523434, 'matrix_lr': 0.01893795448306003, 'weight_decay': 0.2732383999235339, 'warmdown_ratio': 0.5470982465776253}. Best is trial 1 with value: 1.43071.
-[W 2026-03-11 20:48:21,963] The parameter `device_batch_size` in Trial#3 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-[W 2026-03-11 20:48:21,968] The parameter `total_batch_size` in Trial#3 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-
-================================================================================
-Method: genetic | Trial 4/10
-Optuna Trial #3
-Params: {
-  "depth": 5,
-  "device_batch_size": 8,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.35844149746992554,
-  "matrix_lr": 0.030364024064164018,
-  "weight_decay": 0.12347611247951767,
-  "warmdown_ratio": 0.31694173375905044
-}
-================================================================================
-
-❌ Trial failed:  MiB. GPU 0 has a total capacity of 5.59 GiB of which 242.44 MiB is free. Including non-PyTorch memory, this process has 5.01 GiB memory in use. Of the allocated memory 4.81 GiB is allocated by PyTorch, and 98.06 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
-
-[I 2026-03-11 20:48:34,503] Trial 3 pruned. 
-[W 2026-03-11 20:48:34,534] The parameter `device_batch_size` in Trial#4 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-[W 2026-03-11 20:48:34,538] The parameter `total_batch_size` in Trial#4 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-
-================================================================================
-Method: genetic | Trial 5/10
-Optuna Trial #4
-Params: {
-  "depth": 2,
-  "device_batch_size": 4,
-  "total_batch_size": 65536,
-  "embedding_lr": 0.3316286492293008,
-  "matrix_lr": 0.025700547728985244,
-  "weight_decay": 0.0807427123063359,
-  "warmdown_ratio": 0.365509595585509
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.481231
-
-[I 2026-03-11 20:55:08,616] Trial 4 finished with value: 1.481231 and parameters: {'depth': 2, 'device_batch_size': 4, 'total_batch_size': 65536, 'embedding_lr': 0.3316286492293008, 'matrix_lr': 0.025700547728985244, 'weight_decay': 0.0807427123063359, 'warmdown_ratio': 0.365509595585509}. Best is trial 1 with value: 1.43071.
-Best trial: 1. Best value: 1.43071:  50%|█████     | 5/10 [32:33<28:50, 346.18s/it]                                                                                   Best trial: 1. Best value: 1.43071:  50%|█████     | 5/10 [32:33<28:50, 346.18s/it]                                                                                   Best trial: 1. Best value: 1.43071:  50%|█████     | 5/10 [42:34<28:50, 346.18s/it]Best trial: 1. Best value: 1.43071:  50%|█████     | 5/10 [42:34<28:50, 346.18s/it]Best trial: 1. Best value: 1.43071:  60%|██████    | 6/10 [42:34<28:50, 432.53s/it]                                                                                   Best trial: 1. Best value: 1.43071:  60%|██████    | 6/10 [42:34<28:50, 432.53s/it]                                                                                   Best trial: 1. Best value: 1.43071:  60%|██████    | 6/10 [42:34<28:50, 432.53s/it]                                                                                   Best trial: 1. Best value: 1.43071:  60%|██████    | 6/10 [42:46<28:50, 432.53s/it]Best trial: 1. Best value: 1.43071:  60%|██████    | 6/10 [42:46<28:50, 432.53s/it]Best trial: 1. Best value: 1.43071:  70%|███████   | 7/10 [42:46<14:45, 295.26s/it]                                                                                   Best trial: 1. Best value: 1.43071:  70%|███████   | 7/10 [42:46<14:45, 295.26s/it]                                                                                   Best trial: 1. Best value: 1.43071:  70%|███████   | 7/10 [42:46<14:45, 295.26s/it]                                                                                   Best trial: 1. Best value: 1.43071:  70%|███████   | 7/10 [43:00<14:45, 295.26s/it]Best trial: 1. Best value: 1.43071:  70%|███████   | 7/10 [43:00<14:45, 295.26s/it]Best trial: 1. Best value: 1.43071:  80%|████████  | 8/10 [43:00<06:50, 205.49s/it]                                                                                   Best trial: 1. Best value: 1.43071:  80%|████████  | 8/10 [43:00<06:50, 205.49s/it]                                                                                   Best trial: 1. Best value: 1.43071:  80%|████████  | 8/10 [43:00<06:50, 205.49s/it]                                                                                   Best trial: 1. Best value: 1.43071:  80%|████████  | 8/10 [43:12<06:50, 205.49s/it]Best trial: 1. Best value: 1.43071:  80%|████████  | 8/10 [43:12<06:50, 205.49s/it]Best trial: 1. Best value: 1.43071:  90%|█████████ | 9/10 [43:12<02:25, 145.27s/it]                                                                                   Best trial: 1. Best value: 1.43071:  90%|█████████ | 9/10 [43:12<02:25, 145.27s/it]                                                                                   [W 2026-03-11 20:55:08,644] The parameter `device_batch_size` in Trial#5 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-[W 2026-03-11 20:55:08,647] The parameter `total_batch_size` in Trial#5 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-
-================================================================================
-Method: genetic | Trial 6/10
-Optuna Trial #5
-Params: {
-  "depth": 5,
-  "device_batch_size": 2,
-  "total_batch_size": 16384,
-  "embedding_lr": 0.19411275758493732,
-  "matrix_lr": 0.05308135795505446,
-  "weight_decay": 0.29554989112569324,
-  "warmdown_ratio": 0.6108405356053215
-}
-================================================================================
-
-❌ Trial failed: Unknown error
-[I 2026-03-11 21:05:08,766] Trial 5 pruned. 
-[W 2026-03-11 21:05:08,797] The parameter `device_batch_size` in Trial#6 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-[W 2026-03-11 21:05:08,800] The parameter `total_batch_size` in Trial#6 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-
-================================================================================
-Method: genetic | Trial 7/10
-Optuna Trial #6
-Params: {
-  "depth": 5,
-  "device_batch_size": 8,
-  "total_batch_size": 32768,
-  "embedding_lr": 0.21328054156317738,
-  "matrix_lr": 0.02889475707250612,
-  "weight_decay": 0.20799710241799452,
-  "warmdown_ratio": 0.17141006662840313
-}
-================================================================================
-
-❌ Trial failed:  of which 326.56 MiB is free. Process 735523 has 2.04 GiB memory in use. Including non-PyTorch memory, this process has 2.88 GiB memory in use. Of the allocated memory 2.59 GiB is allocated by PyTorch, and 202.53 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
-
-[I 2026-03-11 21:05:21,421] Trial 6 pruned. 
-[W 2026-03-11 21:05:21,445] The parameter `device_batch_size` in Trial#7 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-[W 2026-03-11 21:05:21,449] The parameter `total_batch_size` in Trial#7 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-
-================================================================================
-Method: genetic | Trial 8/10
-Optuna Trial #7
-Params: {
-  "depth": 5,
-  "device_batch_size": 4,
-  "total_batch_size": 16384,
-  "embedding_lr": 0.19934640248913438,
-  "matrix_lr": 0.02306258774911408,
-  "weight_decay": 0.13970423834759677,
-  "warmdown_ratio": 0.2543897504999783
-}
-================================================================================
-
-❌ Trial failed: B of which 218.56 MiB is free. Process 735523 has 2.04 GiB memory in use. Including non-PyTorch memory, this process has 2.99 GiB memory in use. Of the allocated memory 2.79 GiB is allocated by PyTorch, and 89.90 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
-
-[I 2026-03-11 21:05:34,699] Trial 7 pruned. 
-[W 2026-03-11 21:05:34,730] The parameter `device_batch_size` in Trial#8 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-[W 2026-03-11 21:05:34,735] The parameter `total_batch_size` in Trial#8 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-
-================================================================================
-Method: genetic | Trial 9/10
-Optuna Trial #8
-Params: {
-  "depth": 5,
-  "device_batch_size": 8,
-  "total_batch_size": 32768,
-  "embedding_lr": 0.47008231477274415,
-  "matrix_lr": 0.018490934849045394,
-  "weight_decay": 0.10986712984792013,
-  "warmdown_ratio": 0.44770648856392603
-}
-================================================================================
-
-❌ Trial failed:  of which 326.56 MiB is free. Process 735523 has 2.04 GiB memory in use. Including non-PyTorch memory, this process has 2.88 GiB memory in use. Of the allocated memory 2.59 GiB is allocated by PyTorch, and 202.53 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
-
-[I 2026-03-11 21:05:47,554] Trial 8 pruned. 
-[W 2026-03-11 21:05:47,581] The parameter `device_batch_size` in Trial#9 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-Best trial: 1. Best value: 1.43071:  90%|█████████ | 9/10 [43:12<02:25, 145.27s/it]                                                                                   Best trial: 1. Best value: 1.43071:  90%|█████████ | 9/10 [51:53<02:25, 145.27s/it]Best trial: 1. Best value: 1.43071:  90%|█████████ | 9/10 [51:53<02:25, 145.27s/it]Best trial: 1. Best value: 1.43071: 100%|██████████| 10/10 [51:53<00:00, 261.13s/it]Best trial: 1. Best value: 1.43071: 100%|██████████| 10/10 [51:53<00:00, 311.35s/it]
-[W 2026-03-11 21:05:47,585] The parameter `total_batch_size` in Trial#9 is sampled independently using `RandomSampler` instead of `CmaEsSampler`, potentially degrading the optimization performance. This fallback happend because dynamic search space and `CategoricalDistribution` are not supported by `CmaEsSampler`. You can suppress this warning by setting `warn_independent_sampling` to `False` in the constructor of `CmaEsSampler` if this independent sampling is intended behavior.
-
-================================================================================
-Method: genetic | Trial 10/10
-Optuna Trial #9
-Params: {
-  "depth": 4,
-  "device_batch_size": 4,
-  "total_batch_size": 16384,
-  "embedding_lr": 0.2842888874907643,
-  "matrix_lr": 0.02710376156087119,
-  "weight_decay": 0.31628756900748545,
-  "warmdown_ratio": 0.37732858681400944
-}
-================================================================================
-
-
-✅ Trial complete: val_bpb = 1.519974
-
-[I 2026-03-11 21:14:28,122] Trial 9 finished with value: 1.519974 and parameters: {'depth': 4, 'device_batch_size': 4, 'total_batch_size': 16384, 'embedding_lr': 0.2842888874907643, 'matrix_lr': 0.02710376156087119, 'weight_decay': 0.31628756900748545, 'warmdown_ratio': 0.37732858681400944}. Best is trial 1 with value: 1.43071.
-
-################################################################################
-# GENETIC Optimization Complete!
-#
-# Total time: 3113.5s (51.9 min)
-# Completed trials: 5/10
-# Failed trials: 0
-# Best val_bpb: 1.430710
-# Best params:
-#   depth: 4
-#   device_batch_size: 2
-#   total_batch_size: 65536
-#   embedding_lr: 0.2324661814960508
-#   matrix_lr: 0.018199186417410244
-#   weight_decay: 0.25954543544681624
-#   warmdown_ratio: 0.2973265483910836
-################################################################################
-
