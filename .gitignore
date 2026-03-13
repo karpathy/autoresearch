@@ -20,7 +20,7 @@ AGENTS.md
 dev/
 
 # Results file
-results.tsv
+# results.tsv
 
 # Run logs
-run.log
+# run.log
