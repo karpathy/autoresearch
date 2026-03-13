@@ -23,12 +23,12 @@ from prepare import (
 # Feature Engineering
 # ---------------------------------------------------------------------------
 
-RETURN_LOOKBACKS = [1, 4, 12, 24, 72, 168, 336, 720]
+RETURN_LOOKBACKS = [1, 4, 12, 24, 72, 168]
 VOLATILITY_WINDOWS = [24, 168]
-TREND_MA_WINDOWS = [24, 72, 168, 336, 720]
+TREND_MA_WINDOWS = [24, 72, 168]
 ZSCORE_WINDOWS = [72, 168]
-MAX_LOOKBACK = 720  # maximum lookback window (30 days)
-PRED_SCALE = 1.0  # less aggressive — only high-confidence trades
+MAX_LOOKBACK = 168  # maximum lookback window (1 week)
+PRED_SCALE = 0.8  # very selective — highest confidence trades only
 
 
 def compute_vol_168(df: pd.DataFrame) -> np.ndarray:
@@ -193,11 +193,11 @@ def _apply_regime_filter(preds: np.ndarray, df: pd.DataFrame) -> np.ndarray:
     # Long-only: never go short
     preds = np.maximum(preds, 0.0)
 
-    # Crash filter: go flat during crashes (168h return < -12%)
+    # Crash filter: go flat during crashes (168h return < -15%)
     ret_168 = np.full(len(close), 0.0)
     ret_168[168:] = close[168:] / close[:-168] - 1.0
     ret_168 = ret_168[MAX_LOOKBACK:][:len(preds)]
-    crash_mask = ret_168 < -0.12
+    crash_mask = ret_168 < -0.15
     preds[crash_mask] = 0.0  # flat during crash
 
     return preds
