@@ -222,6 +222,17 @@ def parse_step_line(line):
 TRAIN_TIMEOUT = 600  # kill training if it takes longer than 10 min wall clock
 
 
+def validate_train_py():
+    """Quick syntax check on train.py before running. Returns error string or None."""
+    try:
+        import ast
+        source = read_file(TRAIN_PY)
+        ast.parse(source)
+        return None
+    except SyntaxError as e:
+        return f"SyntaxError: {e}"
+
+
 def run_training_live(on_line=None):
     """Run train.py, stream output via callback. Returns parsed results dict."""
     env = os.environ.copy()
@@ -290,7 +301,19 @@ def run_training_live(on_line=None):
         if results:
             return results
         if proc.returncode != 0:
-            return {"error": output[-500:] if len(output) > 500 else output}
+            # Find the actual error: look for Traceback or Error lines
+            error_lines = []
+            capture = False
+            for line in all_output:
+                if "Traceback" in line or "Error" in line or "assert" in line.lower():
+                    capture = True
+                if capture:
+                    error_lines.append(line)
+            if error_lines:
+                error_msg = "\n".join(error_lines[-20:])  # last 20 error lines
+            else:
+                error_msg = "\n".join(all_output[-20:])  # fallback: last 20 lines
+            return {"error": error_msg}
         return None
 
     except subprocess.TimeoutExpired:
@@ -339,10 +362,21 @@ def get_results_history():
 # LLM interaction
 # ---------------------------------------------------------------------------
 
+def _count_recent_failures(results_history):
+    """Count consecutive non-keep results from the end of history."""
+    count = 0
+    for r in reversed(results_history):
+        if r["status"] == "keep":
+            break
+        count += 1
+    return count
+
+
 def build_prompt(train_py_source, results_history, best_bpb):
     history_str = ""
     crashed_str = ""
     tried_str = ""
+    streak_str = ""
     if results_history:
         # Show full history so the LLM never forgets what was tried
         history_str = "\n## Full experiment history (most recent last):\n"
@@ -368,6 +402,26 @@ def build_prompt(train_py_source, results_history, best_bpb):
             for idea in discarded_ideas:
                 tried_str += f"  TRIED: {idea}\n"
 
+        # Adaptive strategy after consecutive failures
+        fail_streak = _count_recent_failures(results_history)
+        if fail_streak >= 5:
+            streak_str = f"""
+## WARNING: {fail_streak} consecutive failures. CHANGE YOUR STRATEGY.
+Previous approaches are clearly not working. You MUST try a fundamentally different category:
+- If you've been trying architecture changes → switch to optimizer/hyperparameter tuning
+- If you've been trying optimizer changes → switch to training tricks (batch size, sequence length, accumulation steps)
+- If you've been trying training tricks → switch to small, safe numerical tweaks (learning rate, weight decay, epsilon values)
+KEEP CHANGES MINIMAL. A single number change is better than a structural rewrite.
+"""
+        elif fail_streak >= 3:
+            streak_str = f"""
+## CAUTION: {fail_streak} consecutive failures. Consider a simpler approach.
+Recent experiments have all failed. Try smaller, safer changes:
+- Tweak a single hyperparameter (learning rate, weight decay, batch size)
+- Make a minimal one-line change rather than multi-line rewrites
+- Prefer changes that won't trigger torch.compile recompilation
+"""
+
     return f"""You are an autonomous ML researcher. Your goal: minimize val_bpb on this training script.
 
 ## Constraints
@@ -378,9 +432,10 @@ def build_prompt(train_py_source, results_history, best_bpb):
 - Available packages: torch, numpy (no new deps).
 - flash-attn3 is fragile: Do NOT change normalization (RMSNorm→LayerNorm, QKNorm, etc.) — it WILL crash.
 - Avoid large structural changes that trigger torch.compile recompilation (causes timeouts).
+- TOTAL_BATCH_SIZE must be divisible by (DEVICE_BATCH_SIZE * MAX_SEQ_LEN). MAX_SEQ_LEN=2048 from prepare.py.
 
 ## Current best val_bpb: {best_bpb:.6f}
-{crashed_str}{tried_str}{history_str}
+{streak_str}{crashed_str}{tried_str}{history_str}
 ## Current train.py:
 ```python
 {train_py_source}
@@ -817,6 +872,22 @@ def build_dashboard(state):
     g.append(f"Abort {GPU_TEMP_ABORT}C  ", style="dim")
     g.append(f"VRAM {VRAM_LIMIT_MB}MB\n", style="dim")
 
+    # Sample text output
+    sample = state.get("sample_text", "")
+    if sample:
+        g.append(f"\n")
+        g.append(f"  Sample Output\n", style="bold")
+        # Word-wrap the sample text to ~35 chars per line
+        words = sample.split()
+        line = "  "
+        for word in words:
+            if len(line) + len(word) + 1 > 38:
+                g.append(f"{line}\n", style="italic")
+                line = "  "
+            line += word + " "
+        if line.strip():
+            g.append(f"{line}\n", style="italic")
+
     layout["right"].update(Panel(g, title="[bold]Hardware Monitor[/]", border_style="bright_blue"))
 
     # --- Footer (log) ---
@@ -844,7 +915,11 @@ def main():
     parser.add_argument("--resume", action="store_true", help="Resume from existing branch")
     parser.add_argument("--tag", type=str, default=None, help="Branch tag (default: date-based)")
     parser.add_argument("--no-dashboard", action="store_true", help="Text-only mode (no Rich TUI)")
+    parser.add_argument("--dataset", type=str, default=None, help="Dataset name (default, pubmed)")
     args = parser.parse_args()
+
+    if args.dataset:
+        os.environ["AUTORESEARCH_DATASET"] = args.dataset
 
     call_llm = call_local if args.local else call_claude
     llm_name = "LM Studio (local)" if args.local else "Claude Sonnet"
@@ -910,6 +985,7 @@ def main():
         "total_elapsed": 0,
         "phase_start": time.time(),
         "phase_elapsed": 0,
+        "sample_text": "",
     }
     t_agent_start = time.time()
 
@@ -1026,6 +1102,13 @@ def main():
             refresh()
 
             train_source = read_file(TRAIN_PY)
+            fail_streak = _count_recent_failures(history)
+            if fail_streak >= 5:
+                add_log(f"STREAK: {fail_streak} consecutive failures — forcing strategy change")
+                log_to_file(f"STREAK: {fail_streak} consecutive failures — forcing strategy change")
+            elif fail_streak >= 3:
+                add_log(f"STREAK: {fail_streak} consecutive failures — suggesting simpler approach")
+                log_to_file(f"STREAK: {fail_streak} consecutive failures — suggesting simpler approach")
             prompt = build_prompt(train_source, history, best_bpb)
             response = call_llm(prompt)
             proposal = parse_llm_response(response)
@@ -1055,6 +1138,19 @@ def main():
                 continue
 
             write_file(TRAIN_PY, modified)
+
+            # Validate before wasting time on training
+            syntax_err = validate_train_py()
+            if syntax_err:
+                add_log(f"Patch broke syntax: {syntax_err}")
+                log_to_file(f"SYNTAX ERROR after patch: {syntax_err}")
+                git("checkout", "--", "train.py")  # revert
+                log_result("-------", 0.0, 0.0, "crash", f"SYNTAX: {description} [{syntax_err}]")
+                history = get_results_history()
+                state["history"] = history
+                refresh()
+                continue
+
             sha = git_commit(description)
             add_log(f"Committed: {sha}")
 
@@ -1101,6 +1197,9 @@ def main():
             if results and "val_bpb" in results:
                 val_bpb = results["val_bpb"]
                 memory_gb = float(results.get("peak_vram_mb", 0)) / 1024
+                # Capture sample text if available
+                if "sample_text" in results:
+                    state["sample_text"] = str(results["sample_text"])[:300]
                 improved = val_bpb < best_bpb
 
                 if improved:

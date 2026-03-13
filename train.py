@@ -724,3 +724,21 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
+
+# Generate sample text so we can see what the model learned
+try:
+    with torch.no_grad(), autocast_ctx:
+        # Start from BOS token
+        prompt_ids = [tokenizer.get_bos_token_id()]
+        idx = torch.tensor([prompt_ids], dtype=torch.long, device=device)
+        for _ in range(100):
+            # Crop to max sequence length
+            idx_cond = idx[:, -MAX_SEQ_LEN:]
+            logits = model(idx_cond)
+            next_id = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+            idx = torch.cat([idx, next_id], dim=1)
+        sample_text = tokenizer.decode(idx[0].tolist())
+        # Print in parseable format
+        print(f"sample_text:      {sample_text[:500]}")
+except Exception:
+    pass

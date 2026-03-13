@@ -32,17 +32,63 @@ TIME_BUDGET = 300        # training time budget in seconds (5 minutes)
 EVAL_TOKENS = 40 * 524288  # number of tokens for val eval
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Dataset configurations
 # ---------------------------------------------------------------------------
 
-CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "autoresearch")
+DATASETS = {
+    "default": {
+        "base_url": "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main",
+        "max_shard": 6542,
+        "shard_fmt": "shard_{index:05d}.parquet",  # how shard filenames are formatted
+        "text_column": "text",
+        "vocab_size": 8192,
+    },
+    "pubmed": {
+        "base_url": "https://huggingface.co/api/datasets/uiyunkim-hub/pubmed-abstract/parquet/default/train",
+        "max_shard": 51,
+        "shard_fmt": "{index}.parquet",
+        "text_column": "abstract",
+        "vocab_size": 8192,
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Configuration (set by --dataset flag or AUTORESEARCH_DATASET env var)
+# ---------------------------------------------------------------------------
+
+_dataset_name = os.environ.get("AUTORESEARCH_DATASET", "default")
+_dataset_cfg = DATASETS.get(_dataset_name, DATASETS["default"])
+
+
+def _apply_dataset_config(name):
+    """Update module globals for a different dataset."""
+    global _dataset_name, _dataset_cfg, CACHE_DIR, DATA_DIR, TOKENIZER_DIR
+    global BASE_URL, MAX_SHARD, SHARD_FMT, TEXT_COLUMN, VAL_SHARD, VAL_FILENAME, VOCAB_SIZE
+    _dataset_name = name
+    _dataset_cfg = DATASETS[name]
+    CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "autoresearch", name)
+    DATA_DIR = os.path.join(CACHE_DIR, "data")
+    TOKENIZER_DIR = os.path.join(CACHE_DIR, "tokenizer")
+    BASE_URL = _dataset_cfg["base_url"]
+    MAX_SHARD = _dataset_cfg["max_shard"]
+    SHARD_FMT = _dataset_cfg["shard_fmt"]
+    TEXT_COLUMN = _dataset_cfg["text_column"]
+    VAL_SHARD = MAX_SHARD
+    VAL_FILENAME = SHARD_FMT.format(index=VAL_SHARD)
+    VOCAB_SIZE = _dataset_cfg["vocab_size"]
+    os.environ["AUTORESEARCH_DATASET"] = name
+
+
+CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "autoresearch", _dataset_name)
 DATA_DIR = os.path.join(CACHE_DIR, "data")
 TOKENIZER_DIR = os.path.join(CACHE_DIR, "tokenizer")
-BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main"
-MAX_SHARD = 6542 # the last datashard is shard_06542.parquet
-VAL_SHARD = MAX_SHARD  # pinned validation shard (shard_06542)
-VAL_FILENAME = f"shard_{VAL_SHARD:05d}.parquet"
-VOCAB_SIZE = 8192
+BASE_URL = _dataset_cfg["base_url"]
+MAX_SHARD = _dataset_cfg["max_shard"]
+SHARD_FMT = _dataset_cfg["shard_fmt"]
+TEXT_COLUMN = _dataset_cfg["text_column"]
+VAL_SHARD = MAX_SHARD  # pinned validation shard (last shard)
+VAL_FILENAME = SHARD_FMT.format(index=VAL_SHARD)
+VOCAB_SIZE = _dataset_cfg["vocab_size"]
 
 # BPE split pattern (GPT-4 style, with \p{N}{1,2} instead of {1,3})
 SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
@@ -56,7 +102,7 @@ BOS_TOKEN = "<|reserved_0|>"
 
 def download_single_shard(index):
     """Download one parquet shard with retries. Returns True on success."""
-    filename = f"shard_{index:05d}.parquet"
+    filename = SHARD_FMT.format(index=index)
     filepath = os.path.join(DATA_DIR, filename)
     if os.path.exists(filepath):
         return True
@@ -97,7 +143,7 @@ def download_data(num_shards, download_workers=8):
         ids.append(VAL_SHARD)
 
     # Count what's already downloaded
-    existing = sum(1 for i in ids if os.path.exists(os.path.join(DATA_DIR, f"shard_{i:05d}.parquet")))
+    existing = sum(1 for i in ids if os.path.exists(os.path.join(DATA_DIR, SHARD_FMT.format(index=i))))
     if existing == len(ids):
         print(f"Data: all {len(ids)} shards already downloaded at {DATA_DIR}")
         return
@@ -130,7 +176,7 @@ def text_iterator(max_chars=1_000_000_000, doc_cap=10_000):
         pf = pq.ParquetFile(filepath)
         for rg_idx in range(pf.num_row_groups):
             rg = pf.read_row_group(rg_idx)
-            for text in rg.column("text").to_pylist():
+            for text in rg.column(TEXT_COLUMN).to_pylist():
                 doc = text[:doc_cap] if len(text) > doc_cap else text
                 nchars += len(doc)
                 yield doc
@@ -266,7 +312,7 @@ def _document_batches(split, tokenizer_batch_size=128):
             pf = pq.ParquetFile(filepath)
             for rg_idx in range(pf.num_row_groups):
                 rg = pf.read_row_group(rg_idx)
-                batch = rg.column('text').to_pylist()
+                batch = rg.column(TEXT_COLUMN).to_pylist()
                 for i in range(0, len(batch), tokenizer_batch_size):
                     yield batch[i:i+tokenizer_batch_size], epoch
         epoch += 1
@@ -369,12 +415,19 @@ def evaluate_bpb(model, tokenizer, batch_size):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Prepare data and tokenizer for autoresearch")
+    parser.add_argument("--dataset", choices=list(DATASETS.keys()), default=_dataset_name,
+                        help="Dataset to use (default: %(default)s). Or set AUTORESEARCH_DATASET env var.")
     parser.add_argument("--num-shards", type=int, default=10, help="Number of training shards to download (-1 = all). Val shard is always pinned.")
     parser.add_argument("--download-workers", type=int, default=8, help="Number of parallel download workers")
     args = parser.parse_args()
 
+    # Apply dataset config to module globals if flag overrides env
+    if args.dataset != _dataset_name:
+        _apply_dataset_config(args.dataset)
+
     num_shards = MAX_SHARD if args.num_shards == -1 else args.num_shards
 
+    print(f"Dataset: {args.dataset}")
     print(f"Cache directory: {CACHE_DIR}")
     print()
 
