@@ -6,6 +6,11 @@ Usage: echo '{"jsonrpc":"2.0","id":1,"method":"status","params":{}}' | python3 d
 import json, os, subprocess, sys, threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from pathlib import Path
+
+# Project root: /stdio_bus in Docker, parent of stdio_bus/ locally
+_dispatcher_dir = Path(__file__).resolve().parent
+PROJECT_ROOT = Path("/stdio_bus") if _dispatcher_dir == Path("/stdio_bus") else _dispatcher_dir.parent
 
 def _detect_gpus():
     if ids := os.environ.get("SWARM_GPU_IDS"):
@@ -36,11 +41,11 @@ def run_experiment(gpu_id, agent_id, branch):
     log(f"[GPU {gpu_id}] Start {agent_id}")
     base = {"agent_id": agent_id, "gpu_id": gpu_id, "timestamp": datetime.now().isoformat(), "branch": branch}
     try:
-        r = subprocess.run(["uv", "run", "train.py"], capture_output=True, text=True, timeout=600, env=env)
+        r = subprocess.run(["uv", "run", "train.py"], capture_output=True, text=True, timeout=600, env=env, cwd=PROJECT_ROOT)
         val_bpb = _parse_output(r.stdout, "val_bpb")
         mem = _parse_output(r.stdout, "peak_vram_mb")
         commit = subprocess.run(["git", "rev-parse", "--short=7", "HEAD"],
-                               capture_output=True, text=True).stdout.strip() or "?"
+                               capture_output=True, text=True, cwd=PROJECT_ROOT).stdout.strip() or "?"
         log(f"[GPU {gpu_id}] Done val_bpb={val_bpb:.6f}")
         return {**base, "commit": commit, "val_bpb": val_bpb, "memory_gb": mem/1024,
                 "status": "keep" if val_bpb > 0 else "crash"}
