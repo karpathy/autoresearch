@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import Ridge
+from sklearn.ensemble import GradientBoostingRegressor
 
 from prepare import (
     FORWARD_HOURS,
@@ -136,12 +136,16 @@ _trained_model = None
 
 
 def count_model_params(model=None) -> int:
-    """Return parameter count for the Ridge model."""
+    """Return approximate parameter count for the GBR model."""
     if model is None:
         model = _trained_model
     if model is None:
         return 0
-    return model.coef_.size + 1  # coefficients + intercept
+    n_params = 0
+    for estimators in model.estimators_:
+        for tree in estimators:
+            n_params += tree.tree_.node_count
+    return n_params
 
 
 # ---------------------------------------------------------------------------
@@ -230,23 +234,29 @@ def main():
     targets = targets[valid]
     train_timestamps = timestamps[valid]
 
-    # Compute median volatility for regime filter dampening
-    train_vol = compute_vol_168(train_df)
-    global _vol_median
-    _vol_median = np.nanmedian(train_vol[~np.isnan(train_vol)])
-    print(f"  Median 168h volatility: {_vol_median:.6f}")
-
-    # Normalize features (fit on training data)
-    features = _normalize(features, fit=True)
+    # No normalization for GBR (trees are invariant to monotone transforms)
     features = np.nan_to_num(features, nan=0.0)
+    # Store normalization stats for holdout prediction (which still needs them)
+    _normalize(features, fit=True)
 
     print(f"  Training samples: {len(features)}, Features: {features.shape[1]}")
 
-    # --- Train Ridge ---
-    print("Training Ridge regression...")
+    # --- Train GBR with early stopping ---
+    print(f"Training GBR...")
     train_start = time.time()
 
-    model = Ridge(alpha=1.0)
+    model = GradientBoostingRegressor(
+        n_estimators=500,
+        max_depth=3,
+        learning_rate=0.01,
+        subsample=0.8,
+        min_samples_leaf=100,
+        max_features=0.8,
+        loss="huber",
+        alpha=0.9,
+        n_iter_no_change=20,
+        validation_fraction=0.2,
+    )
     model.fit(features, targets)
 
     training_seconds = time.time() - train_start
