@@ -1,0 +1,103 @@
+# Bayesian Optimization Configuration (TPE/GP)
+#
+# WHEN TO USE:
+#   - General-purpose hyperparameter tuning (default choice)
+#   - Limited trial budget (100-1000 trials)
+#   - Expensive objective evaluations
+#   - Mixed continuous/discrete/categorical parameters
+#   - High-dimensional spaces (TPE handles 100+ dims well)
+#
+# STRENGTHS:
+#   - 2.5x faster convergence than random search
+#   - Sample-efficient (learns from all previous trials)
+#   - Handles all parameter types
+#   - Excellent parallelization support
+#
+# LIMITATIONS:
+#   - Less effective than CMA-ES for purely continuous with correlations
+#   - GP doesn't scale well beyond ~500 trials
+
+algorithm:
+  name: "bayesian"
+  variant: "tpe"  # Options: 'tpe' (fast, scalable) or 'gp' (better for <500 trials)
+
+sampler_config:
+  n_startup_trials: 10  # Random exploration trials before using model
+  n_ei_candidates: 24   # Number of candidates for Expected Improvement (TPE only)
+  multivariate: false   # Use multivariate TPE to model parameter interactions
+  seed: 42             # Random seed for reproducibility
+
+optimization:
+  direction: "minimize"  # or "maximize"
+  n_trials: 100
+  timeout: null  # Optional time limit in seconds
+
+search_space:
+  # Continuous parameters (suggest_float)
+  learning_rate:
+    type: "float"
+    min: 0.0001
+    max: 0.1
+    log: true  # Use log scale for learning rates
+
+  # Integer parameters (suggest_int)
+  batch_size:
+    type: "int"
+    min: 16
+    max: 256
+
+  # Categorical parameters (suggest_categorical)
+  optimizer:
+    type: "categorical"
+    choices: ["adam", "sgd", "rmsprop"]
+
+# Example: ML hyperparameter tuning
+example_search_space:
+  # Neural network hyperparameters
+  embedding_lr:
+    type: "float"
+    min: 0.1
+    max: 1.0
+    log: false
+
+  matrix_lr:
+    type: "float"
+    min: 0.01
+    max: 0.1
+    log: false
+
+  weight_decay:
+    type: "float"
+    min: 0.0
+    max: 0.5
+    log: false
+
+  warmdown_ratio:
+    type: "float"
+    min: 0.0
+    max: 0.5
+    log: false
+
+  depth:
+    type: "int"
+    min: 2
+    max: 12
+
+output:
+  output_dir: "bayesian_output"
+  save_plots: true
+  save_report: true
+
+# Advanced options
+advanced:
+  # Use constant liar strategy for parallel optimization
+  constant_liar: true
+
+  # Enable early stopping if no improvement for N trials
+  early_stopping_patience: null  # Set to integer to enable
+
+# Performance tips:
+# 1. Start with n_startup_trials = sqrt(n_total_trials)
+# 2. Use multivariate=true if parameters likely interact
+# 3. Use variant='gp' for <500 trials with complex landscapes
+# 4. Use log=true for parameters spanning orders of magnitude

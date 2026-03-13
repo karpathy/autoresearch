@@ -1,0 +1,124 @@
+# NSGA-II/III (Multi-Objective) Configuration
+#
+# WHEN TO USE:
+#   - Multiple competing objectives (accuracy vs latency, perf vs cost)
+#   - Trade-off analysis (need entire Pareto frontier)
+#   - Many-objective problems (3-10 objectives, use NSGA-III)
+#   - Decision-making with multiple criteria
+#
+# STRENGTHS:
+#   - Produces complete Pareto-optimal frontier
+#   - NSGA-III superior for many-objective (4+ objectives)
+#   - Handles all parameter types
+#   - Embarrassingly parallel (population-based)
+#   - Well-established, proven algorithm
+#
+# LIMITATIONS:
+#   - Less sample-efficient than Bayesian for single-objective
+#   - Requires larger populations for many objectives
+#   - Returns set of solutions (not single best)
+
+algorithm:
+  name: "nsga"
+  variant: "auto"  # Options: 'nsga2' (2-3 obj), 'nsga3' (4+ obj), 'auto'
+
+sampler_config:
+  population_size: null     # Auto: 50 for NSGA-II, 100 for NSGA-III
+  mutation_prob: null       # Auto: 1/n_params
+  crossover_prob: 0.9       # Probability of crossover
+  seed: 42
+
+optimization:
+  n_objectives: 2
+  directions: ["minimize", "minimize"]  # One per objective
+  n_trials: 200  # Population-based, needs more trials than Bayesian
+  timeout: null
+
+# Multi-objective example: Accuracy vs Inference Time
+search_space:
+  learning_rate:
+    type: "float"
+    min: 0.0001
+    max: 0.1
+    log: true
+
+  model_size:
+    type: "int"
+    min: 64
+    max: 512
+
+  dropout:
+    type: "float"
+    min: 0.0
+    max: 0.5
+
+# Objective function should return tuple/list:
+#   def objective(trial, params):
+#       accuracy = train_model(params)
+#       latency = measure_latency(params)
+#       return accuracy, latency  # Both to minimize
+#
+# Or maximize accuracy, minimize latency:
+#   directions: ["maximize", "minimize"]
+
+# Example: Bi-objective (accuracy vs model size)
+example_2_objectives:
+  n_objectives: 2
+  directions: ["maximize", "minimize"]  # maximize accuracy, minimize size
+
+  objectives:
+    - name: "validation_accuracy"
+      goal: "maximize"
+      description: "Model accuracy on validation set"
+
+    - name: "model_parameters"
+      goal: "minimize"
+      description: "Number of trainable parameters"
+
+# Example: Many-objective (4 objectives)
+example_many_objectives:
+  n_objectives: 4
+  directions: ["maximize", "minimize", "minimize", "minimize"]
+  variant: "nsga3"  # Use NSGA-III for 4+ objectives
+
+  objectives:
+    - name: "accuracy"
+      goal: "maximize"
+
+    - name: "latency_ms"
+      goal: "minimize"
+
+    - name: "memory_mb"
+      goal: "minimize"
+
+    - name: "energy_mw"
+      goal: "minimize"
+
+output:
+  output_dir: "nsga_output"
+  save_plots: true
+  save_report: true
+  save_pareto_front: true
+
+# Variant selection guide:
+# - NSGA-II: Best for 2-3 objectives (crowding distance for diversity)
+# - NSGA-III: Best for 4+ objectives (reference points for diversity)
+# - Auto: Automatically selects based on n_objectives
+
+# Population size guide:
+# - 2 objectives: 50-100
+# - 3-4 objectives: 100-200
+# - 5+ objectives: 200-500
+# Rule of thumb: population_size ≈ 50 * (n_objectives - 1)
+
+# Understanding Pareto Front:
+# - All solutions on Pareto front are equally "optimal"
+# - No single "best" solution, only trade-offs
+# - Choose solution based on your preference/constraints
+# - Result includes metadata['pareto_front'] with all solutions
+
+# Performance tips:
+# 1. Ensure n_trials >= 20 * population_size for convergence
+# 2. Use NSGA-III for 4+ objectives (better diversity)
+# 3. Normalize objectives to similar scales if possible
+# 4. Post-process Pareto front to select final solution
