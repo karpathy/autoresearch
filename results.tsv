@@ -1,0 +1,40 @@
+commit	val_rmse	status	description
+c2450ad	343.88	keep	baseline
+7436138	285.86	keep	log-transform target price
+7436138	321.16	discard	add car_age mileage_per_year log_mileage features
+7436138	313.57	discard	car_age feature alone
+936b66a	284.09	keep	n_estimators=1000 learning_rate=0.02
+f6f4b34	245.31	keep	max_depth=8 min_child_weight=3
+ea47b2f	203.37	keep	native XGBoost categorical support
+ea47b2f	248.46	discard	add car_age log_mileage with native categorical
+0f4ade9	191.45	keep	n_estimators=2000 lr=0.01
+0f4ade9	232.94	discard	add reg_alpha=0.1 reg_lambda=1.5
+53dff87	210.43	keep	add car_age feature
+53dff87	210.43	discard	n_estimators=1000 lr=0.02
+53dff87	210.43	discard	max_depth=8
+53dff87	210.43	discard	reg_alpha=0.1 reg_lambda=1.5
+53dff87	210.43	discard	target encode Manufacturer Model Fuel type
+53dff87	210.43	discard	target encode + car_age
+53dff87	210.43	discard	target encode + car_age + log_mileage
+53dff87	210.43	discard	n_estimators=1500 lr=0.02 depth=7 min_child_weight=3
+53dff87	210.43	discard	add mileage_per_age and age_x_engine features
+53dff87	210.43	discard	drop mileage_per_age keep age_x_engine
+53dff87	210.43	discard	colsample_bylevel=0.8 reg_alpha=0.05 gamma=0.1
+bb1f0db	204.52	discard	log_mileage feature
+bb1f0db	210.43	discard	car_age feature
+bb1f0db	210.47	discard	n_estimators=3000 lr=0.005
+bb1f0db	192.53	discard	n_estimators=4000 lr=0.005
+bb1f0db	191.74	discard	max_depth=10
+bb1f0db	217.65	discard	max_depth=6
+bb1f0db	192.82	discard	subsample=0.7
+7504639	178.84	keep	colsample_bytree=0.6
+7504639	179.58	discard	min_child_weight=5
+7504639	179.06	discard	min_child_weight=1
+7504639	536.95	discard	gamma=0.1
+7504639	199.93	discard	reg_alpha=0.05
+7504639	182.98	discard	target encode cats
+7504639	224.93	discard	log_mileage + car_age
+7504639	179.49	discard	max_depth=9
+7504639	179.37	discard	n_estimators=2500 lr=0.008
+7504639	200.10	discard	engine_size squared feature
+7504639	206.26	discard	mileage bins 10
