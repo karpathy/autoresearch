@@ -73,7 +73,19 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         zscore = np.where(rolling_std > 0, (close - rolling_mean) / rolling_std, 0.0)
         feature_cols.append(zscore)
 
-    # 5. Hour of day (cyclical)
+    # 5. Rolling max drawdown (crash detector) over 168h
+    rolling_max = close_series.rolling(168, min_periods=168).max().values
+    rolling_dd = np.where(rolling_max > 0, close / rolling_max - 1.0, 0.0)
+    feature_cols.append(rolling_dd)
+
+    # 6. High-low range volatility (24h average)
+    high = df["high"].values.astype(np.float64)
+    low = df["low"].values.astype(np.float64)
+    hl_range = np.where(close > 0, (high - low) / close, 0.0)
+    hl_range_24 = pd.Series(hl_range).rolling(24, min_periods=24).mean().values
+    feature_cols.append(hl_range_24)
+
+    # 7. Hour of day (cyclical)
     hours = pd.to_datetime(ts).hour
     feature_cols.append(np.sin(2 * np.pi * hours / 24))
     feature_cols.append(np.cos(2 * np.pi * hours / 24))
@@ -184,9 +196,7 @@ def main():
     targets = targets[valid]
     train_timestamps = timestamps[valid]
 
-    # Winsorize targets to reduce extreme outlier influence
-    p5, p95 = np.percentile(targets, [5, 95])
-    targets = np.clip(targets, p5, p95)
+    # No winsorization — let model learn from extreme events (crashes)
 
     # Normalize features (fit on training data)
     features = _normalize(features, fit=True)
@@ -199,11 +209,11 @@ def main():
     train_start = time.time()
 
     model = GradientBoostingRegressor(
-        n_estimators=200,
-        max_depth=2,
-        learning_rate=0.005,
-        subsample=0.7,
-        min_samples_leaf=200,
+        n_estimators=300,
+        max_depth=3,
+        learning_rate=0.01,
+        subsample=0.8,
+        min_samples_leaf=100,
         loss="huber",
         alpha=0.9,
     )
