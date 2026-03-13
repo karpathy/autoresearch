@@ -1,0 +1,1163 @@
+/Users/ipatterson/dev/autoresearch/train.py:76: RuntimeWarning: invalid value encountered in divide
+  rsi = np.where(avg_loss > 0, avg_gain / (avg_gain + avg_loss), 0.5)
+Device: mps
+Loading training data...
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  43824 rows
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  Training samples: 43632, Features: 17
+  Val samples: 12960
+Generating strategies...
+  Single features: 267 promising strategies
+Phase 4: Vol168-based strategies (targeted for val_pass)...
+  Targeted: 162 strategies
+Phase 5: Vol-gated val-passing strategies...
+  Gated: 940 strategies
+Phase 6: Fine-tuning around best val-passing params...
+Phase 7: 3-feature gated combos...
+  Fine-tuned: 822, Triple-gated: 90
+Phase 8: New feature strategies (rzs24, EMA devs)...
+  New feature strategies: 68
+  Pairs: 516 promising strategies
+  Total: 2865
+
+Evaluating top 500 on train+val...
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #0: f4*-0.0030+f5*+0.0015 train=1.0976 sharpe=1.0980 dd=-22.7% trades=289 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #1: 72hMR(0.0030)+168hMOM(0.0015) train=1.0976 sharpe=1.0980 dd=-22.7% trades=289 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #2: GATED 72hMR(0.0025)+168hMOM(0.0020) vt=1.50 train=0.9957 sharpe=0.9960 dd=-5.3% trades=63 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #3: GATED 72hMR(0.0025)+168hMOM(0.0020) vt=1.25 train=0.8815 sharpe=0.8818 dd=-3.8% trades=54 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #5: 72hMR(0.0025)+168hMOM(0.0010) train=0.8390 sharpe=0.8393 dd=-22.3% trades=180 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #6: GATED 72hMR(0.0025)+168hMOM(0.0010) vt=1.50 train=0.8180 sharpe=0.8183 dd=-6.7% trades=47 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #8: GATED 72hMR(0.0025)+168hMOM(0.0015) vt=1.00 train=0.7842 sharpe=0.7845 dd=-1.8% trades=33 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #9: f1*-0.0010+f4*-0.0010 train=0.7798 sharpe=0.7801 dd=-19.4% trades=171 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #10: GATED 72hMR(0.0025)+168hMOM(0.0015) vt=1.50 train=0.7795 sharpe=0.7798 dd=-8.7% trades=51 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #11: f2*-0.0010+f4*-0.0010 train=0.7781 sharpe=0.7784 dd=-20.5% trades=139 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #12: GATED 72hMR(0.0025)+168hMOM(0.0015) vt=1.25 train=0.7554 sharpe=0.7557 dd=-5.9% trades=42 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #13: f1*-0.0010+rsi13*+0.0010 train=0.7377 sharpe=0.7380 dd=-20.7% trades=109 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #14: 72hMR(0.0025)+168hMOM(0.0020) train=0.7324 sharpe=0.7327 dd=-19.4% trades=139 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #15: GATED 72hMR(0.0030)+168hMOM(0.0020) vt=0.50 train=0.7272 sharpe=0.7274 dd=-4.5% trades=35 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #17: f4*-0.0030+f5*+0.0020 train=0.6936 sharpe=0.6938 dd=-18.6% trades=247 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #18: 72hMR(0.0030)+168hMOM(0.0020) train=0.6936 sharpe=0.6938 dd=-18.6% trades=247 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #22: GATED 72hMR(0.0030)+168hMOM(0.0010) vt=1.25 train=0.6779 sharpe=0.6782 dd=-10.6% trades=157 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #23: f4*-0.0020+rsi12*+0.0010 train=0.6724 sharpe=0.6727 dd=-14.4% trades=63 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #25: TG 24hMR(0.0015)+168hMOM(0.0030)+72hMR(0.0015) vt=0.50 train=0.6555 sharpe=0.6558 dd=-6.8% trades=57 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #26: GATED 72hMR(0.0025)+168hMOM(0.0025) vt=1.25 train=0.6450 sharpe=0.6453 dd=-7.3% trades=89 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #27: NEWCOMBO ema72devMR(0.0030)+168hMOM(0.0030) vt=1.00 st=1.5 train=0.6417 sharpe=0.6419 dd=-3.4% trades=30 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #29: NEWCOMBO ema72devMR(0.0020)+168hMOM(0.0030) vt=1.25 st=1.5 train=0.6242 sharpe=0.6244 dd=-6.6% trades=33 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #30: FT 24hMR(0.0018)+168hMOM(0.0022) vt=0.60 st=5 train=0.6204 sharpe=0.6206 dd=-4.4% trades=43 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #31: GATED 72hMR(0.0030)+168hMOM(0.0020) vt=0.75 train=0.6180 sharpe=0.6183 dd=-5.6% trades=60 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #32: GATED 72hMR(0.0025)+168hMOM(0.0020) vt=1.00 train=0.6163 sharpe=0.6165 dd=-2.9% trades=40 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #33: GATED 24hMR(0.0010)+168hMOM(0.0025) vt=1.25 train=0.6088 sharpe=0.6090 dd=-14.5% trades=84 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #35: GATED 72hMR(0.0030)+168hMOM(0.0025) vt=0.75 train=0.6000 sharpe=0.6002 dd=-7.0% trades=83 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #36: f2*-0.0010+f5*-0.0010 train=0.5974 sharpe=0.5976 dd=-23.0% trades=128 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #37: FT 24hMR(0.0022)+168hMOM(0.0022) vt=1.20 st=2 train=0.5969 sharpe=0.5971 dd=-11.0% trades=88 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #38: NEWCOMBO ema72devMR(0.0030)+168hMOM(0.0030) vt=1.00 st=2.0 train=0.5950 sharpe=0.5953 dd=-10.4% trades=57 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #39: GATED 72hMR(0.0030)+168hMOM(0.0020) vt=1.25 train=0.5934 sharpe=0.5936 dd=-12.5% trades=117 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #40: TG 24hMR(0.0010)+168hMOM(0.0020)+72hMR(0.0020) vt=1.00 train=0.5930 sharpe=0.5933 dd=-4.3% trades=48 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #41: FT 24hMR(0.0018)+168hMOM(0.0022) vt=0.70 st=3 train=0.5891 sharpe=0.5893 dd=-4.1% trades=33 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #42: 72hMR(0.0025)+168hMOM(0.0015) train=0.5885 sharpe=0.5888 dd=-20.0% trades=137 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #44: NEWCOMBO ema72devMR(0.0020)+168hMOM(0.0030) vt=1.25 st=2.5 train=0.5823 sharpe=0.5825 dd=-8.5% trades=86 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #46: NEWCOMBO ema72devMR(0.0020)+168hMOM(0.0030) vt=0.75 st=2.5 train=0.5742 sharpe=0.5744 dd=-5.0% trades=30 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #47: FT 24hMR(0.0018)+168hMOM(0.0032) vt=0.90 st=2 train=0.5713 sharpe=0.5715 dd=-19.3% trades=138 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #49: NEWCOMBO ema72devMR(0.0030)+168hMOM(0.0020) vt=1.00 st=2.5 train=0.5612 sharpe=0.5614 dd=-7.5% trades=41 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #50: GATED 72hMR(0.0025)+168hMOM(0.0010) vt=1.75 train=0.5517 sharpe=0.5519 dd=-12.6% trades=69 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #51: GATED 72hMR(0.0025)+168hMOM(0.0025) vt=0.75 train=0.5516 sharpe=0.5518 dd=-7.3% trades=35 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #52: NEWCOMBO ema72devMR(0.0030)+168hMOM(0.0020) vt=1.25 st=2.5 train=0.5515 sharpe=0.5517 dd=-11.1% trades=82 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #53: f4*-0.0020+rsi12*+0.0015 train=0.5495 sharpe=0.5497 dd=-7.9% trades=42 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #54: FT 24hMR(0.0018)+168hMOM(0.0022) vt=1.20 st=3 train=0.5486 sharpe=0.5488 dd=-11.0% trades=92 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #55: TG 24hMR(0.0015)+168hMOM(0.0025)+72hMR(0.0010) vt=1.00 train=0.5480 sharpe=0.5482 dd=-5.9% trades=63 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #56: GATED 72hMR(0.0025)+168hMOM(0.0025) vt=1.00 train=0.5459 sharpe=0.5461 dd=-11.7% trades=71 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #57: FT 24hMR(0.0018)+168hMOM(0.0034) vt=0.80 st=2 train=0.5439 sharpe=0.5441 dd=-19.4% trades=166 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #58: GATED 72hMR(0.0020)+168hMOM(0.0020) vt=1.50 train=0.5430 sharpe=0.5432 dd=-5.8% trades=34 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #59: TG 24hMR(0.0020)+168hMOM(0.0025)+72hMR(0.0010) vt=1.00 train=0.5411 sharpe=0.5413 dd=-14.2% trades=124 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #61: f3*-0.0010+rsi13*-0.0010 train=0.5361 sharpe=0.5363 dd=-14.0% trades=50 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #62: f4*-0.0020+f5*+0.0015 train=0.5342 sharpe=0.5344 dd=-17.5% trades=53 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #63: 72hMR(0.0020)+168hMOM(0.0015) train=0.5342 sharpe=0.5344 dd=-17.5% trades=53 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #64: GATED vol168(0.0040) vt=0.75 train=0.5321 sharpe=0.5323 dd=-20.3% trades=54 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #65: NEWCOMBO ema72devMR(0.0030)+168hMOM(0.0030) vt=1.00 st=2.5 train=0.5270 sharpe=0.5272 dd=-10.4% trades=77 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #66: GATED 72hMR(0.0025)+168hMOM(0.0010) vt=1.25 train=0.5266 sharpe=0.5268 dd=-6.7% trades=34 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #67: NEWCOMBO ema72devMR(0.0020)+168hMOM(0.0040) vt=0.75 st=2.0 train=0.5262 sharpe=0.5264 dd=-19.5% trades=135 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #68: GATED 72hMR(0.0030)+168hMOM(0.0015) vt=1.25 train=0.5255 sharpe=0.5257 dd=-13.7% trades=108 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #70: TG 24hMR(0.0015)+168hMOM(0.0030)+72hMR(0.0005) vt=1.00 train=0.5215 sharpe=0.5217 dd=-12.9% trades=134 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #71: FT 24hMR(0.0022)+168hMOM(0.0024) vt=1.10 st=2 train=0.5196 sharpe=0.5198 dd=-13.1% trades=102 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #72: f4*-0.0020+rsi12*+0.0020 train=0.5166 sharpe=0.5168 dd=-7.9% trades=45 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #73: FT 24hMR(0.0018)+168hMOM(0.0022) vt=1.00 st=5 train=0.5166 sharpe=0.5167 dd=-8.0% trades=86 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #74: NEWCOMBO ema72devMR(0.0020)+168hMOM(0.0030) vt=1.25 st=2.0 train=0.5159 sharpe=0.5161 dd=-11.4% trades=59 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #76: NEWCOMBO ema72devMR(0.0030)+168hMOM(0.0020) vt=1.25 st=2.0 train=0.5109 sharpe=0.5111 dd=-8.4% trades=49 val_pass=False
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #77: FT 24hMR(0.0020)+168hMOM(0.0032) vt=1.00 st=2 train=0.5104 sharpe=0.5106 dd=-16.7% trades=183 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #128: FT 24hMR(0.0020)+168hMOM(0.0034) vt=0.60 st=5 train=0.4186 sharpe=0.4187 dd=-20.9% trades=239 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #142: FT 24hMR(0.0020)+168hMOM(0.0034) vt=0.50 st=5 train=0.4041 sharpe=0.4042 dd=-16.6% trades=218 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #147: NEWCOMBO ema24devMR(0.0020)+168hMOM(0.0030) vt=1.00 st=2.5 train=0.3994 sharpe=0.3995 dd=-21.7% trades=194 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #149: FT 24hMR(0.0020)+168hMOM(0.0032) vt=0.60 st=5 train=0.3984 sharpe=0.3986 dd=-22.1% trades=207 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #173: FT 24hMR(0.0022)+168hMOM(0.0036) vt=0.70 st=3 train=0.3764 sharpe=0.3765 dd=-17.2% trades=276 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #190: FT 24hMR(0.0022)+168hMOM(0.0032) vt=0.60 st=5 train=0.3597 sharpe=0.3599 dd=-22.9% trades=246 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #201: TG 24hMR(0.0015)+168hMOM(0.0035)+72hMR(0.0005) vt=0.75 train=0.3551 sharpe=0.3552 dd=-19.8% trades=173 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #204: FT 24hMR(0.0026)+168hMOM(0.0032) vt=0.60 st=3 train=0.0000 sharpe=0.3535 dd=-17.5% trades=203 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #208: FT 24hMR(0.0024)+168hMOM(0.0028) vt=0.70 st=5 train=0.3494 sharpe=0.3495 dd=-14.4% trades=190 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #209: FT 24hMR(0.0026)+168hMOM(0.0036) vt=0.70 st=2 train=0.3487 sharpe=0.3488 dd=-14.6% trades=236 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #214: GATED 24hMR(0.0010)+168hMOM(0.0040) vt=1.25 train=0.0000 sharpe=0.4118 dd=-29.6% trades=347 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #229: FT 24hMR(0.0022)+168hMOM(0.0032) vt=0.90 st=2 train=0.3385 sharpe=0.3387 dd=-18.0% trades=176 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #231: FT 24hMR(0.0022)+168hMOM(0.0040) vt=0.60 st=2 train=0.3377 sharpe=0.3378 dd=-17.0% trades=226 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #255: FT 24hMR(0.0020)+168hMOM(0.0030) vt=0.50 st=7 train=0.0000 sharpe=0.3184 dd=-18.9% trades=168 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #260: FT 24hMR(0.0024)+168hMOM(0.0034) vt=0.50 st=5 train=0.3156 sharpe=0.3157 dd=-22.9% trades=258 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #265: FT 24hMR(0.0024)+168hMOM(0.0028) vt=0.60 st=7 train=0.3117 sharpe=0.3118 dd=-16.5% trades=194 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #267: FT 24hMR(0.0024)+168hMOM(0.0032) vt=0.90 st=2 train=0.3111 sharpe=0.3112 dd=-20.6% trades=208 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #271: FT 24hMR(0.0024)+168hMOM(0.0028) vt=0.50 st=7 train=0.0000 sharpe=0.3076 dd=-15.8% trades=173 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #272: FT 24hMR(0.0026)+168hMOM(0.0034) vt=0.70 st=2 train=0.3045 sharpe=0.3046 dd=-15.2% trades=193 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #280: FT 24hMR(0.0024)+168hMOM(0.0036) vt=0.80 st=2 train=0.2989 sharpe=0.2990 dd=-20.5% trades=261 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #286: FT 24hMR(0.0024)+168hMOM(0.0034) vt=0.60 st=3 train=0.2959 sharpe=0.2960 dd=-15.6% trades=220 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #301: FT 24hMR(0.0022)+168hMOM(0.0034) vt=0.50 st=7 train=0.0000 sharpe=0.3194 dd=-27.6% trades=260 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #305: FT 24hMR(0.0024)+168hMOM(0.0030) vt=0.50 st=5 train=0.0000 sharpe=0.2872 dd=-17.8% trades=181 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #310: FT 24hMR(0.0022)+168hMOM(0.0032) vt=0.60 st=7 train=0.0000 sharpe=0.3206 dd=-28.0% trades=264 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #317: FT 24hMR(0.0024)+168hMOM(0.0032) vt=0.30 st=7 train=0.0000 sharpe=0.2843 dd=-19.8% trades=184 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #320: FT 24hMR(0.0022)+168hMOM(0.0030) vt=1.00 st=2 train=0.2817 sharpe=0.2818 dd=-18.9% trades=173 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #338: FT 24hMR(0.0024)+168hMOM(0.0040) vt=0.60 st=2 train=0.2699 sharpe=0.2700 dd=-20.6% trades=249 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #342: FT 24hMR(0.0024)+168hMOM(0.0034) vt=0.90 st=2 train=0.2682 sharpe=0.2682 dd=-22.6% trades=259 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #346: NEWCOMBO ema24devMR(0.0020)+168hMOM(0.0030) vt=1.25 st=2.0 train=0.0000 sharpe=0.3212 dd=-30.0% trades=230 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #352: TG 24hMR(0.0020)+168hMOM(0.0035)+72hMR(0.0005) vt=0.75 train=0.2645 sharpe=0.2646 dd=-21.2% trades=223 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #353: FT 24hMR(0.0022)+168hMOM(0.0034) vt=0.50 st=5 train=0.2643 sharpe=0.2644 dd=-23.2% trades=240 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #360: FT 24hMR(0.0022)+168hMOM(0.0034) vt=0.80 st=3 train=0.2601 sharpe=0.2602 dd=-23.3% trades=277 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #368: FT 24hMR(0.0022)+168hMOM(0.0032) vt=0.70 st=5 train=0.2563 sharpe=0.2564 dd=-24.4% trades=263 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #373: FT 24hMR(0.0020)+168hMOM(0.0030) vt=0.60 st=7 train=0.2541 sharpe=0.2542 dd=-22.1% trades=193 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #376: TG 24hMR(0.0015)+168hMOM(0.0035)+72hMR(0.0015) vt=1.00 train=0.2518 sharpe=0.2519 dd=-24.3% trades=206 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #378: FT 24hMR(0.0026)+168hMOM(0.0028) vt=0.60 st=5 train=0.0000 sharpe=0.2506 dd=-18.3% trades=201 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #380: GATED 24hMR(0.0025)+168hMOM(0.0035) vt=0.75 train=0.0000 sharpe=0.2690 dd=-27.0% trades=284 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #385: FT 24hMR(0.0028)+168hMOM(0.0034) vt=0.70 st=2 train=0.2472 sharpe=0.2473 dd=-15.9% trades=220 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #390: FT 24hMR(0.0020)+168hMOM(0.0034) vt=0.40 st=7 train=0.2454 sharpe=0.2454 dd=-23.1% trades=218 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #393: FT 24hMR(0.0020)+168hMOM(0.0034) vt=0.30 st=7 train=0.2449 sharpe=0.2450 dd=-21.4% trades=173 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #395: FT 24hMR(0.0022)+168hMOM(0.0036) vt=0.80 st=2 train=0.2446 sharpe=0.2446 dd=-24.2% trades=219 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #402: FT 24hMR(0.0024)+168hMOM(0.0032) vt=0.80 st=2 train=0.2415 sharpe=0.2416 dd=-16.5% trades=175 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #410: FT 24hMR(0.0026)+168hMOM(0.0040) vt=0.70 st=2 train=0.0000 sharpe=0.2377 dd=-25.0% trades=312 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #419: FT 24hMR(0.0026)+168hMOM(0.0034) vt=0.90 st=2 train=0.0000 sharpe=0.2356 dd=-25.2% trades=283 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #420: FT 24hMR(0.0028)+168hMOM(0.0036) vt=0.80 st=2 train=0.0000 sharpe=0.2341 dd=-25.0% trades=301 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #422: FT 24hMR(0.0024)+168hMOM(0.0038) vt=0.80 st=2 train=0.2326 sharpe=0.2327 dd=-21.7% trades=287 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #427: FT 24hMR(0.0028)+168hMOM(0.0030) vt=0.80 st=2 train=0.0000 sharpe=0.2313 dd=-19.1% trades=189 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #434: FT 24hMR(0.0020)+168hMOM(0.0032) vt=1.10 st=2 train=0.0000 sharpe=0.2353 dd=-25.7% trades=219 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #436: FT 24hMR(0.0024)+168hMOM(0.0028) vt=1.00 st=3 train=0.2277 sharpe=0.2278 dd=-17.0% trades=211 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #456: TG 24hMR(0.0015)+168hMOM(0.0035)+72hMR(0.0005) vt=1.00 train=0.2211 sharpe=0.2212 dd=-21.9% trades=205 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #458: FT 24hMR(0.0022)+168hMOM(0.0032) vt=0.70 st=3 train=0.2204 sharpe=0.2204 dd=-17.1% trades=189 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #463: GATED 24hMR(0.0025)+168hMOM(0.0030) vt=0.75 train=0.2172 sharpe=0.2173 dd=-18.9% trades=205 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #464: FT 24hMR(0.0024)+168hMOM(0.0034) vt=0.80 st=2 train=0.2167 sharpe=0.2168 dd=-16.8% trades=215 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #479: FT 24hMR(0.0028)+168hMOM(0.0036) vt=0.60 st=2 train=0.2135 sharpe=0.2136 dd=-23.0% trades=217 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #480: FT 24hMR(0.0024)+168hMOM(0.0032) vt=0.50 st=7 train=0.0000 sharpe=0.2130 dd=-23.8% trades=259 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #485: FT 24hMR(0.0024)+168hMOM(0.0038) vt=0.70 st=2 train=0.2111 sharpe=0.2112 dd=-25.0% trades=249 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #487: FT 24hMR(0.0024)+168hMOM(0.0032) vt=0.40 st=5 train=0.0000 sharpe=0.2109 dd=-17.1% trades=186 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #490: TG 24hMR(0.0010)+168hMOM(0.0040)+RSI14(-0.0010) vt=0.50 train=0.0000 sharpe=0.2330 dd=-27.7% trades=212 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #495: FT 24hMR(0.0024)+168hMOM(0.0034) vt=0.40 st=5 train=0.0000 sharpe=0.2118 dd=-25.3% trades=226 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+  #496: FT 24hMR(0.0026)+168hMOM(0.0034) vt=0.40 st=5 train=0.0000 sharpe=0.2087 dd=-24.3% trades=235 val_pass=True
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+
+Best: FT 24hMR(0.0020)+168hMOM(0.0032) vt=1.00 st=2 score=0.5104 val_pass=True
+Search complete in 94.8s
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+Loading cached data from /Users/ipatterson/.cache/autotrader/btcusdt_1h.parquet
+
+---
+score:            0.5104
+sharpe:           0.5106
+max_drawdown:     -16.7%
+n_trades:         183
+total_return:     33.7%
+n_params:         18
+val_pass:         true
+training_seconds: 94.8
+total_seconds:    94.9
