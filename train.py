@@ -277,6 +277,14 @@ def main():
     val_preds = model.predict(val_features)
     val_preds = _apply_regime_filter(val_preds, val_df)
 
+    # Debug: print val prediction statistics
+    above_thresh = np.sum(val_preds > 0.005)
+    below_thresh = np.sum(val_preds < -0.005)
+    flat = np.sum(np.abs(val_preds) <= 0.005)
+    print(f"  Val preds: long={above_thresh}, short={below_thresh}, flat={flat}")
+    print(f"  Val pred range: [{val_preds.min():.6f}, {val_preds.max():.6f}]")
+    print(f"  Val pred mean: {val_preds.mean():.6f}, std: {val_preds.std():.6f}")
+
     val_result = evaluate_model(val_preds, val_timestamps, n_params, split="val")
 
     total_seconds = time.time() - total_start
