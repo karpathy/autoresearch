@@ -111,22 +111,22 @@ N_FEATURES = len(RETURN_LOOKBACKS) + len(VOLATILITY_WINDOWS) + 1 + len(ZSCORE_WI
 
 
 class ForwardReturnModel(nn.Module):
-    """Simple feedforward network: n_features -> 32 -> 16 -> 1, tanh-scaled output"""
+    """Feedforward network with dropout: n_features -> 32 -> 16 -> 1"""
 
     def __init__(self, n_features: int = N_FEATURES):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(n_features, 32),
             nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(32, 16),
             nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(16, 1),
         )
-        self.output_scale = 0.05  # bound predictions to ±5%
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        raw = self.net(x).squeeze(-1)
-        return torch.tanh(raw) * self.output_scale
+        return self.net(x).squeeze(-1)
 
 
 def count_model_params(model: nn.Module | None = None) -> int:
@@ -222,6 +222,10 @@ def main():
     targets = targets[valid]
     train_timestamps = timestamps[valid]
 
+    # Winsorize targets to reduce extreme outlier influence
+    p5, p95 = np.percentile(targets, [5, 95])
+    targets = np.clip(targets, p5, p95)
+
     # Normalize features (fit on training data)
     features = _normalize(features, fit=True)
 
@@ -235,8 +239,8 @@ def main():
     n_params = count_model_params(model)
     print(f"  Model parameters: {n_params}")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-4)
-    loss_fn = nn.HuberLoss(delta=0.02)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    mse_fn = nn.MSELoss()
 
     # --- Create DataLoader ---
     X_tensor = torch.tensor(features, dtype=torch.float32)
@@ -260,7 +264,11 @@ def main():
             y_batch = y_batch.to(device)
 
             pred = model(X_batch)
-            loss = loss_fn(pred, y_batch)
+            mse_loss = mse_fn(pred, y_batch)
+            # Directional penalty: penalize predictions that have wrong sign
+            sign_match = (pred * y_batch > 0).float()  # 1 if same sign, 0 if not
+            dir_penalty = (1.0 - sign_match).mean()
+            loss = mse_loss + 0.001 * dir_penalty
 
             optimizer.zero_grad()
             loss.backward()
