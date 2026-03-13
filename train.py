@@ -200,6 +200,13 @@ def _apply_regime_filter(preds: np.ndarray, df: pd.DataFrame) -> np.ndarray:
     crash_mask = ret_168 < -0.15
     preds[crash_mask] = 0.0  # flat during crash
 
+    # Trend filter: go flat when price is below 168h MA (downtrend)
+    ma_168 = pd.Series(close).rolling(168, min_periods=168).mean().values
+    ma_168 = ma_168[MAX_LOOKBACK:][:len(preds)]
+    close_trimmed = close[MAX_LOOKBACK:][:len(preds)]
+    downtrend_mask = close_trimmed < ma_168
+    preds[downtrend_mask] = 0.0
+
     return preds
 
 
@@ -256,14 +263,13 @@ def main():
     train_start = time.time()
 
     model = GradientBoostingRegressor(
-        n_estimators=500,
+        n_estimators=300,
         max_depth=3,
         learning_rate=0.01,
         subsample=0.8,
         min_samples_leaf=100,
         max_features=0.8,
-        loss="huber",
-        alpha=0.9,
+        loss="squared_error",
         random_state=42,
     )
     model.fit(features, targets)
