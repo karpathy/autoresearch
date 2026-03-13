@@ -502,6 +502,91 @@ def main():
 
     print(f"  Fine-tuned: {finetune_count}, Triple-gated: {triple_gated_count}")
 
+    # Phase 8: Rolling z-score features + EMA-based signals
+    print("Phase 8: Rolling z-score and EMA features...")
+
+    # Compute rolling z-scores of returns (raw, pre-normalization)
+    raw_features_df = train_df.copy()
+    raw_close = raw_features_df["close"].values.astype(np.float64)
+    n_raw = len(raw_close)
+
+    # Raw returns (not normalized)
+    raw_returns = {}
+    for lb in [24, 72, 168]:
+        ret = np.full(n_raw, np.nan)
+        ret[lb:] = raw_close[lb:] / raw_close[:-lb] - 1.0
+        raw_returns[lb] = ret
+
+    # Rolling z-score: (return - rolling_mean) / rolling_std
+    rzs_features = {}
+    for lb in [24, 72, 168]:
+        ret = pd.Series(raw_returns[lb])
+        for window in [168, 336, 720]:  # 1wk, 2wk, 1mo
+            rmean = ret.rolling(window, min_periods=window).mean()
+            rstd = ret.rolling(window, min_periods=window).std()
+            rzs = np.where(rstd > 0, (ret - rmean) / rstd, 0.0).values
+            rzs = np.clip(rzs, -3, 3)
+            rzs_features[f"rzs{lb}w{window}"] = rzs[MAX_LOOKBACK:][valid]
+
+    # EMA features
+    ema_features = {}
+    close_series = pd.Series(raw_close)
+    for span in [12, 24, 72, 168]:
+        ema = close_series.ewm(span=span).mean().values
+        ema_dev = (raw_close - ema) / np.where(ema > 0, ema, 1.0)
+        ema_features[f"ema{span}dev"] = ema_dev[MAX_LOOKBACK:][valid]
+
+    # Search over new features
+    new_feat_count = 0
+    all_new_feats = {}
+    all_new_feats.update(rzs_features)
+    all_new_feats.update(ema_features)
+
+    for name, raw_feat in all_new_feats.items():
+        # Normalize
+        feat = (raw_feat - np.nanmean(raw_feat)) / (np.nanstd(raw_feat) + 1e-8)
+        feat = np.clip(feat, -3, 3)
+        feat = np.nan_to_num(feat, nan=0.0)
+
+        for sign in [-1, +1]:
+            for scale in [0.001, 0.002, 0.003, 0.005, 0.008]:
+                preds = sign * feat * scale
+                sharpe, max_dd, n_trades = _quick_backtest(preds, close)
+                if n_trades >= 20:
+                    proxy = sharpe * min(1.0, 0.25 / max(abs(max_dd), 0.01))
+                    if proxy > 0.0:
+                        def make_new_fn(f, s, sc):
+                            def fn(feats):
+                                return s * f * sc
+                            return fn
+                        strategies.append((proxy, make_new_fn(feat, sign, scale),
+                            f"NEW {name} s={sign:+d} sc={scale:.4f}"))
+                        new_feat_count += 1
+
+        # Also try combos with 168h momentum
+        for sign in [-1]:
+            for scale in [0.001, 0.002, 0.003]:
+                for mom_sc in [0.002, 0.003, 0.004]:
+                    for vt in [0.75, 1.0, 1.25]:
+                        preds_base = sign * feat * scale + features[:, 5] * mom_sc
+                        gate = 1.0 / (1.0 + np.exp((features[:, IDX_VOL24] - vt) * 2.0))
+                        preds = preds_base * gate
+                        sharpe, max_dd, n_trades = _quick_backtest(preds, close)
+                        if n_trades >= 20:
+                            proxy = sharpe * min(1.0, 0.25 / max(abs(max_dd), 0.01))
+                            if proxy > 0.1:
+                                def make_combo_fn(f, s, sc, msc, v):
+                                    def fn(feats):
+                                        base = s * f * sc + feats[:, 5] * msc
+                                        g = 1.0 / (1.0 + np.exp((feats[:, IDX_VOL24] - v) * 2.0))
+                                        return base * g
+                                    return fn
+                                strategies.append((proxy, make_combo_fn(feat, sign, scale, mom_sc, vt),
+                                    f"NEWCOMBO {name}*{sign*scale:+.4f}+168hMOM({mom_sc:.4f}) vt={vt:.2f}"))
+                                new_feat_count += 1
+
+    print(f"  New feature strategies: {new_feat_count}")
+
     print(f"  Pairs: {pair_count} promising strategies")
     print(f"  Total: {len(strategies)}")
 
