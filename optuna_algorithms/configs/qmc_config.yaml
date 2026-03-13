@@ -1,0 +1,129 @@
+# QMC (Quasi-Monte Carlo) Configuration
+#
+# WHEN TO USE:
+#   - Initial exploration phase (first 50-100 trials)
+#   - Design of Experiments (DoE)
+#   - Warm-starting other adaptive algorithms
+#   - Sensitivity analysis
+#   - Need uniform coverage of search space
+#   - Embarrassingly parallel workloads
+#
+# STRENGTHS:
+#   - O(1/N) convergence vs O(1/√N) for random sampling
+#   - Perfect parallelization (no coordination needed)
+#   - Deterministic and reproducible
+#   - Zero computational overhead
+#   - Systematic exploration of search space
+#
+# LIMITATIONS:
+#   - Non-adaptive (doesn't learn from trials)
+#   - Not an optimizer, just generates well-distributed samples
+#   - Worse sample efficiency than Bayesian/CMA-ES for targeted optimization
+#   - Best as exploration phase, then switch to adaptive method
+
+algorithm:
+  name: "qmc"
+
+sampler_config:
+  qmc_type: "sobol"  # Options: 'sobol' (d > 6), 'halton' (d <= 6)
+  scramble: true     # Use scrambled sequence (improves uniformity)
+  seed: 42
+
+optimization:
+  direction: "minimize"
+  n_trials: 100  # QMC is for exploration, not optimization
+  timeout: null
+
+search_space:
+  # QMC works with any parameter type
+  continuous_param:
+    type: "float"
+    min: -10.0
+    max: 10.0
+
+  integer_param:
+    type: "int"
+    min: 1
+    max: 100
+
+  categorical_param:
+    type: "categorical"
+    choices: ["option1", "option2", "option3"]
+
+output:
+  output_dir: "qmc_output"
+  save_plots: true
+  save_report: true
+
+# QMC Type Selection:
+# - Sobol: Best for d > 6 dimensions (most common choice)
+# - Halton: Best for d <= 6 dimensions (degrades in high-dim)
+#
+# Dimensionality guide:
+# - 1-6 dims: Use Halton
+# - 7+ dims: Use Sobol
+
+# Recommended Hybrid Strategies:
+hybrid_strategies:
+  # Strategy 1: QMC → TPE
+  qmc_then_tpe:
+    phase1:
+      algorithm: "qmc"
+      n_trials: 50
+      purpose: "exploration"
+
+    phase2:
+      algorithm: "bayesian"
+      variant: "tpe"
+      n_trials: 150
+      n_startup_trials: 0  # Already explored with QMC
+      purpose: "exploitation"
+
+  # Strategy 2: QMC → CMA-ES (continuous only)
+  qmc_then_cmaes:
+    phase1:
+      algorithm: "qmc"
+      n_trials: 100
+      purpose: "exploration"
+
+    phase2:
+      algorithm: "cmaes"
+      n_trials: 400
+      purpose: "refinement"
+
+  # Strategy 3: QMC warm-start for any algorithm
+  qmc_warmstart:
+    description: "Use QMC for first 20-30% of trials, then switch"
+    qmc_fraction: 0.25
+    total_trials: 200
+    qmc_trials: 50  # 25% of total
+    adaptive_trials: 150
+
+# Use Cases:
+use_cases:
+  design_of_experiments:
+    description: "Systematic exploration of parameter space"
+    n_trials: 100
+    purpose: "Understanding parameter effects"
+
+  sensitivity_analysis:
+    description: "Identify which parameters matter most"
+    n_trials: 200
+    purpose: "Parameter importance ranking"
+
+  warm_start:
+    description: "Initialize adaptive optimization"
+    n_trials: 50
+    next_step: "Switch to TPE or CMA-ES"
+
+  parallel_evaluation:
+    description: "Maximum parallelism (no coordination needed)"
+    n_trials: 1000
+    parallel_workers: "unlimited"
+
+# Performance tips:
+# 1. Use QMC for first 20-30% of trial budget, then switch to adaptive
+# 2. QMC is perfect for massively parallel workloads
+# 3. Use Sobol for most cases (robust across dimensions)
+# 4. QMC + TPE is a powerful combination
+# 5. Consider QMC for initial exploration in complex landscapes

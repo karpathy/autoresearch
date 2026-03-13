@@ -1,0 +1,103 @@
+# CMA-ES (Evolution Strategies) Configuration
+#
+# WHEN TO USE:
+#   - Purely continuous optimization problems
+#   - Suspected parameter correlations/interactions
+#   - Noisy objective functions
+#   - Large trial budgets (1000-10000 trials)
+#   - High-dimensional continuous spaces (10-1000+ dims)
+#   - Robotics, control, continuous policy search
+#
+# STRENGTHS:
+#   - Industry gold standard for continuous optimization
+#   - Learns parameter correlations via adaptive covariance matrix
+#   - Robust to noisy objectives
+#   - Excellent parallelization (near-linear speedup)
+#   - Restart strategies prevent premature convergence
+#
+# LIMITATIONS:
+#   - Poor performance on categorical/discrete parameters (use TPE instead)
+#   - Requires larger population sizes (~4+3ln(d) for d dimensions)
+#   - Higher computational cost: O(d³) per iteration
+#   - Not sample-efficient for small budgets (<100 trials)
+
+algorithm:
+  name: "cmaes"
+
+sampler_config:
+  with_margin: false        # Use margin for constraint handling
+  use_separable: false      # Use sep-CMA-ES (faster for high-dim, assumes independence)
+  restart_strategy: null    # Options: null, 'ipop', 'bipop'
+                           # - null: Standard CMA-ES
+                           # - 'ipop': IPOP-CMA-ES (increases population on restart)
+                           # - 'bipop': BIPOP-CMA-ES (alternates large/small populations)
+  population_size: null     # Auto: 4 + 3*ln(n_params)
+  sigma0: 0.25             # Initial step-size (fraction of search space)
+  seed: 42
+
+optimization:
+  direction: "minimize"
+  n_trials: 500  # CMA-ES needs more trials than TPE (population-based)
+  timeout: null
+
+# IMPORTANT: CMA-ES works ONLY with continuous parameters
+# For mixed variables, use hybrid optimizer or TPE
+search_space:
+  # All parameters must be continuous (float)
+  param1:
+    type: "float"
+    min: -10.0
+    max: 10.0
+
+  param2:
+    type: "float"
+    min: 0.0
+    max: 1.0
+
+  # DO NOT use integer or categorical with CMA-ES!
+  # If you need mixed variables, use:
+  #   1. CatCMA (hybrid optimizer)
+  #   2. TPE (bayesian optimizer)
+
+# Example: Continuous optimization
+example_search_space_continuous:
+  x:
+    type: "float"
+    min: -5.0
+    max: 5.0
+
+  y:
+    type: "float"
+    min: -5.0
+    max: 5.0
+
+  z:
+    type: "float"
+    min: -5.0
+    max: 5.0
+
+output:
+  output_dir: "cmaes_output"
+  save_plots: true
+  save_report: true
+
+# Restart strategy guide:
+# - Use 'ipop' for multimodal problems (multiple local minima)
+# - Use 'bipop' for complex landscapes
+# - Leave null for smooth, unimodal problems
+
+# Population size guide:
+# - Auto (null): 4 + 3*ln(d) where d = number of parameters
+# - Larger populations: more exploration, slower convergence
+# - Smaller populations: faster but may miss global optimum
+
+# Separable CMA-ES:
+# - Set use_separable=true for high-dim (100+) if parameters are independent
+# - Reduces O(d³) to O(d) but assumes no parameter correlations
+# - Only use if you know parameters don't interact
+
+# Performance tips:
+# 1. Ensure n_trials >= 50 * sqrt(n_params) for good results
+# 2. Use restart_strategy='ipop' if getting stuck in local minima
+# 3. Normalize your parameters to similar scales if possible
+# 4. For very high-dim (1000+), consider use_separable=true

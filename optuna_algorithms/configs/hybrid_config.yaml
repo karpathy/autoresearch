@@ -1,0 +1,192 @@
+# Hybrid Optimization Configuration
+#
+# WHEN TO USE:
+#   - Mixed continuous + discrete + categorical parameters
+#   - Neural architecture search
+#   - AutoML with diverse hyperparameter types
+#   - Complex pipelines with heterogeneous search spaces
+#   - When problem doesn't fit cleanly into continuous or discrete
+#   - When you're unsure which algorithm to use
+#
+# STRENGTHS:
+#   - Handles mixed-variable optimization
+#   - Adaptive to problem structure
+#   - Can combine multiple algorithms (ensemble, sequential)
+#   - Flexibility for complex real-world problems
+#
+# LIMITATIONS:
+#   - More complex setup
+#   - May require algorithm-specific tuning
+#   - CatCMA requires installation from OptunaHub
+
+algorithm:
+  name: "hybrid"
+
+# Strategy Options:
+# - 'auto': Automatically select based on search space analysis
+# - 'catcma': CatCMA-ES for mixed variables (best-in-class, needs OptunaHub)
+# - 'sequential': Multi-phase optimization (QMC → TPE → CMA-ES)
+# - 'tpe_only': Use TPE (good fallback for mixed variables)
+# - 'cmaes_only': Use CMA-ES (pure continuous only)
+strategy: "auto"
+
+sampler_config:
+  seed: 42
+
+optimization:
+  direction: "minimize"
+  n_trials: 200
+  timeout: null
+
+# Mixed variable search space
+search_space:
+  # Continuous parameters
+  learning_rate:
+    type: "float"
+    min: 0.0001
+    max: 0.1
+    log: true
+
+  momentum:
+    type: "float"
+    min: 0.0
+    max: 1.0
+
+  # Integer parameters
+  batch_size:
+    type: "int"
+    min: 16
+    max: 256
+
+  hidden_size:
+    type: "int"
+    min: 64
+    max: 512
+
+  # Categorical parameters
+  optimizer:
+    type: "categorical"
+    choices: ["adam", "sgd", "rmsprop", "adamw"]
+
+  activation:
+    type: "categorical"
+    choices: ["relu", "gelu", "swish"]
+
+output:
+  output_dir: "hybrid_output"
+  save_plots: true
+  save_report: true
+
+# Strategy-specific configuration
+
+# CatCMA Strategy (best for mixed variables)
+catcma_config:
+  # Automatically selected when strategy='catcma' or strategy='auto' with mixed variables
+  # Requires: pip install optunahub
+  description: "CatCMA-ES handles continuous, integer, and categorical jointly"
+  recommended_trials: 500
+  note: "Best-in-class for mixed-variable optimization"
+
+# Sequential Strategy (multi-phase)
+sequential_config:
+  # Phase splits (must sum to 1.0)
+  phase_splits: [0.2, 0.5, 0.3]  # QMC, TPE, CMA-ES
+
+  phase1_qmc:
+    description: "Exploration phase"
+    fraction: 0.2
+    purpose: "Uniform coverage of search space"
+
+  phase2_tpe:
+    description: "Exploitation phase"
+    fraction: 0.5
+    purpose: "Sample-efficient optimization"
+
+  phase3_cmaes:
+    description: "Refinement phase (continuous only)"
+    fraction: 0.3
+    purpose: "Fine-tuning continuous parameters"
+    note: "Skipped if search space has discrete/categorical"
+
+# Auto Strategy Selection Logic
+auto_selection:
+  pure_continuous:
+    description: "All parameters are continuous (float)"
+    selected_algorithm: "cmaes"
+    reason: "CMA-ES is best for continuous optimization"
+
+  mixed_variables:
+    description: "Mix of continuous, integer, categorical"
+    selected_algorithm: "catcma"
+    fallback: "tpe"
+    reason: "CatCMA handles mixed variables; TPE if OptunaHub unavailable"
+
+  pure_discrete:
+    description: "All parameters are integer or categorical"
+    selected_algorithm: "tpe"
+    reason: "TPE handles discrete parameters well"
+
+# Example: Neural Architecture Search
+nas_example:
+  search_space:
+    # Network architecture (discrete)
+    n_layers:
+      type: "int"
+      min: 2
+      max: 10
+
+    layer_type:
+      type: "categorical"
+      choices: ["conv", "dense", "attention"]
+
+    # Hyperparameters (continuous)
+    learning_rate:
+      type: "float"
+      min: 0.0001
+      max: 0.01
+      log: true
+
+    dropout:
+      type: "float"
+      min: 0.0
+      max: 0.5
+
+  strategy: "catcma"
+  n_trials: 500
+
+# Example: AutoML Pipeline
+automl_example:
+  search_space:
+    # Preprocessing
+    normalization:
+      type: "categorical"
+      choices: ["none", "standardize", "minmax"]
+
+    # Model selection
+    model_type:
+      type: "categorical"
+      choices: ["linear", "tree", "neural"]
+
+    # Model hyperparameters (vary by model_type)
+    max_depth:  # For tree models
+      type: "int"
+      min: 3
+      max: 20
+
+    learning_rate:  # For neural models
+      type: "float"
+      min: 0.0001
+      max: 0.1
+      log: true
+
+  strategy: "auto"
+  n_trials: 300
+
+# Installing OptunaHub for CatCMA:
+# $ pip install optunahub
+
+# Performance tips:
+# 1. Use strategy='auto' to let the system choose
+# 2. For mixed variables, CatCMA > TPE > separate optimization
+# 3. Sequential strategy good for large trial budgets (500+)
+# 4. TPE is a solid fallback that handles everything reasonably
