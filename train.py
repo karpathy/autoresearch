@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.linear_model import Ridge
 
 from prepare import (
     FORWARD_HOURS,
@@ -136,17 +136,12 @@ _trained_model = None
 
 
 def count_model_params(model=None) -> int:
-    """Return approximate parameter count for the GBR model."""
+    """Return parameter count for the Ridge model."""
     if model is None:
         model = _trained_model
     if model is None:
         return 0
-    # Count leaf nodes across all trees as proxy for parameters
-    n_params = 0
-    for estimators in model.estimators_:
-        for tree in estimators:
-            n_params += tree.tree_.node_count
-    return n_params
+    return model.coef_.size + 1  # coefficients + intercept
 
 
 # ---------------------------------------------------------------------------
@@ -247,20 +242,11 @@ def main():
 
     print(f"  Training samples: {len(features)}, Features: {features.shape[1]}")
 
-    # --- Train GBR ---
-    print(f"Training GBR for up to {TIME_BUDGET}s...")
+    # --- Train Ridge ---
+    print("Training Ridge regression...")
     train_start = time.time()
 
-    model = GradientBoostingRegressor(
-        n_estimators=300,
-        max_depth=3,
-        learning_rate=0.01,
-        subsample=0.7,
-        min_samples_leaf=100,
-        max_features=0.8,
-        loss="huber",
-        alpha=0.9,
-    )
+    model = Ridge(alpha=1.0)
     model.fit(features, targets)
 
     training_seconds = time.time() - train_start
