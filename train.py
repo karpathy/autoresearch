@@ -189,16 +189,27 @@ def _normalize(features: np.ndarray, fit: bool = False) -> np.ndarray:
 def _apply_regime_filter(preds: np.ndarray, df: pd.DataFrame) -> np.ndarray:
     """Long-only filter with crash protection and vol dampening."""
     close = df["close"].values.astype(np.float64)
+    hourly_returns = np.zeros(len(close))
+    hourly_returns[1:] = close[1:] / close[:-1] - 1.0
 
     # Long-only: never go short
     preds = np.maximum(preds, 0.0)
 
-    # Crash filter: go flat during crashes (168h return < -15%)
+    # Crash filter: go flat during crashes (168h return < -10%)
     ret_168 = np.full(len(close), 0.0)
     ret_168[168:] = close[168:] / close[:-168] - 1.0
     ret_168 = ret_168[MAX_LOOKBACK:][:len(preds)]
-    crash_mask = ret_168 < -0.15
+    crash_mask = ret_168 < -0.10
     preds[crash_mask] = 0.0  # flat during crash
+
+    # Volatility dampening: scale down predictions in high-vol regimes
+    vol = pd.Series(hourly_returns).rolling(168, min_periods=168).std().values
+    vol = vol[MAX_LOOKBACK:][:len(preds)]
+    vol_median = np.nanmedian(vol[vol > 0])
+    vol_ratio = np.where(vol > 0, vol / vol_median, 1.0)
+    # Dampen when vol > median: scale = 1/vol_ratio, capped at [0.3, 1.0]
+    vol_scale = np.clip(1.0 / vol_ratio, 0.3, 1.0)
+    preds = preds * vol_scale
 
     return preds
 
