@@ -1,0 +1,19 @@
+{
+  "method": "genetic",
+  "n_trials": 10,
+  "n_complete": 5,
+  "n_failed": 0,
+  "best_trial_number": 1,
+  "best_value": 1.43071,
+  "best_params": {
+    "depth": 4,
+    "device_batch_size": 2,
+    "total_batch_size": 65536,
+    "embedding_lr": 0.2324661814960508,
+    "matrix_lr": 0.018199186417410244,
+    "weight_decay": 0.25954543544681624,
+    "warmdown_ratio": 0.2973265483910836
+  },
+  "total_time_s": 3113.4753844738007,
+  "avg_time_per_trial_s": 311.3475384473801
+}

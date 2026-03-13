@@ -1,0 +1,16 @@
+{
+  "method": "genetic",
+  "n_trials": 15,
+  "n_complete": 15,
+  "n_failed": 0,
+  "best_trial_number": 4,
+  "best_value": 1.41882,
+  "best_params": {
+    "embedding_lr": 0.5529489033606748,
+    "matrix_lr": 0.08061956125930934,
+    "weight_decay": 0.19137739889637723,
+    "warmdown_ratio": 0.2819884758191076
+  },
+  "total_time_s": 7939.044165611267,
+  "avg_time_per_trial_s": 529.2696110407511
+}

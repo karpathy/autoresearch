@@ -1,0 +1,19 @@
+{
+  "method": "bayesian",
+  "n_trials": 10,
+  "n_complete": 10,
+  "n_failed": 0,
+  "best_trial_number": 8,
+  "best_value": 1.489058,
+  "best_params": {
+    "depth": 3,
+    "device_batch_size": 8,
+    "total_batch_size": 65536,
+    "embedding_lr": 0.4369348036796718,
+    "matrix_lr": 0.0577791408513156,
+    "weight_decay": 0.1290250204101554,
+    "warmdown_ratio": 0.19941375341371437
+  },
+  "total_time_s": 4846.840207099915,
+  "avg_time_per_trial_s": 484.68402070999144
+}

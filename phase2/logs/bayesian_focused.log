@@ -1,0 +1,309 @@
+[I 2026-03-12 08:35:30,655] A new study created in RDB with name: bayesian_tpe
+
+################################################################################
+# Phase 1: BAYESIAN Optimization
+# Trials: 15
+# Output: experiments/bayesian_focused_20260312_083529
+################################################################################
+
+  0%|          | 0/15 [00:00<?, ?it/s]                                        0%|          | 0/15 [08:57<?, ?it/s]Best trial: 0. Best value: 1.42705:   0%|          | 0/15 [08:57<?, ?it/s]Best trial: 0. Best value: 1.42705:   7%|▋         | 1/15 [08:57<2:05:19, 537.14s/it]                                                                                     Best trial: 0. Best value: 1.42705:   7%|▋         | 1/15 [17:47<2:05:19, 537.14s/it]Best trial: 1. Best value: 1.42118:   7%|▋         | 1/15 [17:47<2:05:19, 537.14s/it]Best trial: 1. Best value: 1.42118:  13%|█▎        | 2/15 [17:47<1:55:32, 533.25s/it]                                                                                     Best trial: 1. Best value: 1.42118:  13%|█▎        | 2/15 [26:37<1:55:32, 533.25s/it]Best trial: 1. Best value: 1.42118:  13%|█▎        | 2/15 [26:37<1:55:32, 533.25s/it]Best trial: 1. Best value: 1.42118:  20%|██        | 3/15 [26:37<1:46:17, 531.49s/it]                                                                                     Best trial: 1. Best value: 1.42118:  20%|██        | 3/15 [35:26<1:46:17, 531.49s/it]Best trial: 1. Best value: 1.42118:  20%|██        | 3/15 [35:26<1:46:17, 531.49s/it]Best trial: 1. Best value: 1.42118:  27%|██▋       | 4/15 [35:26<1:37:18, 530.79s/it]                                                                                     Best trial: 1. Best value: 1.42118:  27%|██▋       | 4/15 [44:15<1:37:18, 530.79s/it]Best trial: 4. Best value: 1.41907:  27%|██▋       | 4/15 [44:15<1:37:18, 530.79s/it]Best trial: 4. Best value: 1.41907:  33%|███▎      | 5/15 [44:15<1:28:19, 529.94s/it]                                                                                     Best trial: 4. Best value: 1.41907:  33%|███▎      | 5/15 [53:05<1:28:19, 529.94s/it]Best trial: 4. Best value: 1.41907:  33%|███▎      | 5/15 [53:05<1:28:19, 529.94s/it]Best trial: 4. Best value: 1.41907:  40%|████      | 6/15 [53:05<1:19:29, 529.94s/it]                                                                                     Best trial: 4. Best value: 1.41907:  40%|████      | 6/15 [1:01:54<1:19:29, 529.94s/it]Best trial: 4. Best value: 1.41907:  40%|████      | 6/15 [1:01:54<1:19:29, 529.94s/it]Best trial: 4. Best value: 1.41907:  47%|████▋     | 7/15 [1:01:54<1:10:38, 529.86s/it]                                                                                       Best trial: 4. Best value: 1.41907:  47%|████▋     | 7/15 [1:10:44<1:10:38, 529.86s/it]Best trial: 4. Best value: 1.41907:  47%|████▋     | 7/15 [1:10:44<1:10:38, 529.86s/it]Best trial: 4. Best value: 1.41907:  53%|█████▎    | 8/15 [1:10:44<1:01:49, 529.91s/it]                                                                                       Best trial: 4. Best value: 1.41907:  53%|█████▎    | 8/15 [1:19:33<1:01:49, 529.91s/it]Best trial: 8. Best value: 1.41857:  53%|█████▎    | 8/15 [1:19:33<1:01:49, 529.91s/it]Best trial: 8. Best value: 1.41857:  60%|██████    | 9/15 [1:19:33<52:56, 529.42s/it]                                                                                       Best trial: 8. Best value: 1.41857:  60%|██████    | 9/15 [1:28:23<52:56, 529.42s/it]Best trial: 8. Best value: 1.41857:  60%|██████    | 9/15 [1:28:23<52:56, 529.42s/it]Best trial: 8. Best value: 1.41857:  67%|██████▋   | 10/15 [1:28:23<44:07, 529.54s/it]                                                                                      
+================================================================================
+Method: bayesian | Trial 1/15
+Optuna Trial #0
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.6249080237694725,
+  "matrix_lr": 0.09352142919229749,
+  "weight_decay": 0.24639878836228102,
+  "warmdown_ratio": 0.31973169683940733
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.427055
+
+[I 2026-03-12 08:44:27,795] Trial 0 finished with value: 1.427055 and parameters: {'embedding_lr': 0.6249080237694725, 'matrix_lr': 0.09352142919229749, 'weight_decay': 0.24639878836228102, 'warmdown_ratio': 0.31973169683940733}. Best is trial 0 with value: 1.427055.
+
+================================================================================
+Method: bayesian | Trial 2/15
+Optuna Trial #1
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.5812037280884873,
+  "matrix_lr": 0.06967983561008609,
+  "weight_decay": 0.1116167224336399,
+  "warmdown_ratio": 0.3732352291549871
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.421175
+
+[I 2026-03-12 08:53:18,323] Trial 1 finished with value: 1.421175 and parameters: {'embedding_lr': 0.5812037280884873, 'matrix_lr': 0.06967983561008609, 'weight_decay': 0.1116167224336399, 'warmdown_ratio': 0.3732352291549871}. Best is trial 1 with value: 1.421175.
+
+================================================================================
+Method: bayesian | Trial 3/15
+Optuna Trial #2
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.6702230023486417,
+  "matrix_lr": 0.08624217733388137,
+  "weight_decay": 0.10411689885916049,
+  "warmdown_ratio": 0.3939819704323989
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.427147
+
+[I 2026-03-12 09:02:07,730] Trial 2 finished with value: 1.427147 and parameters: {'embedding_lr': 0.6702230023486417, 'matrix_lr': 0.08624217733388137, 'weight_decay': 0.10411689885916049, 'warmdown_ratio': 0.3939819704323989}. Best is trial 1 with value: 1.421175.
+
+================================================================================
+Method: bayesian | Trial 4/15
+Optuna Trial #3
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.554330112408653,
+  "matrix_lr": 0.06517991548867452,
+  "weight_decay": 0.10150946386325863,
+  "warmdown_ratio": 0.20359237512296396
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.421716
+
+[I 2026-03-12 09:10:57,447] Trial 3 finished with value: 1.421716 and parameters: {'embedding_lr': 0.554330112408653, 'matrix_lr': 0.06517991548867452, 'weight_decay': 0.10150946386325863, 'warmdown_ratio': 0.20359237512296396}. Best is trial 1 with value: 1.421175.
+
+================================================================================
+Method: bayesian | Trial 5/15
+Optuna Trial #4
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.5530735474656209,
+  "matrix_lr": 0.06673987440786468,
+  "weight_decay": 0.18249938129382867,
+  "warmdown_ratio": 0.39522797997159903
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.419073
+
+[I 2026-03-12 09:19:45,884] Trial 4 finished with value: 1.419073 and parameters: {'embedding_lr': 0.5530735474656209, 'matrix_lr': 0.06673987440786468, 'weight_decay': 0.18249938129382867, 'warmdown_ratio': 0.39522797997159903}. Best is trial 4 with value: 1.419073.
+
+================================================================================
+Method: bayesian | Trial 6/15
+Optuna Trial #5
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.7393923752780299,
+  "matrix_lr": 0.07611797142102936,
+  "weight_decay": 0.19398911836083246,
+  "warmdown_ratio": 0.2712182446669988
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.433442
+
+[I 2026-03-12 09:28:35,830] Trial 5 finished with value: 1.433442 and parameters: {'embedding_lr': 0.7393923752780299, 'matrix_lr': 0.07611797142102936, 'weight_decay': 0.19398911836083246, 'warmdown_ratio': 0.2712182446669988}. Best is trial 4 with value: 1.419073.
+
+================================================================================
+Method: bayesian | Trial 7/15
+Optuna Trial #6
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.6332723974915077,
+  "matrix_lr": 0.07663751312754263,
+  "weight_decay": 0.1929497135221948,
+  "warmdown_ratio": 0.32390678862671984
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.424930
+
+[I 2026-03-12 09:37:25,517] Trial 6 finished with value: 1.42493 and parameters: {'embedding_lr': 0.6332723974915077, 'matrix_lr': 0.07663751312754263, 'weight_decay': 0.1929497135221948, 'warmdown_ratio': 0.32390678862671984}. Best is trial 4 with value: 1.419073.
+
+================================================================================
+Method: bayesian | Trial 8/15
+Optuna Trial #7
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.6957870561051195,
+  "matrix_lr": 0.07153560751509012,
+  "weight_decay": 0.27726055896190477,
+  "warmdown_ratio": 0.274950636135444
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.440364
+
+[I 2026-03-12 09:46:15,523] Trial 7 finished with value: 1.440364 and parameters: {'embedding_lr': 0.6957870561051195, 'matrix_lr': 0.07153560751509012, 'weight_decay': 0.27726055896190477, 'warmdown_ratio': 0.274950636135444}. Best is trial 4 with value: 1.419073.
+
+================================================================================
+Method: bayesian | Trial 9/15
+Optuna Trial #8
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.5886041331967578,
+  "matrix_lr": 0.08568609803361926,
+  "weight_decay": 0.1667510218410656,
+  "warmdown_ratio": 0.357895413263893
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.418567
+
+[I 2026-03-12 09:55:03,873] Trial 8 finished with value: 1.418567 and parameters: {'embedding_lr': 0.5886041331967578, 'matrix_lr': 0.08568609803361926, 'weight_decay': 0.1667510218410656, 'warmdown_ratio': 0.357895413263893}. Best is trial 8 with value: 1.418567.
+
+================================================================================
+Method: bayesian | Trial 10/15
+Optuna Trial #9
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.5931516238774249,
+  "matrix_lr": 0.08627111012491709,
+  "weight_decay": 0.15425646265670298,
+  "warmdown_ratio": 0.3563502006321444
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.419157
+
+[I 2026-03-12 10:03:53,696] Trial 9 finished with value: 1.419157 and parameters: {'embedding_lr': 0.5931516238774249, 'matrix_lr': 0.08627111012491709, 'weight_decay': 0.15425646265670298, 'warmdown_ratio': 0.3563502006321444}. Best is trial 8 with value: 1.418567.
+
+================================================================================
+Method: bayesian | Trial 11/15
+Optuna Trial #10
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.6031437205419768,
+  "matrix_lr": 0.08501736831435905,
+  "weight_decay": 0.23774675720155508,
+  "warmdown_ratio": 0.22151607914281318
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.420960
+
+Best trial: 8. Best value: 1.41857:  67%|██████▋   | 10/15 [1:37:11<44:07, 529.54s/it]Best trial: 8. Best value: 1.41857:  67%|██████▋   | 10/15 [1:37:11<44:07, 529.54s/it]Best trial: 8. Best value: 1.41857:  73%|███████▎  | 11/15 [1:37:11<35:17, 529.28s/it]                                                                                      Best trial: 8. Best value: 1.41857:  73%|███████▎  | 11/15 [1:46:00<35:17, 529.28s/it]Best trial: 8. Best value: 1.41857:  73%|███████▎  | 11/15 [1:46:00<35:17, 529.28s/it]Best trial: 8. Best value: 1.41857:  80%|████████  | 12/15 [1:46:00<26:27, 529.11s/it]                                                                                      Best trial: 8. Best value: 1.41857:  80%|████████  | 12/15 [1:54:49<26:27, 529.11s/it]Best trial: 8. Best value: 1.41857:  80%|████████  | 12/15 [1:54:49<26:27, 529.11s/it]Best trial: 8. Best value: 1.41857:  87%|████████▋ | 13/15 [1:54:49<17:37, 528.95s/it]                                                                                      Best trial: 8. Best value: 1.41857:  87%|████████▋ | 13/15 [2:03:37<17:37, 528.95s/it]Best trial: 8. Best value: 1.41857:  87%|████████▋ | 13/15 [2:03:37<17:37, 528.95s/it]Best trial: 8. Best value: 1.41857:  93%|█████████▎| 14/15 [2:03:37<08:48, 528.91s/it]                                                                                      Best trial: 8. Best value: 1.41857:  93%|█████████▎| 14/15 [2:12:26<08:48, 528.91s/it]Best trial: 8. Best value: 1.41857:  93%|█████████▎| 14/15 [2:12:26<08:48, 528.91s/it]Best trial: 8. Best value: 1.41857: 100%|██████████| 15/15 [2:12:26<00:00, 528.85s/it]Best trial: 8. Best value: 1.41857: 100%|██████████| 15/15 [2:12:26<00:00, 529.77s/it]
+[I 2026-03-12 10:12:42,389] Trial 10 finished with value: 1.42096 and parameters: {'embedding_lr': 0.6031437205419768, 'matrix_lr': 0.08501736831435905, 'weight_decay': 0.23774675720155508, 'warmdown_ratio': 0.22151607914281318}. Best is trial 8 with value: 1.418567.
+
+================================================================================
+Method: bayesian | Trial 12/15
+Optuna Trial #11
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.5551098989621086,
+  "matrix_lr": 0.09363255052638474,
+  "weight_decay": 0.16118974379659767,
+  "warmdown_ratio": 0.3995247774073911
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.427332
+
+[I 2026-03-12 10:21:31,108] Trial 11 finished with value: 1.427332 and parameters: {'embedding_lr': 0.5551098989621086, 'matrix_lr': 0.09363255052638474, 'weight_decay': 0.16118974379659767, 'warmdown_ratio': 0.3995247774073911}. Best is trial 8 with value: 1.418567.
+
+================================================================================
+Method: bayesian | Trial 13/15
+Optuna Trial #12
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.5526280631435617,
+  "matrix_lr": 0.08122965061883555,
+  "weight_decay": 0.15891169595148483,
+  "warmdown_ratio": 0.3540260616865046
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.429569
+
+[I 2026-03-12 10:30:19,683] Trial 12 finished with value: 1.429569 and parameters: {'embedding_lr': 0.5526280631435617, 'matrix_lr': 0.08122965061883555, 'weight_decay': 0.15891169595148483, 'warmdown_ratio': 0.3540260616865046}. Best is trial 8 with value: 1.418567.
+
+================================================================================
+Method: bayesian | Trial 14/15
+Optuna Trial #13
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.5862935095321913,
+  "matrix_lr": 0.08093372091054381,
+  "weight_decay": 0.22097540587608647,
+  "warmdown_ratio": 0.34472737667530506
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.419838
+
+[I 2026-03-12 10:39:08,492] Trial 13 finished with value: 1.419838 and parameters: {'embedding_lr': 0.5862935095321913, 'matrix_lr': 0.08093372091054381, 'weight_decay': 0.22097540587608647, 'warmdown_ratio': 0.34472737667530506}. Best is trial 8 with value: 1.418567.
+
+================================================================================
+Method: bayesian | Trial 15/15
+Optuna Trial #14
+Params: {
+  "depth": 4,
+  "device_batch_size": 4,
+  "total_batch_size": 65536,
+  "embedding_lr": 0.6141700357239634,
+  "matrix_lr": 0.08971832431864463,
+  "weight_decay": 0.1386438251090384,
+  "warmdown_ratio": 0.298598569735504
+}
+================================================================================
+
+
+✅ Trial complete: val_bpb = 1.424466
+
+[I 2026-03-12 10:47:57,210] Trial 14 finished with value: 1.424466 and parameters: {'embedding_lr': 0.6141700357239634, 'matrix_lr': 0.08971832431864463, 'weight_decay': 0.1386438251090384, 'warmdown_ratio': 0.298598569735504}. Best is trial 8 with value: 1.418567.
+
+################################################################################
+# BAYESIAN Optimization Complete!
+#
+# Total time: 7946.6s (132.4 min)
+# Completed trials: 15/15
+# Failed trials: 0
+# Best val_bpb: 1.418567
+# Best params:
+#   embedding_lr: 0.5886041331967578
+#   matrix_lr: 0.08568609803361926
+#   weight_decay: 0.1667510218410656
+#   warmdown_ratio: 0.357895413263893
+################################################################################
+
