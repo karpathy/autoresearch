@@ -165,12 +165,29 @@ def _normalize(features: np.ndarray, fit: bool = False) -> np.ndarray:
 # Prediction helper (used by prepare.py --evaluate-holdout)
 # ---------------------------------------------------------------------------
 
-def _vol_dampen(preds: np.ndarray, vol: np.ndarray) -> np.ndarray:
-    """Dampen predictions when volatility is high."""
-    # Scale factor: 1.0 at median vol, drops toward 0 at high vol
-    vol_safe = np.maximum(vol, 1e-8)
+def _apply_regime_filter(preds: np.ndarray, df: pd.DataFrame) -> np.ndarray:
+    """Dampen predictions based on regime detection.
+
+    During high-vol periods: scale down predictions.
+    During crash regime (168h return < -15%): clamp predictions to non-positive.
+    """
+    close = df["close"].values.astype(np.float64)
+    vol = compute_vol_168(df)
+
+    # Vol dampening
+    vol_safe = np.maximum(vol[:len(preds)], 1e-8)
     scale = _vol_median / np.maximum(vol_safe, _vol_median)
-    return preds * scale
+    preds = preds * scale
+
+    # Crash regime filter: if 168h return is very negative, prevent longs
+    ret_168 = np.full(len(close), 0.0)
+    ret_168[168:] = close[168:] / close[:-168] - 1.0
+    ret_168 = ret_168[MAX_LOOKBACK:][:len(preds)]  # align with predictions
+
+    crash_mask = ret_168 < -0.15  # 15% drop over a week = crash
+    preds[crash_mask] = np.minimum(preds[crash_mask], 0.0)  # no longs during crash
+
+    return preds
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
@@ -185,7 +202,7 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         raise RuntimeError("Model not trained. Run train.py first.")
 
     preds = model.predict(features)
-    preds = _vol_dampen(preds, vol[:len(preds)])
+    preds = _apply_regime_filter(preds, df)
     return preds, timestamps
 
 
@@ -216,12 +233,10 @@ def main():
     targets = targets[valid]
     train_timestamps = timestamps[valid]
 
-    # Compute 168h volatility for dampening
+    # Compute median volatility for regime filter dampening
     train_vol = compute_vol_168(train_df)
-    train_vol = train_vol[valid[:len(train_vol)]]  # same trimming as features
-
     global _vol_median
-    _vol_median = np.nanmedian(train_vol)
+    _vol_median = np.nanmedian(train_vol[~np.isnan(train_vol)])
     print(f"  Median 168h volatility: {_vol_median:.6f}")
 
     # Normalize features (fit on training data)
@@ -255,7 +270,7 @@ def main():
     # --- Evaluate on train split ---
     print("Evaluating on training data...")
     all_preds = model.predict(features)
-    all_preds = _vol_dampen(all_preds, train_vol)
+    all_preds = _apply_regime_filter(all_preds, train_df)
 
     train_result = evaluate_model(all_preds, train_timestamps, n_params, split="train")
 
@@ -263,12 +278,11 @@ def main():
     print("Evaluating on validation data...")
     val_df = load_val_data()
     val_features, val_timestamps = compute_features(val_df)
-    val_vol = compute_vol_168(val_df)
     val_features = _normalize(val_features, fit=False)
     val_features = np.nan_to_num(val_features, nan=0.0)
 
     val_preds = model.predict(val_features)
-    val_preds = _vol_dampen(val_preds, val_vol[:len(val_preds)])
+    val_preds = _apply_regime_filter(val_preds, val_df)
 
     val_result = evaluate_model(val_preds, val_timestamps, n_params, split="val")
 
