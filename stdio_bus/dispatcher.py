@@ -6,19 +6,32 @@ Usage: echo '{"jsonrpc":"2.0","id":1,"method":"status","params":{}}' | python3 d
 import json, os, subprocess, sys, threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from pathlib import Path
 
-def _detect_gpus():
+import platform
+
+# Project root: /stdio_bus in Docker, parent of stdio_bus/ locally
+_dispatcher_dir = Path(__file__).resolve().parent
+PROJECT_ROOT = Path("/stdio_bus") if _dispatcher_dir == Path("/stdio_bus") else _dispatcher_dir.parent
+
+def _detect_backend():
+    """Detect GPU backend: 'cuda', 'mps', or 'cpu'."""
     if ids := os.environ.get("SWARM_GPU_IDS"):
-        return [int(x) for x in ids.split(",")]
+        return "cuda", [int(x) for x in ids.split(",")]
+    # Try CUDA first
     try:
         r = subprocess.run(["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
                           capture_output=True, text=True, timeout=5)
         if r.returncode == 0 and (lines := r.stdout.strip()):
-            return [int(x.strip()) for x in lines.split("\n") if x.strip()]
+            return "cuda", [int(x.strip()) for x in lines.split("\n") if x.strip()]
     except: pass
-    return [0]
+    if platform.system() == "Darwin":
+        return "mps", [0]  # MPS has single "device"
+    # CPU fallback — extremely slow, not recommended for training
+    print("[WARNING] No GPU detected (CUDA/MPS). CPU training is 100x slower and not practical.", file=sys.stderr, flush=True)
+    return "cpu", [0]
 
-GPU_IDS = _detect_gpus()
+BACKEND, GPU_IDS = _detect_backend()
 
 state = {"best": float('inf'), "total": 0, "active": 0, "results": []}
 state_lock = threading.Lock()
@@ -32,16 +45,19 @@ def _parse_output(stdout, key):
     return next((float(l.split(":")[1]) for l in stdout.split("\n") if l.startswith(f"{key}:")), 0.0)
 
 def run_experiment(gpu_id, agent_id, branch):
-    env = os.environ | {"CUDA_VISIBLE_DEVICES": str(gpu_id)}
-    log(f"[GPU {gpu_id}] Start {agent_id}")
-    base = {"agent_id": agent_id, "gpu_id": gpu_id, "timestamp": datetime.now().isoformat(), "branch": branch}
+    env = os.environ.copy()
+    # CUDA uses CUDA_VISIBLE_DEVICES, MPS uses single device
+    if BACKEND == "cuda":
+        env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    log(f"[{BACKEND.upper()} {gpu_id}] Start {agent_id}")
+    base = {"agent_id": agent_id, "gpu_id": gpu_id, "timestamp": datetime.now().isoformat(), "branch": branch, "backend": BACKEND}
     try:
-        r = subprocess.run(["uv", "run", "train.py"], capture_output=True, text=True, timeout=600, env=env)
+        r = subprocess.run(["uv", "run", "train.py"], capture_output=True, text=True, timeout=600, env=env, cwd=PROJECT_ROOT)
         val_bpb = _parse_output(r.stdout, "val_bpb")
         mem = _parse_output(r.stdout, "peak_vram_mb")
         commit = subprocess.run(["git", "rev-parse", "--short=7", "HEAD"],
-                               capture_output=True, text=True).stdout.strip() or "?"
-        log(f"[GPU {gpu_id}] Done val_bpb={val_bpb:.6f}")
+                               capture_output=True, text=True, cwd=PROJECT_ROOT).stdout.strip() or "?"
+        log(f"[{BACKEND.upper()} {gpu_id}] Done val_bpb={val_bpb:.6f}")
         return {**base, "commit": commit, "val_bpb": val_bpb, "memory_gb": mem/1024,
                 "status": "keep" if val_bpb > 0 else "crash"}
     except subprocess.TimeoutExpired:
@@ -67,7 +83,7 @@ def handle(method, params):
     match method:
         case "status":
             with state_lock:
-                return {"total": state["total"], "active": state["active"],
+                return {"backend": BACKEND, "total": state["total"], "active": state["active"],
                         "best": state["best"] if state["best"] != float('inf') else None,
                         "gpus": {"ids": GPU_IDS, "busy": [g for g, b in gpu_busy.items() if b]}}
         case "sync":
@@ -89,7 +105,7 @@ def handle(method, params):
     return None
 
 def main():
-    log(f"Dispatcher | GPUs: {GPU_IDS}")
+    log(f"Dispatcher | Backend: {BACKEND} | Devices: {GPU_IDS}")
     for line in sys.stdin:
         if not (line := line.strip()): continue
         try: msg = json.loads(line)

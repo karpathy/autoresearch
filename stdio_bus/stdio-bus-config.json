@@ -5,10 +5,10 @@
       "command": "uv",
       "args": [
         "run",
-        "/stdio_bus/dispatcher.py"
+        "stdio_bus/dispatcher.py"
       ],
       "instances": 1,
-      "cwd": "/stdio_bus"
+      "cwd": "stdio_bus"
     }
   ]
 }
