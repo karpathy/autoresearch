@@ -60,8 +60,21 @@ pyproject.toml    — dependencies
 uv run scripts/agent.py                  # full dashboard mode
 uv run scripts/agent.py --resume         # continue from prior experiments
 uv run scripts/agent.py --max-runs 50    # cap total experiments
-uv run scripts/agent.py --local          # use local LLM (LM Studio)
+uv run scripts/agent.py --dataset pubmed # train on PubMed medical abstracts
 uv run scripts/agent.py --no-dashboard   # text-only mode
+```
+
+## Custom datasets
+
+Train on PubMed medical abstracts (27.7M abstracts, ~14.6GB download):
+
+```bash
+# Download data to a specific drive (default: ~/.cache/autoresearch/)
+export AUTORESEARCH_DATA_DIR=/mnt/g/autoresearch-data
+uv run prepare.py --dataset pubmed
+
+# Or pass it via setup.sh
+bash scripts/setup.sh --api-key sk-ant-... --data-dir /mnt/g/autoresearch-data
 ```
 
 ## Design choices

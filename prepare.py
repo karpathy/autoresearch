@@ -5,8 +5,10 @@ Downloads data shards and trains a BPE tokenizer.
 Usage:
     python prepare.py                  # full prep (download + tokenizer)
     python prepare.py --num-shards 8   # download only 8 shards (for testing)
+    python prepare.py --dataset pubmed # use PubMed medical abstracts
 
-Data and tokenizer are stored in ~/.cache/autoresearch/.
+Data and tokenizer are stored in ~/.cache/autoresearch/ by default.
+Set AUTORESEARCH_DATA_DIR to override (e.g. for a larger drive).
 """
 
 import os
@@ -66,7 +68,9 @@ def _apply_dataset_config(name):
     global BASE_URL, MAX_SHARD, SHARD_FMT, TEXT_COLUMN, VAL_SHARD, VAL_FILENAME, VOCAB_SIZE
     _dataset_name = name
     _dataset_cfg = DATASETS[name]
-    CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "autoresearch", name)
+    _base = os.environ.get("AUTORESEARCH_DATA_DIR",
+                           os.path.join(os.path.expanduser("~"), ".cache", "autoresearch"))
+    CACHE_DIR = os.path.join(_base, name)
     DATA_DIR = os.path.join(CACHE_DIR, "data")
     TOKENIZER_DIR = os.path.join(CACHE_DIR, "tokenizer")
     BASE_URL = _dataset_cfg["base_url"]
@@ -79,7 +83,9 @@ def _apply_dataset_config(name):
     os.environ["AUTORESEARCH_DATASET"] = name
 
 
-CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "autoresearch", _dataset_name)
+_base_cache = os.environ.get("AUTORESEARCH_DATA_DIR",
+                              os.path.join(os.path.expanduser("~"), ".cache", "autoresearch"))
+CACHE_DIR = os.path.join(_base_cache, _dataset_name)
 DATA_DIR = os.path.join(CACHE_DIR, "data")
 TOKENIZER_DIR = os.path.join(CACHE_DIR, "tokenizer")
 BASE_URL = _dataset_cfg["base_url"]

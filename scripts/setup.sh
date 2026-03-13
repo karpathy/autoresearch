@@ -6,6 +6,7 @@
 # Usage (from inside WSL):
 #   bash scripts/setup.sh
 #   bash scripts/setup.sh --api-key sk-ant-api03-YOUR-KEY-HERE
+#   bash scripts/setup.sh --api-key sk-ant-... --data-dir /mnt/g/autoresearch-data
 # ============================================================================
 
 set -e
@@ -23,9 +24,11 @@ error() { echo -e "${RED}[x]${NC} $1"; }
 # Parse args
 # ---------------------------------------------------------------------------
 API_KEY=""
+DATA_DIR=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --api-key) API_KEY="$2"; shift 2 ;;
+        --data-dir) DATA_DIR="$2"; shift 2 ;;
         *) error "Unknown arg: $1"; exit 1 ;;
     esac
 done
@@ -76,29 +79,31 @@ fi
 PROFILE_SCRIPT="/etc/profile.d/autoresearch.sh"
 info "Setting up environment..."
 
+# Build profile script content
+PROFILE_LINES="export PATH=\"/home/$(whoami)/.local/bin:\$PATH\""
+
 # API key
 if [[ -n "$API_KEY" ]]; then
-    sudo tee "$PROFILE_SCRIPT" > /dev/null <<EOF
-export ANTHROPIC_API_KEY="$API_KEY"
-export PATH="/home/$(whoami)/.local/bin:\$PATH"
-EOF
-    # Also export for current session
+    PROFILE_LINES="${PROFILE_LINES}\nexport ANTHROPIC_API_KEY=\"$API_KEY\""
     export ANTHROPIC_API_KEY="$API_KEY"
     info "API key configured."
-elif [[ -z "$ANTHROPIC_API_KEY" ]]; then
-    warn "No API key provided. Set it later with:"
-    warn "  echo 'export ANTHROPIC_API_KEY=\"sk-ant-...\"' | sudo tee /etc/profile.d/autoresearch.sh"
-    # Still set up PATH
-    sudo tee "$PROFILE_SCRIPT" > /dev/null <<EOF
-export PATH="/home/$(whoami)/.local/bin:\$PATH"
-EOF
-else
+elif [[ -n "$ANTHROPIC_API_KEY" ]]; then
+    PROFILE_LINES="${PROFILE_LINES}\nexport ANTHROPIC_API_KEY=\"$ANTHROPIC_API_KEY\""
     info "Using existing ANTHROPIC_API_KEY from environment."
-    sudo tee "$PROFILE_SCRIPT" > /dev/null <<EOF
-export ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
-export PATH="/home/$(whoami)/.local/bin:\$PATH"
-EOF
+else
+    warn "No API key provided. Set it later with:"
+    warn "  echo 'export ANTHROPIC_API_KEY=\"sk-ant-...\"' | sudo tee -a /etc/profile.d/autoresearch.sh"
 fi
+
+# Data directory (for large datasets on a different drive)
+if [[ -n "$DATA_DIR" ]]; then
+    mkdir -p "$DATA_DIR"
+    PROFILE_LINES="${PROFILE_LINES}\nexport AUTORESEARCH_DATA_DIR=\"$DATA_DIR\""
+    export AUTORESEARCH_DATA_DIR="$DATA_DIR"
+    info "Data directory: $DATA_DIR"
+fi
+
+echo -e "$PROFILE_LINES" | sudo tee "$PROFILE_SCRIPT" > /dev/null
 
 # ---------------------------------------------------------------------------
 # Install Python dependencies
@@ -159,11 +164,12 @@ echo ""
 echo "  # Run the autonomous agent:"
 echo "  uv run scripts/agent.py"
 echo ""
+echo "  # Train on PubMed medical abstracts:"
+echo "  uv run prepare.py --dataset pubmed"
+echo "  uv run scripts/agent.py --dataset pubmed"
+echo ""
 echo "  # Resume a previous run:"
 echo "  uv run scripts/agent.py --resume"
-echo ""
-echo "  # Run with local LLM (LM Studio):"
-echo "  uv run scripts/agent.py --local"
 echo ""
 echo "  # Just run a single training test:"
 echo "  uv run train.py"
