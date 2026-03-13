@@ -12,6 +12,7 @@ from ttt_autoresearch.config import TTTAutoResearchConfig
 from ttt_autoresearch.runner import (
     AutoResearchRunner,
     _find_top_level_undefined_name,
+    extract_patch_payload,
     parse_patch_candidate_for_state,
     parse_val_bpb,
 )
@@ -35,13 +36,44 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(candidate.patch_block_count, 1)
         self.assertEqual(candidate.train_py, "print(1)\n")
 
-    def test_parse_candidate_extracts_patch_from_wrapper_text(self) -> None:
+    def test_parse_candidate_accepts_tag_patch(self) -> None:
         candidate = parse_patch_candidate_for_state(
-            "Here is the patch\n<<<<<<< SEARCH\nprint(0)\n=======\nprint(1)\n>>>>>>> REPLACE\nDone.",
+            "<search>\nprint(0)\n</search>\n<replace>\nprint(1)\n</replace>",
             "print(0)\n",
         )
-        self.assertEqual(candidate.candidate_format, "search_replace_patch_extracted")
+        self.assertEqual(candidate.candidate_format, "tag_patch")
+        self.assertEqual(candidate.patch_block_count, 1)
         self.assertEqual(candidate.train_py, "print(1)\n")
+
+    def test_parse_candidate_extracts_patch_from_wrapper_text(self) -> None:
+        candidate = parse_patch_candidate_for_state(
+            "Here is the patch\n<search>\nprint(0)\n</search>\n<replace>\nprint(1)\n</replace>\nDone.",
+            "print(0)\n",
+        )
+        self.assertEqual(candidate.candidate_format, "tag_patch_extracted")
+        self.assertEqual(candidate.train_py, "print(1)\n")
+
+    def test_extract_patch_payload_prefers_gpt_oss_final_channel(self) -> None:
+        payload = (
+            "<|channel|>analysis<|message|>thinking\n"
+            "<<<<<<< SEARCH\nprint(0)\n=======\nprint(2)\n>>>>>>> REPLACE\n"
+            "<|channel|>final<|message|>"
+            "<<<<<<< SEARCH\nprint(0)\n=======\nprint(1)\n>>>>>>> REPLACE"
+        )
+        self.assertEqual(
+            extract_patch_payload(payload),
+            "<<<<<<< SEARCH\nprint(0)\n=======\nprint(1)\n>>>>>>> REPLACE",
+        )
+
+    def test_extract_patch_payload_prefers_text_after_kimi_think_block(self) -> None:
+        payload = (
+            "<think>\ninternal reasoning\n<<<<<<< SEARCH\nprint(0)\n=======\nprint(2)\n>>>>>>> REPLACE\n</think>\n"
+            "<<<<<<< SEARCH\nprint(0)\n=======\nprint(1)\n>>>>>>> REPLACE"
+        )
+        self.assertEqual(
+            extract_patch_payload(payload),
+            "<<<<<<< SEARCH\nprint(0)\n=======\nprint(1)\n>>>>>>> REPLACE",
+        )
 
     def test_parse_val_bpb(self) -> None:
         stdout = "---\nval_bpb:          0.997900\n"

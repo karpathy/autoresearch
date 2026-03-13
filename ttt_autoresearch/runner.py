@@ -25,6 +25,14 @@ SEARCH_REPLACE_BLOCK_RE = re.compile(
     r"<<<<<<< SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>> REPLACE",
     re.DOTALL,
 )
+TAG_PATCH_BLOCK_RE = re.compile(
+    r"<search>\s*\n?(.*?)\n?\s*</search>\s*<replace>\s*\n?(.*?)\n?\s*</replace>",
+    re.DOTALL | re.IGNORECASE,
+)
+GPT_OSS_ANALYSIS_MARKER = "<|channel|>analysis<|message|>"
+GPT_OSS_FINAL_MARKER = "<|channel|>final<|message|>"
+KIMI_THINK_OPEN = "<think>"
+KIMI_THINK_CLOSE = "</think>"
 VAL_BPB_PRINT_RE = re.compile(r"print\(\s*f?[\"']val_bpb:\s*", re.MULTILINE)
 FORWARD_WITH_REDUCTION_RE = re.compile(r"def\s+forward\s*\([^)]*\breduction\s*=", re.MULTILINE)
 _KNOWN_PREPARE_CONSTANTS = {"MAX_SEQ_LEN": 2048}
@@ -82,28 +90,48 @@ def parse_patch_candidate(candidate_json: str) -> PatchCandidate:
 
 
 def parse_patch_candidate_for_state(candidate_json: str, current_train_py: str) -> PatchCandidate:
-    stripped = candidate_json.strip()
+    stripped = extract_patch_payload(candidate_json).strip()
     if not stripped:
         raise ValueError("Candidate must not be empty.")
 
-    updated_train_py, patch_block_count, extracted = apply_search_replace_patch(stripped, current_train_py)
+    updated_train_py, patch_block_count, extracted, parser_name = apply_search_replace_patch(stripped, current_train_py)
     lines_changed = count_lines_changed(current_train_py, updated_train_py)
     if lines_changed == 0:
         raise ValueError("Patch did not change train.py.")
+    candidate_format = parser_name
+    if extracted:
+        candidate_format = f"{candidate_format}_extracted"
     return PatchCandidate(
-        summary="search_replace_patch_candidate",
-        rationale="model returned search/replace patch",
+        summary=f"{parser_name}_candidate",
+        rationale="model returned patch edits",
         train_py=updated_train_py,
-        candidate_format="search_replace_patch_extracted" if extracted else "search_replace_patch",
+        candidate_format=candidate_format,
         patch_block_count=patch_block_count,
         lines_changed=lines_changed,
     )
 
 
-def apply_search_replace_patch(patch_text: str, current_train_py: str) -> tuple[str, int, bool]:
-    blocks = list(SEARCH_REPLACE_BLOCK_RE.finditer(patch_text))
+def extract_patch_payload(candidate_text: str) -> str:
+    if GPT_OSS_FINAL_MARKER in candidate_text:
+        final_text = candidate_text.split(GPT_OSS_FINAL_MARKER, 1)[1].strip()
+        if final_text:
+            return final_text
+    if KIMI_THINK_OPEN in candidate_text and KIMI_THINK_CLOSE in candidate_text:
+        final_text = candidate_text.split(KIMI_THINK_CLOSE, 1)[1].strip()
+        if final_text:
+            return final_text
+    return candidate_text
+
+
+def apply_search_replace_patch(patch_text: str, current_train_py: str) -> tuple[str, int, bool, str]:
+    parser_name = "search_replace_patch"
+    blocks = list(TAG_PATCH_BLOCK_RE.finditer(patch_text))
+    if blocks:
+        parser_name = "tag_patch"
+    else:
+        blocks = list(SEARCH_REPLACE_BLOCK_RE.finditer(patch_text))
     if not blocks:
-        raise ValueError("Candidate must contain one or more SEARCH/REPLACE patch blocks.")
+        raise ValueError("Candidate must contain one or more valid patch blocks.")
 
     updated = current_train_py
     for match in blocks:
@@ -119,7 +147,7 @@ def apply_search_replace_patch(patch_text: str, current_train_py: str) -> tuple[
         updated = updated.replace(search_text, replace_text, 1)
 
     extracted = _has_non_block_wrapper_text(patch_text, blocks)
-    return updated, len(blocks), extracted
+    return updated, len(blocks), extracted, parser_name
 
 
 def count_lines_changed(previous_text: str, updated_text: str) -> int:

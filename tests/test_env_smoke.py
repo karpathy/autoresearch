@@ -104,6 +104,128 @@ class EnvSmokeTests(unittest.TestCase):
             next_state = env._create_next_state(0, payload, verify)
             self.assertAlmostEqual(next_state.current_best_val_bpb, 0.9)
 
+    def test_env_step_accepts_raw_search_replace_response(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "program.md").write_text("Focus on val_bpb.", encoding="utf-8")
+            (root / "prepare.py").write_text("TIME_BUDGET = 1\n", encoding="utf-8")
+            (root / "train.py").write_text(MINIMAL_VALID_TRAIN_PY, encoding="utf-8")
+            fixtures = root / "tests" / "fixtures"
+            fixtures.mkdir(parents=True)
+            fixture_src = Path(__file__).parent / "fixtures" / "fake_train.py"
+            (fixtures / "fake_train.py").write_text(fixture_src.read_text(encoding="utf-8"), encoding="utf-8")
+
+            config = TTTAutoResearchConfig(
+                execution_backend="local",
+                max_concurrent_evaluations=1,
+                timeout_sec=1,
+                target_val_bpb=0.95,
+                candidate_command_override=[sys.executable, "tests/fixtures/fake_train.py"],
+            ).normalized(root)
+            runner = AutoResearchRunner(root, config, Path(config.run_dir))
+            bootstrap = runner.build_bootstrap(1.1)
+            AutoResearchDiscoverEnv.configure(bootstrap)
+            AutoResearchRewardEvaluator.configure(bootstrap, runner)
+
+            state = AutoResearchDiscoverEnv.create_initial_state("autoresearch")
+
+            class FakeRenderer:
+                def __init__(self, payload: str) -> None:
+                    self.payload = payload
+
+                def parse_response(self, action):
+                    return {"role": "assistant", "content": self.payload}, True
+
+                def get_stop_sequences(self):
+                    return []
+
+            class FakeSampler:
+                def __init__(self) -> None:
+                    self.updated = False
+
+                def update_states(self, states, parent_states, save=False):
+                    self.updated = True
+
+            payload = "<<<<<<< SEARCH\n# val_bpb: 1.100000\n=======\n# val_bpb: 0.900000\n>>>>>>> REPLACE"
+            sampler = FakeSampler()
+            env = AutoResearchDiscoverEnv(renderer=FakeRenderer(payload), initial_state=state, sampler=sampler, config=type("Cfg", (), {
+                "problem_type": "autoresearch",
+                "log_path": str(bootstrap.discover_log_dir),
+                "eval_timeout": config.eval_timeout,
+                "timeout": config.eval_timeout,
+                "num_cpus_per_task": 0,
+                "convo_prefix": [],
+            })())
+
+            result = asyncio.run(env.step([], 0))
+            self.assertGreater(result.reward, 0.0)
+            self.assertTrue(result.metrics["format"])
+            self.assertEqual(result.metrics["parsed_code"], payload)
+            self.assertTrue(sampler.updated)
+
+    def test_env_step_uses_final_channel_and_persists_invalid_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "program.md").write_text("Focus on val_bpb.", encoding="utf-8")
+            (root / "prepare.py").write_text("TIME_BUDGET = 1\n", encoding="utf-8")
+            (root / "train.py").write_text(MINIMAL_VALID_TRAIN_PY, encoding="utf-8")
+
+            config = TTTAutoResearchConfig(
+                execution_backend="local",
+                max_concurrent_evaluations=1,
+                timeout_sec=1,
+                target_val_bpb=0.95,
+            ).normalized(root)
+            runner = AutoResearchRunner(root, config, Path(config.run_dir))
+            bootstrap = runner.build_bootstrap(1.1)
+            AutoResearchDiscoverEnv.configure(bootstrap)
+            AutoResearchRewardEvaluator.configure(bootstrap, runner)
+            state = AutoResearchDiscoverEnv.create_initial_state("autoresearch")
+
+            class FakeRenderer:
+                def parse_response(self, action):
+                    content = (
+                        "<|channel|>analysis<|message|>\n"
+                        "<<<<<<< SEARCH\n# val_bpb: 1.100000\n=======\n# val_bpb: 0.800000\n>>>>>>> REPLACE\n"
+                        "<|channel|>final<|message|>\n"
+                        "not a valid patch"
+                    )
+                    return {"role": "assistant", "content": content}, True
+
+                def get_stop_sequences(self):
+                    return []
+
+            class FakeSampler:
+                def __init__(self) -> None:
+                    self.updated = False
+                    self.failed = False
+
+                def update_states(self, states, parent_states, save=False):
+                    self.updated = True
+
+                def record_failed_rollout(self, initial_state):
+                    self.failed = True
+
+            sampler = FakeSampler()
+            env = AutoResearchDiscoverEnv(renderer=FakeRenderer(), initial_state=state, sampler=sampler, config=type("Cfg", (), {
+                "problem_type": "autoresearch",
+                "log_path": str(bootstrap.discover_log_dir),
+                "eval_timeout": config.eval_timeout,
+                "timeout": config.eval_timeout,
+                "num_cpus_per_task": 0,
+                "convo_prefix": [],
+            })())
+
+            result = asyncio.run(env.step([], 0))
+            self.assertEqual(result.reward, 0.0)
+            self.assertFalse(result.metrics["format"])
+            self.assertEqual(result.metrics["parsed_code"], "not a valid patch")
+            self.assertEqual(result.metrics["candidate_status"], "invalid_candidate")
+            self.assertTrue(sampler.failed)
+            history_path = Path(config.run_dir) / "history.jsonl"
+            self.assertTrue(history_path.exists())
+            self.assertEqual(len(history_path.read_text(encoding="utf-8").splitlines()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

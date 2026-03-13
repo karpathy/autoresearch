@@ -5,11 +5,15 @@ import asyncio
 import json
 from typing import Any, ClassVar
 
+import tinker
+
 from ttt_autoresearch.config import BootstrapContext
 from ttt_autoresearch.discover_compat import Environment, State, VerifyResult
 from ttt_autoresearch.prompt_builder import build_prompt_for_state
 from ttt_autoresearch.reward import AutoResearchRewardEvaluator
-from ttt_autoresearch.runner import parse_patch_candidate_for_state
+from ttt_autoresearch.runner import extract_patch_payload, parse_patch_candidate_for_state
+from ttt_discover.rl.types import StepResult
+from ttt_discover.tinker_utils import logtree
 
 class AutoResearchState(State):
     def __init__(
@@ -169,6 +173,46 @@ class AutoResearchDiscoverEnv(Environment):
     def _should_keep_code_separators(self) -> bool:
         return False
 
+    async def step(self, action: list[int], step_idx: int) -> StepResult:
+        message, parse_success = self.renderer.parse_response(action)
+        response = message["content"]
+        if not isinstance(response, str):
+            raise ValueError(f"Expected string response content, got {type(response)!r}")
+
+        parsed_code = extract_patch_payload(response)
+        correct_format = float(parse_success) and float(self.check_format(parsed_code))
+
+        outs = await self.check_answer(parsed_code, step_idx)
+        logtree.log_text(f"Problem: {self.get_question()[:200]}...")
+        logtree.log_text(f"Response: {message['content']}")
+        logtree.log_text(
+            f"Format Valid: {'✓' if correct_format else '✗'}, "
+            f"Reward: {outs.reward:.4f}, Correctness: {outs.correctness:.4f}, "
+            f"Raw Score: {outs.raw_score:.4f}, Msg: {outs.msg}"
+        )
+
+        metrics = self._build_metrics(outs, correct_format, message, parsed_code)
+        step_result = StepResult(
+            reward=outs.reward,
+            episode_done=True,
+            next_observation=tinker.ModelInput.empty(),
+            next_stop_condition=self.stop_condition,
+            metrics=metrics,
+        )
+
+        if outs.correctness > 0:
+            try:
+                next_state = self._create_next_state(step_idx, parsed_code, outs)
+                self.sampler.update_states([next_state], [self.initial_state], save=False)
+            except Exception as exc:
+                logtree.log_text(f"Failed to create next state: {exc}")
+                if hasattr(self.sampler, "record_failed_rollout"):
+                    self.sampler.record_failed_rollout(self.initial_state)
+        elif hasattr(self.sampler, "record_failed_rollout"):
+            self.sampler.record_failed_rollout(self.initial_state)
+
+        return step_result
+
     def get_question(self) -> str:
         if self.bootstrap is None:
             raise RuntimeError("AutoResearchDiscoverEnv is not configured.")
@@ -187,17 +231,6 @@ class AutoResearchDiscoverEnv(Environment):
         return True
 
     async def check_answer(self, parsed_code: str, step: int) -> VerifyResult:
-        if not self.check_format(parsed_code):
-            return VerifyResult(
-                reward=0.0,
-                msg="Invalid candidate train.py patch payload.",
-                correctness=0.0,
-                raw_score=float(self.initial_state.current_best_val_bpb),
-                result_construction=[],
-                stdout="",
-                metrics={"candidate_status": "invalid_candidate"},
-            )
-
         loop = asyncio.get_running_loop()
         out = await loop.run_in_executor(None, self._run_reward, parsed_code)
         return VerifyResult(
