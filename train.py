@@ -20,10 +20,10 @@ t_start = time.time()
 df = load_raw()
 train_df, val_df = get_train_val_split(df)
 
-# Encode categoricals: fit on train, apply to both
-enc = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
-train_df[CAT_COLS] = enc.fit_transform(train_df[CAT_COLS])
-val_df[CAT_COLS] = enc.transform(val_df[CAT_COLS])
+# Native XGBoost categorical support
+for col in CAT_COLS:
+    train_df[col] = train_df[col].astype("category")
+    val_df[col] = val_df[col].astype("category")
 
 FEATURE_COLS = CAT_COLS + NUM_COLS
 
@@ -43,6 +43,7 @@ model = xgb.XGBRegressor(
     subsample=0.8,
     colsample_bytree=0.8,
     min_child_weight=3,
+    enable_categorical=True,
     random_state=42,
     n_jobs=-1,
 )
