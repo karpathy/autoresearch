@@ -187,26 +187,7 @@ def _normalize(features: np.ndarray, fit: bool = False) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def _apply_regime_filter(preds: np.ndarray, df: pd.DataFrame) -> np.ndarray:
-    """Long-only filter with crash protection and vol dampening."""
-    close = df["close"].values.astype(np.float64)
-
-    # Long-only: never go short
-    preds = np.maximum(preds, 0.0)
-
-    # Crash filter: go flat during crashes (168h return < -15%)
-    ret_168 = np.full(len(close), 0.0)
-    ret_168[168:] = close[168:] / close[:-168] - 1.0
-    ret_168 = ret_168[MAX_LOOKBACK:][:len(preds)]
-    crash_mask = ret_168 < -0.15
-    preds[crash_mask] = 0.0  # flat during crash
-
-    # Trend filter: go flat when price is below 168h MA (downtrend)
-    ma_168 = pd.Series(close).rolling(168, min_periods=168).mean().values
-    ma_168 = ma_168[MAX_LOOKBACK:][:len(preds)]
-    close_trimmed = close[MAX_LOOKBACK:][:len(preds)]
-    downtrend_mask = close_trimmed < ma_168
-    preds[downtrend_mask] = 0.0
-
+    """Allow both long and short positions. No directional filter."""
     return preds
 
 
