@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 
 from prepare import (
     FORWARD_HOURS,
@@ -151,15 +151,19 @@ _trained_model = None
 
 
 def count_model_params(model=None) -> int:
-    """Return approximate parameter count for the GBR model."""
+    """Return approximate parameter count for the tree ensemble model."""
     if model is None:
         model = _trained_model
     if model is None:
         return 0
     n_params = 0
-    for estimators in model.estimators_:
-        for tree in estimators:
-            n_params += tree.tree_.node_count
+    if hasattr(model, 'estimators_'):
+        for est in model.estimators_:
+            if hasattr(est, '__iter__'):
+                for tree in est:
+                    n_params += tree.tree_.node_count
+            else:
+                n_params += est.tree_.node_count
     return n_params
 
 
@@ -254,25 +258,19 @@ def main():
 
     print(f"  Training samples: {len(features)}, Features: {features.shape[1]}")
 
-    # --- Train GBR ---
-    print(f"Training GBR...")
+    # --- Train RF ---
+    print(f"Training RandomForest...")
     train_start = time.time()
 
-    model = GradientBoostingRegressor(
+    model = RandomForestRegressor(
         n_estimators=300,
-        max_depth=3,
-        learning_rate=0.01,
-        subsample=0.8,
+        max_depth=6,
         min_samples_leaf=100,
         max_features=0.8,
-        loss="squared_error",
         random_state=42,
+        n_jobs=-1,
     )
-    # Exponential sample weights: half-life ~2 years (17520 hours)
-    n_samples = len(features)
-    decay = np.exp(np.linspace(-n_samples / 17520, 0, n_samples))
-    sample_weights = decay / decay.mean()  # normalize to mean=1
-    model.fit(features, targets, sample_weight=sample_weights)
+    model.fit(features, targets)
 
     training_seconds = time.time() - train_start
     print(f"Training complete in {training_seconds:.1f}s")
