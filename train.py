@@ -25,7 +25,7 @@ from prepare import (
 
 RETURN_LOOKBACKS = [1, 4, 12, 24, 72, 168]
 VOLATILITY_WINDOWS = [24, 168]
-ZSCORE_WINDOWS = [24, 72, 168]
+TREND_MA_WINDOWS = [24, 72, 168]
 MAX_LOOKBACK = 168  # maximum lookback window (1 week)
 
 
@@ -74,13 +74,12 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     vol_ratio = np.where(vol_168 > 0, vol_24 / vol_168, 1.0)
     feature_cols.append(vol_ratio)
 
-    # 4. Rolling z-scores of price (mean-reversion signals)
+    # 4. Price relative to moving averages (trend signals)
     close_series = pd.Series(close)
-    for w in ZSCORE_WINDOWS:
-        rolling_mean = close_series.rolling(w, min_periods=w).mean().values
-        rolling_std = close_series.rolling(w, min_periods=w).std().values
-        zscore = np.where(rolling_std > 0, (close - rolling_mean) / rolling_std, 0.0)
-        feature_cols.append(zscore)
+    for w in TREND_MA_WINDOWS:
+        ma = close_series.rolling(w, min_periods=w).mean().values
+        price_rel_ma = np.where(ma > 0, close / ma - 1.0, 0.0)
+        feature_cols.append(price_rel_ma)
 
     # 5. Rolling max drawdown (crash detector) over 168h
     rolling_max = close_series.rolling(168, min_periods=168).max().values
@@ -166,21 +165,8 @@ def _normalize(features: np.ndarray, fit: bool = False) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def _apply_regime_filter(preds: np.ndarray, df: pd.DataFrame) -> np.ndarray:
-    """Dampen predictions based on regime detection.
-
-    During high-vol periods: scale down predictions.
-    During crash regime (168h return < -15%): clamp predictions to non-positive.
-    """
+    """During crash regime (168h return < -15%): clamp predictions to non-positive."""
     close = df["close"].values.astype(np.float64)
-    vol = compute_vol_168(df)
-
-    # Vol dampening — only kick in when vol > 1.5x median
-    vol_threshold = _vol_median * 1.5
-    vol_safe = np.maximum(vol[:len(preds)], 1e-8)
-    scale = np.where(vol_safe > vol_threshold,
-                     vol_threshold / vol_safe,
-                     1.0)
-    preds = preds * scale
 
     # Crash regime filter: if 168h return is very negative, prevent longs
     ret_168 = np.full(len(close), 0.0)
