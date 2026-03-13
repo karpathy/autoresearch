@@ -199,11 +199,11 @@ def main():
     train_start = time.time()
 
     model = GradientBoostingRegressor(
-        n_estimators=300,
+        n_estimators=200,
         max_depth=2,
-        learning_rate=0.01,
+        learning_rate=0.005,
         subsample=0.7,
-        min_samples_leaf=100,
+        min_samples_leaf=200,
         loss="huber",
         alpha=0.9,
     )
