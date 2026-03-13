@@ -117,6 +117,39 @@ echo '{"jsonrpc":"2.0","id":1,"method":"sync","params":{}}' | ./stdio_bus -c con
 |----------|-------------|
 | `SWARM_GPU_IDS` | Override GPU detection (e.g., `0,1,2,3`) |
 
+
+## Test
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"status","params":{},"sessionId":"s1"}' | nc -i 1 localhost 9000
+```
+
+Response:
+```json
+{"jsonrpc":"2.0","id":1,"sessionId":"s1","result":{"total":0,"active":0,"best":null,"gpus":{"ids":[0],"busy":[]}}}
+```
+
+- `total` — completed experiments
+- `active` — running experiments
+- `best` — best val_bpb achieved
+- `gpus.ids` — available GPU IDs
+- `gpus.busy` — currently busy GPU IDs
+
+## JSON-RPC Methods
+
+| Method | Description |
+|--------|-------------|
+| `status` | GPU pool status |
+| `sync` | Full state sync with last 50 results |
+| `history` | Experiment history (params: `limit`) |
+| `run` | Run experiment (params: `agentId`, `branch`, `blocking`) |
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SWARM_GPU_IDS` | auto-detect | Comma-separated GPU IDs (e.g., "0,1,2") |
+
 ## Standalone Testing
 
 Test workers directly without kernel:
