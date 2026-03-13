@@ -7,8 +7,7 @@
         "run",
         "stdio_bus/dispatcher.py"
       ],
-      "instances": 1,
-      "cwd": "stdio_bus"
+      "instances": 1
     }
   ]
 }
