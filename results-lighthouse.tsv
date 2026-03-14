@@ -15,4 +15,6 @@ c07ef3a	88.0	97.0	100.0	100.0	keep	fix popular-services touch targets with inlin
 1a1ad7a	81.0	100.0	100.0	100.0	discard	adsense prod-only (HURTS performance again)
 1a6792f	81.0	100.0	100.0	100.0	discard	logo WebP with fetchpriority=high caused SI 10.5s regression
 e86c946	84.0	100.0	100.0	100.0	discard	lazy Firebase: score more variable, no improvement
-TBD	86.0	100.0	100.0	100.0	discard	logo WebP without fetchpriority still hurts performance (86 vs 88)
+11b2010	86.0	100.0	100.0	100.0	discard	logo WebP without fetchpriority still hurts performance (86 vs 88)
+TBD	87.0	100.0	100.0	100.0	discard	Typed.js startDelay 15s: SI still 3.6s, FCP 2.4s, LCP 3.2s (noise only)
+TBD	73.0	100.0	100.0	100.0	discard	remove backdrop-filter/text-shadow/background-clip: massive SI regression
