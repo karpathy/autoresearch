@@ -26,10 +26,10 @@ uv run python -c "import torch; import flash_attn; print(f'PyTorch: {torch.__ver
 ```python
 from flash_attn import flash_attn_func
 
-# [batch_size, num_heads, seq_len, head_dim]
-q = torch.randn(2, 8, 512, 64, device='cuda', dtype=torch.float16)
-k = torch.randn(2, 8, 512, 64, device='cuda', dtype=torch.float16)
-v = torch.randn(2, 8, 512, 64, device='cuda', dtype=torch.float16)
+# [batch_size, seq_len, num_heads, head_dim]
+q = torch.randn(2, 512, 8, 64, device='cuda', dtype=torch.float16)
+k = torch.randn(2, 512, 8, 64, device='cuda', dtype=torch.float16)
+v = torch.randn(2, 512, 8, 64, device='cuda', dtype=torch.float16)
 
 output = flash_attn_func(q, k, v, causal=True)
 ```

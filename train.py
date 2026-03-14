@@ -907,6 +907,7 @@ smooth_train_loss = 0
 total_training_time = 0
 step = 0
 measured_steps = 0
+BENCHMARK_WARMUP_STEPS = 1 if BENCHMARK_MODE else 0
 
 while True:
     torch.cuda.synchronize()
@@ -957,8 +958,9 @@ while True:
     torch.cuda.synchronize()
     t1 = time.time()
     dt = t1 - t0
+    is_benchmark_warmup = BENCHMARK_MODE and step < BENCHMARK_WARMUP_STEPS
 
-    if BENCHMARK_MODE or step > 10:
+    if (BENCHMARK_MODE and not is_benchmark_warmup) or (not BENCHMARK_MODE and step > 10):
         total_training_time += dt
         measured_steps += 1
 
@@ -968,10 +970,16 @@ while True:
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
     pct_done = 100 * progress
     tok_per_sec = TOTAL_BATCH_SIZE / dt
-    device_mfu = compute_mfu(device_peak_flops, num_flops_per_token, tok_per_sec)
-    h100_mfu = compute_mfu(H100_BF16_PEAK_FLOPS, num_flops_per_token, tok_per_sec)
-    device_mfu_str = f"{device_mfu:.1f}%" if device_mfu is not None else "n/a"
-    h100_mfu_str = f"{h100_mfu:.1f}%" if h100_mfu is not None else "n/a"
+    if is_benchmark_warmup:
+        tok_per_sec_str = "warmup"
+        device_mfu_str = "warmup"
+        h100_mfu_str = "warmup"
+    else:
+        device_mfu = compute_mfu(device_peak_flops, num_flops_per_token, tok_per_sec)
+        h100_mfu = compute_mfu(H100_BF16_PEAK_FLOPS, num_flops_per_token, tok_per_sec)
+        tok_per_sec_str = f"{tok_per_sec:,.0f}"
+        device_mfu_str = f"{device_mfu:.1f}%" if device_mfu is not None else "n/a"
+        h100_mfu_str = f"{h100_mfu:.1f}%" if h100_mfu is not None else "n/a"
 
     if BENCHMARK_MODE:
         remaining_str = f"{max(BENCHMARK_STEPS - (step + 1), 0)} steps"
@@ -980,7 +988,7 @@ while True:
         remaining_str = f"{max(0, TIME_BUDGET - total_training_time):.0f}s"
         progress_str = f"{pct_done:.1f}%"
 
-    print(f"\rstep {step:05d} ({progress_str}) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,.0f} | mfu: {device_mfu_str} | h100_mfu: {h100_mfu_str} | epoch: {epoch} | remaining: {remaining_str}    ", end="", flush=True)
+    print(f"\rstep {step:05d} ({progress_str}) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec_str} | mfu: {device_mfu_str} | h100_mfu: {h100_mfu_str} | epoch: {epoch} | remaining: {remaining_str}    ", end="", flush=True)
 
     # GC management (Python's GC causes ~500ms stalls)
     if step == 0:
@@ -1012,8 +1020,8 @@ if not BENCHMARK_MODE:
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_tok_per_sec = (TOTAL_BATCH_SIZE * measured_steps / total_training_time) if total_training_time > 0 else 0
-steady_train_flops = num_flops_per_token * steady_tok_per_sec
+steady_tok_per_sec = (TOTAL_BATCH_SIZE * measured_steps / total_training_time) if total_training_time > 0 and measured_steps > 0 else None
+steady_train_flops = num_flops_per_token * steady_tok_per_sec if steady_tok_per_sec is not None else None
 steady_state_mfu = compute_mfu(device_peak_flops, num_flops_per_token, steady_tok_per_sec)
 steady_state_h100_mfu = compute_mfu(H100_BF16_PEAK_FLOPS, num_flops_per_token, steady_tok_per_sec)
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
@@ -1032,13 +1040,15 @@ print(f"training_seconds: {total_training_time:.1f}")
 print(f"total_seconds:    {t_end - t_start:.1f}")
 print(f"startup_seconds:  {startup_time:.1f}")
 print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
-print(f"tok_per_sec:      {steady_tok_per_sec:,.0f}")
-print(f"train_tflops:     {steady_train_flops / 1e12:.2f}")
+print(f"tok_per_sec:      {steady_tok_per_sec:,.0f}" if steady_tok_per_sec is not None else "tok_per_sec:      n/a")
+print(f"train_tflops:     {steady_train_flops / 1e12:.2f}" if steady_train_flops is not None else "train_tflops:     n/a")
 print(f"mfu_percent:      {steady_state_mfu:.2f}" if steady_state_mfu is not None else "mfu_percent:      n/a")
 print(f"h100_mfu_percent: {steady_state_h100_mfu:.2f}" if steady_state_h100_mfu is not None else "h100_mfu_percent: n/a")
 print(f"peak_tflops_est:  {device_peak_flops / 1e12:.2f}" if device_peak_flops is not None else "peak_tflops_est:  n/a")
 print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"measured_steps:   {measured_steps}")
+if BENCHMARK_MODE and measured_steps == 0:
+    print("benchmark_note:   use --benchmark-steps >= 2 for steady-state throughput")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")

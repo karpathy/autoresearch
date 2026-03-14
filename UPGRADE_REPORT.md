@@ -85,7 +85,7 @@ output = compiled_model(input)
 ```python
 from flash_attn import flash_attn_func
 
-# Q, K, V: [batch_size, num_heads, seq_len, head_dim]
+# Q, K, V: [batch_size, seq_len, num_heads, head_dim]
 output = flash_attn_func(q, k, v)
 ```
 
@@ -129,12 +129,12 @@ import torch
 from flash_attn import flash_attn_func
 
 # 创建输入
-batch_size, num_heads, seq_len, head_dim = 2, 8, 512, 64
-q = torch.randn(batch_size, num_heads, seq_len, head_dim,
+batch_size, seq_len, num_heads, head_dim = 2, 512, 8, 64
+q = torch.randn(batch_size, seq_len, num_heads, head_dim,
                 device='cuda', dtype=torch.float16)
-k = torch.randn(batch_size, num_heads, seq_len, head_dim,
+k = torch.randn(batch_size, seq_len, num_heads, head_dim,
                 device='cuda', dtype=torch.float16)
-v = torch.randn(batch_size, num_heads, seq_len, head_dim,
+v = torch.randn(batch_size, seq_len, num_heads, head_dim,
                 device='cuda', dtype=torch.float16)
 
 # Flash Attention

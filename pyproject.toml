@@ -13,7 +13,7 @@ dependencies = [
     "requests>=2.32.0",
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
-    "flash-attn==2.8.3; sys_platform == 'win32'",
+    "flash-attn==2.8.3; sys_platform == 'win32' and python_version == '3.12' and platform_machine == 'AMD64'",
     "torch==2.10.0",
     "triton-windows==3.6.0.post26; sys_platform == 'win32'",
 ]
