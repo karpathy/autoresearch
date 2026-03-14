@@ -21,3 +21,10 @@ dev/
 
 # Results file
 results.tsv
+
+# Lighthouse audit logs
+run-lighthouse*.log
+
+# Aider files
+.aider/
+.aider.*

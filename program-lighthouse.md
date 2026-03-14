@@ -13,8 +13,8 @@ To set up a new Lighthouse optimization run, work with the user to:
    - `program-lighthouse.md` — these instructions.
    - `lighthouse_audit.py` — audit runner and metrics collection. Do not modify the core evaluation logic.
    - `optimize.py` — the file you modify. This contains all optimization strategies.
-   - Target project: `/home/kinit/Code/snapwerks` — the Symfony web application to optimize.
-4. **Verify target project is accessible**: Check that `/home/kinit/Code/snapwerks` exists and is running.
+   - Target project: `/home/<Project/Directory>` — the Symfony web application to optimize.
+4. **Verify target project is accessible**: Check that `/home/<Project/Directory>` exists and is running.
 5. **Initialize results-lighthouse.tsv**: Create `results-lighthouse.tsv` with just the header row.
 6. **Confirm and go**: Confirm setup looks good.
 
@@ -63,7 +63,7 @@ Each experiment runs a Lighthouse audit on the target application.
 
 ## The first run
 
-Your very first run should always be to establish the baseline, so you will run the audit script as-is on the current snapwerks codebase.
+Your very first run should always be to establish the baseline, so you will run the audit script as-is on the current PROJECT_NAME codebase.
 
 ## Output format
 
@@ -186,8 +186,5 @@ Here are proven strategies to try:
 
 By default, audit these key pages:
 - Homepage: `http://localhost:8000/`
-- Job listing: `http://localhost:8000/vind-een-vakman-in/amsterdam` (or equivalent)
-- Service page: `http://localhost:8000//vind-een-vakman-in/amsterdam/puttenboorder` (or equivalent)
 - Contact/About page
 
-Adjust based on the actual snapwerks routing.

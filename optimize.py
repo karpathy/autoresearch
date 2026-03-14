@@ -1,5 +1,5 @@
 """
-Autonomous Lighthouse optimization for Snapwerks.
+Autonomous Lighthouse optimization for PROJECT_NAME.
 This is the main file that the AI agent modifies to run optimization experiments.
 
 Usage: uv run optimize.py
@@ -22,7 +22,7 @@ from lighthouse_audit import run_audits, print_summary, AuditSummary, DEFAULT_UR
 # ---------------------------------------------------------------------------
 
 # Target project path
-TARGET_PROJECT = Path("/home/kinit/Code/snapwerks")
+TARGET_PROJECT = Path("/home/NAME/Code/PROJECT_NAME")
 
 # URLs to audit (customize based on your application)
 AUDIT_URLS = [
@@ -485,10 +485,10 @@ class AddMetaTags(OptimizationStrategy):
         
         meta_tags = """
     {# SEO Meta Tags #}
-    <meta name="description" content="{% block meta_description %}SnapWerks - Professional services marketplace{% endblock %}">
+    <meta name="description" content="{% block meta_description %}PROJECT_NAME - Professional services marketplace{% endblock %}">
     <meta name="keywords" content="{% block meta_keywords %}plumber, electrician, painter, services, Netherlands{% endblock %}">
     <meta name="robots" content="index, follow">
-    <meta name="author" content="SnapWerks">
+    <meta name="author" content="PROJECT_NAME">
     
     {# Open Graph / Facebook #}
     <meta property="og:type" content="website">
@@ -585,7 +585,7 @@ class AllowSearchEngineIndexing(OptimizationStrategy):
 
     def _clear_cache(self):
         subprocess.run(
-            ["docker", "exec", "snapwerks-app-1", "php", "bin/console", "cache:clear", "--no-warmup", "-q"],
+            ["docker", "exec", "PROJECT_NAME-app-1", "php", "bin/console", "cache:clear", "--no-warmup", "-q"],
             cwd=TARGET_PROJECT, capture_output=True, timeout=30
         )
         time.sleep(3)  # Let FrankenPHP/watchexec restart
@@ -685,7 +685,7 @@ class DisableWebProfilerToolbar(OptimizationStrategy):
 
     def _clear_cache(self):
         subprocess.run(
-            ["docker", "exec", "snapwerks-app-1", "php", "bin/console", "cache:clear", "--no-warmup", "-q"],
+            ["docker", "exec", "PROJECT_NAME-app-1", "php", "bin/console", "cache:clear", "--no-warmup", "-q"],
             cwd=TARGET_PROJECT, capture_output=True, timeout=30
         )
         time.sleep(3)
@@ -760,7 +760,7 @@ class FixAccessibility(OptimizationStrategy):
     TOP_PROFS = TARGET_PROJECT / "templates" / "home" / "top_professions.html.twig"
     PROFS_LIST = TARGET_PROJECT / "templates" / "home" / "professions_list.html.twig"
     CAROUSEL = TARGET_PROJECT / "templates" / "components" / "carousel_pagination.html.twig"
-    WHY_SNPWRKS = TARGET_PROJECT / "templates" / "components" / "why_snapwerks_for_homeowner.html.twig"
+    WHY_SNPWRKS = TARGET_PROJECT / "templates" / "components" / "why_PROJECT_NAME_for_homeowner.html.twig"
     PWA_INSTALL = TARGET_PROJECT / "templates" / "components" / "pwa_installation.html.twig"
 
     CHANGES = [
@@ -828,15 +828,15 @@ class FixAccessibility2(OptimizationStrategy):
     """Fix remaining accessibility issues.
 
     1. Color contrast: bg-primary-600 (3.3:1) → bg-primary-700 (5.0:1) on CTA buttons (weight 7)
-    2. Heading order: h3 after h1 (skips h2) in why_snapwerks_for_service_pro (weight 3)
+    2. Heading order: h3 after h1 (skips h2) in why_PROJECT_NAME_for_service_pro (weight 3)
     3. Touch targets: popular-services JS controller creates tiny dots → add min-size inline style
     """
 
     name = "fix_accessibility_2"
     description = "Fix color contrast on CTA buttons, heading order, and JS-generated touch targets"
 
-    WHY_HOMEOWNER = TARGET_PROJECT / "templates" / "components" / "why_snapwerks_for_homeowner.html.twig"
-    WHY_PRO = TARGET_PROJECT / "templates" / "components" / "why_snapwerks_for_service_pro.html.twig"
+    WHY_HOMEOWNER = TARGET_PROJECT / "templates" / "components" / "why_PROJECT_NAME_for_homeowner.html.twig"
+    WHY_PRO = TARGET_PROJECT / "templates" / "components" / "why_PROJECT_NAME_for_service_pro.html.twig"
     POPULAR_CTRL = TARGET_PROJECT / "assets" / "controllers" / "popular_services_controller.js"
 
     CHANGES = [
@@ -880,7 +880,7 @@ class FixAccessibility2(OptimizationStrategy):
                 applied += 1
         # Recompile assets since JS changed
         subprocess.run(
-            ["docker", "exec", "snapwerks-app-1", "php", "bin/console", "asset-map:compile"],
+            ["docker", "exec", "PROJECT_NAME-app-1", "php", "bin/console", "asset-map:compile"],
             cwd=TARGET_PROJECT, capture_output=True, timeout=60
         )
         # Remove old compiled popular_services files
@@ -896,7 +896,7 @@ class FixAccessibility2(OptimizationStrategy):
             if new in content:
                 file_path.write_text(content.replace(new, old))
         subprocess.run(
-            ["docker", "exec", "snapwerks-app-1", "php", "bin/console", "asset-map:compile"],
+            ["docker", "exec", "PROJECT_NAME-app-1", "php", "bin/console", "asset-map:compile"],
             cwd=TARGET_PROJECT, capture_output=True, timeout=60
         )
         return True
@@ -1038,6 +1038,54 @@ class FixAccessibility5(OptimizationStrategy):
         return True
 
 
+class SpeedUpTypedAnimation(OptimizationStrategy):
+    """Speed up Typed.js animation and disable loop so it completes within ~3s.
+
+    Current config: typeSpeed:30ms, backSpeed:100ms, backDelay:100ms, loop:true.
+    With 5 profession names (~12 chars avg):
+      - One full cycle: 12×30 + 100 + 12×100 = 1660ms
+      - Loops forever → SI inflated throughout Lighthouse's 10s window
+
+    New config: typeSpeed:10ms, backSpeed:30ms, backDelay:50ms, loop:false.
+    One pass through 5 professions:
+      - 12×10 + 50 + 12×30 = 120 + 50 + 360 = 530ms per profession
+      - 5 × 530ms = ~2650ms total → animation done by ~2.75s after startDelay
+    After ~2.75s the page is stable → Lighthouse captures stable frames for ~7s.
+    Expected SI improvement from 3.6s toward 2.5s.
+    """
+
+    name = "speed_up_typed_animation"
+    description = "Speed up Typed.js + loop:false so animation completes in ~3s"
+
+    HERO = TARGET_PROJECT / "templates" / "components" / "hero_section.html.twig"
+
+    OLD = (
+        "                        startDelay: 100,\n"
+        "                        backSpeed: 100,\n"
+        "                        backDelay: 100,\n"
+        "                        loop: true,"
+    )
+    NEW = (
+        "                        startDelay: 100,\n"
+        "                        typeSpeed: 10,\n"
+        "                        backSpeed: 30,\n"
+        "                        backDelay: 50,\n"
+        "                        loop: false,"
+    )
+
+    def apply(self):
+        content = self.HERO.read_text()
+        if self.OLD not in content:
+            return False
+        self.HERO.write_text(content.replace(self.OLD, self.NEW))
+        return True
+
+    def revert(self):
+        content = self.HERO.read_text()
+        self.HERO.write_text(content.replace(self.NEW, self.OLD))
+        return True
+
+
 class FontDisplayOptional(OptimizationStrategy):
     """Change font-display from swap to optional for Inter Variable and Noto Sans Tamil.
 
@@ -1075,7 +1123,7 @@ class FontDisplayOptional(OptimizationStrategy):
             return False
         self.APP_CSS.write_text(content.replace(self.OLD, self.NEW))
         subprocess.run(
-            ["docker", "exec", "snapwerks-app-1", "php", "bin/console", "asset-map:compile"],
+            ["docker", "exec", "PROJECT_NAME-app-1", "php", "bin/console", "asset-map:compile"],
             cwd=TARGET_PROJECT, capture_output=True, timeout=60
         )
         return True
@@ -1084,7 +1132,7 @@ class FontDisplayOptional(OptimizationStrategy):
         content = self.APP_CSS.read_text()
         self.APP_CSS.write_text(content.replace(self.NEW, self.OLD))
         subprocess.run(
-            ["docker", "exec", "snapwerks-app-1", "php", "bin/console", "asset-map:compile"],
+            ["docker", "exec", "PROJECT_NAME-app-1", "php", "bin/console", "asset-map:compile"],
             cwd=TARGET_PROJECT, capture_output=True, timeout=60
         )
         return True
@@ -1178,7 +1226,7 @@ class ConvertFontsToWoff2(OptimizationStrategy):
         self.APP_CSS.write_text(content.replace(self.OLD, self.NEW))
         # Recompile assets
         subprocess.run(
-            ["docker", "exec", "snapwerks-app-1", "php", "bin/console", "asset-map:compile"],
+            ["docker", "exec", "PROJECT_NAME-app-1", "php", "bin/console", "asset-map:compile"],
             cwd=TARGET_PROJECT, capture_output=True, timeout=60
         )
         return True
@@ -1187,7 +1235,7 @@ class ConvertFontsToWoff2(OptimizationStrategy):
         content = self.APP_CSS.read_text()
         self.APP_CSS.write_text(content.replace(self.NEW, self.OLD))
         subprocess.run(
-            ["docker", "exec", "snapwerks-app-1", "php", "bin/console", "asset-map:compile"],
+            ["docker", "exec", "PROJECT_NAME-app-1", "php", "bin/console", "asset-map:compile"],
             cwd=TARGET_PROJECT, capture_output=True, timeout=60
         )
         return True
@@ -1317,12 +1365,12 @@ class OptimizeLogoWebP(OptimizationStrategy):
     OLD = ('                <img src="{{ asset(\'images/logo.svg\') }}"\n'
            '                     width="160"\n'
            '                     height="80"\n'
-           '                     class="h-9 w-auto" alt="SnapWerks"\n'
+           '                     class="h-9 w-auto" alt="PROJECT_NAME"\n'
            '                />')
     NEW = ('                <img src="{{ asset(\'images/logo.webp\') }}"\n'
            '                     width="295"\n'
            '                     height="72"\n'
-           '                     class="h-9 w-auto" alt="SnapWerks"\n'
+           '                     class="h-9 w-auto" alt="PROJECT_NAME"\n'
            '                />')
 
     def apply(self):
@@ -1341,11 +1389,11 @@ class OptimizeLogoWebP(OptimizationStrategy):
 def main():
     """Main entry point."""
     print("=" * 60)
-    print("Lighthouse Optimization - Experiment: font_display_optional")
+    print("Lighthouse Optimization - Experiment: speed_up_typed_animation")
     print("=" * 60)
     print()
 
-    summary = run_optimization(FontDisplayOptional)
+    summary = run_optimization(SpeedUpTypedAnimation)
     print_summary(summary)
 
 

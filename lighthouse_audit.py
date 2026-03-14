@@ -29,13 +29,13 @@ from pathlib import Path
 # Configuration
 # ---------------------------------------------------------------------------
 
-# Default URLs to audit (Snapwerks default pages)
+# Default URLs to audit (Default pages of your project)
 DEFAULT_URLS = [
     "http://localhost:8000/",
 ]
 
 # Target project path
-TARGET_PROJECT = "/home/kinit/Code/snapwerks"
+TARGET_PROJECT = "/home/<Project/Directory>"
 
 # Lighthouse categories to evaluate
 CATEGORIES = ["performance", "accessibility", "best-practices", "seo"]

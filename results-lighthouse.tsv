@@ -16,6 +16,8 @@ c07ef3a	88.0	97.0	100.0	100.0	keep	fix popular-services touch targets with inlin
 1a6792f	81.0	100.0	100.0	100.0	discard	logo WebP with fetchpriority=high caused SI 10.5s regression
 e86c946	84.0	100.0	100.0	100.0	discard	lazy Firebase: score more variable, no improvement
 11b2010	86.0	100.0	100.0	100.0	discard	logo WebP without fetchpriority still hurts performance (86 vs 88)
-TBD	87.0	100.0	100.0	100.0	discard	Typed.js startDelay 15s: SI still 3.6s, FCP 2.4s, LCP 3.2s (noise only)
-TBD	73.0	100.0	100.0	100.0	discard	remove backdrop-filter/text-shadow/background-clip: massive SI regression
-TBD	81.0	100.0	100.0	100.0	discard	WOFF2 font: faster font swap hits SI measurement window harder (81,86 vs 88)
+085f38a	87.0	100.0	100.0	100.0	discard	Typed.js startDelay 15s: SI still 3.6s, FCP 2.4s, LCP 3.2s (noise only)
+085f38a	73.0	100.0	100.0	100.0	discard	remove backdrop-filter/text-shadow/background-clip: massive SI regression
+085f38a	81.0	100.0	100.0	100.0	discard	WOFF2 font: faster font swap hits SI measurement window harder (81,86 vs 88)
+e44e708	90.0	100.0	100.0	100.0	keep	font-display:optional eliminates 0.8s font-swap LCP delay (performance 88→90)
+TBD	84.0	100.0	100.0	100.0	discard	speed up Typed.js (loop:false, 10ms/char): faster animation hits more SI frames
