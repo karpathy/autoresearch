@@ -1,0 +1,56 @@
+C:\Users\Administrator\Desktop\autoresearch\.venv\Lib\site-packages\torch\_refs\__init__.py:5209: UserWarning: expandable_segments not supported on this platform (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\pytorch\c10/cuda/CUDAAllocatorConfig.h:39.)
+  return torch.empty_permuted(
+W0315 00:49:58.417000 2324 .venv\Lib\site-packages\torch\_inductor\utils.py:1679] [0/0] Not enough SMs to use max_autotune_gemm mode
+Vocab size: 8,192
+Attention backend: flash_attn
+Device batch size: 12
+Mode: benchmark
+Compile backend: inductor
+Compile mode: default
+Compile scope: model
+Optimizer compile backend: inductor
+MSVC cl.exe: C:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Tools\MSVC\14.50.35717\bin\HostX64\x64\cl.exe
+MSVC help decode override: utf-8
+Benchmark steps: 5
+Device peak BF16/FP16 TFLOPS est: 43.78
+Model config: {'sequence_len': 2048, 'vocab_size': 8192, 'n_layer': 8, 'n_head': 4, 'n_kv_head': 4, 'n_embd': 512, 'window_pattern': 'SSSL'}
+Parameter counts:
+  wte                     : 4,194,304
+  value_embeds            : 16,777,216
+  lm_head                 : 4,194,304
+  transformer_matrices    : 25,166,336
+  scalars                 : 16
+  total                   : 50,332,176
+Estimated FLOPs per token: 2.390784e+08
+Scaling AdamW LRs by 1/sqrt(512/768) = 1.224745
+torch.compile: enabled (inductor, mode=default, scope=model)
+Time budget: 300s
+Total batch size: 24576
+Gradient accumulation steps: 1
+
+step 00000 (20.0%) | loss: 9.011675 | lrm: 1.00 | dt: 53785ms | tok/sec: 457 | mfu: 0.2% | h100_mfu: 0.0% | epoch: 1 | remaining: 4 steps    
+step 00001 (40.0%) | loss: 9.129344 | lrm: 1.00 | dt: 344ms | tok/sec: 71,426 | mfu: 39.0% | h100_mfu: 1.7% | epoch: 1 | remaining: 3 steps    
+step 00002 (60.0%) | loss: 8.976349 | lrm: 1.00 | dt: 349ms | tok/sec: 70,399 | mfu: 38.4% | h100_mfu: 1.7% | epoch: 1 | remaining: 2 steps    
+step 00003 (80.0%) | loss: 8.719183 | lrm: 1.00 | dt: 349ms | tok/sec: 70,436 | mfu: 38.5% | h100_mfu: 1.7% | epoch: 1 | remaining: 1 steps    
+step 00004 (100.0%) | loss: 8.454898 | lrm: 1.00 | dt: 350ms | tok/sec: 70,308 | mfu: 38.4% | h100_mfu: 1.7% | epoch: 1 | remaining: 0 steps    
+---
+mode:             benchmark
+compile_backend:  inductor
+compile_mode:     default
+compile_scope:    model
+optimizer_compile:inductor
+val_bpb:          skipped
+training_seconds: 55.2
+total_seconds:    56.6
+startup_seconds:  1.2
+peak_vram_mb:     4610.3
+tok_per_sec:      2,227
+train_tflops:     0.53
+mfu_percent:      1.22
+h100_mfu_percent: 0.05
+peak_tflops_est:  43.78
+total_tokens_M:   0.1
+num_steps:        5
+measured_steps:   5
+num_params_M:     50.3
+depth:            8

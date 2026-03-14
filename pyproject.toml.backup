@@ -3,7 +3,7 @@ name = "autoresearch"
 version = "0.1.0"
 description = "Autonomous pretraining research swarm"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "kernels>=0.11.7",
     "matplotlib>=3.10.8",
@@ -13,18 +13,14 @@ dependencies = [
     "requests>=2.32.0",
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
-    "flash-attn==2.8.3; sys_platform == 'win32'",
-    "torch==2.10.0",
-    "triton-windows==3.6.0.post26; sys_platform == 'win32'",
+    "torch==2.9.1",
 ]
 
 [tool.uv.sources]
-flash-attn = { path = "flash_attn-2.8.3+cu130torch2.10.0cxx11abiTRUE-cp312-cp312-win_amd64.whl" }
-torch = [
-    { index = "pytorch-cu130" },
-]
+flash-attn = { index = "pypi" }
+torch = { index = "pytorch-cu128" }
 
 [[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true

@@ -1,27 +1,317 @@
 """
 Autoresearch pretraining script. Single-GPU, single-file.
 Cherry-picked and simplified from nanochat.
-Usage: uv run train.py
+Usage:
+    uv run train.py
+    uv run train.py --benchmark-steps 1
+    uv run train.py --benchmark-steps 5
+    uv run train.py --benchmark-steps 5 --compile-backend inductor --compile-mode max-autotune
+    uv run train.py --benchmark-steps 5 --compile-backend inductor --compile-scope microstep
+    uv run train.py --benchmark-steps 5 --compile-backend inductor --compile-scope trunk
+    uv run train.py --benchmark-steps 5 --compile-backend inductor --optimizer-compile-backend off
 """
 
+import argparse
+import glob
 import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
+import importlib.util
 import math
+import shutil
+import subprocess
 import time
 from dataclasses import dataclass, asdict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch._inductor as inductor
+import torch._inductor.cpp_builder as cpp_builder
 
-from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+HAS_TRITON = importlib.util.find_spec("triton") is not None
+AVAILABLE_COMPILE_BACKENDS = set(torch.compiler.list_backends())
+EXTRA_COMPILE_BACKENDS = {"aot_eager"}
+AVAILABLE_INDUCTOR_MODES = set(inductor.list_mode_options().keys())
+
+
+def resolve_compile_backend(requested_backend):
+    if requested_backend == "auto":
+        return "inductor" if HAS_TRITON else "off"
+    return requested_backend
+
+
+def validate_compile_backend(compile_backend):
+    if compile_backend == "off":
+        return
+    if compile_backend not in AVAILABLE_COMPILE_BACKENDS and compile_backend not in EXTRA_COMPILE_BACKENDS:
+        available = ", ".join(sorted(AVAILABLE_COMPILE_BACKENDS | EXTRA_COMPILE_BACKENDS))
+        raise RuntimeError(f"Compile backend '{compile_backend}' is unavailable. Available backends: {available}")
+    if compile_backend == "inductor" and not HAS_TRITON:
+        raise RuntimeError("Compile backend 'inductor' requires Triton in this environment")
+
+
+def maybe_compile_optimizer(**kwargs):
+    if OPTIMIZER_COMPILE_BACKEND == "off":
+        def decorator(fn):
+            return fn
+        return decorator
+    return torch.compile(backend=OPTIMIZER_COMPILE_BACKEND, mode=INDUCTOR_COMPILE_MODE, **kwargs)
+
+
+def validate_compile_mode(compile_backend, compile_mode):
+    if compile_backend != "inductor":
+        return
+    if compile_mode not in AVAILABLE_INDUCTOR_MODES:
+        available = ", ".join(sorted(AVAILABLE_INDUCTOR_MODES))
+        raise RuntimeError(f"Compile mode '{compile_mode}' is unavailable. Available modes: {available}")
+
+
+def find_vcvars64():
+    if os.name != "nt":
+        return None
+
+    vswhere_candidates = []
+    env_vswhere = os.environ.get("VSWHERE")
+    if env_vswhere:
+        vswhere_candidates.append(env_vswhere)
+
+    which_vswhere = shutil.which("vswhere.exe")
+    if which_vswhere and which_vswhere not in vswhere_candidates:
+        vswhere_candidates.append(which_vswhere)
+
+    default_vswhere = r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+    if os.path.isfile(default_vswhere) and default_vswhere not in vswhere_candidates:
+        vswhere_candidates.append(default_vswhere)
+
+    for vswhere in vswhere_candidates:
+        try:
+            result = subprocess.run(
+                [
+                    vswhere,
+                    "-latest",
+                    "-products",
+                    "*",
+                    "-requires",
+                    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                    "-property",
+                    "installationPath",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                errors="ignore",
+            )
+        except (OSError, subprocess.CalledProcessError):
+            continue
+
+        install_path = result.stdout.strip()
+        if not install_path:
+            continue
+
+        vcvars64 = os.path.join(install_path, "VC", "Auxiliary", "Build", "vcvars64.bat")
+        if os.path.isfile(vcvars64):
+            return vcvars64
+
+    fallback_matches = []
+    for pattern in (
+        r"C:\Program Files\Microsoft Visual Studio\*\*\VC\Auxiliary\Build\vcvars64.bat",
+        r"C:\Program Files (x86)\Microsoft Visual Studio\*\*\VC\Auxiliary\Build\vcvars64.bat",
+    ):
+        fallback_matches.extend(glob.glob(pattern))
+    if fallback_matches:
+        return sorted(fallback_matches, reverse=True)[0]
+    return None
+
+
+def load_windows_msvc_env(vcvars64_path):
+    command = f'call "{vcvars64_path}" >nul && set'
+    result = subprocess.run(
+        command,
+        shell=True,
+        check=True,
+        capture_output=True,
+        text=True,
+        errors="ignore",
+    )
+    for line in result.stdout.splitlines():
+        if "=" not in line or line.startswith("="):
+            continue
+        key, value = line.split("=", 1)
+        os.environ[key] = value
+
+
+def ensure_windows_msvc_compiler():
+    if os.name != "nt":
+        return None
+
+    compiler = shutil.which("cl.exe")
+    if compiler is not None:
+        os.environ.setdefault("CC", compiler)
+        os.environ.setdefault("CXX", compiler)
+        return compiler
+
+    vcvars64_path = find_vcvars64()
+    if vcvars64_path is None:
+        raise RuntimeError(
+            "Optimizer compile on Windows requires MSVC cl.exe, but no Visual Studio C++ toolchain was found. "
+            "Install Visual Studio Build Tools with Desktop development with C++."
+        )
+
+    try:
+        load_windows_msvc_env(vcvars64_path)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        if detail:
+            detail = f" Details: {detail}"
+        raise RuntimeError(f"Failed to load MSVC environment from '{vcvars64_path}'.{detail}") from exc
+
+    compiler = shutil.which("cl.exe")
+    if compiler is None:
+        raise RuntimeError(
+            f"Loaded MSVC environment from '{vcvars64_path}', but cl.exe is still unavailable in PATH."
+        )
+
+    os.environ.setdefault("CC", compiler)
+    os.environ.setdefault("CXX", compiler)
+    return compiler
+
+
+def maybe_configure_msvc_utf8_help(compiler):
+    if os.name != "nt" or compiler is None:
+        return None
+
+    help_output = subprocess.check_output([compiler, "/help"], stderr=subprocess.STDOUT)
+    try:
+        help_output.decode(*cpp_builder.SUBPROCESS_DECODE_ARGS)
+        return None
+    except UnicodeDecodeError:
+        try:
+            help_output.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise RuntimeError(
+                f"cl.exe help output from '{compiler}' could not be decoded using "
+                f"{cpp_builder.SUBPROCESS_DECODE_ARGS[0]!r} or 'utf-8'."
+            ) from exc
+
+    cpp_builder.SUBPROCESS_DECODE_ARGS = ("utf-8", "ignore")
+    cpp_builder._is_msvc_cl.cache_clear()
+    return "utf-8"
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Autoresearch pretraining script")
+    parser.add_argument(
+        "--benchmark-steps",
+        type=int,
+        default=0,
+        help="Run N optimizer steps, report throughput/MFU, and skip final eval.",
+    )
+    parser.add_argument(
+        "--compile-backend",
+        choices=["auto", "off", "inductor", "cudagraphs", "aot_eager"],
+        default="inductor",
+        help="Model compile backend. Default is the validated high-throughput inductor path.",
+    )
+    parser.add_argument(
+        "--compile-mode",
+        choices=sorted(AVAILABLE_INDUCTOR_MODES),
+        default="default",
+        help="TorchInductor compile mode. Used only when --compile-backend is inductor.",
+    )
+    parser.add_argument(
+        "--compile-scope",
+        choices=["model", "microstep", "trunk"],
+        default="model",
+        help="Compile only the model forward, or compile a whole microstep (forward + backward).",
+    )
+    parser.add_argument(
+        "--grad-accum-steps",
+        type=int,
+        default=1,
+        help="Gradient accumulation steps. Default 1 is the validated high-throughput setting.",
+    )
+    parser.add_argument(
+        "--optimizer-compile-backend",
+        choices=["auto", "off", "inductor"],
+        default="inductor",
+        help="Control optimizer fused-step compilation separately from model compilation.",
+    )
+    args = parser.parse_args()
+    if args.benchmark_steps < 0:
+        parser.error("--benchmark-steps must be >= 0")
+    if args.grad_accum_steps < 0:
+        parser.error("--grad-accum-steps must be >= 0")
+    return args
+
+
+def estimate_device_peak_flops(device_props):
+    # Approximate dense BF16/FP16 tensor-core peak FLOPs using SM count and SM clock.
+    flops_per_cycle_by_capability = {
+        (9, 0): 4096,  # Hopper
+        (8, 0): 2048,  # A100 / A800
+        (8, 6): 1024,  # RTX 30-series
+        (8, 9): 1024,  # Ada Lovelace
+        (7, 0): 1024,  # Volta
+        (7, 5): 1024,  # Turing
+    }
+    capability = (device_props.major, device_props.minor)
+    flops_per_cycle = flops_per_cycle_by_capability.get(capability)
+    if flops_per_cycle is None:
+        return None
+    return device_props.multi_processor_count * flops_per_cycle * device_props.clock_rate * 1000
+
+
+def compute_mfu(peak_flops, num_flops_per_token, tok_per_sec):
+    if peak_flops is None or peak_flops <= 0 or tok_per_sec <= 0:
+        return None
+    return 100 * num_flops_per_token * tok_per_sec / peak_flops
+
+
+ARGS = parse_args()
+BENCHMARK_STEPS = ARGS.benchmark_steps
+BENCHMARK_MODE = BENCHMARK_STEPS > 0
+REQUESTED_COMPILE_BACKEND = ARGS.compile_backend
+MODEL_COMPILE_BACKEND = resolve_compile_backend(REQUESTED_COMPILE_BACKEND)
+validate_compile_backend(MODEL_COMPILE_BACKEND)
+INDUCTOR_COMPILE_MODE = ARGS.compile_mode
+validate_compile_mode(MODEL_COMPILE_BACKEND, INDUCTOR_COMPILE_MODE)
+COMPILE_SCOPE = ARGS.compile_scope
+GRAD_ACCUM_STEPS_OVERRIDE = ARGS.grad_accum_steps
+REQUESTED_OPTIMIZER_COMPILE_BACKEND = ARGS.optimizer_compile_backend
+if REQUESTED_OPTIMIZER_COMPILE_BACKEND == "auto":
+    OPTIMIZER_COMPILE_BACKEND = "inductor" if MODEL_COMPILE_BACKEND == "inductor" else "off"
+else:
+    OPTIMIZER_COMPILE_BACKEND = REQUESTED_OPTIMIZER_COMPILE_BACKEND
+USE_COMPILED_EXECUTION = MODEL_COMPILE_BACKEND != "off"
+USE_COMPILED_MODEL = USE_COMPILED_EXECUTION and COMPILE_SCOPE == "model"
+USE_COMPILED_MICROSTEP = USE_COMPILED_EXECUTION and COMPILE_SCOPE == "microstep"
+USE_COMPILED_TRUNK = USE_COMPILED_EXECUTION and COMPILE_SCOPE == "trunk"
+MSVC_CL_PATH = None
+MSVC_HELP_ENCODING = None
+if MODEL_COMPILE_BACKEND == "inductor" or OPTIMIZER_COMPILE_BACKEND == "inductor":
+    MSVC_CL_PATH = ensure_windows_msvc_compiler()
+    MSVC_HELP_ENCODING = maybe_configure_msvc_utf8_help(MSVC_CL_PATH)
+
+
+ATTN_BACKEND = None
+
+if os.name == "nt":
+    try:
+        from flash_attn import flash_attn_func
+        ATTN_BACKEND = "flash_attn"
+    except ImportError:
+        pass
+
+if ATTN_BACKEND is None:
+    from kernels import get_kernel
+    cap = torch.cuda.get_device_capability()
+    # varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
+    repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+    flash_attn_func = get_kernel(repo).flash_attn_interface.flash_attn_func
+    ATTN_BACKEND = repo
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -90,7 +380,7 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        y = flash_attn_func(q, k, v, causal=True, window_size=window_size)
         y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
@@ -265,20 +555,17 @@ class GPT(nn.Module):
             group["initial_lr"] = group["lr"]
         return optimizer
 
-    def forward(self, idx, targets=None, reduction='mean'):
-        B, T = idx.size()
-        assert T <= self.cos.size(1)
-        cos_sin = self.cos[:, :T], self.sin[:, :T]
-
-        x = self.transformer.wte(idx)
-        x = norm(x)
+    def forward_trunk(self, x, idx, cos, sin):
+        cos_sin = cos, sin
         x0 = x
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i])
         x = norm(x)
+        return x
 
+    def compute_loss(self, x, targets=None, reduction='mean'):
         softcap = 15
         logits = self.lm_head(x)
         logits = logits.float()
@@ -289,6 +576,16 @@ class GPT(nn.Module):
                                    ignore_index=-1, reduction=reduction)
             return loss
         return logits
+
+    def forward(self, idx, targets=None, reduction='mean'):
+        B, T = idx.size()
+        assert T <= self.cos.size(1)
+        cos = self.cos[:, :T]
+        sin = self.sin[:, :T]
+        x = self.transformer.wte(idx)
+        x = norm(x)
+        x = self.forward_trunk(x, idx, cos, sin)
+        return self.compute_loss(x, targets=targets, reduction=reduction)
 
 # ---------------------------------------------------------------------------
 # Optimizer (MuonAdamW, single GPU only)
@@ -302,7 +599,7 @@ polar_express_coeffs = [
     (2.3465413258596377, -1.7097828382687081, 0.42323551169305323),
 ]
 
-@torch.compile(dynamic=False, fullgraph=True)
+@maybe_compile_optimizer(dynamic=False, fullgraph=True)
 def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t):
     p.mul_(1 - lr_t * wd_t)
     exp_avg.lerp_(grad, 1 - beta1_t)
@@ -313,7 +610,7 @@ def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_
     step_size = lr_t / bias1
     p.add_(exp_avg / denom, alpha=-step_size)
 
-@torch.compile(dynamic=False, fullgraph=True)
+@maybe_compile_optimizer(dynamic=False, fullgraph=True)
 def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momentum_buffer,
                     momentum_t, lr_t, wd_t, beta2_t, ns_steps, red_dim):
     # Nesterov momentum
@@ -448,7 +745,17 @@ FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
 DEPTH = 8               # number of transformer layers
-DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
+DEFAULT_DEVICE_BATCH_SIZE = 12 # validated best-throughput local default
+
+
+def pick_device_batch_size(default_batch_size):
+    override = os.environ.get("DEVICE_BATCH_SIZE")
+    if override is not None:
+        return int(override)
+    return default_batch_size
+
+
+DEVICE_BATCH_SIZE = pick_device_batch_size(DEFAULT_DEVICE_BATCH_SIZE)
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
@@ -460,11 +767,29 @@ torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 device = torch.device("cuda")
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+device_props = torch.cuda.get_device_properties(0)
+device_peak_flops = estimate_device_peak_flops(device_props)
 H100_BF16_PEAK_FLOPS = 989.5e12
 
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
 print(f"Vocab size: {vocab_size:,}")
+print(f"Attention backend: {ATTN_BACKEND}")
+print(f"Device batch size: {DEVICE_BATCH_SIZE}")
+print(f"Mode: {'benchmark' if BENCHMARK_MODE else 'train'}")
+print(f"Compile backend: {MODEL_COMPILE_BACKEND}")
+if MODEL_COMPILE_BACKEND == "inductor":
+    print(f"Compile mode: {INDUCTOR_COMPILE_MODE}")
+print(f"Compile scope: {COMPILE_SCOPE}")
+print(f"Optimizer compile backend: {OPTIMIZER_COMPILE_BACKEND}")
+if MSVC_CL_PATH is not None:
+    print(f"MSVC cl.exe: {MSVC_CL_PATH}")
+if MSVC_HELP_ENCODING is not None:
+    print(f"MSVC help decode override: {MSVC_HELP_ENCODING}")
+if BENCHMARK_MODE:
+    print(f"Benchmark steps: {BENCHMARK_STEPS}")
+if device_peak_flops is not None:
+    print(f"Device peak BF16/FP16 TFLOPS est: {device_peak_flops / 1e12:.2f}")
 
 def build_model_config(depth):
     base_dim = depth * ASPECT_RATIO
@@ -493,8 +818,12 @@ num_flops_per_token = model.estimate_flops()
 print(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
 tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN
-assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0
-grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
+if GRAD_ACCUM_STEPS_OVERRIDE > 0:
+    grad_accum_steps = GRAD_ACCUM_STEPS_OVERRIDE
+    TOTAL_BATCH_SIZE = tokens_per_fwdbwd * grad_accum_steps
+else:
+    assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0
+    grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
 
 optimizer = model.setup_optimizer(
     unembedding_lr=UNEMBEDDING_LR,
@@ -505,12 +834,50 @@ optimizer = model.setup_optimizer(
     weight_decay=WEIGHT_DECAY,
 )
 
-model = torch.compile(model, dynamic=False)
+compile_kwargs = None
+if USE_COMPILED_EXECUTION:
+    compile_kwargs = {"backend": MODEL_COMPILE_BACKEND, "dynamic": False}
+    if MODEL_COMPILE_BACKEND == "inductor":
+        compile_kwargs["mode"] = INDUCTOR_COMPILE_MODE
+
+def run_microstep(x, y):
+    with autocast_ctx:
+        loss = model(x, y)
+    (loss / grad_accum_steps).backward()
+    return loss.detach()
+
+def run_trunk_forward(x, idx, cos, sin):
+    return model.forward_trunk(x, idx, cos, sin)
+
+microstep_fn = run_microstep
+trunk_fn = run_trunk_forward
+
+if USE_COMPILED_MODEL:
+    model = torch.compile(model, **compile_kwargs)
+    if MODEL_COMPILE_BACKEND == "inductor":
+        print(f"torch.compile: enabled ({MODEL_COMPILE_BACKEND}, mode={INDUCTOR_COMPILE_MODE}, scope=model)")
+    else:
+        print(f"torch.compile: enabled ({MODEL_COMPILE_BACKEND}, scope=model)")
+elif USE_COMPILED_MICROSTEP:
+    microstep_fn = torch.compile(microstep_fn, **compile_kwargs)
+    if MODEL_COMPILE_BACKEND == "inductor":
+        print(f"torch.compile: enabled ({MODEL_COMPILE_BACKEND}, mode={INDUCTOR_COMPILE_MODE}, scope=microstep)")
+    else:
+        print(f"torch.compile: enabled ({MODEL_COMPILE_BACKEND}, scope=microstep)")
+elif USE_COMPILED_TRUNK:
+    trunk_fn = torch.compile(trunk_fn, **compile_kwargs)
+    if MODEL_COMPILE_BACKEND == "inductor":
+        print(f"torch.compile: enabled ({MODEL_COMPILE_BACKEND}, mode={INDUCTOR_COMPILE_MODE}, scope=trunk)")
+    else:
+        print(f"torch.compile: enabled ({MODEL_COMPILE_BACKEND}, scope=trunk)")
+else:
+    print("torch.compile: disabled")
 
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
 x, y, epoch = next(train_loader)  # prefetch first batch
 
 print(f"Time budget: {TIME_BUDGET}s")
+print(f"Total batch size: {TOTAL_BATCH_SIZE}")
 print(f"Gradient accumulation steps: {grad_accum_steps}")
 
 # Schedules (all based on progress = training_time / TIME_BUDGET)
@@ -539,16 +906,34 @@ t_start_training = time.time()
 smooth_train_loss = 0
 total_training_time = 0
 step = 0
+measured_steps = 0
 
 while True:
     torch.cuda.synchronize()
     t0 = time.time()
+    train_loss_f = 0.0
     for micro_step in range(grad_accum_steps):
-        with autocast_ctx:
-            loss = model(x, y)
-        train_loss = loss.detach()
-        loss = loss / grad_accum_steps
-        loss.backward()
+        if USE_COMPILED_EXECUTION:
+            torch.compiler.cudagraph_mark_step_begin()
+        if COMPILE_SCOPE == "microstep":
+            train_loss = microstep_fn(x, y)
+            train_loss_f = train_loss.float().item()
+        elif COMPILE_SCOPE == "trunk":
+            with autocast_ctx:
+                cos = model.cos[:, :x.size(1)]
+                sin = model.sin[:, :x.size(1)]
+                hidden = model.transformer.wte(x)
+                hidden = norm(hidden)
+                hidden = trunk_fn(hidden, x, cos, sin)
+                loss = model.compute_loss(hidden, targets=y)
+            train_loss_f = loss.detach().float().item()
+            (loss / grad_accum_steps).backward()
+        else:
+            with autocast_ctx:
+                loss = model(x, y)
+            train_loss_f = loss.detach().float().item()
+            loss = loss / grad_accum_steps
+            loss.backward()
         x, y, epoch = next(train_loader)
 
     # Progress and schedules
@@ -564,8 +949,6 @@ while True:
     optimizer.step()
     model.zero_grad(set_to_none=True)
 
-    train_loss_f = train_loss.item()
-
     # Fast fail: abort if loss is exploding or NaN
     if math.isnan(train_loss_f) or train_loss_f > 100:
         print("FAIL")
@@ -575,19 +958,29 @@ while True:
     t1 = time.time()
     dt = t1 - t0
 
-    if step > 10:
+    if BENCHMARK_MODE or step > 10:
         total_training_time += dt
+        measured_steps += 1
 
     # Logging
     ema_beta = 0.9
     smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
     pct_done = 100 * progress
-    tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
-    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
-    remaining = max(0, TIME_BUDGET - total_training_time)
+    tok_per_sec = TOTAL_BATCH_SIZE / dt
+    device_mfu = compute_mfu(device_peak_flops, num_flops_per_token, tok_per_sec)
+    h100_mfu = compute_mfu(H100_BF16_PEAK_FLOPS, num_flops_per_token, tok_per_sec)
+    device_mfu_str = f"{device_mfu:.1f}%" if device_mfu is not None else "n/a"
+    h100_mfu_str = f"{h100_mfu:.1f}%" if h100_mfu is not None else "n/a"
 
-    print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
+    if BENCHMARK_MODE:
+        remaining_str = f"{max(BENCHMARK_STEPS - (step + 1), 0)} steps"
+        progress_str = f"{100 * (step + 1) / BENCHMARK_STEPS:.1f}%"
+    else:
+        remaining_str = f"{max(0, TIME_BUDGET - total_training_time):.0f}s"
+        progress_str = f"{pct_done:.1f}%"
+
+    print(f"\rstep {step:05d} ({progress_str}) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,.0f} | mfu: {device_mfu_str} | h100_mfu: {h100_mfu_str} | epoch: {epoch} | remaining: {remaining_str}    ", end="", flush=True)
 
     # GC management (Python's GC causes ~500ms stalls)
     if step == 0:
@@ -599,32 +992,53 @@ while True:
 
     step += 1
 
+    if BENCHMARK_MODE and step >= BENCHMARK_STEPS:
+        break
+
     # Time's up — but only stop after warmup steps so we don't count compilation
-    if step > 10 and total_training_time >= TIME_BUDGET:
+    if not BENCHMARK_MODE and step > 10 and total_training_time >= TIME_BUDGET:
         break
 
 print()  # newline after \r training log
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
-# Final eval
-model.eval()
-with autocast_ctx:
-    val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+val_bpb = None
+if not BENCHMARK_MODE:
+    model.eval()
+    with autocast_ctx:
+        val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
 
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
+steady_tok_per_sec = (TOTAL_BATCH_SIZE * measured_steps / total_training_time) if total_training_time > 0 else 0
+steady_train_flops = num_flops_per_token * steady_tok_per_sec
+steady_state_mfu = compute_mfu(device_peak_flops, num_flops_per_token, steady_tok_per_sec)
+steady_state_h100_mfu = compute_mfu(H100_BF16_PEAK_FLOPS, num_flops_per_token, steady_tok_per_sec)
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
 print("---")
-print(f"val_bpb:          {val_bpb:.6f}")
+print(f"mode:             {'benchmark' if BENCHMARK_MODE else 'train'}")
+print(f"compile_backend:  {MODEL_COMPILE_BACKEND}")
+print(f"compile_mode:     {INDUCTOR_COMPILE_MODE}" if MODEL_COMPILE_BACKEND == "inductor" else "compile_mode:     n/a")
+print(f"compile_scope:    {COMPILE_SCOPE}")
+print(f"optimizer_compile:{OPTIMIZER_COMPILE_BACKEND}")
+if val_bpb is not None:
+    print(f"val_bpb:          {val_bpb:.6f}")
+else:
+    print("val_bpb:          skipped")
 print(f"training_seconds: {total_training_time:.1f}")
 print(f"total_seconds:    {t_end - t_start:.1f}")
+print(f"startup_seconds:  {startup_time:.1f}")
 print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
-print(f"mfu_percent:      {steady_state_mfu:.2f}")
+print(f"tok_per_sec:      {steady_tok_per_sec:,.0f}")
+print(f"train_tflops:     {steady_train_flops / 1e12:.2f}")
+print(f"mfu_percent:      {steady_state_mfu:.2f}" if steady_state_mfu is not None else "mfu_percent:      n/a")
+print(f"h100_mfu_percent: {steady_state_h100_mfu:.2f}" if steady_state_h100_mfu is not None else "h100_mfu_percent: n/a")
+print(f"peak_tflops_est:  {device_peak_flops / 1e12:.2f}" if device_peak_flops is not None else "peak_tflops_est:  n/a")
 print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
+print(f"measured_steps:   {measured_steps}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")

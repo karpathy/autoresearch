@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv sync:*)",
+      "Bash(uv pip:*)",
+      "Bash(uv run:*)",
+      "mcp__firecrawl__firecrawl_search",
+      "WebSearch",
+      "mcp__firecrawl__firecrawl_scrape",
+      "Bash(uv export:*)",
+      "Bash(uv python:*)",
+      "Bash(UV_HTTP_TIMEOUT=300 uv sync)",
+      "Bash(curl:*)",
+      "Bash(ls:*)",
+      "Bash(clear:*)"
+    ]
+  }
+}
