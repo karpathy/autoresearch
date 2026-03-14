@@ -1,0 +1,24 @@
+name: gpt-pretraining
+description: >
+  Optimize a GPT training script for lowest validation bits-per-byte (val_bpb).
+  Training runs for a fixed 5-minute time budget on a single GPU. You can change
+  anything in the mutable files: model architecture, optimizer, hyperparameters,
+  batch size, model size, etc. The evaluation metric is val_bpb — lower is better.
+
+mutable:
+  - state/train.py
+
+readonly:
+  - context/prepare.py
+
+score:
+  direction: minimize
+  name: val_bpb
+  description: "Validation bits per byte — measures how well the model compresses unseen text"
+  bounded: false
+
+constraints:
+  - "Training must complete within the 5-minute time budget"
+  - "Only packages in pyproject.toml are available"
+  - "Must not modify files outside of state/"
+  - "Requires NVIDIA GPU with CUDA"

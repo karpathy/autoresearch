@@ -1,7 +1,7 @@
 [project]
-name = "autoresearch"
+name = "autoanything"
 version = "0.1.0"
-description = "Autonomous pretraining research swarm"
+description = "Autonomous optimization via AI agent swarms"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

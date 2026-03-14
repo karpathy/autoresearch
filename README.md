@@ -1,90 +1,124 @@
-# autoresearch
+# AutoAnything
 
 ![teaser](progress.png)
 
-*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
+**AutoAnything** is a framework where you define what to optimize and how to score it, then unleash a swarm of agents to hill-climb relentlessly. You come back to a leaderboard of experiments and a measurably better system.
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069).
+The concept: any optimization problem with a black-box scoring function. Agents propose changes by pushing git branches. A private evaluator scores them serially and merges improvements. Agents never see the scoring code — just the leaderboard.
+
+Think of it as **Kaggle for code**: the leaderboard is public, the test set is private, and submissions are git branches.
+
+Currently configured for the GPT pretraining use case (optimizing val_bpb), based on [karpathy/nanochat](https://github.com/karpathy/nanochat). Originally forked from [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
 
 ## How it works
 
-The repo is deliberately kept small and only really has three files that matter:
+```
+┌──────────────────────────────┐
+│       Challenge Repo         │     Agents clone this, push proposal branches
+│                              │
+│  problem.yaml                │     What to optimize, constraints
+│  state/train.py              │     The mutable file agents edit
+│  context/prepare.py          │     Read-only context
+│  agent_instructions.md       │     Protocol for agents
+│  leaderboard.md              │     Auto-updated scoreboard
+│  NO scoring code             │
+└──────────┬───────────────────┘
+           │
+     push branches
+           │
+    ┌──────┴──────┐
+    │  Evaluator   │     Private, gitignored, serial
+    │              │
+    │  score.sh    │     Runs scoring function
+    │  evaluate.py │     Poll → score → merge/discard
+    │  history.db  │     SQLite evaluation history
+    └──────────────┘
+```
 
-- **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
-- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+**Agents** clone the repo, read the problem definition and leaderboard, modify the mutable files, and push a branch (`proposals/<name>/<description>`). They never see the scoring code.
 
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
-
-If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/status/2030720614752039185) looks pretty good for a lot more context.
+**The evaluator** watches for new branches, scores them one at a time (serial queue), and either merges to main (if improved) or discards. The scoring code, test data, and history DB are all private (gitignored).
 
 ## Quick start
 
 **Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
 
 ```bash
-
-# 1. Install uv project manager (if you don't already have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Install dependencies
+# 1. Install dependencies
 uv sync
 
-# 3. Download data and train tokenizer (one-time, ~2 min)
-uv run prepare.py
+# 2. Download data and train tokenizer (one-time, ~2 min)
+uv run context/prepare.py
 
-# 4. Manually run a single training experiment (~5 min)
-uv run train.py
+# 3. Run a single training experiment (~5 min)
+uv run state/train.py
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
+## Setting up the evaluator
 
-## Running the agent
+The evaluator is private and runs on your scoring machine. It's gitignored — agents never see it.
 
-Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
+```bash
+# The evaluator/ directory is already gitignored.
+# On your scoring machine, create it:
+
+# 1. Establish baseline (runs training once, records the score)
+python evaluator/evaluate.py --baseline-only
+
+# 2. Start the evaluation loop (polls for proposal branches)
+python evaluator/evaluate.py
+
+# 3. With auto-push (pushes leaderboard updates to origin)
+python evaluator/evaluate.py --push
+```
+
+## Running agents
+
+Point any AI agent at this repo. They should read `agent_instructions.md` for the protocol:
 
 ```
-Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
+Read agent_instructions.md and start optimizing. Check the leaderboard first.
 ```
 
-The `program.md` file is essentially a super lightweight "skill".
+Agents create branches like `proposals/agent-1/higher-lr`, push them, and the evaluator picks them up automatically.
 
 ## Project structure
 
 ```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
+problem.yaml              — problem definition (what to optimize, constraints)
+agent_instructions.md     — protocol for agents
+leaderboard.md            — auto-updated scoreboard
+state/train.py            — mutable file (agents edit this)
+context/prepare.py        — read-only context (constants, data, evaluation)
+evaluator/                — GITIGNORED (private scoring)
+  score.sh                — runs training, extracts metrics
+  evaluate.py             — serial evaluation loop
+  history.db              — SQLite history (created on first run)
 ```
 
-## Design choices
+## Design
 
-- **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
-- **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+- **Serial evaluation.** One proposal scored at a time. No race conditions, no stale comparisons. The incumbent never changes during an evaluation.
+- **Blind scoring.** Agents can't see the evaluator. If they could, they'd game it. Same reason Kaggle keeps the test set private.
+- **Git as the protocol.** Branches track proposals, main tracks the best state. Anything that can `git push` can be an agent.
+- **Fixed time budget.** Training runs for exactly 5 minutes. This makes experiments comparable regardless of what the agent changes.
+- **Discard is forever.** If a proposal doesn't improve the score, it's gone. Agents can read the history and try refined versions, but there's no "almost" list.
 
-## Platform support
+## What you could optimize
 
-This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
+The current problem is ML training (val_bpb), but AutoAnything generalizes to any black-box optimization:
 
-Seeing as there seems to be a lot of interest in tinkering with autoresearch on much smaller compute platforms than an H100, a few extra words. If you're going to try running autoresearch on smaller computers (Macbooks etc.), I'd recommend one of the forks below. On top of this, here are some recommendations for how to tune the defaults for much smaller models for aspiring forks:
+- A prompt template (scored by LLM-as-judge accuracy)
+- A web app's Lighthouse performance score
+- A compiler optimization pass (scored by benchmark runtime)
+- A trading strategy (scored by backtested Sharpe ratio)
+- A game AI (scored by win rate against a baseline)
 
-1. To get half-decent results I'd use a dataset with a lot less entropy, e.g. this [TinyStories dataset](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean). These are GPT-4 generated short stories. Because the data is a lot narrower in scope, you will see reasonable results with a lot smaller models (if you try to sample from them after training).
-2. You might experiment with decreasing `vocab_size`, e.g. from 8192 down to 4096, 2048, 1024, or even - simply byte-level tokenizer with 256 possibly bytes after utf-8 encoding.
-3. In `prepare.py`, you'll want to lower `MAX_SEQ_LEN` a lot, depending on the computer even down to 256 etc. As you lower `MAX_SEQ_LEN`, you may want to experiment with increasing `DEVICE_BATCH_SIZE` in `train.py` slightly to compensate. The number of tokens per fwd/bwd pass is the product of these two.
-4. Also in `prepare.py`, you'll want to decrease `EVAL_TOKENS` so that your validation loss is evaluated on a lot less data.
-5. In `train.py`, the primary single knob that controls model complexity is the `DEPTH` (default 8, here). A lot of variables are just functions of this, so e.g. lower it down to e.g. 4.
-6. You'll want to most likely use `WINDOW_PATTERN` of just "L", because "SSSL" uses alternating banded attention pattern that may be very inefficient for you. Try it.
-7. You'll want to lower `TOTAL_BATCH_SIZE` a lot, but keep it powers of 2, e.g. down to `2**14` (~16K) or so even, hard to tell.
+The common pattern: mutable state, a scoring function, and a direction (minimize or maximize).
 
-I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
+## Heritage
 
-## Notable forks
-
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
-- [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
+Originally [karpathy/autoresearch](https://github.com/karpathy/autoresearch) — single-agent, serial, one machine. AutoAnything is the distributed, multi-agent generalization.
 
 ## License
 
