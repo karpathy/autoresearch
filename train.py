@@ -223,11 +223,12 @@ def main():
         subsample=0.8,
         min_samples_leaf=100,
         max_features=0.8,
-        loss="quantile",
-        alpha=0.6,
+        loss="squared_error",
         random_state=42,
     )
-    model.fit(features, targets)
+    # Weight by abs(target): focus on getting big moves right
+    sample_weights = np.abs(targets) + 1e-8
+    model.fit(features, targets, sample_weight=sample_weights)
 
     training_seconds = time.time() - train_start
     print(f"Training complete in {training_seconds:.1f}s")
