@@ -218,7 +218,7 @@ def main():
 
     model = GradientBoostingRegressor(
         n_estimators=300,
-        max_depth=3,
+        max_depth=2,
         learning_rate=0.01,
         subsample=0.8,
         min_samples_leaf=100,
