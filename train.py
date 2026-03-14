@@ -10,7 +10,6 @@ import time
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.linear_model import Ridge
 
 from prepare import (
     FORWARD_HOURS,
@@ -123,22 +122,19 @@ def compute_targets(df: pd.DataFrame) -> np.ndarray:
 # Model
 # ---------------------------------------------------------------------------
 
-_trained_gbr = None
-_trained_ridge = None
-_trained_model = None  # kept for interface compatibility
+_trained_model = None
 
 
 def count_model_params(model=None) -> int:
-    """Return approximate parameter count for the ensemble."""
+    """Return approximate parameter count for the GBR model."""
+    if model is None:
+        model = _trained_model
+    if model is None:
+        return 0
     n_params = 0
-    gbr = _trained_gbr
-    if gbr is not None:
-        for estimators in gbr.estimators_:
-            for tree in estimators:
-                n_params += tree.tree_.node_count
-    ridge = _trained_ridge
-    if ridge is not None:
-        n_params += ridge.coef_.size + 1
+    for estimators in model.estimators_:
+        for tree in estimators:
+            n_params += tree.tree_.node_count
     return n_params
 
 
@@ -169,13 +165,11 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     features, timestamps = compute_features(df)
     features = np.nan_to_num(features, nan=0.0)
 
-    if _trained_gbr is None or _trained_ridge is None:
+    model = _trained_model
+    if model is None:
         raise RuntimeError("Model not trained. Run train.py first.")
 
-    features_norm = _normalize(features)
-    gbr_preds = _trained_gbr.predict(features) * PRED_SCALE
-    ridge_preds = _trained_ridge.predict(features_norm) * PRED_SCALE
-    preds = 0.7 * gbr_preds + 0.3 * ridge_preds
+    preds = model.predict(features) * PRED_SCALE
     return preds, timestamps
 
 
@@ -213,42 +207,32 @@ def main():
 
     print(f"  Training samples: {len(features)}, Features: {features.shape[1]}")
 
-    # Z-score normalize features for Ridge
-    features_norm = _normalize(features, fit=True)
-
-    # --- Train GBR + Ridge ensemble ---
-    print("Training GBR + Ridge ensemble...")
+    # --- Train GBR ---
+    print(f"Training GBR...")
     train_start = time.time()
 
-    gbr = GradientBoostingRegressor(
+    model = GradientBoostingRegressor(
         n_estimators=300,
         max_depth=3,
         learning_rate=0.01,
-        subsample=0.8,
+        subsample=0.5,
         min_samples_leaf=100,
         max_features=0.8,
         loss="squared_error",
         random_state=42,
     )
-    gbr.fit(features, targets)
-
-    ridge = Ridge(alpha=1.0)
-    ridge.fit(features_norm, targets)
+    model.fit(features, targets)
 
     training_seconds = time.time() - train_start
     print(f"Training complete in {training_seconds:.1f}s")
 
-    _trained_gbr = gbr
-    _trained_ridge = ridge
-    _trained_model = gbr  # for interface compatibility
-    n_params = count_model_params()
-    print(f"  Model parameters: {n_params}")
+    _trained_model = model
+    n_params = count_model_params(model)
+    print(f"  Model parameters (node count): {n_params}")
 
     # --- Evaluate on train split ---
     print("Evaluating on training data...")
-    gbr_preds = gbr.predict(features) * PRED_SCALE
-    ridge_preds = ridge.predict(features_norm) * PRED_SCALE
-    all_preds = 0.7 * gbr_preds + 0.3 * ridge_preds
+    all_preds = model.predict(features) * PRED_SCALE
 
     train_result = evaluate_model(all_preds, train_timestamps, n_params, split="train")
 
@@ -258,10 +242,7 @@ def main():
     val_features, val_timestamps = compute_features(val_df)
     val_features = np.nan_to_num(val_features, nan=0.0)
 
-    val_features_norm = _normalize(val_features)
-    val_gbr_preds = gbr.predict(val_features) * PRED_SCALE
-    val_ridge_preds = ridge.predict(val_features_norm) * PRED_SCALE
-    val_preds = 0.7 * val_gbr_preds + 0.3 * val_ridge_preds
+    val_preds = model.predict(val_features) * PRED_SCALE
 
     val_result = evaluate_model(val_preds, val_timestamps, n_params, split="val")
 
