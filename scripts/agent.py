@@ -255,8 +255,6 @@ def run_training_live(on_line=None):
     """Run train.py, stream output via callback. Returns parsed results dict."""
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
-    # Pass auto-detected GPU limits to train.py
-    env["AUTORESEARCH_VRAM_LIMIT"] = str(VRAM_LIMIT_MB)
 
     all_output = []
     try:

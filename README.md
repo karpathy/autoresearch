@@ -79,19 +79,18 @@ uv run prepare.py --dataset pubmed
 bash scripts/setup.sh --api-key sk-ant-... --data-dir /mnt/g/autoresearch-data
 ```
 
-## GPU configuration
+## GPU auto-detection
 
-`train.py` auto-adapts to your GPU via environment variables:
+`train.py` auto-detects your GPU and scales model size accordingly:
 
-```bash
-# RTX 3070 8GB (defaults, no config needed)
-# RTX 5070 Ti 16GB or similar:
-export AUTORESEARCH_DEPTH=12            # more transformer layers
-export AUTORESEARCH_BATCH_SIZE=16       # larger batches
-export AUTORESEARCH_VRAM_LIMIT=15500    # VRAM safety limit (MB)
-```
+| VRAM | Depth | Batch Size | Examples |
+|------|-------|------------|----------|
+| 8GB  | 8     | 8          | RTX 3070, 3060 8GB |
+| 12GB | 10    | 12         | RTX 4070, 3060 12GB |
+| 16GB | 12    | 16         | RTX 5070 Ti, 4080 |
+| 24GB+| 16    | 24         | RTX 4090, A5000 |
 
-The agent auto-detects GPU VRAM and passes limits to `train.py` automatically.
+Override with env vars if needed: `AUTORESEARCH_DEPTH`, `AUTORESEARCH_BATCH_SIZE`, `AUTORESEARCH_VRAM_LIMIT`.
 
 ## Design choices
 

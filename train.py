@@ -461,13 +461,49 @@ WARMUP_RATIO = 0.0      # fraction of time budget for LR warmup
 WARMDOWN_RATIO = 0.5    # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
-# Model size (auto-adapt to GPU via env vars, or use defaults for RTX 3070 8GB)
-DEPTH = int(os.environ.get("AUTORESEARCH_DEPTH", "8"))
-DEVICE_BATCH_SIZE = int(os.environ.get("AUTORESEARCH_BATCH_SIZE", "8"))
+# ---------------------------------------------------------------------------
+# GPU auto-detection: scale model size and batch to available VRAM
+# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Setup: tokenizer, model, optimizer, dataloader
-# ---------------------------------------------------------------------------
+_pynvml_available = False
+_nvml_handle = None
+_gpu_vram_mb = 0
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    _nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+    _pynvml_available = True
+    _gpu_vram_mb = pynvml.nvmlDeviceGetMemoryInfo(_nvml_handle).total // (1024 * 1024)
+    _gpu_name = pynvml.nvmlDeviceGetName(_nvml_handle)
+    if isinstance(_gpu_name, bytes):
+        _gpu_name = _gpu_name.decode()
+    print(f"GPU: {_gpu_name} ({_gpu_vram_mb}MB VRAM)")
+except Exception:
+    _gpu_vram_mb = 8192  # assume 8GB if can't detect
+    print("WARNING: pynvml not available — assuming 8GB VRAM. Install with: pip install pynvml")
+
+def _auto_gpu_config(vram_mb):
+    """Scale model depth, batch size, and VRAM limit to detected GPU."""
+    # Env vars override auto-detection
+    if vram_mb >= 20000:    # 24GB+ (RTX 4090, A5000, etc.)
+        depth, batch = 16, 24
+    elif vram_mb >= 14000:  # 16GB (RTX 5070 Ti, 4080, A4000)
+        depth, batch = 12, 16
+    elif vram_mb >= 10000:  # 12GB (RTX 3060 12GB, 4070)
+        depth, batch = 10, 12
+    else:                   # 8GB (RTX 3070, 3060 8GB)
+        depth, batch = 8, 8
+    vram_limit = vram_mb - 500
+    return depth, batch, vram_limit
+
+_auto_depth, _auto_batch, _auto_vram_limit = _auto_gpu_config(_gpu_vram_mb)
+
+# Env vars override auto-detection if set
+DEPTH = int(os.environ.get("AUTORESEARCH_DEPTH", str(_auto_depth)))
+DEVICE_BATCH_SIZE = int(os.environ.get("AUTORESEARCH_BATCH_SIZE", str(_auto_batch)))
+VRAM_LIMIT_MB = int(os.environ.get("AUTORESEARCH_VRAM_LIMIT", str(_auto_vram_limit)))
+
+print(f"Config: DEPTH={DEPTH}, DEVICE_BATCH_SIZE={DEVICE_BATCH_SIZE}, VRAM_LIMIT={VRAM_LIMIT_MB}MB")
 
 # ---------------------------------------------------------------------------
 # Thermal & VRAM guardrails (protects hardware from overheating/OOM)
@@ -476,20 +512,13 @@ DEVICE_BATCH_SIZE = int(os.environ.get("AUTORESEARCH_BATCH_SIZE", "8"))
 GPU_TEMP_PAUSE = 80       # pause training if GPU temp >= this (°C)
 GPU_TEMP_ABORT = 90       # abort training if GPU temp >= this (°C)
 GPU_TEMP_RESUME = 72      # resume training once GPU cools to this (°C)
-VRAM_LIMIT_MB = int(os.environ.get("AUTORESEARCH_VRAM_LIMIT", "7500"))
 COOLDOWN_SLEEP = 5        # seconds to sleep when thermally throttled
 TEMP_CHECK_INTERVAL = 3   # check temperature every N steps (avoid pynvml overhead)
 
-_pynvml_available = False
-_nvml_handle = None
-try:
-    import pynvml
-    pynvml.nvmlInit()
-    _nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-    _pynvml_available = True
+if _pynvml_available:
     print(f"Thermal monitoring: enabled (pause={GPU_TEMP_PAUSE}°C, abort={GPU_TEMP_ABORT}°C)")
-except Exception:
-    print("WARNING: pynvml not available — no thermal monitoring! Install with: pip install pynvml")
+else:
+    print("WARNING: No thermal monitoring available")
 
 def get_gpu_temp():
     if not _pynvml_available:
