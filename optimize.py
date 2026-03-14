@@ -668,14 +668,91 @@ class FixAvatarDicebearImport(OptimizationStrategy):
         return True
 
 
+class DisableWebProfilerToolbar(OptimizationStrategy):
+    """Disable Symfony web profiler toolbar injection.
+
+    The debug toolbar injects non-crawlable links (file://, javascript:void(0))
+    into every page, causing SEO to flag them. Disabling the toolbar (while
+    keeping the profiler itself) fixes the non-crawlable-links audit.
+    """
+
+    name = "disable_web_profiler_toolbar"
+    description = "Disable Symfony debug toolbar to fix non-crawlable links in SEO"
+
+    WP_YAML = TARGET_PROJECT / "config" / "packages" / "web_profiler.yaml"
+    OLD = "    toolbar: true"
+    NEW = "    toolbar: false"
+
+    def _clear_cache(self):
+        subprocess.run(
+            ["docker", "exec", "snapwerks-app-1", "php", "bin/console", "cache:clear", "--no-warmup", "-q"],
+            cwd=TARGET_PROJECT, capture_output=True, timeout=30
+        )
+        time.sleep(3)
+
+    def apply(self):
+        content = self.WP_YAML.read_text()
+        if self.OLD not in content:
+            return False
+        self.WP_YAML.write_text(content.replace(self.OLD, self.NEW))
+        self._clear_cache()
+        return True
+
+    def revert(self):
+        content = self.WP_YAML.read_text()
+        self.WP_YAML.write_text(content.replace(self.NEW, self.OLD))
+        self._clear_cache()
+        return True
+
+
+class ForceTradeTrackerHTTPS(OptimizationStrategy):
+    """Force TradeTracker script to always load over HTTPS.
+
+    The TradeTracker tag script picks http vs https based on document.location.protocol.
+    On localhost (HTTP), it loads an insecure HTTP request, which Lighthouse flags
+    as a best practices failure. Forcing HTTPS fixes this.
+    """
+
+    name = "force_tradetracker_https"
+    description = "Force TradeTracker analytics to use HTTPS regardless of page protocol"
+
+    HOME_BASE = TARGET_PROJECT / "templates" / "home_base.html.twig"
+    OLD = "(document.location.protocol == 'https:' ? 'https' : 'http') + '://tm.tradetracker.net"
+    NEW = "'https://tm.tradetracker.net"
+
+    def apply(self):
+        content = self.HOME_BASE.read_text()
+        if self.OLD not in content:
+            return False
+        # Also need to close the string properly: the old has + '/tag?...' so we fix the trailing part
+        new_content = content.replace(
+            "(document.location.protocol == 'https:' ? 'https' : 'http') + '://tm.tradetracker.net/tag?t='",
+            "'https://tm.tradetracker.net/tag?t='"
+        )
+        if new_content == content:
+            return False
+        self.HOME_BASE.write_text(new_content)
+        return True
+
+    def revert(self):
+        content = self.HOME_BASE.read_text()
+        new_content = content.replace(
+            "'https://tm.tradetracker.net/tag?t='",
+            "(document.location.protocol == 'https:' ? 'https' : 'http') + '://tm.tradetracker.net/tag?t='"
+        )
+        self.HOME_BASE.write_text(new_content)
+        return True
+
+
 def main():
     """Main entry point."""
     print("=" * 60)
-    print("Lighthouse Optimization - Experiment: fix_avatar_dicebear_import")
+    print("Lighthouse Optimization - Experiments: toolbar + tradetracker HTTPS")
     print("=" * 60)
     print()
 
-    summary = run_optimization(FixAvatarDicebearImport)
+    run_optimization(DisableWebProfilerToolbar)
+    summary = run_optimization(ForceTradeTrackerHTTPS)
     print_summary(summary)
 
 
