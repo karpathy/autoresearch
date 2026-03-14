@@ -161,8 +161,8 @@ def _normalize(features: np.ndarray, fit: bool = False) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
-    """Apply EMA smoothing to tree-based predictions (span=48h)."""
-    return pd.Series(raw_preds).ewm(span=48, min_periods=1).mean().values
+    """Apply 48h rolling mean to smooth noisy tree-based predictions."""
+    return pd.Series(raw_preds).rolling(48, min_periods=1).mean().values
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
@@ -218,7 +218,7 @@ def main():
 
     model = GradientBoostingRegressor(
         n_estimators=300,
-        max_depth=7,
+        max_depth=3,
         learning_rate=0.01,
         subsample=0.8,
         min_samples_leaf=100,
@@ -226,8 +226,10 @@ def main():
         loss="squared_error",
         random_state=42,
     )
-    # Weight by abs(target): focus on getting big moves right
-    sample_weights = np.abs(targets) + 1e-8
+    # Asymmetric weighting: 2x penalty on positive-return samples
+    # Model learns directional bias from data (biases toward predicting up
+    # when uncertain, since errors on up-moves cost more)
+    sample_weights = np.where(targets > 0, 1.2, 1.0)
     model.fit(features, targets, sample_weight=sample_weights)
 
     training_seconds = time.time() - train_start
