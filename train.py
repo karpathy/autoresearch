@@ -161,8 +161,8 @@ def _normalize(features: np.ndarray, fit: bool = False) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
-    """Apply 48h rolling mean to smooth noisy tree-based predictions."""
-    return pd.Series(raw_preds).rolling(48, min_periods=1).mean().values
+    """Apply EMA smoothing to tree-based predictions (span=48h)."""
+    return pd.Series(raw_preds).ewm(span=48, min_periods=1).mean().values
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
