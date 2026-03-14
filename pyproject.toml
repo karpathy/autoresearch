@@ -5,16 +5,24 @@ description = "Autonomous pretraining research swarm"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "arxiv>=2.4.1",
+    "fastapi>=0.116.0",
+    "jinja2>=3.1.6",
     "kernels>=0.11.7",
     "matplotlib>=3.10.8",
     "numpy>=2.2.6",
     "pandas>=2.3.3",
     "pyarrow>=21.0.0",
+    "python-multipart>=0.0.20",
     "requests>=2.32.0",
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
     "torch==2.9.1",
+    "uvicorn>=0.35.0",
 ]
+
+[project.optional-dependencies]
+test = ["httpx>=0.28.0", "pytest>=8.0.0"]
 
 [tool.uv.sources]
 torch = [
@@ -25,3 +33,6 @@ torch = [
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["pdca_system/tests"]

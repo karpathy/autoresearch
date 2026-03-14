@@ -49,6 +49,8 @@ Hi have a look at program.md and let's kick off a new experiment! let's do the s
 
 The `program.md` file is essentially a super lightweight "skill".
 
+For the PDCA-system workflow, see `pdca_system/README.md`.
+
 ## Project structure
 
 ```

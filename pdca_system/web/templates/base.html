@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta content="width=device-width, initial-scale=1" name="viewport">
+    <title>{% block title %}PDCA System{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script defer src="https://unpkg.com/ansi_up@6.0.2/ansi_up.js"></script>
+    <link href="{{ request.url_for('static', path='app.css') }}?v={{ request.app.state.static_version }}" rel="stylesheet">
+    <script defer src="{{ request.url_for('static', path='app.js') }}?v={{ request.app.state.static_version }}"></script>
+  </head>
+  <body class="flex min-h-screen flex-col bg-slate-950 text-slate-100">
+    <header class="shrink-0 border-b border-slate-800 bg-slate-900/95">
+      <div class="flex w-full items-center justify-between px-6 py-4">
+        <div>
+          <a class="text-xl font-semibold tracking-tight text-white" href="{{ request.url_for('dashboard') }}">
+            PDCA System
+          </a>
+          <p class="mt-1 text-sm text-slate-400">Seed -> Plan-Do -> Check-Action orchestration with FastAPI, HTMX, Alpine, and Tailwind.</p>
+        </div>
+        <nav class="flex items-center gap-8 text-sm text-slate-300" x-data="{ settingsOpen: false, figureOpen: false, progressUrl: '{{ request.url_for("progress_png") }}' }">
+          <button
+            type="button"
+            class="hover:text-white"
+            @click="figureOpen = true; $nextTick(() => { $refs.figureFallback.classList.add('hidden'); $refs.figureImg.style.display = ''; $refs.figureImg.src = progressUrl + '?t=' + Date.now() })"
+          >
+            Figure
+          </button>
+          <div
+            x-show="figureOpen"
+            x-cloak
+            class="fixed inset-0 z-50 flex items-center justify-center p-4"
+            @keydown.escape.window="figureOpen = false"
+          >
+            <div class="absolute inset-0 bg-black/60" @click="figureOpen = false"></div>
+            <div class="relative z-10 max-h-[90vh] max-w-[90vw] rounded-xl border border-slate-700 bg-slate-900 p-2 shadow-xl" @click.stop>
+              <div class="flex items-center justify-between border-b border-slate-700 pb-2 mb-2">
+                <h2 class="text-lg font-medium text-white">Progress</h2>
+                <button type="button" class="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white" @click="figureOpen = false" aria-label="Close">✕</button>
+              </div>
+              <img x-ref="figureImg" alt="Progress chart" class="max-h-[85vh] w-auto object-contain rounded-lg" onerror="this.style.display='none'; this.nextElementSibling.classList.remove('hidden')" />
+              <p x-ref="figureFallback" class="hidden text-slate-400">progress.png not found in project root.</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="hover:text-white"
+            @click="settingsOpen = true"
+            hx-get="{{ request.url_for('daemon_settings_partial') }}"
+            hx-target="#daemon-settings-modal-body"
+            hx-swap="innerHTML"
+            hx-trigger="click"
+          >
+            Settings
+          </button>
+          <div
+            x-show="settingsOpen"
+            x-cloak
+            class="fixed inset-0 z-50 flex items-center justify-center p-4"
+            @keydown.escape.window="settingsOpen = false"
+          >
+            <div class="absolute inset-0 bg-black/60" @click="settingsOpen = false"></div>
+            <div class="relative z-10 w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-xl" @click.stop>
+              <div class="flex items-center justify-between border-b border-slate-700 pb-3">
+                <h2 class="text-lg font-medium text-white">Settings</h2>
+                <button type="button" class="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white" @click="settingsOpen = false" aria-label="Close">✕</button>
+              </div>
+              <div id="daemon-settings-modal-body" class="mt-4 min-h-[8rem] text-sm text-slate-300">
+                <p class="text-slate-500">Loading…</p>
+              </div>
+            </div>
+          </div>
+        </nav>
+      </div>
+    </header>
+    <main class="min-h-0 flex-1 px-6 py-6">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>
