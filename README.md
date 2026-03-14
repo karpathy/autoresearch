@@ -37,7 +37,7 @@ Currently configured for the GPT pretraining use case (optimizing val_bpb), base
 
 **Agents** clone the repo, read the problem definition and leaderboard, modify the mutable files, and push a branch (`proposals/<name>/<description>`). They never see the scoring code.
 
-**The evaluator** watches for new branches, scores them one at a time (serial queue), and either merges to main (if improved) or discards. The scoring code, test data, and history DB are all private (gitignored).
+**The evaluator** watches for new branches, scores them one at a time (serial queue), and either merges to master (if improved) or discards. The scoring code, test data, and history DB are all private (gitignored).
 
 ## Quick start
 
@@ -100,7 +100,7 @@ evaluator/                — GITIGNORED (private scoring)
 
 - **Serial evaluation.** One proposal scored at a time. No race conditions, no stale comparisons. The incumbent never changes during an evaluation.
 - **Blind scoring.** Agents can't see the evaluator. If they could, they'd game it. Same reason Kaggle keeps the test set private.
-- **Git as the protocol.** Branches track proposals, main tracks the best state. Anything that can `git push` can be an agent.
+- **Git as the protocol.** Branches track proposals, master tracks the best state. Anything that can `git push` can be an agent.
 - **Fixed time budget.** Training runs for exactly 5 minutes. This makes experiments comparable regardless of what the agent changes.
 - **Discard is forever.** If a proposal doesn't improve the score, it's gone. Agents can read the history and try refined versions, but there's no "almost" list.
 

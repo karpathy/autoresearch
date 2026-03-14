@@ -4,7 +4,7 @@ This is an AutoAnything challenge. You are optimizing a GPT training script for 
 
 ## Protocol
 
-1. Pull the latest main and create a branch: `proposals/<your-name>/<short-description>`
+1. Pull the latest master and create a branch: `proposals/<your-name>/<short-description>`
 2. Read `problem.yaml` to understand what you're optimizing
 3. Read the files in `context/` for background (constants, data loading, evaluation)
 4. Read `leaderboard.md` to see what's been tried and what worked
