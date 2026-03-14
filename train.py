@@ -215,7 +215,7 @@ def main():
         n_estimators=300,
         max_depth=3,
         learning_rate=0.01,
-        subsample=0.5,
+        subsample=0.9,
         min_samples_leaf=100,
         max_features=0.8,
         loss="squared_error",
