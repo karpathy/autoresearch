@@ -614,10 +614,12 @@ class AllowSearchEngineIndexing(OptimizationStrategy):
 def run_optimization(strategy_class=None):
     """
     Run a single optimization experiment.
-    
+    Applies the strategy PERMANENTLY to the target project (no auto-revert).
+    If the experiment is discarded, manually revert via git in the target project.
+
     Args:
         strategy_class: Optional strategy class to apply. If None, runs baseline.
-    
+
     Returns:
         AuditSummary with results
     """
@@ -625,33 +627,55 @@ def run_optimization(strategy_class=None):
     print(f"Target: {TARGET_PROJECT}")
     print(f"URLs: {AUDIT_URLS}")
     print()
-    
-    strategy = None
+
     if strategy_class:
         strategy = strategy_class()
         print(f"Applying strategy: {strategy.name} - {strategy.description}")
-        
-        if not strategy.apply():
+        applied = strategy.apply()
+        if not applied:
             print("⚠️  Strategy application failed or not applicable")
-    
+
     print("\nRunning Lighthouse audit...")
     summary = run_audits(AUDIT_URLS)
-    
-    if strategy:
-        print(f"\nReverting strategy: {strategy.name}")
-        strategy.revert()
-    
     return summary
+
+
+class FixAvatarDicebearImport(OptimizationStrategy):
+    """Import @dicebear/initials directly instead of full @dicebear/collection.
+
+    avatar_controller.js imports `initials` from @dicebear/collection, which
+    re-exports all 30+ avatar styles. This causes 500+ KiB of unused JS on
+    every page. Fixing to import only @dicebear/initials saves all that waste.
+    """
+
+    name = "fix_avatar_dicebear_import"
+    description = "Import @dicebear/initials directly instead of @dicebear/collection"
+
+    AVATAR_CTRL = TARGET_PROJECT / "assets" / "controllers" / "avatar_controller.js"
+    OLD_IMPORT = 'import { initials } from "@dicebear/collection";'
+    NEW_IMPORT = 'import { initials } from "@dicebear/initials";'
+
+    def apply(self):
+        content = self.AVATAR_CTRL.read_text()
+        if self.OLD_IMPORT not in content:
+            return False
+        self.AVATAR_CTRL.write_text(content.replace(self.OLD_IMPORT, self.NEW_IMPORT))
+        return True
+
+    def revert(self):
+        content = self.AVATAR_CTRL.read_text()
+        self.AVATAR_CTRL.write_text(content.replace(self.NEW_IMPORT, self.OLD_IMPORT))
+        return True
 
 
 def main():
     """Main entry point."""
     print("=" * 60)
-    print("Lighthouse Optimization - Experiment: allow_search_engine_indexing")
+    print("Lighthouse Optimization - Experiment: fix_avatar_dicebear_import")
     print("=" * 60)
     print()
 
-    summary = run_optimization(AllowSearchEngineIndexing)
+    summary = run_optimization(FixAvatarDicebearImport)
     print_summary(summary)
 
 
