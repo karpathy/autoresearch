@@ -1038,6 +1038,161 @@ class FixAccessibility5(OptimizationStrategy):
         return True
 
 
+class FontDisplayOptional(OptimizationStrategy):
+    """Change font-display from swap to optional for Inter Variable and Noto Sans Tamil.
+
+    With font-display:swap, Lighthouse (empty cache) sees:
+    1. FCP at 2.4s with system font (swap renders fallback immediately)
+    2. LCP at 3.2s when Inter Variable (879KB TTF) finishes downloading and swaps
+
+    The 0.8s gap FCP→LCP is caused by the font swap. The Inter Variable TTF
+    is 879KB and takes ~1.17s to download under 6Mbps simulated throttling.
+
+    font-display:optional gives a very short block period (<100ms), then no
+    swap ever. For Lighthouse (empty cache), the font is not ready in 100ms,
+    so the system font is used permanently — no swap occurs.
+
+    Expected result:
+    - LCP drops from 3.2s → ~2.4s (same as FCP, no post-FCP font swap)
+    - FCP unchanged at ~2.4s
+    - SI might improve (no font swap causing visual instability)
+    - Performance +3-5 points
+
+    UX tradeoff: real users on first visit see system fonts; second visit
+    uses cached Inter Variable. Acceptable for a performance-critical homepage.
+    """
+
+    name = "font_display_optional"
+    description = "Change font-display:swap to font-display:optional (no font swap on cold cache)"
+
+    APP_CSS = TARGET_PROJECT / "assets" / "styles" / "app.css"
+    OLD = "font-display: swap;"
+    NEW = "font-display: optional;"
+
+    def apply(self):
+        content = self.APP_CSS.read_text()
+        if self.OLD not in content:
+            return False
+        self.APP_CSS.write_text(content.replace(self.OLD, self.NEW))
+        subprocess.run(
+            ["docker", "exec", "snapwerks-app-1", "php", "bin/console", "asset-map:compile"],
+            cwd=TARGET_PROJECT, capture_output=True, timeout=60
+        )
+        return True
+
+    def revert(self):
+        content = self.APP_CSS.read_text()
+        self.APP_CSS.write_text(content.replace(self.NEW, self.OLD))
+        subprocess.run(
+            ["docker", "exec", "snapwerks-app-1", "php", "bin/console", "asset-map:compile"],
+            cwd=TARGET_PROJECT, capture_output=True, timeout=60
+        )
+        return True
+
+
+class ConvertFontsToWoff2(OptimizationStrategy):
+    """Convert Inter Variable font from TTF (879KB) to WOFF2 (343KB) — 60% reduction.
+
+    The app.css @font-face references InterVariable.ttf (879KB). Under Lighthouse's
+    simulated 6Mbps throttling, this takes ~1.17s to download. The font-display:swap
+    renders FCP with system fonts at ~2.4s, then swaps to Inter Variable when it
+    finishes at ~3.2s, causing LCP = 3.2s (a 0.8s gap after FCP).
+
+    Switching to WOFF2 (343KB) reduces download to ~0.46s, which should:
+    1. Reduce the font-swap time: LCP drops from ~3.2s toward ~2.5s
+    2. Improve performance score by ~2-3 points
+
+    WOFF2 files were pre-generated with fonttools:
+    - InterVariable.ttf (879KB) → InterVariable.woff2 (343KB)
+    - NotoSansTamil-Regular.ttf (77KB) → NotoSansTamil-Regular.woff2 (29KB)
+    - NotoSansTamil-Bold.ttf (77KB) → NotoSansTamil-Bold.woff2 (29KB)
+
+    app.css @font-face declarations updated to reference woff2 files.
+    asset-map:compile run to produce content-hashed woff2 in public/assets.
+    """
+
+    name = "convert_fonts_to_woff2"
+    description = "Convert Inter Variable font TTF (879KB) to WOFF2 (343KB), save 0.7s LCP"
+
+    APP_CSS = TARGET_PROJECT / "assets" / "styles" / "app.css"
+
+    OLD = (
+        '@font-face {\n'
+        '  font-family: "Inter Variable";\n'
+        '  src: url("../fonts/inter/InterVariable.ttf") format("truetype");\n'
+        '  font-weight: 100 900;\n'
+        '  font-style: normal;\n'
+        '  font-display: swap;\n'
+        '}\n'
+        '\n'
+        '/* Noto Sans Tamil */\n'
+        '@font-face {\n'
+        '  font-family: "Noto Sans Tamil";\n'
+        '  src: url("../fonts/noto-sans-tamil/NotoSansTamil-Regular.ttf") format("truetype");\n'
+        '  font-weight: 400;\n'
+        '  font-style: normal;\n'
+        '  font-display: swap;\n'
+        '}\n'
+        '\n'
+        '@font-face {\n'
+        '  font-family: "Noto Sans Tamil";\n'
+        '  src: url("../fonts/noto-sans-tamil/NotoSansTamil-Bold.ttf") format("truetype");\n'
+        '  font-weight: 700;\n'
+        '  font-style: normal;\n'
+        '  font-display: swap;\n'
+        '}'
+    )
+    NEW = (
+        '@font-face {\n'
+        '  font-family: "Inter Variable";\n'
+        '  src: url("../fonts/inter/InterVariable.woff2") format("woff2");\n'
+        '  font-weight: 100 900;\n'
+        '  font-style: normal;\n'
+        '  font-display: swap;\n'
+        '}\n'
+        '\n'
+        '/* Noto Sans Tamil */\n'
+        '@font-face {\n'
+        '  font-family: "Noto Sans Tamil";\n'
+        '  src: url("../fonts/noto-sans-tamil/NotoSansTamil-Regular.woff2") format("woff2");\n'
+        '  font-weight: 400;\n'
+        '  font-style: normal;\n'
+        '  font-display: swap;\n'
+        '}\n'
+        '\n'
+        '@font-face {\n'
+        '  font-family: "Noto Sans Tamil";\n'
+        '  src: url("../fonts/noto-sans-tamil/NotoSansTamil-Bold.woff2") format("woff2");\n'
+        '  font-weight: 700;\n'
+        '  font-style: normal;\n'
+        '  font-display: swap;\n'
+        '}'
+    )
+
+    def apply(self):
+        content = self.APP_CSS.read_text()
+        if self.NEW in content:
+            return False  # Already applied
+        if self.OLD not in content:
+            return False
+        self.APP_CSS.write_text(content.replace(self.OLD, self.NEW))
+        # Recompile assets
+        subprocess.run(
+            ["docker", "exec", "snapwerks-app-1", "php", "bin/console", "asset-map:compile"],
+            cwd=TARGET_PROJECT, capture_output=True, timeout=60
+        )
+        return True
+
+    def revert(self):
+        content = self.APP_CSS.read_text()
+        self.APP_CSS.write_text(content.replace(self.NEW, self.OLD))
+        subprocess.run(
+            ["docker", "exec", "snapwerks-app-1", "php", "bin/console", "asset-map:compile"],
+            cwd=TARGET_PROJECT, capture_output=True, timeout=60
+        )
+        return True
+
+
 class RemoveExpensiveHeroPainting(OptimizationStrategy):
     """Remove GPU-compositing-intensive CSS from the hero h1 element.
 
@@ -1186,11 +1341,11 @@ class OptimizeLogoWebP(OptimizationStrategy):
 def main():
     """Main entry point."""
     print("=" * 60)
-    print("Lighthouse Optimization - Experiment: remove_expensive_hero_painting")
+    print("Lighthouse Optimization - Experiment: font_display_optional")
     print("=" * 60)
     print()
 
-    summary = run_optimization(RemoveExpensiveHeroPainting)
+    summary = run_optimization(FontDisplayOptional)
     print_summary(summary)
 
 
