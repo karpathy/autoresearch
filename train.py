@@ -24,9 +24,9 @@ from prepare import (
 # Feature Engineering
 # ---------------------------------------------------------------------------
 
-RETURN_LOOKBACKS = [1, 4, 12, 24, 72, 168]
+RETURN_LOOKBACKS = [1, 4, 12, 24, 72, 168, 720]
 VOLATILITY_WINDOWS = [24, 168]
-MAX_LOOKBACK = 168  # maximum lookback window (1 week)
+MAX_LOOKBACK = 720  # maximum lookback window (30 days)
 
 
 def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
