@@ -232,21 +232,25 @@ def claim_pending(
     return None
 
 
-def restore_in_progress_tasks() -> dict[str, int]:
-    """Move stranded in-progress tasks back to their stage queue."""
+def restore_in_progress_tasks() -> tuple[dict[str, int], list[str]]:
+    """Move stranded in-progress tasks back to their stage queue. Returns (counts per stage, list of restored run_ids)."""
     ensure_queue_layout()
     restored = {stage: 0 for stage in STAGE_DIRS}
+    restored_run_ids: list[str] = []
     for path in sorted(IN_PROGRESS_DIR.glob("*.json")):
         payload = _read_json(path, {})
         stage = payload.get("stage")
         if stage not in STAGE_DIRS:
             continue
+        run_id = payload.get("run_id")
+        if run_id:
+            restored_run_ids.append(run_id)
         dest = STAGE_DIRS[stage] / path.name
         if dest.exists():
             dest.unlink()
         path.rename(dest)
         restored[stage] += 1
-    return restored
+    return restored, restored_run_ids
 
 
 def seed_path(seed_id: str) -> Path:

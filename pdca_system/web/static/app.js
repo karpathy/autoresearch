@@ -14,10 +14,17 @@ function selectedSeedIdFromUrl() {
 function applySelectedSeed(seedId) {
   const cards = document.querySelectorAll(".seed-card[data-seed-id]");
   cards.forEach((card) => {
-    const isSelected = seedId !== null && card.dataset.seedId === seedId;
-    card.classList.toggle("is-selected", isSelected);
-    card.setAttribute("aria-current", isSelected ? "true" : "false");
+    card.classList.remove("is-selected");
+    card.setAttribute("aria-current", "false");
   });
+  if (seedId !== null) {
+    cards.forEach((card) => {
+      if (card.dataset.seedId === seedId) {
+        card.classList.add("is-selected");
+        card.setAttribute("aria-current", "true");
+      }
+    });
+  }
 }
 
 let dashboardPollInFlight = false;
@@ -127,6 +134,14 @@ function applyRunsPartial(seedId) {
   return htmx.ajax("GET", url, { target: "#seed-runs-list", swap: "innerHTML" });
 }
 
+function applySeedDetailPartial(seedId) {
+  const url = seedDetailUrl(seedId);
+  if (!url || !document.getElementById("seed-detail")) return Promise.resolve();
+  savedScrollPositions.runs = null;
+  savedScrollPositions.timeline = null;
+  return htmx.ajax("GET", url, { target: "#seed-detail", swap: "innerHTML" });
+}
+
 function applyTimelinePartial(seedId) {
   const listEl = document.getElementById("seed-timeline-list");
   const paneEl = document.getElementById("seed-timeline-scroll-pane");
@@ -157,8 +172,11 @@ function pollSeedDetailSections() {
       const runsIdle = now - lastRunsInteraction >= INTERACTION_DEBOUNCE_MS;
       const timelineIdle = now - lastTimelineInteraction >= INTERACTION_DEBOUNCE_MS;
       const promises = [];
-      if (runsChanged && runsIdle) promises.push(applyRunsPartial(seedId));
-      if (timelineChanged && timelineIdle) promises.push(applyTimelinePartial(seedId));
+      if (runsChanged && runsIdle) {
+        promises.push(applySeedDetailPartial(seedId));
+      } else if (timelineChanged && timelineIdle) {
+        promises.push(applyTimelinePartial(seedId));
+      }
       return Promise.all(promises);
     })
     .finally(() => {
@@ -212,6 +230,13 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   applySelectedSeed(card.dataset.seedId);
+});
+
+document.body.addEventListener("htmx:afterSwap", (event) => {
+  const target = event.detail?.target;
+  if (target?.id === "dashboard-board") {
+    applySelectedSeed(selectedSeedIdFromUrl());
+  }
 });
 
 document.body.addEventListener("htmx:afterSettle", (event) => {

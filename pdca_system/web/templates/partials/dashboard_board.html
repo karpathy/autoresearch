@@ -19,15 +19,13 @@
       <div class="scroll-pane scroll-pane-stage space-y-1.5 pr-1">
         {% if column.seeds %}
           {% for seed in column.seeds %}
-          {% set is_selected = selected_seed_id == seed.seed_id %}
           {% set is_promoted = column.id == 'completed' and seed.status.value == 'promoted' %}
           <a
             class="seed-card block rounded-lg border px-2.5 py-2 transition
-              {% if is_selected %}is-selected border-sky-500 bg-sky-500/10
-              {% elif is_promoted %}border-emerald-500/50 bg-emerald-500/10 hover:border-emerald-500/70
+              {% if is_promoted %}border-emerald-500/50 bg-emerald-500/10 hover:border-emerald-500/70
               {% else %}border-slate-700 bg-slate-950/80 hover:border-slate-600{% endif %}"
             data-seed-id="{{ seed.seed_id }}"
-            aria-current="{% if is_selected %}true{% else %}false{% endif %}"
+            aria-current="false"
             href="{{ request.url_for('seed_detail_page', seed_id=seed.seed_id) }}"
             hx-get="{{ request.url_for('seed_detail_partial', seed_id=seed.seed_id) }}"
             hx-target="#seed-detail"

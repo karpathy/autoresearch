@@ -5,8 +5,8 @@ import unittest
 
 from fastapi.testclient import TestClient
 
-from pdca_system.domain.models import RunStatus, SeedStatus
-from pdca_system.task import LOG_ROOT, run_path, save_run
+from pdca_system.domain.models import RunStatus, SeedStatus, StageName, StageRun
+from pdca_system.task import LOG_ROOT, run_path, save_run, write_task
 from pdca_system.web.app import app
 
 
@@ -173,6 +173,66 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("daemon-settings-modal-body", response.text)
         self.assertIn("Settings", response.text)
+
+    def test_terminate_tasks_redirects_and_marks_runs_failed(self) -> None:
+        service = app.state.workflow
+        seed = service.create_seed("web terminate test", baseline_branch="master")
+        run = StageRun(
+            run_id="pd-20990101-000099-webterm",
+            seed_id=seed.seed_id,
+            stage=StageName.pd,
+            status=RunStatus.queued,
+            task_id="task-pd-webterm",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        service.run_repo.save(run)
+        write_task("pd", {"seed_id": seed.seed_id, "run_id": run.run_id}, task_id=run.task_id)
+        client = TestClient(app)
+
+        response = client.post(
+            f"/pdca-system/actions/seeds/{seed.seed_id}/terminate",
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertIn(f"?seed_id={seed.seed_id}", response.headers.get("location", ""))
+        updated_run = service.require_run(run.run_id)
+        updated_seed = service.require_seed(seed.seed_id)
+        self.assertEqual(updated_run.status, RunStatus.failed)
+        self.assertEqual(updated_run.error, "Terminated by user.")
+        self.assertEqual(updated_seed.status, SeedStatus.failed)
+
+    def test_terminate_tasks_unknown_seed_returns_404(self) -> None:
+        client = TestClient(app)
+        response = client.post("/pdca-system/actions/seeds/nonexistent-seed-id/terminate")
+        self.assertEqual(response.status_code, 404)
+
+    def test_terminate_tasks_no_non_completed_redirects_with_no_tasks_param(self) -> None:
+        service = app.state.workflow
+        seed = service.create_seed("web terminate no tasks", baseline_branch="master")
+        run = StageRun(
+            run_id="ca-20990101-000100-done",
+            seed_id=seed.seed_id,
+            stage=StageName.ca,
+            status=RunStatus.succeeded,
+            task_id="task-ca-done-100",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        service.run_repo.save(run)
+        client = TestClient(app)
+        response = client.post(
+            f"/pdca-system/actions/seeds/{seed.seed_id}/terminate",
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("terminate_result=no_tasks", response.headers.get("location", ""))
+        get_response = client.get(
+            f"/pdca-system/?seed_id={seed.seed_id}&terminate_result=no_tasks",
+            follow_redirects=True,
+        )
+        self.assertIn("Completed tasks cannot be terminated", get_response.text)
 
 
 if __name__ == "__main__":

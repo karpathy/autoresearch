@@ -48,17 +48,23 @@ from pdca_system.task import (
     BASELINE_BRANCHES_PATH,
     BASELINE_METRICS_PATH,
     DEFAULT_DAEMON_CONFIG,
+    IN_PROGRESS_DIR,
+    list_runs,
     PDCA_SYSTEM_ROOT,
     claim_pending,
     DAEMON_HEARTBEAT_PATH,
     daemon_heartbeat,
     ensure_queue_layout,
     get_daemon_config,
+    load_run,
+    load_seed,
     LOG_ROOT,
     move_to_done,
     move_to_error,
+    now_ts,
     read_task,
     restore_in_progress_tasks,
+    save_run,
 )
 
 PROJECT_ROOT = PDCA_SYSTEM_ROOT.parent
@@ -69,6 +75,9 @@ PROGRESS_PNG = PROJECT_ROOT / "progress.png"
 POLL_INTERVAL = 10.0
 _shutdown = False
 WORKFLOW = WorkflowService()
+# Set at startup when tasks are restored; printed once when a worker actually resumes (so log order is natural).
+_restored_summary: str | None = None
+_restored_summary_lock = threading.Lock()
 
 STAGE_DOCS = {
     "pd": ["PDCA-Plan-Do.md"],
@@ -428,6 +437,57 @@ def _write_prompt_file(run_id: str, prompt: str) -> Path:
     prompt_path = LOG_DIR / f"{run_id}.prompt.txt"
     prompt_path.write_text(prompt, encoding="utf-8")
     return prompt_path
+
+
+def _build_resume_prompt(run_id: str, stage: str) -> str:
+    """Build a resume prompt from the original prompt plus saved stdout/stderr so the agent can continue from where it left off after daemon restart."""
+    def _read_log(path: Path, fallback: str = "") -> str:
+        if not path or not path.exists():
+            return fallback
+        try:
+            return path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            return fallback
+
+    def _strip_daemon_log_header(text: str) -> str:
+        """Remove the daemon-written header lines (stage/agent/timestamp and blank line) from a log so the resume block shows mainly agent output."""
+        if not text:
+            return text
+        lines = text.splitlines()
+        while lines and (
+            lines[0].startswith("stage:") or lines[0].startswith("agent:") or lines[0].startswith("timestamp:") or not lines[0].strip()
+        ):
+            lines.pop(0)
+        return "\n".join(lines).strip()
+
+    prompt_path = LOG_DIR / f"{run_id}.prompt.txt"
+    stdout_path = LOG_DIR / f"{run_id}.stdout.log"
+    stderr_path = LOG_DIR / f"{run_id}.stderr.log"
+
+    original_prompt = _read_log(prompt_path, "")
+    stdout_content = _strip_daemon_log_header(_read_log(stdout_path, "(no stdout saved)"))
+    stderr_content = _strip_daemon_log_header(_read_log(stderr_path, "(no stderr saved)"))
+
+    resume_block = (
+        "\n\n--- RESUMING (daemon was stopped; output so far) ---\n\n"
+        "The previous run was interrupted when the daemon stopped. Below is the original prompt and the stdout/stderr captured before the interruption.\n\n"
+        "Continue from where you left off. Complete the task as described in the original prompt and write the same summary JSON output as required (e.g. "
+        f"file named {SUMMARY_FILENAME} in your current working directory). Do not repeat work already reflected in the output below.\n\n"
+        "--- Stdout so far ---\n"
+        f"{stdout_content}\n\n"
+        "--- Stderr so far ---\n"
+        f"{stderr_content}\n\n"
+        "--- End of previous output; continue from here ---\n\n"
+    )
+
+    if not original_prompt:
+        return (
+            f"You are resuming an interrupted {stage.upper()} run (run_id={run_id}). "
+            "The original prompt was not saved. Use the stdout/stderr below to infer what was in progress and complete the task. "
+            f"Write the summary JSON to the file named {SUMMARY_FILENAME} in your current working directory when done.\n\n"
+            f"{resume_block}"
+        )
+    return original_prompt + resume_block
 
 
 def _ca_command_guidance() -> tuple[str, str, str]:
@@ -1215,21 +1275,51 @@ def _worker(stage: str, lane: str = "any") -> None:
             if not seed_id or not run_id:
                 move_to_error(task_path)
                 continue
-            started_seed = None
-            if stage == "direct":
-                started_seed, _ = WORKFLOW.mark_direct_code_run_started(seed_id, run_id)
-            else:
-                started_seed, _ = WORKFLOW.mark_run_started(seed_id, run_id)
-                if (
-                    stage == "ca"
-                    and task.get("metrics_recovery") is not True
-                ):
-                    started_seed = WORKFLOW.ensure_seed_worktree_ready(seed_id)
-            print(f"[{stage.upper()}] picked up {task['task_id']} for {seed_id}")
 
+            run_dict = load_run(run_id)
+            run_status = run_dict.get("status")
+            is_resume = str(run_status) == "running" if run_status is not None else False
+
+            started_seed = None
             worktree_path = task.get("worktree_path")
-            if started_seed is not None and started_seed.worktree_path is not None:
-                worktree_path = started_seed.worktree_path
+
+            if is_resume:
+                # Run was interrupted (daemon stopped); resume with original prompt + saved stdout/stderr
+                global _restored_summary
+                with _restored_summary_lock:
+                    msg = _restored_summary
+                    if msg is not None:
+                        _restored_summary = None
+                        print(msg)
+                if stage == "direct":
+                    pass  # worktree_path stays None
+                else:
+                    seed_dict = load_seed(seed_id)
+                    worktree_path = seed_dict.get("worktree_path") or worktree_path
+                    if (
+                        stage == "ca"
+                        and task.get("metrics_recovery") is not True
+                        and task.get("merge_resolution") is not True
+                        and task.get("sync_resolution") is not True
+                    ):
+                        started_seed = WORKFLOW.ensure_seed_worktree_ready(seed_id)
+                        if started_seed is not None and started_seed.worktree_path is not None:
+                            worktree_path = started_seed.worktree_path
+                print(f"[{stage.upper()}] resuming {task['task_id']} for {seed_id} (run was interrupted)")
+            else:
+                if stage == "direct":
+                    started_seed, _ = WORKFLOW.mark_direct_code_run_started(seed_id, run_id)
+                else:
+                    started_seed, _ = WORKFLOW.mark_run_started(seed_id, run_id)
+                    if (
+                        stage == "ca"
+                        and task.get("metrics_recovery") is not True
+                    ):
+                        started_seed = WORKFLOW.ensure_seed_worktree_ready(seed_id)
+                if started_seed is not None and started_seed.worktree_path is not None:
+                    worktree_path = started_seed.worktree_path
+                print(f"[{stage.upper()}] picked up {task['task_id']} for {seed_id}")
+
             # Merge-resolution and metrics_recovery CA run from project root; sync_resolution runs in seed worktree
             if stage == "ca" and (
                 task.get("merge_resolution") is True or task.get("metrics_recovery") is True
@@ -1239,7 +1329,9 @@ def _worker(stage: str, lane: str = "any") -> None:
             if worktree_path:
                 _sync_worktree_context(worktree_path)
 
-            if stage == "direct":
+            if is_resume:
+                prompt = _build_resume_prompt(run_id, stage)
+            elif stage == "direct":
                 prompt = _build_direct_code_prompt(task["prompt"])
             else:
                 prompt = _build_prompt(stage, task, task_path)
@@ -1265,16 +1357,19 @@ def _worker(stage: str, lane: str = "any") -> None:
             if exit_code == 0 or salvaged_ca:
                 if stage == "pd":
                     if not summary_path.exists():
-                        WORKFLOW.mark_run_failed(
-                            seed_id,
-                            run_id,
-                            f"Summary file not found. Write the summary JSON to the file named {SUMMARY_FILENAME} in your current working directory.",
-                            task_path=task_path,
-                            prompt_path=prompt_path_str,
-                            log_path=str(stdout_log_path) if stdout_log_path else None,
-                            stderr_log_path=str(stderr_log_path) if stderr_log_path else None,
-                        )
-                        move_to_error(task_path)
+                        if not _shutdown:
+                            WORKFLOW.mark_run_failed(
+                                seed_id,
+                                run_id,
+                                f"Summary file not found. Write the summary JSON to the file named {SUMMARY_FILENAME} in your current working directory.",
+                                task_path=task_path,
+                                prompt_path=prompt_path_str,
+                                log_path=str(stdout_log_path) if stdout_log_path else None,
+                                stderr_log_path=str(stderr_log_path) if stderr_log_path else None,
+                            )
+                            move_to_error(task_path)
+                        else:
+                            print(f"[{stage.upper()}] task {task['task_id']} interrupted by shutdown (will resume on restart)")
                     else:
                         WORKFLOW.finish_pd_run(
                             seed_id,
@@ -1299,31 +1394,37 @@ def _worker(stage: str, lane: str = "any") -> None:
                 else:
                     if task.get("sync_resolution") is True:
                         if not summary_path.exists():
-                            WORKFLOW.mark_run_failed(
-                                seed_id,
-                                run_id,
-                                f"Summary file not found. Write the summary JSON to the file named {SUMMARY_FILENAME} in your current working directory.",
-                                task_path=task_path,
-                                prompt_path=prompt_path_str,
-                                log_path=str(stdout_log_path) if stdout_log_path else None,
-                                stderr_log_path=str(stderr_log_path) if stderr_log_path else None,
-                            )
-                            move_to_error(task_path)
+                            if not _shutdown:
+                                WORKFLOW.mark_run_failed(
+                                    seed_id,
+                                    run_id,
+                                    f"Summary file not found. Write the summary JSON to the file named {SUMMARY_FILENAME} in your current working directory.",
+                                    task_path=task_path,
+                                    prompt_path=prompt_path_str,
+                                    log_path=str(stdout_log_path) if stdout_log_path else None,
+                                    stderr_log_path=str(stderr_log_path) if stderr_log_path else None,
+                                )
+                                move_to_error(task_path)
+                            else:
+                                print(f"[{stage.upper()}] task {task['task_id']} interrupted by shutdown (will resume on restart)")
                         else:
                             WORKFLOW.finish_sync_resolution(seed_id, run_id)
                             task_completed = True
                     else:
                         if not summary_path.exists():
-                            WORKFLOW.mark_run_failed(
-                                seed_id,
-                                run_id,
-                                f"Summary file not found. Write the summary JSON to the file named {SUMMARY_FILENAME} in your current working directory.",
-                                task_path=task_path,
-                                prompt_path=prompt_path_str,
-                                log_path=str(stdout_log_path) if stdout_log_path else None,
-                                stderr_log_path=str(stderr_log_path) if stderr_log_path else None,
-                            )
-                            move_to_error(task_path)
+                            if not _shutdown:
+                                WORKFLOW.mark_run_failed(
+                                    seed_id,
+                                    run_id,
+                                    f"Summary file not found. Write the summary JSON to the file named {SUMMARY_FILENAME} in your current working directory.",
+                                    task_path=task_path,
+                                    prompt_path=prompt_path_str,
+                                    log_path=str(stdout_log_path) if stdout_log_path else None,
+                                    stderr_log_path=str(stderr_log_path) if stderr_log_path else None,
+                                )
+                                move_to_error(task_path)
+                            else:
+                                print(f"[{stage.upper()}] task {task['task_id']} interrupted by shutdown (will resume on restart)")
                         else:
                             run = WORKFLOW.finish_ca_run(
                                 seed_id,
@@ -1354,38 +1455,45 @@ def _worker(stage: str, lane: str = "any") -> None:
                 move_to_done(task_path)
                 print(f"[{stage.upper()}] task {task['task_id']} done")
             else:
-                if stage == "direct":
-                    WORKFLOW.mark_direct_code_run_failed(
-                        seed_id,
-                        run_id,
-                        f"[agent={used_agent}] {_agent_failure_reason(exit_code, stdout, stderr)}",
-                        task_path=task_path,
-                        prompt_path=prompt_path_str,
-                        log_path=str(stdout_log_path) if stdout_log_path else None,
-                        stderr_log_path=str(stderr_log_path) if stderr_log_path else None,
-                    )
+                if _shutdown:
+                    # Leave run as "running" and task in in_progress so restart can resume.
+                    print(f"[{stage.upper()}] task {task['task_id']} interrupted by shutdown (will resume on restart)")
                 else:
-                    WORKFLOW.mark_run_failed(
-                        seed_id,
-                        run_id,
-                        f"[agent={used_agent}] {_agent_failure_reason(exit_code, stdout, stderr)}",
-                        task_path=task_path,
-                        prompt_path=prompt_path_str,
-                    )
-                print(f"[{stage.upper()}] task {task['task_id']} failed")
+                    if stage == "direct":
+                        WORKFLOW.mark_direct_code_run_failed(
+                            seed_id,
+                            run_id,
+                            f"[agent={used_agent}] {_agent_failure_reason(exit_code, stdout, stderr)}",
+                            task_path=task_path,
+                            prompt_path=prompt_path_str,
+                            log_path=str(stdout_log_path) if stdout_log_path else None,
+                            stderr_log_path=str(stderr_log_path) if stderr_log_path else None,
+                        )
+                    else:
+                        WORKFLOW.mark_run_failed(
+                            seed_id,
+                            run_id,
+                            f"[agent={used_agent}] {_agent_failure_reason(exit_code, stdout, stderr)}",
+                            task_path=task_path,
+                            prompt_path=prompt_path_str,
+                        )
+                    print(f"[{stage.upper()}] task {task['task_id']} failed")
         except SyncResolutionQueued:
             # Sync with baseline failed; sync-resolution CA was queued. Move PD task to error so we don't retry it.
             if task_path.exists():
                 move_to_error(task_path)
             continue
         except DuplicateRunStartError:
-            # Run was already started (e.g. restored in-progress task). Move task to error to avoid double run.
+            # Run was already started and is not "running" (edge case: e.g. run status was reset). Move to error to avoid double run.
             if task_path.exists():
                 move_to_error(task_path)
             continue
         except Exception as exc:
             traceback.print_exc()
             if not task_path.exists():
+                continue
+            if _shutdown:
+                # Leave run as "running" and task in in_progress so restart can resume.
                 continue
             try:
                 task = read_task(task_path)
@@ -1420,6 +1528,28 @@ def _worker(stage: str, lane: str = "any") -> None:
     print(f"[daemon] worker-{worker_name} stopped")
 
 
+def _mark_orphan_running_runs_failed(restored_run_ids: list[str]) -> None:
+    """Mark any runs still 'running' that are not in restored_run_ids as failed (orphaned by a previous daemon stop)."""
+    restored_set = set(restored_run_ids)
+    for run_dict in list_runs(seed_id=None):
+        if run_dict.get("status") != "running":
+            continue
+        if run_dict.get("run_id") in restored_set:
+            continue
+        seed_id = run_dict.get("seed_id")
+        run_id = run_dict.get("run_id")
+        if not seed_id or not run_id:
+            continue
+        try:
+            WORKFLOW.mark_run_failed(
+                seed_id,
+                run_id,
+                "Run was interrupted by daemon stop (no task in queue to resume).",
+            )
+        except Exception:
+            traceback.print_exc()
+
+
 def main() -> None:
     global _shutdown
     signal.signal(signal.SIGINT, _signal_handler)
@@ -1428,13 +1558,26 @@ def main() -> None:
 
     ensure_queue_layout()
     _initialize_agent_runtime_state()
-    restored = restore_in_progress_tasks()
+    restored, restored_run_ids = restore_in_progress_tasks()
     total_restored = sum(restored.values())
+    global _restored_summary
     if total_restored:
-        print(
-            "[daemon] restored in_progress tasks "
-            f"(pd={restored['pd']}, ca={restored['ca']}, direct={restored['direct']})"
+        _restored_summary = (
+            f"[daemon] in_progress restore: {total_restored} task(s) from {IN_PROGRESS_DIR!s} -> stage queues "
+            f"(pd={restored['pd']}, ca={restored['ca']}, direct={restored['direct']}); run_ids={restored_run_ids!r}"
         )
+    else:
+        _restored_summary = None
+    restored_set = set(restored_run_ids)
+    if total_restored:
+        # Mark restored runs as "running" so workers treat them as resume (they may have been set to "failed" on stop/start).
+        for run_id in restored_run_ids:
+            run_dict = load_run(run_id)
+            if run_dict and run_dict.get("status") != "succeeded":
+                run_dict["status"] = "running"
+                run_dict["updated_at"] = now_ts()
+                save_run(run_dict)
+    _mark_orphan_running_runs_failed(restored_run_ids)
     daemon_heartbeat()
     with _AGENT_HEALTH_LOCK:
         active = _AGENT_RUNTIME_STATE.get("active")

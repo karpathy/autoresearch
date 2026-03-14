@@ -34,7 +34,9 @@ from pdca_system.repositories.state import (
 )
 from pdca_system.logging_utils import get_logger
 from pdca_system.task import (
+    IN_PROGRESS_DIR,
     PDCA_SYSTEM_ROOT,
+    STAGE_DIRS,
     WORKTREE_ROOT,
     get_daemon_config,
     get_daemon_status,
@@ -888,6 +890,36 @@ class WorkflowService:
             metrics_recovery,
         )
         return run
+
+    def terminate_non_completed_tasks(self, seed_id: str) -> int:
+        """Mark every run for this seed that is not in the completed column (succeeded/failed) as failed and move any queued/in-progress task to error. Disables Ralph loop for this seed. Returns the number of runs terminated."""
+        seed = self.require_seed(seed_id)
+        runs = self.run_repo.list(seed_id)
+        completed = {RunStatus.succeeded, RunStatus.failed}
+        count = 0
+        for run in runs:
+            if run.status in completed:
+                continue
+            task_path: Path | None = None
+            stage_dir = STAGE_DIRS.get(run.stage.value)
+            if stage_dir is not None:
+                candidate = stage_dir / f"{run.task_id}.json"
+                if candidate.exists():
+                    task_path = candidate
+            if task_path is None:
+                candidate = IN_PROGRESS_DIR / f"{run.task_id}.json"
+                if candidate.exists():
+                    task_path = candidate
+            self.mark_run_failed(
+                seed_id,
+                run.run_id,
+                "Terminated by user.",
+                task_path=task_path,
+            )
+            count += 1
+        if seed.ralph_loop_enabled:
+            self.set_ralph_loop(seed_id, False)
+        return count
 
     def queue_sync_resolution(self, seed_id: str) -> StageRun:
         """Queue a merge-resolution run to resolve 'merge baseline into seed' in the seed worktree (e.g. after sync failed before PD)."""
@@ -1830,13 +1862,19 @@ class WorkflowService:
             self.seed_repo.save(seed)
         self._reconcile_seed_status_signal(seed)
         raw_events = self.seed_repo.events(seed_id)
+        runs = self.run_repo.list(seed_id)
+        completed = {RunStatus.succeeded, RunStatus.failed}
+        has_incomplete_runs = any(r.status not in completed for r in runs)
+        seed_in_early_stage = seed.status in (SeedStatus.draft, SeedStatus.queued, SeedStatus.planning)
+        has_non_completed_runs = has_incomplete_runs or seed_in_early_stage
         return {
             "seed": seed,
             "can_edit_prompt": self.can_edit_seed_prompt(seed),
-            "runs": self.run_repo.list(seed_id),
+            "runs": runs,
             "events": _timeline_display_events(raw_events),
             "baseline_metrics_for_branch": self.metrics_repo.get_for_branch(seed.baseline_branch),
             "setup_error": self.git_service.setup_error_for_branches(seed.baseline_branch),
+            "has_non_completed_runs": has_non_completed_runs,
         }
 
     def seed_detail_versions(self, seed_id: str) -> dict[str, str]:

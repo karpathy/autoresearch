@@ -65,11 +65,15 @@ def _resolve_prompt_path(run_id: str, run_prompt_path: str | None) -> Path | Non
 def dashboard(request: Request, seed_id: str | None = None) -> HTMLResponse:
     workflow = _workflow(request)
     viewmodel = workflow.build_dashboard(selected_seed_id=seed_id)
+    terminated = request.query_params.get("terminated") == "1"
+    terminate_no_tasks = request.query_params.get("terminate_result") == "no_tasks"
     context = {
         "dashboard": viewmodel,
         "selected_seed_id": seed_id,
         "detail": workflow.seed_detail(seed_id) if seed_id else None,
         "daemon_config": get_daemon_config(),
+        "show_terminated_message": terminated and seed_id is not None,
+        "show_terminate_no_tasks_message": terminate_no_tasks and seed_id is not None,
     }
     return _render(request, "dashboard.html", context)
 
@@ -411,6 +415,28 @@ def queue_ca(request: Request, seed_id: str) -> Response:
             return _render(request, "partials/action_error.html", {"message": str(exc)}, status_code=400)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     target_url = str(request.url_for("dashboard")) + f"?seed_id={seed_id}"
+    if _is_htmx(request):
+        response = Response(status_code=204)
+        response.headers["HX-Redirect"] = target_url
+        return response
+    return RedirectResponse(target_url, status_code=303)
+
+
+@router.post("/actions/seeds/{seed_id}/terminate", response_class=HTMLResponse)
+def terminate_tasks(request: Request, seed_id: str) -> Response:
+    workflow = _workflow(request)
+    try:
+        count = workflow.terminate_non_completed_tasks(seed_id)
+    except KeyError as exc:
+        if _is_htmx(request):
+            return _render(request, "partials/action_error.html", {"message": str(exc)}, status_code=404)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (RuntimeError, GitCommandError) as exc:
+        if _is_htmx(request):
+            return _render(request, "partials/action_error.html", {"message": str(exc)}, status_code=400)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    suffix = "&terminated=1" if count > 0 else "&terminate_result=no_tasks"
+    target_url = str(request.url_for("dashboard")) + f"?seed_id={seed_id}{suffix}"
     if _is_htmx(request):
         response = Response(status_code=204)
         response.headers["HX-Redirect"] = target_url

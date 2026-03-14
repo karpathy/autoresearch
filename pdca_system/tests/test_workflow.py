@@ -7,7 +7,7 @@ from pathlib import Path
 from pdca_system.config import TARGET_METRIC_KEY, TARGET_METRIC_LOWER_IS_BETTER, best_target_metric_key
 from pdca_system.domain.models import RunStatus, SeedRecord, SeedStatus, StageName, StageRun
 from pdca_system.services.workflow import BASELINE_SEED_ID, DuplicateRunStartError, GitCommandError, WorkflowService
-from pdca_system.task import PDCA_SYSTEM_ROOT, list_pending, read_task
+from pdca_system.task import ERROR_DIR, PDCA_SYSTEM_ROOT, list_pending, read_task, write_task
 
 from .test_helpers import (
     MergeFailingGitService,
@@ -833,6 +833,123 @@ class AgentTypeTests(unittest.TestCase):
         updated = service.require_run(pd_run.run_id)
         self.assertIsNone(updated.agent_type)
         self.assertNotIn("agent_type", updated.summary)
+
+
+class TerminateNonCompletedTasksTests(unittest.TestCase):
+    """Tests for terminate_non_completed_tasks: mark non-completed runs failed and move task files to error."""
+
+    def test_terminate_non_completed_tasks_marks_queued_run_failed_and_moves_task_to_error(self) -> None:
+        service = WorkflowService()
+        seed = service.create_seed("terminate queued run", baseline_branch="master")
+        run = StageRun(
+            run_id="pd-20990101-000001-terminate",
+            seed_id=seed.seed_id,
+            stage=StageName.pd,
+            status=RunStatus.queued,
+            task_id="task-pd-terminate-001",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        service.run_repo.save(run)
+        write_task("pd", {"seed_id": seed.seed_id, "run_id": run.run_id}, task_id=run.task_id)
+
+        service.terminate_non_completed_tasks(seed.seed_id)
+
+        updated_run = service.require_run(run.run_id)
+        updated_seed = service.require_seed(seed.seed_id)
+        self.assertEqual(updated_run.status, RunStatus.failed)
+        self.assertEqual(updated_run.error, "Terminated by user.")
+        self.assertEqual(updated_seed.status, SeedStatus.failed)
+        self.assertTrue((ERROR_DIR / f"{run.task_id}.json").exists())
+        self.assertFalse(
+            any(read_task(p).get("run_id") == run.run_id for p in list_pending("pd")),
+            "Task should no longer be in pd queue",
+        )
+
+    def test_terminate_non_completed_tasks_leaves_completed_runs_unchanged(self) -> None:
+        service = WorkflowService()
+        seed = service.create_seed("terminate leaves completed", baseline_branch="master")
+        run = StageRun(
+            run_id="ca-20990101-000002-done",
+            seed_id=seed.seed_id,
+            stage=StageName.ca,
+            status=RunStatus.succeeded,
+            task_id="task-ca-done-002",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        service.run_repo.save(run)
+
+        service.terminate_non_completed_tasks(seed.seed_id)
+
+        updated_run = service.require_run(run.run_id)
+        self.assertEqual(updated_run.status, RunStatus.succeeded)
+
+    def test_terminate_non_completed_tasks_unknown_seed_raises(self) -> None:
+        service = WorkflowService()
+        with self.assertRaises(KeyError):
+            service.terminate_non_completed_tasks("nonexistent-seed-id")
+
+    def test_terminate_non_completed_tasks_seed_with_no_runs_succeeds(self) -> None:
+        service = WorkflowService()
+        seed = service.create_seed("terminate no runs", baseline_branch="master")
+        service.terminate_non_completed_tasks(seed.seed_id)
+        updated_seed = service.require_seed(seed.seed_id)
+        self.assertEqual(updated_seed.status, SeedStatus.draft)
+
+    def test_terminate_non_completed_tasks_mixed_runs_only_terminates_non_completed(self) -> None:
+        service = WorkflowService()
+        seed = service.create_seed("terminate mixed", baseline_branch="master")
+        succeeded_run = StageRun(
+            run_id="pd-20990101-000003-succ",
+            seed_id=seed.seed_id,
+            stage=StageName.pd,
+            status=RunStatus.succeeded,
+            task_id="task-pd-succ",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        queued_run = StageRun(
+            run_id="ca-20990101-000004-queued",
+            seed_id=seed.seed_id,
+            stage=StageName.ca,
+            status=RunStatus.queued,
+            task_id="task-ca-queued",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        service.run_repo.save(succeeded_run)
+        service.run_repo.save(queued_run)
+        write_task("ca", {"seed_id": seed.seed_id, "run_id": queued_run.run_id}, task_id=queued_run.task_id)
+
+        service.terminate_non_completed_tasks(seed.seed_id)
+
+        self.assertEqual(service.require_run(succeeded_run.run_id).status, RunStatus.succeeded)
+        self.assertEqual(service.require_run(queued_run.run_id).status, RunStatus.failed)
+        self.assertEqual(service.require_run(queued_run.run_id).error, "Terminated by user.")
+        self.assertTrue((ERROR_DIR / f"{queued_run.task_id}.json").exists())
+
+    def test_terminate_non_completed_tasks_resets_ralph_loop(self) -> None:
+        service = WorkflowService()
+        seed = service.create_seed("terminate resets ralph", baseline_branch="master")
+        service.set_ralph_loop(seed.seed_id, True)
+        run = StageRun(
+            run_id="pd-20990101-000005-ralph",
+            seed_id=seed.seed_id,
+            stage=StageName.pd,
+            status=RunStatus.queued,
+            task_id="task-pd-ralph",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        service.run_repo.save(run)
+        write_task("pd", {"seed_id": seed.seed_id, "run_id": run.run_id}, task_id=run.task_id)
+        self.assertTrue(service.require_seed(seed.seed_id).ralph_loop_enabled)
+
+        service.terminate_non_completed_tasks(seed.seed_id)
+
+        updated_seed = service.require_seed(seed.seed_id)
+        self.assertFalse(updated_seed.ralph_loop_enabled)
 
 
 if __name__ == "__main__":

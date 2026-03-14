@@ -112,7 +112,10 @@
             events=detail.events,
             baseline_metrics_for_branch=detail.baseline_metrics_for_branch,
             setup_error=detail.setup_error,
-            daemon_status=dashboard.daemon_status
+            daemon_status=dashboard.daemon_status,
+            show_terminated_message=show_terminated_message|default(false),
+            show_terminate_no_tasks_message=show_terminate_no_tasks_message|default(false),
+            has_non_completed_runs=detail.has_non_completed_runs|default(false)
           %}
             {% include "partials/seed_detail.html" %}
           {% endwith %}

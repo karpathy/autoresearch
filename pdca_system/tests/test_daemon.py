@@ -25,9 +25,11 @@ from pdca_system.daemon import (
     AGENT_EXIT0_FAILURE_CHECKS,
     _agent_failure_reason,
     _build_prompt,
+    _build_resume_prompt,
     _build_stuck_check_prompt,
     _effective_exit_for_downgrade,
     _invoke_agent,
+    _mark_orphan_running_runs_failed,
     _maybe_rotate_after_stuck_check,
     _record_agent_exit,
     _run_stuck_check,
@@ -140,7 +142,7 @@ class DaemonTests(unittest.TestCase):
             run_module.time.sleep = stop_after_first_sleep
             run_module.signal.signal = lambda *_args, **_kwargs: None
             run_module.ensure_queue_layout = lambda: None
-            run_module.restore_in_progress_tasks = lambda: {"pd": 0, "ca": 0, "direct": 0}
+            run_module.restore_in_progress_tasks = lambda: ({"pd": 0, "ca": 0, "direct": 0}, [])
             run_module.daemon_heartbeat = lambda: None
             run_module._shutdown = False
             run_module.main()
@@ -154,8 +156,8 @@ class DaemonTests(unittest.TestCase):
             run_module._shutdown = False
 
         by_prefix = {instance.thread_name_prefix: instance for instance in ExecutorSpy.instances}
-        self.assertEqual(by_prefix["pdca-pd"].max_workers, 2)
-        self.assertEqual(len(by_prefix["pdca-pd"].submit_calls), 2)
+        self.assertEqual(by_prefix["pdca-pd"].max_workers, 3)
+        self.assertEqual(len(by_prefix["pdca-pd"].submit_calls), 3)
         self.assertEqual(len(by_prefix["pdca-ca-gpu"].submit_calls), 1)
         self.assertEqual(len(by_prefix["pdca-ca-aux"].submit_calls), 1)
         self.assertEqual(len(by_prefix["pdca-direct"].submit_calls), 1)
@@ -302,7 +304,7 @@ class DaemonTests(unittest.TestCase):
                 claim_pending("ca")
                 claim_pending("direct")
 
-                restored = restore_in_progress_tasks()
+                restored, restored_run_ids = restore_in_progress_tasks()
                 p_count = len(list(stage_dirs["pd"].glob("*.json")))
                 ca_count = len(list(stage_dirs["ca"].glob("*.json")))
                 direct_count = len(list(stage_dirs["direct"].glob("*.json")))
@@ -312,8 +314,373 @@ class DaemonTests(unittest.TestCase):
                     setattr(task_module, name, value)
 
         self.assertEqual(restored, {"pd": 1, "ca": 1, "direct": 1})
+        self.assertEqual(len(restored_run_ids), 3)
         self.assertEqual((p_count, ca_count, direct_count), (1, 1, 1))
         self.assertEqual(in_progress_count, 0)
+
+
+class ResumePromptTests(unittest.TestCase):
+    """Tests for _build_resume_prompt: resume prompt from original prompt + saved stdout/stderr after daemon restart."""
+
+    def test_build_resume_prompt_includes_original_and_logs(self) -> None:
+        """Resume prompt contains original prompt, RESUMING block, stdout and stderr content, and summary filename."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_dir = Path(tmpdir)
+            (log_dir / "run-123.prompt.txt").write_text(
+                "Original task: implement feature X.",
+                encoding="utf-8",
+            )
+            (log_dir / "run-123.stdout.log").write_text(
+                "> building...\n> step 1 done\n",
+                encoding="utf-8",
+            )
+            (log_dir / "run-123.stderr.log").write_text(
+                "warn: deprecation\n",
+                encoding="utf-8",
+            )
+            with patch.object(run_module, "LOG_DIR", log_dir):
+                prompt = _build_resume_prompt("run-123", "pd")
+            self.assertIn("Original task: implement feature X.", prompt)
+            self.assertIn("--- RESUMING (daemon was stopped; output so far) ---", prompt)
+            self.assertIn("> building...", prompt)
+            self.assertIn("step 1 done", prompt)
+            self.assertIn("warn: deprecation", prompt)
+            self.assertIn("--- End of previous output; continue from here ---", prompt)
+            self.assertIn(run_module.SUMMARY_FILENAME, prompt)
+
+    def test_build_resume_prompt_uses_fallback_when_prompt_missing(self) -> None:
+        """When prompt file is missing, resume prompt includes fallback text and summary filename."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_dir = Path(tmpdir)
+            (log_dir / "run-456.stdout.log").write_text("some stdout", encoding="utf-8")
+            (log_dir / "run-456.stderr.log").write_text("some stderr", encoding="utf-8")
+            with patch.object(run_module, "LOG_DIR", log_dir):
+                prompt = _build_resume_prompt("run-456", "ca")
+            self.assertIn("resuming an interrupted CA run", prompt)
+            self.assertIn("run_id=run-456", prompt)
+            self.assertIn("original prompt was not saved", prompt)
+            self.assertIn("some stdout", prompt)
+            self.assertIn("some stderr", prompt)
+            self.assertIn(run_module.SUMMARY_FILENAME, prompt)
+
+    def test_build_resume_prompt_uses_fallback_when_logs_missing(self) -> None:
+        """When stdout/stderr files are missing, resume prompt uses (no stdout saved) and (no stderr saved)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_dir = Path(tmpdir)
+            (log_dir / "run-789.prompt.txt").write_text(
+                "Do the thing.",
+                encoding="utf-8",
+            )
+            with patch.object(run_module, "LOG_DIR", log_dir):
+                prompt = _build_resume_prompt("run-789", "direct")
+            self.assertIn("Do the thing.", prompt)
+            self.assertIn("(no stdout saved)", prompt)
+            self.assertIn("(no stderr saved)", prompt)
+
+    def test_build_resume_prompt_strips_daemon_log_header(self) -> None:
+        """Resume prompt strips stage/agent/timestamp header from stdout/stderr so only agent output appears."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_dir = Path(tmpdir)
+            (log_dir / "run-hdr.prompt.txt").write_text("Original.", encoding="utf-8")
+            (log_dir / "run-hdr.stdout.log").write_text(
+                "stage:     PD\nagent:     opencode\ntimestamp: 20260314-234546\n\n> build · glm-4.7\n",
+                encoding="utf-8",
+            )
+            (log_dir / "run-hdr.stderr.log").write_text(
+                "stage:     PD\nagent:     opencode\ntimestamp: 20260314-234546\n\n",
+                encoding="utf-8",
+            )
+            with patch.object(run_module, "LOG_DIR", log_dir):
+                prompt = _build_resume_prompt("run-hdr", "pd")
+            self.assertIn("> build · glm-4.7", prompt)
+            self.assertNotIn("stage:     PD", prompt)
+            self.assertNotIn("agent:     opencode", prompt)
+            self.assertNotIn("timestamp: 20260314-234546", prompt)
+
+    def test_worker_uses_resume_path_when_run_status_is_running(self) -> None:
+        """When a restored task has run status 'running', worker uses _build_resume_prompt and does not call mark_run_started."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            history_root = root / "history"
+            queue_root = history_root / "queue"
+            state_root = history_root / "state"
+            log_dir = history_root / "logs"
+            stage_dirs = {
+                "pd": queue_root / "pd",
+                "ca": queue_root / "ca",
+                "direct": queue_root / "direct",
+            }
+            in_progress_dir = queue_root / "in_progress"
+            replacements = {
+                "HISTORY_ROOT": history_root,
+                "QUEUE_ROOT": queue_root,
+                "STATE_ROOT": state_root,
+                "SEEDS_ROOT": state_root / "seeds",
+                "RUNS_ROOT": state_root / "runs",
+                "EVENTS_ROOT": state_root / "events",
+                "BASELINE_BRANCHES_PATH": root / "baseline_branches.json",
+                "BASELINE_METRICS_PATH": root / "baseline_metrics.json",
+                "WORKTREE_ROOT": history_root / "worktrees",
+                "LOG_ROOT": log_dir,
+                "STAGE_DIRS": stage_dirs,
+                "IN_PROGRESS_DIR": in_progress_dir,
+                "DONE_DIR": queue_root / "done",
+                "ERROR_DIR": queue_root / "error",
+                "DAEMON_HEARTBEAT_PATH": state_root / "daemon_heartbeat.json",
+            }
+            originals = {name: getattr(task_module, name) for name in replacements}
+            try:
+                for name, value in replacements.items():
+                    setattr(task_module, name, value)
+                task_module.ensure_queue_layout()
+                log_dir.mkdir(parents=True, exist_ok=True)
+
+                run_id = "pd-run-resume-1"
+                seed_id = "seed-resume-1"
+                task_id = "pd-task-resume-1"
+                worktree = root / "wt"
+                worktree.mkdir(parents=True, exist_ok=True)
+                (worktree / run_module.SUMMARY_FILENAME).write_text(
+                    json.dumps({
+                        "idea": "resumed",
+                        "commit_sha": "abc",
+                        "completed_at": "2020-01-01 00:00:00",
+                    }),
+                    encoding="utf-8",
+                )
+
+                task_module.save_run({
+                    "run_id": run_id,
+                    "seed_id": seed_id,
+                    "status": "running",
+                    "stage": "pd",
+                    "task_id": task_id,
+                    "created_at": 0,
+                    "updated_at": 0,
+                })
+                task_module.save_seed({
+                    "seed_id": seed_id,
+                    "prompt": "test",
+                    "worktree_path": str(worktree),
+                    "created_at": 0,
+                    "updated_at": 0,
+                })
+                write_task("pd", {"seed_id": seed_id, "run_id": run_id, "worktree_path": str(worktree)}, task_id=task_id)
+                task_path = stage_dirs["pd"] / f"{task_id}.json"
+                shutil.move(str(task_path), str(in_progress_dir / f"{task_id}.json"))
+                task_path = in_progress_dir / f"{task_id}.json"
+
+                build_resume_called = []
+                mark_run_started_called = []
+
+                def track_build_resume(rid: str, st: str) -> str:
+                    build_resume_called.append((rid, st))
+                    return "resume prompt"
+
+                original_mark = run_module.WORKFLOW.mark_run_started
+                def track_mark_started(sid: str, rid: str):
+                    mark_run_started_called.append((sid, rid))
+                    raise AssertionError("mark_run_started must not be called for resume")
+
+                with (
+                    patch.object(run_module, "LOG_DIR", log_dir),
+                    patch.object(run_module, "_build_resume_prompt", side_effect=track_build_resume),
+                    patch.object(run_module.WORKFLOW, "mark_run_started", side_effect=track_mark_started),
+                    patch.object(run_module.WORKFLOW, "finish_pd_run", return_value=MagicMock()),
+                    patch.object(run_module, "_invoke_agent", return_value=("opencode", 0, "", "", log_dir / "out.log", log_dir / "err.log")),
+                    patch.object(run_module, "claim_pending", side_effect=[task_path, None]),
+                    patch.object(run_module, "move_to_done", return_value=task_path),
+                    patch.object(run_module.time, "sleep", side_effect=lambda _: setattr(run_module, "_shutdown", True)),
+                ):
+                    run_module._shutdown = False
+                    run_module._worker("pd", "any")
+
+                self.assertEqual(len(mark_run_started_called), 0, "mark_run_started should not be called for resumed run")
+                self.assertEqual(len(build_resume_called), 1, "_build_resume_prompt should be called once for resumed run")
+                self.assertEqual(build_resume_called[0], (run_id, "pd"))
+            finally:
+                for name, value in originals.items():
+                    setattr(task_module, name, value)
+
+    def test_restored_summary_printed_once_when_worker_resumes(self) -> None:
+        """When a worker takes the resume path and _restored_summary is set, it prints the message and clears it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            history_root = root / "history"
+            queue_root = history_root / "queue"
+            state_root = history_root / "state"
+            log_dir = history_root / "logs"
+            stage_dirs = {"pd": queue_root / "pd", "ca": queue_root / "ca", "direct": queue_root / "direct"}
+            in_progress_dir = queue_root / "in_progress"
+            replacements = {
+                "HISTORY_ROOT": history_root,
+                "QUEUE_ROOT": queue_root,
+                "STATE_ROOT": state_root,
+                "SEEDS_ROOT": state_root / "seeds",
+                "RUNS_ROOT": state_root / "runs",
+                "EVENTS_ROOT": state_root / "events",
+                "BASELINE_BRANCHES_PATH": root / "baseline_branches.json",
+                "BASELINE_METRICS_PATH": root / "baseline_metrics.json",
+                "WORKTREE_ROOT": history_root / "worktrees",
+                "LOG_ROOT": log_dir,
+                "STAGE_DIRS": stage_dirs,
+                "IN_PROGRESS_DIR": in_progress_dir,
+                "DONE_DIR": queue_root / "done",
+                "ERROR_DIR": queue_root / "error",
+                "DAEMON_HEARTBEAT_PATH": state_root / "daemon_heartbeat.json",
+            }
+            originals = {name: getattr(task_module, name) for name in replacements}
+            try:
+                for name, value in replacements.items():
+                    setattr(task_module, name, value)
+                task_module.ensure_queue_layout()
+                log_dir.mkdir(parents=True, exist_ok=True)
+                run_id = "pd-run-rs-1"
+                seed_id = "seed-rs-1"
+                task_id = "pd-task-rs-1"
+                worktree = root / "wt"
+                worktree.mkdir(parents=True, exist_ok=True)
+                (worktree / run_module.SUMMARY_FILENAME).write_text(
+                    json.dumps({"idea": "x", "commit_sha": "y", "completed_at": "2020-01-01 00:00:00"}),
+                    encoding="utf-8",
+                )
+                task_module.save_run({
+                    "run_id": run_id,
+                    "seed_id": seed_id,
+                    "status": "running",
+                    "stage": "pd",
+                    "task_id": task_id,
+                    "created_at": 0,
+                    "updated_at": 0,
+                })
+                task_module.save_seed({
+                    "seed_id": seed_id,
+                    "prompt": "test",
+                    "worktree_path": str(worktree),
+                    "created_at": 0,
+                    "updated_at": 0,
+                })
+                write_task("pd", {"seed_id": seed_id, "run_id": run_id, "worktree_path": str(worktree)}, task_id=task_id)
+                task_path = stage_dirs["pd"] / f"{task_id}.json"
+                shutil.move(str(task_path), str(in_progress_dir / f"{task_id}.json"))
+                task_path = in_progress_dir / f"{task_id}.json"
+                printed = []
+                with (
+                    patch.object(run_module, "LOG_DIR", log_dir),
+                    patch.object(run_module, "_build_resume_prompt", return_value="resume prompt"),
+                    patch.object(run_module.WORKFLOW, "mark_run_started", side_effect=AssertionError("must not be called")),
+                    patch.object(run_module.WORKFLOW, "finish_pd_run", return_value=MagicMock()),
+                    patch.object(run_module, "_invoke_agent", return_value=("opencode", 0, "", "", log_dir / "o", log_dir / "e")),
+                    patch.object(run_module, "claim_pending", side_effect=[task_path, None]),
+                    patch.object(run_module, "move_to_done", return_value=task_path),
+                    patch.object(run_module.time, "sleep", side_effect=lambda _: setattr(run_module, "_shutdown", True)),
+                    patch("builtins.print", side_effect=lambda *args, **kw: printed.append(" ".join(str(a) for a in args))),
+                ):
+                    run_module._restored_summary = "[daemon] in_progress restore: 1 task(s) from /path -> queues; run_ids=['pd-run-rs-1']"
+                    run_module._shutdown = False
+                    run_module._worker("pd", "any")
+                self.assertTrue(
+                    any("in_progress restore" in p for p in printed),
+                    f"Expected one print to contain 'in_progress restore'; got {printed!r}",
+                )
+                self.assertIsNone(run_module._restored_summary, "_restored_summary should be cleared after resume")
+            finally:
+                for name, value in originals.items():
+                    setattr(task_module, name, value)
+
+
+class ShutdownAndOrphanTests(unittest.TestCase):
+    """Tests for shutdown (do not mark run failed when _shutdown) and orphan running runs at startup."""
+
+    def test_worker_shutdown_does_not_mark_run_failed(self) -> None:
+        """When _shutdown is True and task does not complete, we do not call mark_run_failed and print interrupted by shutdown."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            history_root = root / "history"
+            queue_root = history_root / "queue"
+            state_root = history_root / "state"
+            log_dir = history_root / "logs"
+            stage_dirs = {"pd": queue_root / "pd", "ca": queue_root / "ca", "direct": queue_root / "direct"}
+            in_progress_dir = queue_root / "in_progress"
+            replacements = {
+                "HISTORY_ROOT": history_root,
+                "QUEUE_ROOT": queue_root,
+                "STATE_ROOT": state_root,
+                "SEEDS_ROOT": state_root / "seeds",
+                "RUNS_ROOT": state_root / "runs",
+                "EVENTS_ROOT": state_root / "events",
+                "BASELINE_BRANCHES_PATH": root / "baseline_branches.json",
+                "BASELINE_METRICS_PATH": root / "baseline_metrics.json",
+                "WORKTREE_ROOT": history_root / "worktrees",
+                "LOG_ROOT": log_dir,
+                "STAGE_DIRS": stage_dirs,
+                "IN_PROGRESS_DIR": in_progress_dir,
+                "DONE_DIR": queue_root / "done",
+                "ERROR_DIR": queue_root / "error",
+                "DAEMON_HEARTBEAT_PATH": state_root / "daemon_heartbeat.json",
+            }
+            originals = {name: getattr(task_module, name) for name in replacements}
+            try:
+                for name, value in replacements.items():
+                    setattr(task_module, name, value)
+                task_module.ensure_queue_layout()
+                log_dir.mkdir(parents=True, exist_ok=True)
+                run_id = "pd-run-shutdown-1"
+                seed_id = "seed-shutdown-1"
+                task_id = "pd-task-shutdown-1"
+                worktree = root / "wt"
+                worktree.mkdir(parents=True, exist_ok=True)
+                task_module.save_run({
+                    "run_id": run_id,
+                    "seed_id": seed_id,
+                    "status": "running",
+                    "stage": "pd",
+                    "task_id": task_id,
+                    "created_at": 0,
+                    "updated_at": 0,
+                })
+                task_module.save_seed({
+                    "seed_id": seed_id,
+                    "prompt": "test",
+                    "worktree_path": str(worktree),
+                    "created_at": 0,
+                    "updated_at": 0,
+                })
+                write_task("pd", {"seed_id": seed_id, "run_id": run_id, "worktree_path": str(worktree)}, task_id=task_id)
+                task_path = stage_dirs["pd"] / f"{task_id}.json"
+                shutil.move(str(task_path), str(in_progress_dir / f"{task_id}.json"))
+                task_path = in_progress_dir / f"{task_id}.json"
+                mark_failed_calls = []
+                with (
+                    patch.object(run_module, "LOG_DIR", log_dir),
+                    patch.object(run_module, "_build_resume_prompt", return_value="resume prompt"),
+                    patch.object(run_module, "_invoke_agent", return_value=("opencode", 1, "out", "err", log_dir / "o", log_dir / "e")),
+                    patch.object(run_module.WORKFLOW, "mark_run_failed", side_effect=lambda *a, **k: mark_failed_calls.append((a, k))),
+                    patch.object(run_module, "claim_pending", side_effect=[task_path, None]),
+                    patch.object(run_module.time, "sleep", side_effect=lambda _: setattr(run_module, "_shutdown", True)),
+                ):
+                    run_module._shutdown = True
+                    run_module._worker("pd", "any")
+                self.assertEqual(len(mark_failed_calls), 0, "mark_run_failed must not be called when _shutdown is True")
+            finally:
+                for name, value in originals.items():
+                    setattr(task_module, name, value)
+
+    def test_mark_orphan_running_runs_failed_marks_only_orphans(self) -> None:
+        """_mark_orphan_running_runs_failed marks runs that are 'running' but not in restored_run_ids; restored runs are left alone."""
+        with patch.object(run_module, "list_runs") as mock_list_runs:
+            mock_list_runs.return_value = [
+                {"run_id": "run-restored", "seed_id": "seed-1", "status": "running"},
+                {"run_id": "run-orphan", "seed_id": "seed-2", "status": "running"},
+                {"run_id": "run-already-failed", "seed_id": "seed-3", "status": "failed"},
+            ]
+            mark_failed_calls = []
+            with patch.object(run_module.WORKFLOW, "mark_run_failed", side_effect=lambda sid, rid, err: mark_failed_calls.append((sid, rid, err))):
+                _mark_orphan_running_runs_failed(["run-restored"])
+            self.assertEqual(len(mark_failed_calls), 1)
+            self.assertEqual(mark_failed_calls[0][0], "seed-2")
+            self.assertEqual(mark_failed_calls[0][1], "run-orphan")
+            self.assertIn("no task in queue to resume", mark_failed_calls[0][2])
 
 
 class AgentRotationAndStuckCheckTests(unittest.TestCase):

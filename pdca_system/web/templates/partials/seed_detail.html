@@ -1,12 +1,23 @@
 <section
   class="rounded-2xl border border-slate-800 bg-slate-900/95 p-5 shadow-sm"
-  x-data="{ activeRunId: localStorage.getItem('seed-active-run-{{ seed.seed_id }}') || null, eventsOpen: true }"
+  x-data="{ activeRunId: localStorage.getItem('seed-active-run-{{ seed.seed_id }}') || null, eventsOpen: true, terminateConfirmOpen: false }"
   x-bind:data-log-viewer-open="activeRunId ? 'true' : 'false'"
   x-on:keydown.escape.window="
     activeRunId = null;
     localStorage.removeItem('seed-active-run-{{ seed.seed_id }}');
+    terminateConfirmOpen = false;
   "
 >
+  {% if show_terminated_message|default(false) %}
+  <div class="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200" role="status">
+    Non-completed tasks were terminated and marked as failed.
+  </div>
+  {% endif %}
+  {% if show_terminate_no_tasks_message|default(false) %}
+  <div class="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-200" role="status">
+    Completed tasks cannot be terminated.
+  </div>
+  {% endif %}
   <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
     <div class="min-w-0 flex-1">
       <p class="section-label">Seed detail</p>
@@ -58,6 +69,21 @@
           Run Check-Action
         </button>
       </form>
+      <form id="terminate-form-{{ seed.seed_id }}" hx-post="{{ request.url_for('terminate_tasks', seed_id=seed.seed_id) }}" hx-swap="none" method="post"></form>
+      <button type="button" {% if not has_non_completed_runs|default(false) %}disabled{% endif %} @click="terminateConfirmOpen = true" class="rounded-lg border px-4 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900 {% if has_non_completed_runs|default(false) %}border-red-500/70 text-red-200 hover:border-red-400 hover:bg-red-500/10 focus:ring-red-400{% else %}border-slate-600 text-slate-500 cursor-not-allowed bg-slate-800/50{% endif %}">
+        Terminate Task
+      </button>
+      <div x-show="terminateConfirmOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" x-transition>
+        <div class="absolute inset-0 bg-black/60" @click="terminateConfirmOpen = false"></div>
+        <div class="relative z-10 w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-xl" @click.stop>
+          <h3 class="text-lg font-medium text-white">Terminate tasks</h3>
+          <p class="mt-2 text-sm text-slate-300">All tasks for this seed that are not yet completed (queued or running) will be terminated immediately and marked as failed. This cannot be undone.</p>
+          <div class="mt-5 flex justify-end gap-2">
+            <button type="button" @click="terminateConfirmOpen = false" class="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-slate-500 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 focus:ring-offset-slate-900">Cancel</button>
+            <button type="submit" form="terminate-form-{{ seed.seed_id }}" class="rounded-lg border border-red-500/70 bg-red-500/20 px-4 py-2 text-sm font-medium text-red-200 transition hover:bg-red-500/30 focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-slate-900">Terminate</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
