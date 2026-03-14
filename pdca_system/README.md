@@ -29,8 +29,11 @@ All commands in this document are run from the **project root**. Use your projec
    - `PDCA-Check-Action.md` — what the agent should do in the Check-Action stage (e.g. run tests, collect metrics, decide promote/discard).
    - `config.py` — promotion threshold, default baseline branch, paths if you change them.
 5. **Run** the dashboard (optional) and daemon from the **project root**:
-   - Dashboard: `uv run uvicorn pdca_system.web.app:app --reload` (or `python -m uvicorn pdca_system.web.app:app --reload`) → http://127.0.0.1:8000/pdca-system
-   - Daemon: `uv run pdca_system/daemon.py` (or `python -m pdca_system.daemon`; set `PDCA_AGENT=codex` / `PDCA_AGENT=gemini` / `PDCA_AGENT=opencode` / `PDCA_AGENT=kimi` for other backends)
+   - Dashboard: `uv run uvicorn pdca_system.web.app:app` (or `python -m uvicorn pdca_system.web.app:app`). By default it listens on **host** `127.0.0.1` and **port** `8000`. Open http://127.0.0.1:8000/pdca-system in your browser. To use another host/port: `uv run uvicorn pdca_system.web.app:app --host 0.0.0.0 --port 8080`.
+   - Daemon: run with your project’s Python runner (e.g. `uv run pdca_system/daemon.py` or `python -m pdca_system.daemon`). Default agent is Claude; to use another backend set **`PDCA_AGENT`** to `codex`, `gemini`, `opencode`, or `kimi` before the command:
+     - **Linux / macOS:** `PDCA_AGENT=codex uv run pdca_system/daemon.py` (or `PDCA_AGENT=codex python -m pdca_system.daemon`)
+     - **Windows (cmd):** `set PDCA_AGENT=codex` then run the daemon (e.g. `uv run pdca_system/daemon.py` or `python -m pdca_system.daemon`)
+     - **Windows (PowerShell):** `$env:PDCA_AGENT="codex"; uv run pdca_system/daemon.py` (or `$env:PDCA_AGENT="codex"; python -m pdca_system.daemon`)
 6. **Bootstrap:** Have your agent read `pdca_system/protocol.md`, create a seed from your prompt, queue it for Plan-Do, then start the daemon. The daemon will hand off tasks to the agent via the queue; do not run Plan-Do or Check-Action stages manually in the same session.
 
 Seeds flow: **queue/pd/** → Plan-Do → **queue/ca/** → Check-Action → **state/**. View runs and status in the dashboard.

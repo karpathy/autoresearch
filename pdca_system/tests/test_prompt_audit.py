@@ -17,8 +17,23 @@ from pdca_system import daemon as run_module
 from pdca_system.config import TARGET_METRIC_KEY
 from pdca_system.services.workflow import BASELINE_SEED_ID
 
-# Number of distinct prompt variants the agent can generate (see run._build_prompt docstring)
-EXPECTED_PROMPT_COUNT = 9
+# Canonical list of every prompt type the daemon can produce. Must match all code paths that build
+# prompts: _build_direct_code_prompt; _build_prompt(PD root/worktree); _build_sync_resolution_prompt;
+# _build_merge_resolution_prompt (normal seed only in audit); _build_metrics_recovery_prompt;
+# _build_prompt(CA baseline_measurement); _build_prompt(CA normal); _build_stuck_check_prompt.
+# If you add a new prompt builder or path in daemon.py, add a corresponding entry here and generate it below.
+ALL_DAEMON_PROMPT_TYPES = (
+    "direct",
+    "pd_project_root",
+    "pd_worktree",
+    "ca_sync_resolution",
+    "ca_merge_resolution_normal",
+    "ca_metrics_recovery",
+    "ca_baseline_measurement",
+    "ca_normal",
+    "stuck_check",
+)
+EXPECTED_PROMPT_COUNT = len(ALL_DAEMON_PROMPT_TYPES)
 
 # Directory for audit output (gitignored, under pdca_system)
 AUDIT_DIR = Path(__file__).resolve().parent.parent.parent / "pdca_system" / "prompt_audit"
@@ -83,19 +98,7 @@ class PromptAuditTests(unittest.TestCase):
         _write_audit_file("04_ca_sync_resolution", prompt_sync)
         generated.append("04_ca_sync_resolution")
 
-        # 5. CA merge_resolution (baseline seed: merge __baseline__ into target branch)
-        task_merge_baseline = {
-            "seed_id": BASELINE_SEED_ID,
-            "run_id": "ca-merge-001",
-            "merge_resolution": True,
-            "baseline_branch": "master",
-            "worktree_path": None,
-        }
-        prompt_merge_baseline = run_module._build_merge_resolution_prompt(task_merge_baseline)
-        _write_audit_file("05_ca_merge_resolution_baseline", prompt_merge_baseline)
-        generated.append("05_ca_merge_resolution_baseline")
-
-        # 6. CA merge_resolution (normal seed: merge seed into baseline)
+        # 5. CA merge_resolution (normal seed: merge seed into baseline; single representative for merge_resolution)
         task_merge_normal = {
             "seed_id": "seed-abc",
             "run_id": "ca-merge-002",
@@ -106,10 +109,10 @@ class PromptAuditTests(unittest.TestCase):
             "last_summary": {"notes": "Run completed.", "completed_at": "2025-01-15 12:00:00"},
         }
         prompt_merge_normal = run_module._build_merge_resolution_prompt(task_merge_normal)
-        _write_audit_file("06_ca_merge_resolution_normal", prompt_merge_normal)
-        generated.append("06_ca_merge_resolution_normal")
+        _write_audit_file("05_ca_merge_resolution_normal", prompt_merge_normal)
+        generated.append("05_ca_merge_resolution_normal")
 
-        # 7. CA metrics_recovery
+        # 6. CA metrics_recovery
         task_metrics = {
             "seed_id": "seed-abc",
             "run_id": "ca-metrics-001",
@@ -119,20 +122,20 @@ class PromptAuditTests(unittest.TestCase):
             "source_stderr_log_path": "pdca_system/history/logs/ca-gpu-001.stderr.log",
         }
         prompt_metrics = run_module._build_metrics_recovery_prompt(task_metrics)
-        _write_audit_file("07_ca_metrics_recovery", prompt_metrics)
-        generated.append("07_ca_metrics_recovery")
+        _write_audit_file("06_ca_metrics_recovery", prompt_metrics)
+        generated.append("06_ca_metrics_recovery")
 
-        # 8. CA baseline_measurement
+        # 7. CA baseline_measurement
         task_baseline = {
             "seed_id": BASELINE_SEED_ID,
             "run_id": "ca-baseline-001",
             "worktree_path": "pdca_system/history/worktrees/__baseline__",
         }
         prompt_baseline = run_module._build_prompt("ca", task_baseline, task_path_ca)
-        _write_audit_file("08_ca_baseline_measurement", prompt_baseline)
-        generated.append("08_ca_baseline_measurement")
+        _write_audit_file("07_ca_baseline_measurement", prompt_baseline)
+        generated.append("07_ca_baseline_measurement")
 
-        # 9. CA normal (adapt/fix, run, commit, report)
+        # 8. CA normal (adapt/fix, run, commit, report)
         task_ca_normal = {
             "seed_id": "seed-abc",
             "run_id": "ca-normal-001",
@@ -140,21 +143,35 @@ class PromptAuditTests(unittest.TestCase):
             "worktree_path": "pdca_system/history/worktrees/seed-abc",
         }
         prompt_ca_normal = run_module._build_prompt("ca", task_ca_normal, task_path_ca)
-        _write_audit_file("09_ca_normal", prompt_ca_normal)
-        generated.append("09_ca_normal")
+        _write_audit_file("08_ca_normal", prompt_ca_normal)
+        generated.append("08_ca_normal")
 
-        self.assertEqual(EXPECTED_PROMPT_COUNT, 9, "Expected 9 prompt variants (direct, pd×2, ca×6)")
-        self.assertEqual(len([g for g in generated if g.startswith("0")]), 9)
+        # 9. Stuck check (abnormal agent exit: backup agent decides if previous agent was stuck)
+        prompt_stuck = run_module._build_stuck_check_prompt(
+            prev_agent="claude",
+            stdout_path=None,
+            stderr_path=None,
+        )
+        _write_audit_file("09_stuck_check", prompt_stuck)
+        generated.append("09_stuck_check")
+
+        self.assertEqual(len(generated), EXPECTED_PROMPT_COUNT)
+        types_generated = {name[3:] for name in generated}  # "01_direct" -> "direct", etc.
+        self.assertEqual(
+            types_generated,
+            set(ALL_DAEMON_PROMPT_TYPES),
+            "Generated prompt types must exactly match ALL_DAEMON_PROMPT_TYPES (add new daemon prompt paths here)",
+        )
         self.assertTrue(self.audit_dir.is_dir(), "pdca_system/prompt_audit/ should exist after run")
 
         # Prompts that reference the target metric must contain the key directly (so agent sees the key)
         metric_prompt_files = (
             "02_pd_project_root",
             "03_pd_worktree",
-            "06_ca_merge_resolution_normal",
-            "07_ca_metrics_recovery",
-            "08_ca_baseline_measurement",
-            "09_ca_normal",
+            "05_ca_merge_resolution_normal",
+            "06_ca_metrics_recovery",
+            "07_ca_baseline_measurement",
+            "08_ca_normal",
         )
         for name in metric_prompt_files:
             path = self.audit_dir / f"{name}.txt"
@@ -166,11 +183,44 @@ class PromptAuditTests(unittest.TestCase):
                 f"Prompt {name} must contain the target metric key {TARGET_METRIC_KEY!r} directly (config.py); got audit file {path}",
             )
 
+        # Stuck-check prompt must require the backup agent to output previous_agent_stuck / reason / checks
+        stuck_path = self.audit_dir / "09_stuck_check.txt"
+        self.assertTrue(stuck_path.exists(), "09_stuck_check audit file should exist")
+        stuck_content = stuck_path.read_text(encoding="utf-8")
+        self.assertIn("previous_agent_stuck", stuck_content)
+        self.assertIn("stuck_check", stuck_content)
+        self.assertIn(run_module.SUMMARY_FILENAME, stuck_content)
+
+    def test_audit_covers_all_daemon_prompt_types(self) -> None:
+        """ALL_DAEMON_PROMPT_TYPES is the single source of truth; test_generate_* must generate each. No duplicates."""
+        self.assertEqual(len(ALL_DAEMON_PROMPT_TYPES), len(set(ALL_DAEMON_PROMPT_TYPES)), "no duplicate prompt types")
+        self.assertGreater(len(ALL_DAEMON_PROMPT_TYPES), 0)
+        # Cross-check: daemon's public prompt-building entry points (used by test_generate_*)
+        builders = ("_build_direct_code_prompt", "_build_stuck_check_prompt", "_build_sync_resolution_prompt",
+                    "_build_merge_resolution_prompt", "_build_metrics_recovery_prompt")
+        for b in builders:
+            self.assertTrue(hasattr(run_module, b), f"daemon must define {b}")
+
     def test_prompt_count_matches_documentation(self) -> None:
         """Ensure we document and generate the same number of variants as run._build_prompt."""
-        # From daemon._build_prompt docstring: PD, CA (sync, merge, metrics_recovery, baseline_measurement, normal)
-        # Plus: direct; P has 2 context variants (root vs worktree); merge has 2 (baseline vs normal)
-        self.assertEqual(EXPECTED_PROMPT_COUNT, 9)
+        self.assertEqual(EXPECTED_PROMPT_COUNT, len(ALL_DAEMON_PROMPT_TYPES))
+
+    def test_new_agent_kimi_in_daemon_config(self) -> None:
+        """Ensure the kimi agent is registered in daemon AGENT_CONFIGS, version probes, and exit0 checks."""
+        self.assertIn("kimi", run_module.AGENT_CONFIGS)
+        config = run_module.AGENT_CONFIGS["kimi"]
+        self.assertIn("cmd", config)
+        self.assertIsInstance(config["cmd"], list)
+        self.assertEqual(config["cmd"][0], "kimi")
+        self.assertIn(config["via"], ("stdin", "arg"))
+
+        self.assertIn("kimi", run_module.AGENT_VERSION_PROBES)
+        probes = run_module.AGENT_VERSION_PROBES["kimi"]
+        self.assertIsInstance(probes, list)
+        self.assertGreater(len(probes), 0)
+
+        self.assertIn("kimi", run_module.AGENT_EXIT0_FAILURE_CHECKS)
+        self.assertTrue(callable(run_module.AGENT_EXIT0_FAILURE_CHECKS["kimi"]))
 
 
 if __name__ == "__main__":

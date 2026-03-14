@@ -20,6 +20,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError:
+        pass
+
 import matplotlib
 import pandas as pd
 
@@ -118,17 +125,23 @@ STUCK_CHECK_LOG_TAIL_LINES = 80
 
 
 def _run_agent_probe(cmd: list[str], timeout: float = AGENT_DETECT_TIMEOUT_SECONDS) -> tuple[bool, str]:
+    run_kwargs: dict[str, Any] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": timeout,
+        "check": False,
+    }
+    if sys.platform == "win32":
+        run_kwargs["env"] = {
+            **os.environ,
+            "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
+        }
     try:
-        proc = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            check=False,
-        )
+        proc = subprocess.run(cmd, **run_kwargs)
     except (FileNotFoundError, OSError) as exc:
         return False, str(exc)
     except subprocess.TimeoutExpired:
@@ -648,6 +661,11 @@ def _invoke_agent(
         # immediately instead of block-buffering when stdout is a pipe; otherwise
         # stdout log only appears in one shot after the task finishes.
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        if sys.platform == "win32":
+            # Force Python-based agents (e.g. kimi) to use UTF-8 stdio so box-drawing
+            # and other Unicode don't trigger 'gbk' encode errors in Git Bash / CJK locales.
+            env["PYTHONUTF8"] = "1"
+            env["PYTHONIOENCODING"] = "utf-8"
         if agent_name == "opencode":
             project_root_glob = str(PROJECT_ROOT.resolve().as_posix()) + "/**"
             existing = {}
@@ -987,24 +1005,22 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
             return header + conflict_block + (
                 "BASELINE MEASUREMENT: establish the first reference metrics in the dedicated baseline worktree.\n"
                 "You must retry until the run completes successfully and you can report real metrics. Do not report empty metrics and stop.\n"
-                f"Python runner (use this): {runner_label}. ({ca_note})\n"
                 "If training fails with CUDA out of memory (OOM): the default batch size is for H100. Reduce DEVICE_BATCH_SIZE (and if needed TOTAL_BATCH_SIZE) in train.py so training fits in available VRAM, then rerun until the baseline run completes. Only trivial execution fixes (e.g. batch size) are allowed; do not change model architecture or training logic.\n"
                 "If you modified any files (e.g. batch size for OOM), you must commit those changes on the baseline branch before reporting. An uncommitted worktree causes the follow-up merge to fail.\n"
-                f"Use this Python executable for the canonical run: `{runner_label}`. Run the project's canonical command (see protocol; e.g. train.py or the script your project uses) with it, e.g. `{python_exe} <script> > training.log 2>&1`. Set your command/tool timeout to at least {CA_CANONICAL_RUN_TIMEOUT_SECONDS} seconds. After the run, inspect training.log to confirm completion and recover or verify metrics.\n"
+                f"Use this Python executable for the canonical run: `{runner_label}` ({ca_note}). Run the project's canonical command (see protocol; e.g. train.py or the script your project uses) with it, e.g. `{python_exe} <script> > training.log 2>&1`. Set your command/tool timeout to at least {CA_CANONICAL_RUN_TIMEOUT_SECONDS} seconds. After the run, inspect training.log to confirm completion and recover or verify metrics.\n"
                 f"Write the final result JSON to the file named {SUMMARY_FILENAME} in your current working directory once training has completed successfully. The metrics object must include the target metric key {TARGET_METRIC_KEY!r}. Include the current commit SHA in the summary (commit any changes first). Do not print this JSON to stdout or stderr. Use this shape (reference): "
                 f'{{"checks":["baseline_measurement"],"notes":"Measured the current baseline in the dedicated baseline worktree.","completed_at":"YYYY-MM-DD HH:MM:SS","commit_sha":"...","metrics":{{"{TARGET_METRIC_KEY}":1.239972,"training_seconds":300.1,"total_seconds":360.4,"startup_seconds":25.8,"peak_vram_mb":11967.8,"mfu_percent":2.15,"total_tokens_M":140.5,"num_steps":268,"num_params_M":11.5,"depth":4}}}}\n'
                 "If after all retries (including batch size reduction) metrics are still unavailable, only then write the same object with an empty metrics object and explain in notes.\n"
             )
         return header + conflict_block + (
             "You are working on the Check-Action stage.\n"
-            f"Python runner (use this): {runner_label}. ({ca_note})\n"
             "Do not put forward new ideas or optimize for better metrics. Your only goal is to make the Plan-Do-stage code run and report the result. "
             '"Adapt or fix" means: fix bugs, import/runtime errors, OOM (e.g. reduce batch size), and config/path issues only. '
             "Do not change model architecture, optimizer logic, hyperparameters, or training logic to improve results. "
             "The task \"prompt\" is for context only; do not treat it as a goal to achieve in this stage.\n\n"
             "Workflow:\n"
             "1. Adapt or fix the generated code in the seed worktree until it runs.\n"
-            f"2. Use this Python executable for the canonical run: `{runner_label}`. Run the project's canonical command (see protocol; e.g. train.py or the script your project uses) with it, e.g. `{python_exe} <script> > training.log 2>&1` (or `... 2>&1 | tee training.log` to also see output). Set your command/tool timeout to at least {CA_CANONICAL_RUN_TIMEOUT_SECONDS} seconds. After the run, inspect training.log to confirm completion and recover or verify metrics.\n"
+            f"2. Use this Python executable for the canonical run: `{runner_label}` ({ca_note}). Run the project's canonical command (see protocol; e.g. train.py or the script your project uses) with it, e.g. `{python_exe} <script> > training.log 2>&1` (or `... 2>&1 | tee training.log` to also see output). Set your command/tool timeout to at least {CA_CANONICAL_RUN_TIMEOUT_SECONDS} seconds. After the run, inspect training.log to confirm completion and recover or verify metrics.\n"
             "3. If it fails for a simple reason, fix and rerun.\n"
             "4. Create a git commit in the seed branch for your changes.\n"
             f"5. Write the final result JSON to the file named {SUMMARY_FILENAME} in your current working directory. The metrics object must include the target metric key {TARGET_METRIC_KEY!r}. Include the current commit SHA in the summary. Do not print this JSON to stdout or stderr. Use this shape (reference) and include numeric metric values when available: "
