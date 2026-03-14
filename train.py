@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import Ridge
+from sklearn.ensemble import GradientBoostingRegressor
 
 from prepare import (
     FORWARD_HOURS,
@@ -34,6 +34,7 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
     All return-based features are vol-normalized (divided by 168h rolling vol)
     so the model sees "how many sigma" rather than raw percentages.
+    This makes features more comparable across different volatility regimes.
 
     Returns:
         features: (N, n_features) array where N = len(df) - MAX_LOOKBACK.
@@ -43,9 +44,11 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     volume = df["volume"].values.astype(np.float64)
     ts = df["timestamp"].values
 
+    # Hourly returns (for lookback and volatility calculations)
     hourly_returns = np.zeros(len(close))
     hourly_returns[1:] = close[1:] / close[:-1] - 1.0
 
+    # 168h rolling vol for normalizing return-based features
     hr_series = pd.Series(hourly_returns)
     vol_168h = hr_series.rolling(168, min_periods=168).std().values
     vol_safe = np.where((vol_168h > 0) & ~np.isnan(vol_168h), vol_168h, 1.0)
@@ -58,12 +61,12 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         ret[lb:] = close[lb:] / close[:-lb] - 1.0
         feature_cols.append(ret / vol_safe)
 
-    # 2. Volatility (rolling std of hourly returns)
+    # 2. Volatility (rolling std of hourly returns) — raw, not normalized
     for w in VOLATILITY_WINDOWS:
         vol = hr_series.rolling(w, min_periods=w).std().values
         feature_cols.append(vol)
 
-    # 3. Vol ratio: 24h vol / 168h vol
+    # 3. Vol ratio: 24h vol / 168h vol (vol regime indicator)
     vol_24h = hr_series.rolling(24, min_periods=24).std().values
     vol_ratio = np.where(vol_safe > 0, vol_24h / vol_safe, 1.0)
     feature_cols.append(vol_ratio)
@@ -95,6 +98,7 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
     features = np.column_stack(feature_cols)
 
+    # Trim to valid rows (after max lookback)
     valid_start = MAX_LOOKBACK
     features = features[valid_start:]
     timestamps = ts[valid_start:]
@@ -103,7 +107,10 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
 
 def compute_targets(df: pd.DataFrame) -> np.ndarray:
-    """Compute 24-hour forward returns: close[t+24]/close[t] - 1."""
+    """Compute 24-hour forward returns: close[t+24]/close[t] - 1.
+
+    Returns array of same length as df. Last FORWARD_HOURS entries are NaN.
+    """
     close = df["close"].values.astype(np.float64)
     n = len(close)
     targets = np.full(n, np.nan)
@@ -116,21 +123,31 @@ def compute_targets(df: pd.DataFrame) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 _trained_model = None
-_feat_mean: np.ndarray | None = None
-_feat_std: np.ndarray | None = None
 
 
 def count_model_params(model=None) -> int:
-    """Return number of parameters (coefficients + intercept)."""
+    """Return approximate parameter count for the GBR model."""
     if model is None:
         model = _trained_model
     if model is None:
         return 0
-    return model.coef_.size + 1
+    n_params = 0
+    for estimators in model.estimators_:
+        for tree in estimators:
+            n_params += tree.tree_.node_count
+    return n_params
+
+
+# ---------------------------------------------------------------------------
+# Normalization
+# ---------------------------------------------------------------------------
+
+_feat_mean: np.ndarray | None = None
+_feat_std: np.ndarray | None = None
 
 
 def _normalize(features: np.ndarray, fit: bool = False) -> np.ndarray:
-    """Z-score normalize features."""
+    """Z-score normalize features. If fit=True, compute and store stats."""
     global _feat_mean, _feat_std
     if fit:
         _feat_mean = np.nanmean(features, axis=0)
@@ -147,7 +164,6 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     """Generate predictions on arbitrary OHLCV data."""
     features, timestamps = compute_features(df)
     features = np.nan_to_num(features, nan=0.0)
-    features = _normalize(features)
 
     model = _trained_model
     if model is None:
@@ -175,36 +191,54 @@ def main():
     features, timestamps = compute_features(train_df)
     targets = compute_targets(train_df)
 
+    # Align: targets need same trimming as features (MAX_LOOKBACK from start)
     targets = targets[MAX_LOOKBACK:]
 
+    # Drop rows where targets are NaN (last FORWARD_HOURS rows)
     valid = ~np.isnan(targets)
     features = features[valid]
     targets = targets[valid]
     train_timestamps = timestamps[valid]
 
-    # Winsorize targets at ±5%
+    # Winsorize targets at ±5% to reduce influence of extreme returns
     targets = np.clip(targets, -0.05, 0.05)
 
     features = np.nan_to_num(features, nan=0.0)
 
-    # Z-score normalize features
-    features = _normalize(features, fit=True)
+    # Compute vol-based sample weights: upweight high-vol periods
+    # so model learns to be more accurate during crashes
+    close = train_df["close"].values.astype(np.float64)
+    hourly_ret = np.zeros(len(close))
+    hourly_ret[1:] = close[1:] / close[:-1] - 1.0
+    vol_168 = pd.Series(hourly_ret).rolling(168, min_periods=168).std().values
+    vol_168 = vol_168[MAX_LOOKBACK:][valid]
+    vol_168 = np.nan_to_num(vol_168, nan=np.nanmean(vol_168))
+    sample_weights = vol_168 / np.mean(vol_168)
 
     print(f"  Training samples: {len(features)}, Features: {features.shape[1]}")
 
-    # --- Train Ridge ---
-    print("Training Ridge regression...")
+    # --- Train GBR ---
+    print("Training GBR...")
     train_start = time.time()
 
-    model = Ridge(alpha=1.0)
-    model.fit(features, targets)
+    model = GradientBoostingRegressor(
+        n_estimators=300,
+        max_depth=3,
+        learning_rate=0.01,
+        subsample=0.8,
+        min_samples_leaf=100,
+        max_features=0.8,
+        loss="squared_error",
+        random_state=42,
+    )
+    model.fit(features, targets, sample_weight=sample_weights)
 
     training_seconds = time.time() - train_start
     print(f"Training complete in {training_seconds:.1f}s")
 
     _trained_model = model
     n_params = count_model_params(model)
-    print(f"  Model parameters: {n_params}")
+    print(f"  Model parameters (node count): {n_params}")
 
     # --- Evaluate on train split ---
     print("Evaluating on training data...")
@@ -217,7 +251,6 @@ def main():
     val_df = load_val_data()
     val_features, val_timestamps = compute_features(val_df)
     val_features = np.nan_to_num(val_features, nan=0.0)
-    val_features = _normalize(val_features)
 
     val_preds = model.predict(val_features) * PRED_SCALE
 
