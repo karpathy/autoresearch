@@ -653,7 +653,7 @@ class FixAvatarDicebearImport(OptimizationStrategy):
 
     AVATAR_CTRL = TARGET_PROJECT / "assets" / "controllers" / "avatar_controller.js"
     OLD_IMPORT = 'import { initials } from "@dicebear/collection";'
-    NEW_IMPORT = 'import { initials } from "@dicebear/initials";'
+    NEW_IMPORT = 'import * as initials from "@dicebear/initials";'
 
     def apply(self):
         content = self.AVATAR_CTRL.read_text()
