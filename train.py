@@ -26,13 +26,15 @@ from prepare import (
 
 RETURN_LOOKBACKS = [1, 4, 12, 24, 72, 168]
 VOLATILITY_WINDOWS = [24, 168]
-TREND_MA_WINDOWS = [24, 72, 168]
-ZSCORE_WINDOWS = [72, 168]
 MAX_LOOKBACK = 168  # maximum lookback window (1 week)
 
 
 def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     """Compute features from OHLCV data.
+
+    All return-based features are vol-normalized (divided by 168h rolling vol)
+    so the model sees "how many sigma" rather than raw percentages.
+    This makes features more comparable across different volatility regimes.
 
     Returns:
         features: (N, n_features) array where N = len(df) - MAX_LOOKBACK.
@@ -46,71 +48,53 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     hourly_returns = np.zeros(len(close))
     hourly_returns[1:] = close[1:] / close[:-1] - 1.0
 
+    # 168h rolling vol for normalizing return-based features
+    hr_series = pd.Series(hourly_returns)
+    vol_168h = hr_series.rolling(168, min_periods=168).std().values
+    vol_safe = np.where((vol_168h > 0) & ~np.isnan(vol_168h), vol_168h, 1.0)
+
     feature_cols = []
 
-    # 1. Returns over lookback windows
+    # 1. Vol-normalized returns over lookback windows
     for lb in RETURN_LOOKBACKS:
         ret = np.full(len(close), np.nan)
         ret[lb:] = close[lb:] / close[:-lb] - 1.0
-        feature_cols.append(ret)
+        feature_cols.append(ret / vol_safe)
 
-    # 2. Volatility (rolling std of hourly returns)
-    hr_series = pd.Series(hourly_returns)
+    # 2. Volatility (rolling std of hourly returns) — raw, not normalized
     for w in VOLATILITY_WINDOWS:
         vol = hr_series.rolling(w, min_periods=w).std().values
         feature_cols.append(vol)
 
-    # 3. Volume ratio: 24h avg / 168h avg
+    # 3. Vol ratio: 24h vol / 168h vol (vol regime indicator)
+    vol_24h = hr_series.rolling(24, min_periods=24).std().values
+    vol_ratio = np.where(vol_safe > 0, vol_24h / vol_safe, 1.0)
+    feature_cols.append(vol_ratio)
+
+    # 4. Volume ratio: 24h avg / 168h avg
     vol_series = pd.Series(volume)
     vol_24 = vol_series.rolling(24, min_periods=24).mean().values
     vol_168 = vol_series.rolling(168, min_periods=168).mean().values
-    vol_ratio = np.where(vol_168 > 0, vol_24 / vol_168, 1.0)
-    feature_cols.append(vol_ratio)
+    volume_ratio = np.where(vol_168 > 0, vol_24 / vol_168, 1.0)
+    feature_cols.append(volume_ratio)
 
-    # 4. Price relative to moving averages (trend signals)
-    close_series = pd.Series(close)
-    for w in TREND_MA_WINDOWS:
-        ma = close_series.rolling(w, min_periods=w).mean().values
-        price_rel_ma = np.where(ma > 0, close / ma - 1.0, 0.0)
-        feature_cols.append(price_rel_ma)
-
-    # 5. Rolling z-scores (mean-reversion signals)
-    for w in ZSCORE_WINDOWS:
-        rolling_mean = close_series.rolling(w, min_periods=w).mean().values
-        rolling_std = close_series.rolling(w, min_periods=w).std().values
-        zscore = np.where(rolling_std > 0, (close - rolling_mean) / rolling_std, 0.0)
-        feature_cols.append(zscore)
-
-    # 6. Rolling max drawdown (crash detector) over 168h
-    rolling_max = close_series.rolling(168, min_periods=168).max().values
-    rolling_dd = np.where(rolling_max > 0, close / rolling_max - 1.0, 0.0)
-    feature_cols.append(rolling_dd)
-
-    # 6. High-low range volatility (24h average)
+    # 5. High-low range volatility (24h average, normalized by price)
     high = df["high"].values.astype(np.float64)
     low = df["low"].values.astype(np.float64)
     hl_range = np.where(close > 0, (high - low) / close, 0.0)
     hl_range_24 = pd.Series(hl_range).rolling(24, min_periods=24).mean().values
     feature_cols.append(hl_range_24)
 
-    # 7. Hour of day (cyclical)
+    # 6. Hour of day (cyclical)
     dt = pd.to_datetime(ts)
     hours = dt.hour
     feature_cols.append(np.sin(2 * np.pi * hours / 24))
     feature_cols.append(np.cos(2 * np.pi * hours / 24))
 
-    # 8. Day of week (cyclical) — crypto has weekly patterns
+    # 7. Day of week (cyclical)
     dow = dt.dayofweek
     feature_cols.append(np.sin(2 * np.pi * dow / 7))
     feature_cols.append(np.cos(2 * np.pi * dow / 7))
-
-    # 9. Momentum acceleration: 24h return - 72h return (trend strengthening?)
-    ret_24 = np.full(len(close), np.nan)
-    ret_24[24:] = close[24:] / close[:-24] - 1.0
-    ret_72 = np.full(len(close), np.nan)
-    ret_72[72:] = close[72:] / close[:-72] - 1.0
-    accel = ret_24 - ret_72 / 3  # normalize 72h to per-24h scale
-    feature_cols.append(accel)
 
     features = np.column_stack(feature_cols)
 
@@ -219,8 +203,6 @@ def main():
     # Winsorize targets at ±5% to reduce influence of extreme returns
     targets = np.clip(targets, -0.05, 0.05)
 
-    # GBR is invariant to feature scaling — skip normalization to avoid
-    # distribution mismatch between train/val periods.
     features = np.nan_to_num(features, nan=0.0)
 
     print(f"  Training samples: {len(features)}, Features: {features.shape[1]}")
