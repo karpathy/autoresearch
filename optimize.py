@@ -744,15 +744,94 @@ class ForceTradeTrackerHTTPS(OptimizationStrategy):
         return True
 
 
+class FixAccessibility(OptimizationStrategy):
+    """Fix multiple accessibility issues on the homepage.
+
+    1. Add role="tablist" to tab nav containers (weight 10)
+    2. Make carousel dot buttons meet 44px touch target minimum (weight 7)
+    3. Fix low-contrast color combinations (weight 7):
+       - PWA install button: bg-primary-500 → bg-primary-700 (2.2:1 → 5.1:1)
+       - Feature badges: bg-green/blue/amber-500 → darker -700 variants
+    """
+
+    name = "fix_accessibility"
+    description = "Fix role containment, touch targets, and color contrast"
+
+    TOP_PROFS = TARGET_PROJECT / "templates" / "home" / "top_professions.html.twig"
+    PROFS_LIST = TARGET_PROJECT / "templates" / "home" / "professions_list.html.twig"
+    CAROUSEL = TARGET_PROJECT / "templates" / "components" / "carousel_pagination.html.twig"
+    WHY_SNPWRKS = TARGET_PROJECT / "templates" / "components" / "why_snapwerks_for_homeowner.html.twig"
+    PWA_INSTALL = TARGET_PROJECT / "templates" / "components" / "pwa_installation.html.twig"
+
+    CHANGES = [
+        # (file, old, new)
+        # 1. role="tablist" for top_professions
+        (
+            TOP_PROFS,
+            '<div data-tabs-target="nav"\n                 class="flex overflow-x-auto hide-scrollbar scroll-smooth space-x-1"\n                 style="scrollbar-width:none; -ms-overflow-style:none;">',
+            '<div data-tabs-target="nav"\n                 role="tablist"\n                 class="flex overflow-x-auto hide-scrollbar scroll-smooth space-x-1"\n                 style="scrollbar-width:none; -ms-overflow-style:none;">',
+        ),
+        # 2. role="tablist" for professions_list
+        (
+            PROFS_LIST,
+            '<div data-tabs-target="nav"\n                 class="flex overflow-x-auto hide-scrollbar scroll-smooth space-x-1"\n                 style="scrollbar-width:none; -ms-overflow-style:none;">',
+            '<div data-tabs-target="nav"\n                 role="tablist"\n                 class="flex overflow-x-auto hide-scrollbar scroll-smooth space-x-1"\n                 style="scrollbar-width:none; -ms-overflow-style:none;">',
+        ),
+        # 3. Carousel dots: add min touch target size to button
+        (
+            CAROUSEL,
+            'class="group relative flex items-center justify-center"',
+            'class="group relative flex items-center justify-center min-w-[44px] min-h-[44px]"',
+        ),
+        # 4. Fix badge contrast: green-500 → green-700
+        (
+            WHY_SNPWRKS,
+            "'badge': 'bg-green-500'",
+            "'badge': 'bg-green-700'",
+        ),
+        (
+            WHY_SNPWRKS,
+            "'badge': 'bg-blue-500'",
+            "'badge': 'bg-blue-700'",
+        ),
+        (
+            WHY_SNPWRKS,
+            "'badge': 'bg-amber-500'",
+            "'badge': 'bg-amber-700'",
+        ),
+        # 5. PWA install button: bg-primary-500 → bg-primary-700
+        (
+            PWA_INSTALL,
+            'class: "bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium px-2 py-1.5 rounded transition-colors whitespace-nowrap"',
+            'class: "bg-primary-700 hover:bg-primary-800 text-white text-xs font-medium px-2 py-1.5 rounded transition-colors whitespace-nowrap"',
+        ),
+    ]
+
+    def apply(self):
+        applied = 0
+        for file_path, old, new in self.CHANGES:
+            content = file_path.read_text()
+            if old in content:
+                file_path.write_text(content.replace(old, new))
+                applied += 1
+        return applied > 0
+
+    def revert(self):
+        for file_path, old, new in self.CHANGES:
+            content = file_path.read_text()
+            if new in content:
+                file_path.write_text(content.replace(new, old))
+        return True
+
+
 def main():
     """Main entry point."""
     print("=" * 60)
-    print("Lighthouse Optimization - Experiments: toolbar + tradetracker HTTPS")
+    print("Lighthouse Optimization - Experiment: fix_accessibility")
     print("=" * 60)
     print()
 
-    run_optimization(DisableWebProfilerToolbar)
-    summary = run_optimization(ForceTradeTrackerHTTPS)
+    summary = run_optimization(FixAccessibility)
     print_summary(summary)
 
 
