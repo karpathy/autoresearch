@@ -1038,14 +1038,53 @@ class FixAccessibility5(OptimizationStrategy):
         return True
 
 
+class OptimizeLogoWebP(OptimizationStrategy):
+    """Switch logo from 330KB SVG (115KB compressed) to 8.8KB WebP.
+
+    The SVG logo wraps an 8000x4500px base64-encoded PNG, making it massive.
+    A pre-created logo.webp (295x72px, 8.8KB) is already compiled.
+    We do NOT add fetchpriority="high" to avoid the SI regression seen in 1a6792f.
+
+    Expected benefit: LCP element loads ~14x faster, reducing LCP from ~3.2s.
+    """
+
+    name = "optimize_logo_webp"
+    description = "Switch logo from 330KB SVG to 8.8KB WebP (no fetchpriority)"
+
+    HEADER = TARGET_PROJECT / "templates" / "_header.html.twig"
+
+    OLD = ('                <img src="{{ asset(\'images/logo.svg\') }}"\n'
+           '                     width="160"\n'
+           '                     height="80"\n'
+           '                     class="h-9 w-auto" alt="SnapWerks"\n'
+           '                />')
+    NEW = ('                <img src="{{ asset(\'images/logo.webp\') }}"\n'
+           '                     width="295"\n'
+           '                     height="72"\n'
+           '                     class="h-9 w-auto" alt="SnapWerks"\n'
+           '                />')
+
+    def apply(self):
+        content = self.HEADER.read_text()
+        if self.OLD not in content:
+            return False
+        self.HEADER.write_text(content.replace(self.OLD, self.NEW))
+        return True
+
+    def revert(self):
+        content = self.HEADER.read_text()
+        self.HEADER.write_text(content.replace(self.NEW, self.OLD))
+        return True
+
+
 def main():
     """Main entry point."""
     print("=" * 60)
-    print("Lighthouse Optimization - Experiment: fix_accessibility_5")
+    print("Lighthouse Optimization - Experiment: optimize_logo_webp")
     print("=" * 60)
     print()
 
-    summary = run_optimization(FixAccessibility5)
+    summary = run_optimization(OptimizeLogoWebP)
     print_summary(summary)
 
 

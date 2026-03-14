@@ -1,0 +1,18 @@
+commit	performance	accessibility	best_practices	seo	status	description
+c2450ad	59.0	85.0	81.0	61.0	keep	baseline
+3903c0f	59.0	85.0	81.0	92.0	keep	disable X-Robots-Tag noindex (Symfony debug mode)
+df215c5	87.0	85.0	77.0	92.0	keep	fix @dicebear/initials direct import (save ~500KB unused JS)
+bd6efb5	87.0	85.0	81.0	92.0	keep	fix namespace import for @dicebear/initials
+88e8b66	87.0	88.0	100.0	100.0	keep	disable debug toolbar + force TradeTracker HTTPS
+f3d9f1b	86.0	88.0	100.0	100.0	discard	adsense prod-only (no score gain)
+d708840	87.0	92.0	100.0	100.0	keep	fix accessibility: role=tablist, touch targets, color contrast
+2fa40f7	90.0	94.0	100.0	100.0	keep	fix CTA button contrast, heading order, JS touch targets
+c07ef3a	88.0	97.0	100.0	100.0	keep	fix popular-services touch targets with inline styles
+87fa7ab	87.0	97.0	100.0	100.0	discard	pro card contrast fix (no improvement)
+66f39df	89.0	97.0	100.0	100.0	keep	fix verified pro card contrast + locale switcher label-in-name
+954b13e	88.0	97.0	100.0	100.0	keep	fix primary-green contrast: active tabs, badges, customize button
+7c7bf06	88.0	100.0	100.0	100.0	keep	fix Accept All Cookies button contrast - accessibility now 100
+1a1ad7a	81.0	100.0	100.0	100.0	discard	adsense prod-only (HURTS performance again)
+1a6792f	81.0	100.0	100.0	100.0	discard	logo WebP with fetchpriority=high caused SI 10.5s regression
+e86c946	84.0	100.0	100.0	100.0	discard	lazy Firebase: score more variable, no improvement
+TBD	86.0	100.0	100.0	100.0	discard	logo WebP without fetchpriority still hurts performance (86 vs 88)

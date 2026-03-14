@@ -1,0 +1,25 @@
+============================================================
+Lighthouse Optimization - Experiment: lazy_load_firebase
+============================================================
+
+Running Lighthouse optimization experiment...
+Target: /home/kinit/Code/snapwerks
+URLs: ['http://localhost:8000/']
+
+Applying strategy: lazy_load_firebase - Lazy-load Firebase in FCM controller (guest/Lighthouse save ~22KB)
+
+Running Lighthouse audit...
+Running Lighthouse audit on: http://localhost:8000/
+  Using native Lighthouse CLI
+  ✓ Performance: 88.0, Accessibility: 100.0, Best Practices: 100.0, SEO: 100.0
+
+---
+performance:        88.0
+accessibility:      100.0
+best_practices:     100.0
+seo:                100.0
+pwa:                0.0
+total_score:        97.0
+audit_time_seconds: 12.5
+url:                http://localhost:8000/
+num_pages:          1
