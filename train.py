@@ -606,6 +606,9 @@ print()  # newline after \r training log
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
+# Save checkpoint before eval so training isn't lost if eval crashes
+torch.save(model.state_dict(), "checkpoint.pt")
+
 # Final eval
 model.eval()
 with autocast_ctx:
