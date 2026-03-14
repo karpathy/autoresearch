@@ -93,6 +93,7 @@ There is strong evidence that higher train scores do not indicate better general
 1. **Train sharpe inflation:** The best configs achieve sharpe 5-7 on train data. No realistic BTC strategy sustains sharpe > 2-3 — these numbers indicate the model is memorizing rather than learning.
 2. **val_pass is insufficient:** All experiments pass val regardless of quality, suggesting the val threshold is too permissive to distinguish between genuine signal and overfitting.
 3. **Monotonic depth-score relationship:** Score increases smoothly with depth without any sign of an overfitting plateau on val. This means val isn't providing a regularization signal.
+4. **Holdout confirms overfitting:** Holdout evaluation was run on six configs spanning the full score range. Higher train scores correlated with *worse* holdout performance. The most conservative config (exp17) performed best on holdout. This is why exp17 is the recommended baseline despite its modest train score.
 
 ## Open questions for Round 4
 
