@@ -16,6 +16,8 @@ The repo is deliberately kept small and only really has three files that matter:
 
 By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
 
+**What is val_bpb?** Bits per byte measures how well the model compresses unseen text — specifically, how many bits the model needs on average to predict each byte of the validation set. A perfect model that always predicts the next byte correctly would score 0; a model that guesses randomly over 256 possible bytes scores 8. Real language models land somewhere in between, typically between 0.9 and 1.2 on this setup. Lower means the model has learned better statistical patterns in the data. Unlike cross-entropy loss, bits per byte is independent of tokenizer vocabulary size, so you can fairly compare a model using a 4096-token vocabulary against one using a 32768-token vocabulary — both are measured against raw bytes, not tokens.
+
 If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/status/2030720614752039185) looks pretty good for a lot more context.
 
 ## Quick start
