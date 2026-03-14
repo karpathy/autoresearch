@@ -122,12 +122,10 @@ class ReturnPredictor(nn.Module):
     def __init__(self, n_features: int):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_features, 32),
+            nn.Linear(n_features, 16),
+            nn.BatchNorm1d(16),
             nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(32, 16),
-            nn.ReLU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.3),
             nn.Linear(16, 1),
         )
 
@@ -222,7 +220,7 @@ def main():
     train_start = time.time()
 
     model = ReturnPredictor(n_features)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-3)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100)
     loss_fn = nn.MSELoss()
 
