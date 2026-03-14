@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================================
 # autoresearch setup script
-# One-command setup for WSL + NVIDIA GPU environments
+# Interactive one-command setup — prompts for everything it needs.
 #
-# Usage (from inside WSL):
-#   bash scripts/setup.sh
-#   bash scripts/setup.sh --api-key sk-ant-api03-YOUR-KEY-HERE
-#   bash scripts/setup.sh --api-key sk-ant-... --data-dir /mnt/g/autoresearch-data
+# Usage:
+#   bash scripts/setup.sh              # interactive (prompts for everything)
+#   bash scripts/setup.sh --auto       # skip prompts, use defaults + env vars
 # ============================================================================
 
 set -e
@@ -14,6 +13,8 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
 NC='\033[0m'
 
 info()  { echo -e "${GREEN}[+]${NC} $1"; }
@@ -21,19 +22,31 @@ warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 error() { echo -e "${RED}[x]${NC} $1"; }
 
 # ---------------------------------------------------------------------------
-# Parse args
+# Parse args (flags still work for scripted/CI use)
 # ---------------------------------------------------------------------------
 API_KEY=""
 DATA_DIR=""
 DATASET=""
+AUTO_MODE=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --api-key) API_KEY="$2"; shift 2 ;;
         --data-dir) DATA_DIR="$2"; shift 2 ;;
         --dataset) DATASET="$2"; shift 2 ;;
+        --auto) AUTO_MODE=true; shift ;;
         *) error "Unknown arg: $1"; exit 1 ;;
     esac
 done
+
+# ---------------------------------------------------------------------------
+# Banner
+# ---------------------------------------------------------------------------
+echo ""
+echo -e "${BOLD}╔══════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}║         autoresearch setup               ║${NC}"
+echo -e "${BOLD}║   Autonomous AI research agent           ║${NC}"
+echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"
+echo ""
 
 # ---------------------------------------------------------------------------
 # Pre-flight checks
@@ -56,6 +69,48 @@ fi
 GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
 GPU_VRAM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)
 info "GPU detected: ${GPU_NAME} (${GPU_VRAM} MB VRAM)"
+
+# ---------------------------------------------------------------------------
+# Interactive prompts (skipped if --auto or flags provided)
+# ---------------------------------------------------------------------------
+if [[ "$AUTO_MODE" == false ]]; then
+    # API key
+    if [[ -z "$API_KEY" && -z "$ANTHROPIC_API_KEY" ]]; then
+        echo ""
+        echo -e "${CYAN}Anthropic API key${NC} (get one at console.anthropic.com)"
+        echo -n "  Paste key: "
+        read -r API_KEY
+        if [[ -z "$API_KEY" ]]; then
+            warn "No key entered. You can set it later in /etc/profile.d/autoresearch.sh"
+        fi
+    fi
+
+    # Dataset selection
+    if [[ -z "$DATASET" ]]; then
+        echo ""
+        echo -e "${CYAN}Which dataset?${NC}"
+        echo "  1) default  — FineWeb 10B (small, fast, ~2 min download)"
+        echo "  2) pubmed   — PubMed medical abstracts (27M abstracts, ~14.6GB download)"
+        echo -n "  Choice [1]: "
+        read -r ds_choice
+        case "$ds_choice" in
+            2|pubmed) DATASET="pubmed" ;;
+            *) DATASET="default" ;;
+        esac
+    fi
+
+    # Data directory (only ask for large datasets)
+    if [[ "$DATASET" != "default" && -z "$DATA_DIR" ]]; then
+        echo ""
+        echo -e "${CYAN}Where to store dataset?${NC} (${DATASET} is ~14.6GB)"
+        echo "  Default: ~/.cache/autoresearch/"
+        echo "  Or enter a path like /mnt/k/autoresearch-data"
+        echo -n "  Path [default]: "
+        read -r DATA_DIR
+    fi
+fi
+
+echo ""
 
 # ---------------------------------------------------------------------------
 # Install system deps
@@ -92,9 +147,6 @@ if [[ -n "$API_KEY" ]]; then
 elif [[ -n "$ANTHROPIC_API_KEY" ]]; then
     PROFILE_LINES="${PROFILE_LINES}\nexport ANTHROPIC_API_KEY=\"$ANTHROPIC_API_KEY\""
     info "Using existing ANTHROPIC_API_KEY from environment."
-else
-    warn "No API key provided. Set it later with:"
-    warn "  echo 'export ANTHROPIC_API_KEY=\"sk-ant-...\"' | sudo tee -a /etc/profile.d/autoresearch.sh"
 fi
 
 # Data directory (for large datasets on a different drive)
@@ -103,6 +155,12 @@ if [[ -n "$DATA_DIR" ]]; then
     PROFILE_LINES="${PROFILE_LINES}\nexport AUTORESEARCH_DATA_DIR=\"$DATA_DIR\""
     export AUTORESEARCH_DATA_DIR="$DATA_DIR"
     info "Data directory: $DATA_DIR"
+fi
+
+# Dataset preference
+if [[ -n "$DATASET" && "$DATASET" != "default" ]]; then
+    PROFILE_LINES="${PROFILE_LINES}\nexport AUTORESEARCH_DATASET=\"$DATASET\""
+    export AUTORESEARCH_DATASET="$DATASET"
 fi
 
 echo -e "$PROFILE_LINES" | sudo tee "$PROFILE_SCRIPT" > /dev/null
@@ -140,42 +198,27 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Verify everything works
+# Done!
 # ---------------------------------------------------------------------------
 echo ""
-echo "============================================"
-info "Setup complete! Verifying..."
-echo "============================================"
-
+echo -e "${BOLD}╔══════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}║           Setup complete!                ║${NC}"
+echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"
 echo ""
 echo "  GPU:        ${GPU_NAME} (${GPU_VRAM} MB)"
 echo "  Python:     $(python3 --version 2>&1)"
 echo "  uv:         $(uv --version 2>&1)"
-echo "  PyTorch:    $(uv run python3 -c 'import torch; print(torch.__version__)' 2>/dev/null || echo 'not yet')"
-echo "  CUDA:       $(uv run python3 -c 'import torch; print(torch.cuda.is_available())' 2>/dev/null || echo 'checking...')"
-
+echo "  Dataset:    ${DATASET:-default}"
 if [[ -n "$ANTHROPIC_API_KEY" ]]; then
     echo "  API Key:    ...${ANTHROPIC_API_KEY: -8}"
 else
-    echo "  API Key:    NOT SET (provide with --api-key)"
+    echo "  API Key:    NOT SET"
 fi
 echo ""
-
-# ---------------------------------------------------------------------------
-# Print next steps
-# ---------------------------------------------------------------------------
-echo "============================================"
-echo "  NEXT STEPS"
-echo "============================================"
-echo ""
+echo -e "  ${GREEN}Run the agent:${NC}"
 if [[ -n "$DATASET" && "$DATASET" != "default" ]]; then
-    echo "  # Run the agent on ${DATASET}:"
     echo "  uv run scripts/agent.py --dataset ${DATASET}"
 else
-    echo "  # Run the autonomous agent:"
     echo "  uv run scripts/agent.py"
 fi
-echo ""
-echo "  # Resume a previous run:"
-echo "  uv run scripts/agent.py --resume"
 echo ""
