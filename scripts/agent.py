@@ -94,8 +94,28 @@ def wait_for_cool_gpu(max_wait=300):
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TRAIN_PY = os.path.join(PROJECT_ROOT, "train.py")
-RESULTS_TSV = os.path.join(PROJECT_ROOT, "agent_results.tsv")
-LOG_FILE = os.path.join(PROJECT_ROOT, "agent.log")
+
+# These get set by _init_dataset_paths() after arg parsing
+RESULTS_TSV = ""
+LOG_FILE = ""
+STATE_FILE = ""
+
+
+def _init_dataset_paths(dataset_name):
+    """Set results/log/state file paths based on dataset. Default dataset uses
+    original filenames for backwards compatibility."""
+    global RESULTS_TSV, LOG_FILE, STATE_FILE
+    if dataset_name and dataset_name != "default":
+        suffix = f"_{dataset_name}"
+    else:
+        suffix = ""
+    RESULTS_TSV = os.path.join(PROJECT_ROOT, f"agent_results{suffix}.tsv")
+    LOG_FILE = os.path.join(PROJECT_ROOT, f"agent{suffix}.log")
+    STATE_FILE = os.path.join(PROJECT_ROOT, f"agent_state{suffix}.json")
+
+
+# Default until arg parsing overrides
+_init_dataset_paths(os.environ.get("AUTORESEARCH_DATASET", "default"))
 
 
 def read_file(path):
@@ -106,9 +126,6 @@ def read_file(path):
 def write_file(path, content):
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
-
-
-STATE_FILE = os.path.join(PROJECT_ROOT, "agent_state.json")
 
 
 def log_to_file(msg):
@@ -219,7 +236,8 @@ def parse_step_line(line):
 # Run experiment with live streaming
 # ---------------------------------------------------------------------------
 
-TRAIN_TIMEOUT = 600  # kill training if it takes longer than 10 min wall clock
+TRAIN_TIMEOUT = 900  # kill training if it takes longer than 15 min wall clock
+                     # (torch.compile can take 3-5 min on first run + 5 min training)
 
 
 def validate_train_py():
@@ -615,6 +633,10 @@ def build_dashboard(state):
         Layout(name="training", ratio=3),
         Layout(name="leaderboard", ratio=2),
     )
+    layout["right"].split_column(
+        Layout(name="gpu_panel", ratio=2),
+        Layout(name="sample_panel", ratio=1),
+    )
 
     # --- Header ---
     phase = state.get("phase", "IDLE")
@@ -872,23 +894,27 @@ def build_dashboard(state):
     g.append(f"Abort {GPU_TEMP_ABORT}C  ", style="dim")
     g.append(f"VRAM {VRAM_LIMIT_MB}MB\n", style="dim")
 
-    # Sample text output
+    layout["gpu_panel"].update(Panel(g, title="[bold]Hardware Monitor[/]", border_style="bright_blue"))
+
+    # --- Model Output panel ---
     sample = state.get("sample_text", "")
+    s = Text()
     if sample:
-        g.append(f"\n")
-        g.append(f"  Sample Output\n", style="bold")
-        # Word-wrap the sample text to ~35 chars per line
+        s.append(f"\n")
+        # Word-wrap the sample text to ~38 chars per line
         words = sample.split()
         line = "  "
         for word in words:
             if len(line) + len(word) + 1 > 38:
-                g.append(f"{line}\n", style="italic")
+                s.append(f"{line}\n", style="italic bright_white")
                 line = "  "
             line += word + " "
         if line.strip():
-            g.append(f"{line}\n", style="italic")
+            s.append(f"{line}\n", style="italic bright_white")
+    else:
+        s.append(f"\n  Waiting for first training run...\n", style="dim")
 
-    layout["right"].update(Panel(g, title="[bold]Hardware Monitor[/]", border_style="bright_blue"))
+    layout["sample_panel"].update(Panel(s, title="[bold bright_green]Model Output[/]", border_style="bright_green"))
 
     # --- Footer (log) ---
     log_lines = state.get("log_lines", deque())
@@ -920,6 +946,7 @@ def main():
 
     if args.dataset:
         os.environ["AUTORESEARCH_DATASET"] = args.dataset
+        _init_dataset_paths(args.dataset)
 
     call_llm = call_local if args.local else call_claude
     llm_name = "LM Studio (local)" if args.local else "Claude Sonnet"
@@ -993,8 +1020,12 @@ def main():
         state["log_lines"].append(f"  {msg}")
         log_to_file(msg)
 
+    _last_gpu_poll = [0.0]
     def update_gpu():
-        state["gpu"] = get_gpu_stats()
+        now = time.time()
+        if now - _last_gpu_poll[0] >= 2.0:  # poll GPU every 2s, not every frame
+            state["gpu"] = get_gpu_stats()
+            _last_gpu_poll[0] = now
 
     def on_training_line(line):
         """Callback for each line of training output."""
@@ -1015,7 +1046,7 @@ def main():
     console = Console()
     console.clear()
 
-    with Live(build_dashboard(state), console=console, refresh_per_second=2, screen=True) as live:
+    with Live(build_dashboard(state), console=console, refresh_per_second=2, screen=True, vertical_overflow="crop") as live:
 
         def refresh():
             try:
@@ -1030,6 +1061,8 @@ def main():
             state["phase"] = phase_name
             state["phase_start"] = time.time()
             state["phase_elapsed"] = 0
+            if phase_name not in ("TRAINING", "BASELINE"):
+                state["metrics"] = None
 
         # Establish baseline if needed
         history = get_results_history()
@@ -1067,6 +1100,8 @@ def main():
             if results and "val_bpb" in results:
                 sha = git_commit("baseline")
                 log_result(sha, results["val_bpb"], float(results.get("peak_vram_mb", 0)) / 1024, "keep", "baseline")
+                if "sample_text" in results:
+                    state["sample_text"] = str(results["sample_text"])[:300]
                 add_log(f"Baseline: val_bpb = {results['val_bpb']:.6f}")
                 history = get_results_history()
                 state["history"] = history
@@ -1157,6 +1192,8 @@ def main():
             # Train
             set_phase("TRAINING")
             state["metrics"] = None
+            state["sample_text"] = ""
+            state["loss_history"] = []
             write_crash_state(i + 1, description, "TRAINING")
             refresh()
 
@@ -1236,9 +1273,9 @@ def main():
             if i < args.max_runs - 1:
                 set_phase("COOLING")
                 add_log(f"Cooling {COOLDOWN_SECONDS}s...")
-                for _ in range(COOLDOWN_SECONDS * 2):
+                for _ in range(COOLDOWN_SECONDS):
                     refresh()
-                    time.sleep(0.5)
+                    time.sleep(1)
 
         # Final
         set_phase("DONE")

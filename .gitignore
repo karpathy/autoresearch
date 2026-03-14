@@ -22,10 +22,13 @@ dev/
 # Results file
 results.tsv
 
-# Agent runtime artifacts
+# Agent runtime artifacts (default + per-dataset variants)
 agent.log
+agent_*.log
 agent_state.json
+agent_state_*.json
 agent_results.tsv
+agent_results_*.tsv
 
 # Data (downloaded by prepare.py)
 data/
