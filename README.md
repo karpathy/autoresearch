@@ -13,48 +13,55 @@ This fork adds `scripts/agent.py` — a standalone autonomous agent with a Rich 
 **Requirements:** NVIDIA GPU, WSL2 (Ubuntu), Python 3.10+
 
 ```bash
-# Clone and setup (one command does everything)
 git clone https://github.com/bmdhodl/autoresearch.git
 cd autoresearch
-bash scripts/setup.sh --api-key sk-ant-api03-YOUR-KEY-HERE
+bash scripts/setup.sh
+```
 
-# Run the agent
+The interactive setup prompts for your Anthropic API key, dataset choice, and data directory. Then:
+
+```bash
 uv run scripts/agent.py
 ```
 
-`setup.sh` installs system deps, uv, Python packages, downloads training data, and configures git credentials.
+For overnight runs, keep your PC awake with `python scripts/keep_awake.py` in a separate Windows terminal.
 
 ## How it works
 
 1. Agent asks Claude Sonnet to propose a code change to `train.py`
-2. Applies the change, commits it, runs training for 5 minutes
+2. Applies the change, validates syntax, commits it, runs training for 5 minutes
 3. If val_bpb improves → keep and push. If not → revert.
 4. Repeat. All results logged to `agent_results.tsv`.
+
+The agent sends the full experiment history to the LLM each round, with categorized summaries, near-miss highlighting, and known-good techniques from community research to guide proposals.
 
 ## Project structure
 
 ```
-train.py          — model + optimizer + training loop (agent modifies this)
-prepare.py        — data prep + evaluation utilities (read-only)
-program.md        — original agent instructions
+train.py              — model + optimizer + training loop (agent modifies this)
+prepare.py            — data prep + evaluation utilities (read-only)
+program.md            — original agent instructions (for Claude Code sessions)
 scripts/
-  agent.py        — autonomous research agent with dashboard
-  setup.sh        — one-command install script
-  dashboard.py    — standalone dashboard wrapper
-pyproject.toml    — dependencies
+  agent.py            — autonomous research agent with dashboard
+  setup.sh            — interactive one-command install script
+  keep_awake.py       — prevents Windows from sleeping during runs
+  dashboard.py        — standalone dashboard wrapper
+pyproject.toml        — dependencies
 ```
 
 ## Agent features
 
-- **Rich TUI dashboard** — live training metrics, GPU stats, experiment history
-- **GPU thermal management** — pauses between experiments, aborts if GPU overheats
-- **Crash recovery** — logs state to disk, resumes cleanly after crashes
+- **Rich TUI dashboard** — live training metrics, GPU stats, experiment history, model output
+- **GPU auto-detection** — scales model depth, batch size, and VRAM limits to your hardware
+- **GPU thermal management** — pauses if GPU overheats, cools between experiments
+- **Crash recovery** — logs state to disk, resumes cleanly after crashes or reboots
 - **Smart experiment history** — categorized summaries, near-miss detection, known-good techniques
 - **Adaptive creativity** — increases LLM temperature after consecutive failures
 - **Parallel cooling + thinking** — calls LLM while GPU cools, saving ~45s per experiment
+- **Per-dataset isolation** — separate results, logs, and state files per dataset
 - **Auto-push** — pushes kept improvements to GitHub automatically
 - **15-minute hard timeout** — kills hung training runs (e.g. from PC sleep)
-- **Auto-detects GPU** — adapts VRAM limits and prompt to your hardware
+- **Sample text generation** — generates and logs 100-token samples after each experiment
 
 ## Agent usage
 
@@ -64,6 +71,7 @@ uv run scripts/agent.py --resume         # continue from prior experiments
 uv run scripts/agent.py --max-runs 50    # cap total experiments
 uv run scripts/agent.py --dataset pubmed # train on PubMed medical abstracts
 uv run scripts/agent.py --no-dashboard   # text-only mode
+uv run scripts/agent.py --local          # use local LM Studio instead of Claude
 ```
 
 ## Custom datasets
@@ -71,26 +79,41 @@ uv run scripts/agent.py --no-dashboard   # text-only mode
 Train on PubMed medical abstracts (27.7M abstracts, ~14.6GB download):
 
 ```bash
-# Download data to a specific drive (default: ~/.cache/autoresearch/)
-export AUTORESEARCH_DATA_DIR=/mnt/g/autoresearch-data
-uv run prepare.py --dataset pubmed
+# Setup handles everything — just pick "pubmed" when prompted:
+bash scripts/setup.sh
 
-# Or pass it via setup.sh
-bash scripts/setup.sh --api-key sk-ant-... --data-dir /mnt/g/autoresearch-data
+# Or non-interactive:
+bash scripts/setup.sh --api-key sk-ant-... --dataset pubmed --data-dir /mnt/k/autoresearch-data
+
+# Then run:
+uv run scripts/agent.py --dataset pubmed
 ```
 
 ## GPU auto-detection
 
-`train.py` auto-detects your GPU and scales model size accordingly:
+`train.py` auto-detects your GPU via pynvml and scales the model accordingly:
 
-| VRAM | Depth | Batch Size | Examples |
-|------|-------|------------|----------|
-| 8GB  | 8     | 8          | RTX 3070, 3060 8GB |
-| 12GB | 10    | 12         | RTX 4070, 3060 12GB |
-| 16GB | 12    | 16         | RTX 5070 Ti, 4080 |
-| 24GB+| 16    | 24         | RTX 4090, A5000 |
+| VRAM  | Depth | Batch Size | Examples                  |
+|-------|-------|------------|---------------------------|
+| 8GB   | 8     | 8          | RTX 3070, 3060 8GB        |
+| 12GB  | 10    | 12         | RTX 4070, 3060 12GB       |
+| 16GB  | 12    | 16         | RTX 5070 Ti, 4080         |
+| 24GB+ | 16    | 24         | RTX 4090, A5000           |
 
 Override with env vars if needed: `AUTORESEARCH_DEPTH`, `AUTORESEARCH_BATCH_SIZE`, `AUTORESEARCH_VRAM_LIMIT`.
+
+## Setup script
+
+`scripts/setup.sh` is interactive by default — it prompts for everything:
+
+```
+bash scripts/setup.sh              # interactive (prompts for key, dataset, data dir)
+bash scripts/setup.sh --auto       # skip prompts, use defaults + env vars
+```
+
+It handles: system deps, uv, Python packages, data download, git credentials, and persistent env vars.
+
+Flags for scripted/CI use: `--api-key`, `--dataset`, `--data-dir`, `--auto`.
 
 ## Design choices
 
