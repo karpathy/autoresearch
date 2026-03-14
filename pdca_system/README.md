@@ -14,9 +14,9 @@ All commands in this document are run from the **project root**. Use your projec
 2. **Git:** If the project has no `.git` directory (not a git repo yet), run `git init`, then add all project files to git (e.g. `git add .`) so the project’s original files, `pdca_system/`, and `.gitignore` are tracked. If the project is already a repo, add `pdca_system/` and any new or changed project files to git (`git add pdca_system` or `git add .` as appropriate). Add the following to your project’s `.gitignore` so runtime artifacts are not committed:
    ```
    pdca_system/history/
-   pdca_system/prompt_audit/
    pdca_system/baseline_branches.json
    pdca_system/baseline_metrics.json
+   autoresearch_summary.json
    ```
 3. **Install** PDCA dependencies from the project root (use your project's runner):
    ```bash
