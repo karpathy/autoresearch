@@ -54,23 +54,36 @@ TIMELINE_SHORT_MESSAGES = {
     "seed.created": "Seed created",
     "seed.updated": "Seed updated",
     "seed.worktree_ready": "Worktree ready",
+    "seed.reconciled": "Seed state reconciled",
     "ralph.enabled": "Ralph loop enabled",
     "ralph.disabled": "Ralph loop disabled",
     "ralph.requeued": "Ralph loop queued next Plan-Do",
+    "ralph.requeue_failed": "Ralph loop could not queue next Plan-Do",
     "ralph.max_reached": "Ralph loop max iterations reached",
+    "ralph.worktree_restored": "Ralph: worktree restored before Plan-Do",
+    "ralph.worktree_restore_failed": "Ralph: worktree restore failed",
+    "ralph.start_failed": "Ralph loop could not queue initial Plan-Do",
     "pd.queued": "Plan-Do queued",
     "pd.started": "Plan-Do started",
     "pd.completed": "Plan-Do completed",
     "pd.failed": "Plan-Do failed",
     "ca.queued": "Check-Action queued",
+    "ca.merge_resolution_queued": "Check-Action (merge resolution) queued",
     "ca.started": "Check-Action started",
     "ca.completed": "Check-Action completed",
+    "ca.merge_resolution_completed": "Check-Action (merge resolution) completed",
     "ca.merge_failed": "Merge into baseline failed",
     "pd.sync_resolution_queued": "Sync failed; merge resolution queued",
     "pd.sync_resolution_done": "Sync resolution done; Plan-Do re-queued",
     "pd.released": "Baseline ready; Plan-Do queued",
     "pd.waiting_for_baseline": "Waiting for baseline",
+    "baseline.queued": "Baseline Check-Action queued",
     "ca.failed": "Check-Action failed",
+    "ca.metrics_recovery_queued": "Check-Action metrics recovery queued",
+    "ca.salvaged": "Check-Action run salvaged (metrics accepted)",
+    "direct_code.queued": "Direct code agent queued",
+    "direct_code.started": "Direct code agent started",
+    "direct_code.completed": "Direct code agent completed",
     "direct_code.failed": "Direct code failed",
 }
 
@@ -840,7 +853,7 @@ class WorkflowService:
         self.run_repo.save(run)
         self.seed_repo.append_event(
             seed.seed_id,
-            "ca.queued",
+            "ca.merge_resolution_queued" if merge_resolution else "ca.queued",
             "Queued Check-Action for merge conflict resolution."
             if merge_resolution
             else "Queued Check-Action for metrics recovery from saved logs."
@@ -1273,6 +1286,7 @@ class WorkflowService:
         run = self.require_run(run_id)
         summary = self.load_summary(Path(summary_path))
         metrics = self.extract_ca_metrics_from_summary(summary)
+        ca_done_kind = "ca.merge_resolution_completed" if merge_resolution else "ca.completed"
         branch_metrics = self.metrics_repo.get_for_branch(seed.baseline_branch)
         best_key = best_target_metric_key()
         best_target_metric = (
@@ -1358,7 +1372,7 @@ class WorkflowService:
                 self.seed_repo.save(seed)
                 self.seed_repo.append_event(
                     seed.seed_id,
-                    "ca.completed",
+                    ca_done_kind,
                     event_message,
                     signal=signal,
                     metrics=metrics,
@@ -1387,7 +1401,7 @@ class WorkflowService:
                 self.seed_repo.save(seed)
                 self.seed_repo.append_event(
                     seed.seed_id,
-                    "ca.completed",
+                    ca_done_kind,
                     "Baseline measurement completed (no promotion); not merged into baseline branch.",
                     signal=signal,
                     metrics=metrics,
@@ -1418,7 +1432,7 @@ class WorkflowService:
                 self.seed_repo.save(seed)
                 self.seed_repo.append_event(
                     seed.seed_id,
-                    "ca.completed",
+                    ca_done_kind,
                     f"Merge resolution Check-Action completed; __baseline__ merged or already up to date with {target_branch}.",
                     signal=signal,
                     metrics=metrics,
@@ -1456,7 +1470,7 @@ class WorkflowService:
                 self.seed_repo.save(seed)
                 self.seed_repo.append_event(
                     seed.seed_id,
-                    "ca.completed",
+                    ca_done_kind,
                     event_message,
                     signal=signal,
                     metrics=metrics,
@@ -1490,7 +1504,7 @@ class WorkflowService:
                     self.run_repo.save(run)
                     self.seed_repo.append_event(
                         seed.seed_id,
-                        "ca.completed",
+                        ca_done_kind,
                         "Baseline measurement completed but merge failed; conflict-resolution Check-Action queued.",
                         signal=signal,
                         metrics=metrics,
@@ -1512,7 +1526,7 @@ class WorkflowService:
                 self.run_repo.save(run)
                 self.seed_repo.append_event(
                     seed.seed_id,
-                    "ca.completed",
+                    ca_done_kind,
                     "Baseline measurement completed; merge into baseline branch failed again after resolution run (loop avoided). Baseline metrics recorded; manual merge may be needed.",
                     signal=signal,
                     metrics=metrics,
@@ -1587,7 +1601,7 @@ class WorkflowService:
                         self.run_repo.save(run)
                         self.seed_repo.append_event(
                             seed.seed_id,
-                            "ca.completed",
+                            ca_done_kind,
                             "Check-Action run completed but merge failed; conflict-resolution Check-Action queued.",
                             signal=signal,
                             metrics=metrics,
@@ -1600,7 +1614,7 @@ class WorkflowService:
                     self.run_repo.save(run)
                     self.seed_repo.append_event(
                         seed.seed_id,
-                        "ca.completed",
+                        ca_done_kind,
                         "Conflict-resolution Check-Action completed but merge still failed; proceeding to next Plan-Do run.",
                         signal=signal,
                         metrics=metrics,
@@ -1642,7 +1656,7 @@ class WorkflowService:
         event_commit_sha = merge_commit_sha if merge_commit_sha else run.summary.get("commit_sha")
         self.seed_repo.append_event(
             seed.seed_id,
-            "ca.completed",
+            ca_done_kind,
             event_message,
             signal=signal,
             metrics=metrics,

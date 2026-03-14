@@ -1098,54 +1098,90 @@ def _regenerate_progress_png() -> None:
         if valid.empty:
             return
 
-        # Attach idea to points: use "idea" column, else "description" (old TSV), else empty
+        col = TARGET_METRIC_KEY
+        baseline_val = float(valid.loc[0, col])
+        kept = valid[valid["status"] == "KEEP"]
+        best = (
+            float(kept[col].min() if TARGET_METRIC_LOWER_IS_BETTER else kept[col].max())
+            if not kept.empty
+            else baseline_val
+        )
+        margin = (abs(baseline_val - best) * 0.15) if baseline_val != best else 0.005
+        # Only plot points in the "interesting" region (near or better than baseline), like analysis.ipynb
+        tol = max(margin * 0.33, 1e-9)
+        if TARGET_METRIC_LOWER_IS_BETTER:
+            in_range = valid[valid[col] <= baseline_val + tol]
+        else:
+            in_range = valid[valid[col] >= baseline_val - tol]
+
+        # Labels: use "idea" or "description", truncate for display (match notebook 45 chars)
         if "idea" in valid.columns:
             valid["_label"] = valid["idea"].fillna("").astype(str).str.strip()
         elif "description" in valid.columns:
             valid["_label"] = valid["description"].fillna("").astype(str).str.strip()
         else:
             valid["_label"] = ""
-        valid["_label"] = valid["_label"].str[:50]  # truncate for display
+        valid["_label"] = valid["_label"].str[:45]
 
-        col = TARGET_METRIC_KEY
-        baseline_val = valid.loc[0, col]
-        kept = valid[valid["status"] == "KEEP"]
-        best = (
-            float(kept[col].min() if TARGET_METRIC_LOWER_IS_BETTER else kept[col].max())
-            if not kept.empty
-            else float(baseline_val)
-        )
+        disc = in_range[in_range["status"] == "DISCARD"]
+        kept_v = in_range[in_range["status"] == "KEEP"]
         cum_series = kept[col].cummin() if TARGET_METRIC_LOWER_IS_BETTER else kept[col].cummax()
 
-        fig, ax = plt.subplots(figsize=(14, 7))
-        ax.scatter(valid.index, valid[col], c="#94a3b8", s=18, alpha=0.6, label="Runs")
+        fig, ax = plt.subplots(figsize=(16, 8))
+        # Discarded as faint background (match analysis.ipynb)
+        ax.scatter(
+            disc.index, disc[col],
+            c="#cccccc", s=12, alpha=0.5, zorder=2, label="Discarded",
+        )
+        # Kept as prominent green dots with black edge (match analysis.ipynb)
+        if not kept_v.empty:
+            ax.scatter(
+                kept_v.index, kept_v[col],
+                c="#2ecc71", s=50, zorder=4, label="Kept",
+                edgecolors="black", linewidths=0.5,
+            )
+        # Running best step line: always from all kept experiments
         if not kept.empty:
-            ax.scatter(kept.index, kept[col], c="#38bdf8", s=42, label="Promoted")
-            ax.step(kept.index, cum_series, where="post", color="#0ea5e9", linewidth=2)
-        # Attach idea to each point (rotated -45° so long text fits)
-        for idx, row in valid.iterrows():
-            if row["_label"]:
-                ax.annotate(
-                    row["_label"],
-                    (idx, row[col]),
-                    xytext=(0, 6),
-                    textcoords="offset points",
-                    fontsize=7,
-                    alpha=0.9,
-                    ha="center",
-                    rotation=-45,
-                )
-        ax.set_xlabel("Experiment #")
+            ax.step(
+                kept.index, cum_series, where="post",
+                color="#27ae60", linewidth=2, alpha=0.7, zorder=3, label="Running best",
+            )
+        # Label each kept experiment with its description (match notebook: only kept, rotation 30)
+        for idx, row in kept.iterrows():
+            label = (row["_label"] or "").strip()
+            if len(label) >= 45:
+                label = label[:42] + "..."
+            if not label:
+                continue
+            ax.annotate(
+                label,
+                (idx, row[col]),
+                xytext=(6, 6),
+                textcoords="offset points",
+                fontsize=8.0,
+                color="#1a7a3a",
+                alpha=0.9,
+                rotation=30,
+                ha="left",
+                va="bottom",
+            )
+
+        n_total = len(valid)
+        n_kept = len(kept)
         direction = " (lower is better)" if TARGET_METRIC_LOWER_IS_BETTER else " (higher is better)"
-        ax.set_ylabel(f"{TARGET_METRIC_LABEL}{direction}")
-        ax.set_title("Component System Progress")
-        margin = (float(baseline_val) - best) * 0.15 if baseline_val != best else 0.005
-        if TARGET_METRIC_LOWER_IS_BETTER:
-            ax.set_ylim(best - margin, float(baseline_val) + margin)
-        else:
-            ax.set_ylim(float(baseline_val) - margin, best + margin)
+        ax.set_xlabel("Experiment #", fontsize=12)
+        ax.set_ylabel(f"{TARGET_METRIC_LABEL}{direction}", fontsize=12)
+        ax.set_title(
+            f"Autoresearch Progress: {n_total} Experiments, {n_kept} Kept Improvements",
+            fontsize=14,
+        )
+        ax.legend(loc="upper right", fontsize=9)
         ax.grid(True, alpha=0.2)
-        ax.legend(loc="upper right")
+
+        if TARGET_METRIC_LOWER_IS_BETTER:
+            ax.set_ylim(best - margin, baseline_val + margin)
+        else:
+            ax.set_ylim(baseline_val - margin, best + margin)
         plt.tight_layout()
         plt.savefig(PROGRESS_PNG, dpi=150, bbox_inches="tight")
         plt.close(fig)

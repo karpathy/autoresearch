@@ -20,7 +20,30 @@
           </a>
           <p class="mt-1 text-sm text-slate-400">Seed -> Plan-Do -> Check-Action orchestration with FastAPI, HTMX, Alpine, and Tailwind.</p>
         </div>
-        <nav class="flex items-center gap-4 text-sm text-slate-300" x-data="{ settingsOpen: false }">
+        <nav class="flex items-center gap-8 text-sm text-slate-300" x-data="{ settingsOpen: false, figureOpen: false, progressUrl: '{{ request.url_for("progress_png") }}' }">
+          <button
+            type="button"
+            class="hover:text-white"
+            @click="figureOpen = true; $nextTick(() => { $refs.figureFallback.classList.add('hidden'); $refs.figureImg.style.display = ''; $refs.figureImg.src = progressUrl + '?t=' + Date.now() })"
+          >
+            Figure
+          </button>
+          <div
+            x-show="figureOpen"
+            x-cloak
+            class="fixed inset-0 z-50 flex items-center justify-center p-4"
+            @keydown.escape.window="figureOpen = false"
+          >
+            <div class="absolute inset-0 bg-black/60" @click="figureOpen = false"></div>
+            <div class="relative z-10 max-h-[90vh] max-w-[90vw] rounded-xl border border-slate-700 bg-slate-900 p-2 shadow-xl" @click.stop>
+              <div class="flex items-center justify-between border-b border-slate-700 pb-2 mb-2">
+                <h2 class="text-lg font-medium text-white">Progress</h2>
+                <button type="button" class="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white" @click="figureOpen = false" aria-label="Close">✕</button>
+              </div>
+              <img x-ref="figureImg" alt="Progress chart" class="max-h-[85vh] w-auto object-contain rounded-lg" onerror="this.style.display='none'; this.nextElementSibling.classList.remove('hidden')" />
+              <p x-ref="figureFallback" class="hidden text-slate-400">progress.png not found in project root.</p>
+            </div>
+          </div>
           <button
             type="button"
             class="hover:text-white"

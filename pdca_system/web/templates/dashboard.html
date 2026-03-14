@@ -40,9 +40,11 @@
           placeholder="Describe the initial seed, hypothesis, or improvement direction."
           required
         ></textarea>
-        <button class="inline-flex items-center rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-sky-400" name="seed_mode" type="submit" value="manual">
-          Create Seed
-        </button>
+        <div class="flex justify-end">
+          <button class="inline-flex items-center rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-sky-400" name="seed_mode" type="submit" value="manual">
+            Create Seed
+          </button>
+        </div>
       </form>
       {% if dashboard.setup_error %}
       <div class="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-200">
@@ -86,9 +88,11 @@
             placeholder="Describe the code change to run directly from the project root."
             required
           ></textarea>
-          <button class="inline-flex items-center rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-emerald-400" type="submit">
-            Run Direct Code Agent
-          </button>
+          <div class="flex justify-end">
+            <button class="inline-flex items-center rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-emerald-400" type="submit">
+              Run Direct Code Agent
+            </button>
+          </div>
         </form>
       </div>
     </div>

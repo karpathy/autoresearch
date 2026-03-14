@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 from pdca_system.domain.models import SeedStatus
 from pdca_system.services.workflow import GitCommandError, WorkflowService
@@ -103,6 +103,19 @@ async def update_daemon_settings(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="JSON body must be an object")
     write_daemon_config(body)
     return get_daemon_config()
+
+
+@router.get("/api/progress.png", name="progress_png", response_class=Response)
+def progress_png() -> Response:
+    """Serve progress.png from project root for the Figure popup. No caching so the modal always shows the current file."""
+    path = PDCA_SYSTEM_ROOT.parent / "progress.png"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="progress.png not found")
+    return FileResponse(
+        path,
+        media_type="image/png",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+    )
 
 
 @router.get("/partials/daemon-settings", response_class=HTMLResponse)
