@@ -226,7 +226,11 @@ def main():
         loss="squared_error",
         random_state=42,
     )
-    model.fit(features, targets)
+    # Asymmetric weighting: 2x penalty on positive-return samples
+    # Model learns directional bias from data (biases toward predicting up
+    # when uncertain, since errors on up-moves cost more)
+    sample_weights = np.where(targets > 0, 2.0, 1.0)
+    model.fit(features, targets, sample_weight=sample_weights)
 
     training_seconds = time.time() - train_start
     print(f"Training complete in {training_seconds:.1f}s")
