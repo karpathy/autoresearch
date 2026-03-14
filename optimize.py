@@ -949,14 +949,69 @@ class FixAccessibility3(OptimizationStrategy):
         return True
 
 
+class FixAccessibility4(OptimizationStrategy):
+    """Fix three remaining primary-green contrast failures.
+
+    1. Active tab: text-primary-600 (3.15:1 on gray-50) → text-primary-700 (5.0:1)
+    2. Profession count badge: text-primary-600 bg-primary-100 (3:1) → text-primary-800 (8+:1)
+    3. Cookie banner "Customize" button: border/text-primary-600 on white (3.29:1) → -700 (5.0:1)
+    """
+
+    name = "fix_accessibility_4"
+    description = "Fix primary-green contrast: active tabs, badges, cookie button"
+
+    TOP_PROFS = TARGET_PROJECT / "templates" / "home" / "top_professions.html.twig"
+    PROFS_LIST = TARGET_PROJECT / "templates" / "home" / "professions_list.html.twig"
+    COOKIE = TARGET_PROJECT / "templates" / "components" / "cookie-banner.html.twig"
+
+    CHANGES = [
+        # 1. Active tab color: top_professions
+        (TOP_PROFS,
+         "'text-primary-600 border-primary-600'",
+         "'text-primary-700 border-primary-700'"),
+        # 2. Badge: top_professions
+        (TOP_PROFS,
+         'class="px-2 py-0.5 text-xs font-medium text-primary-600 bg-primary-100 rounded-full">',
+         'class="px-2 py-0.5 text-xs font-medium text-primary-800 bg-primary-100 rounded-full">'),
+        # 3. Active tab color: professions_list
+        (PROFS_LIST,
+         "'text-primary-600 border-primary-600'",
+         "'text-primary-700 border-primary-700'"),
+        # 4. Badge: professions_list
+        (PROFS_LIST,
+         'class="px-2 py-0.5 text-xs font-medium text-primary-600 bg-primary-100 rounded-full">',
+         'class="px-2 py-0.5 text-xs font-medium text-primary-800 bg-primary-100 rounded-full">'),
+        # 5. Cookie banner "Customize" button
+        (COOKIE,
+         'class="px-6 py-2.5 border border-primary-600 text-primary-600 rounded-lg font-medium hover:bg-primary-50 transition-colors">',
+         'class="px-6 py-2.5 border border-primary-700 text-primary-700 rounded-lg font-medium hover:bg-primary-50 transition-colors">'),
+    ]
+
+    def apply(self):
+        applied = 0
+        for file_path, old, new in self.CHANGES:
+            content = file_path.read_text()
+            if old in content:
+                file_path.write_text(content.replace(old, new))
+                applied += 1
+        return applied > 0
+
+    def revert(self):
+        for file_path, old, new in self.CHANGES:
+            content = file_path.read_text()
+            if new in content:
+                file_path.write_text(content.replace(new, old))
+        return True
+
+
 def main():
     """Main entry point."""
     print("=" * 60)
-    print("Lighthouse Optimization - Experiment: fix_accessibility_3")
+    print("Lighthouse Optimization - Experiment: fix_accessibility_4")
     print("=" * 60)
     print()
 
-    summary = run_optimization(FixAccessibility3)
+    summary = run_optimization(FixAccessibility4)
     print_summary(summary)
 
 
