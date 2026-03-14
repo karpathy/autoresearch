@@ -223,8 +223,8 @@ def main():
 
     model = ReturnPredictor(n_features)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
-    loss_fn = nn.HuberLoss(delta=0.01)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100)
+    loss_fn = nn.MSELoss()
 
     X_train = torch.tensor(features, dtype=torch.float32)
     y_train = torch.tensor(targets, dtype=torch.float32)
@@ -234,7 +234,7 @@ def main():
     n_samples = len(X_train)
     model.train()
 
-    for epoch in range(50):
+    for epoch in range(100):
         perm = torch.randperm(n_samples)
         epoch_loss = 0.0
         n_batches = 0
