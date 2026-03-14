@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}PDCA System Dashboard{% endblock %}
+{% block content %}
+<div class="flex h-full min-h-0 flex-col space-y-6">
+  <section class="grid min-h-0 flex-1 gap-6 lg:grid-cols-[22rem,1fr]">
+    <div class="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+      <h1 class="text-lg font-semibold text-white">Create Seed</h1>
+        <p class="mt-1 text-sm text-slate-400">Start a new seed from a prompt. Baseline branch is selected here; each seed has one branch (seed id).</p>
+      <form
+        class="mt-4 space-y-3"
+        hx-post="{{ request.url_for('create_seed') }}"
+        hx-swap="none"
+        method="post"
+      >
+        <div class="grid gap-3">
+          <div>
+            <label class="block text-sm font-medium text-slate-300" for="baseline_branch">Seed baseline branch</label>
+            <select
+              class="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-sky-500"
+              id="baseline_branch"
+              name="baseline_branch"
+              required
+            >
+              {% if dashboard.available_branches %}
+                {% for branch in dashboard.available_branches %}
+                <option value="{{ branch }}" {% if branch == dashboard.default_baseline_branch %}selected{% endif %}>{{ branch }}</option>
+                {% endfor %}
+              {% else %}
+                <option disabled selected value="">No branches available</option>
+              {% endif %}
+            </select>
+          </div>
+        </div>
+        <p class="text-xs text-slate-500">One branch per seed: the seed id is the branch name (e.g. <code class="font-mono-id">seed-a1b2c3</code>).</p>
+        <label class="block text-sm font-medium text-slate-300" for="prompt">Prompt</label>
+        <textarea
+          class="min-h-40 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none ring-0 placeholder:text-slate-500 focus:border-sky-500"
+          id="prompt"
+          name="prompt"
+          placeholder="Describe the initial seed, hypothesis, or improvement direction."
+          required
+        ></textarea>
+        <button class="inline-flex items-center rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-sky-400" name="seed_mode" type="submit" value="manual">
+          Create Seed
+        </button>
+      </form>
+      {% if dashboard.setup_error %}
+      <div class="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-200">
+        <p class="font-medium">Git setup required</p>
+        <p class="mt-1">{{ dashboard.setup_error }}</p>
+      </div>
+      {% endif %}
+      {% with daemon_status=dashboard.daemon_status %}
+        {% include "partials/daemon_status.html" %}
+      {% endwith %}
+      <div class="mt-5 rounded-xl border border-slate-800 bg-slate-950/80 p-4 text-sm text-slate-300">
+        <p class="font-medium text-white">Baseline branches</p>
+        <p class="mt-1 text-xs text-slate-500">Per-branch best {{ dashboard.target_metric_label }} from baseline_metrics.json. Workflow-managed, read-only: pdca_system/baseline_branches.json (per-branch mapping), pdca_system/baseline_metrics.json (baseline run metrics).</p>
+        {% if dashboard.baseline_metrics_by_branch %}
+        <dl class="mt-3 space-y-2">
+          {% for branch, m in dashboard.baseline_metrics_by_branch.items() %}
+          <div class="flex justify-between gap-4">
+            <dt class="text-slate-500 font-mono-id">{{ branch }}</dt>
+            <dd>{{ dashboard.target_metric_label }} {{ "%.6f"|format(m.get(dashboard.best_target_metric_key)) if m.get(dashboard.best_target_metric_key) is not none else "—" }} · {{ m.get('promoted_branch') or "—" }}{% if m.get('commit_sha') %} · <code class="text-xs">{{ m.get('commit_sha')[:7] }}</code>{% endif %}</dd>
+          </div>
+          {% endfor %}
+        </dl>
+        {% else %}
+        <p class="mt-2 text-slate-500">No baseline metrics yet. Run the first CA to establish baseline for a branch.</p>
+        {% endif %}
+      </div>
+      <div class="mt-5 rounded-xl border border-slate-800 bg-slate-950/80 p-4 text-sm text-slate-300">
+        <p class="font-medium text-white">Direct Code Agent</p>
+        <p class="mt-1 text-xs text-slate-500">Run the configured code agent from the project root with a dedicated single-worker executor. New runs appear in the Check-Action column.</p>
+        <form
+          class="mt-4 space-y-3"
+          hx-post="{{ request.url_for('start_direct_code_agent') }}"
+          hx-swap="none"
+          method="post"
+        >
+          <label class="block text-sm font-medium text-slate-300" for="direct_code_agent_prompt">Prompt</label>
+          <textarea
+            class="min-h-32 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none ring-0 placeholder:text-slate-500 focus:border-sky-500"
+            id="direct_code_agent_prompt"
+            name="prompt"
+            placeholder="Describe the code change to run directly from the project root."
+            required
+          ></textarea>
+          <button class="inline-flex items-center rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-emerald-400" type="submit">
+            Run Direct Code Agent
+          </button>
+        </form>
+      </div>
+    </div>
+    <div class="min-h-0 space-y-6">
+      {% include "partials/dashboard_board.html" %}
+      <div
+        id="seed-detail"
+        data-seed-detail-url-template="{{ request.url_for('seed_detail_partial', seed_id='__SEED_ID__') }}"
+        data-seed-versions-url-template="{{ request.url_for('seed_versions', seed_id='__SEED_ID__') }}"
+        data-seed-runs-url-template="{{ request.url_for('seed_runs_partial', seed_id='__SEED_ID__') }}"
+        data-seed-timeline-url-template="{{ request.url_for('seed_timeline_partial', seed_id='__SEED_ID__') }}"
+      >
+        {% if detail %}
+          {% with
+            seed=detail.seed,
+            runs=detail.runs,
+            events=detail.events,
+            baseline_metrics_for_branch=detail.baseline_metrics_for_branch,
+            setup_error=detail.setup_error,
+            daemon_status=dashboard.daemon_status
+          %}
+            {% include "partials/seed_detail.html" %}
+          {% endwith %}
+        {% else %}
+          <div class="rounded-2xl border border-dashed border-slate-700 bg-slate-900/60 p-8 text-center text-sm text-slate-400">
+            Select a seed to inspect its worktree, plan, runs, logs, and promotion history.
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
