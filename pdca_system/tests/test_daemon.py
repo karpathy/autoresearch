@@ -1,10 +1,12 @@
-"""Tests for daemon: prompt building, salvage/agent failure, claim_pending, restore_in_progress."""
+"""Tests for daemon: prompt building, salvage/agent failure, claim_pending, restore_in_progress, agent rotation."""
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pdca_system.daemon as run_module
 import pdca_system.task as task_module
@@ -18,7 +20,19 @@ from pdca_system.task import (
     write_task,
 )
 
-from pdca_system.daemon import _agent_failure_reason, _build_prompt, _should_salvage_completed_ca
+from pdca_system.daemon import (
+    AGENT_CONFIGS,
+    AGENT_EXIT0_FAILURE_CHECKS,
+    _agent_failure_reason,
+    _build_prompt,
+    _build_stuck_check_prompt,
+    _effective_exit_for_downgrade,
+    _invoke_agent,
+    _maybe_rotate_after_stuck_check,
+    _record_agent_exit,
+    _run_stuck_check,
+    _should_salvage_completed_ca,
+)
 
 
 class DaemonTests(unittest.TestCase):
@@ -300,6 +314,375 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(restored, {"pd": 1, "ca": 1, "direct": 1})
         self.assertEqual((p_count, ca_count, direct_count), (1, 1, 1))
         self.assertEqual(in_progress_count, 0)
+
+
+class AgentRotationAndStuckCheckTests(unittest.TestCase):
+    """Tests for agent detection, effective-exit-for-downgrade, stuck-check prompt, and rotation logic."""
+
+    def setUp(self) -> None:
+        self._saved_state = dict(run_module._AGENT_RUNTIME_STATE)
+        self._saved_state.setdefault("available", [])
+        self._saved_state.setdefault("unavailable", {})
+        self._saved_state.setdefault("active", None)
+        self._saved_state.setdefault("nonzero_streak", {})
+
+    def tearDown(self) -> None:
+        run_module._AGENT_RUNTIME_STATE["available"] = self._saved_state.get("available", [])
+        run_module._AGENT_RUNTIME_STATE["unavailable"] = self._saved_state.get("unavailable", {})
+        run_module._AGENT_RUNTIME_STATE["active"] = self._saved_state.get("active")
+        run_module._AGENT_RUNTIME_STATE["nonzero_streak"] = dict(self._saved_state.get("nonzero_streak", {}))
+
+    def test_effective_exit_for_downgrade_nonzero_unchanged(self) -> None:
+        self.assertEqual(_effective_exit_for_downgrade("claude", 1, "", ""), 1)
+        self.assertEqual(_effective_exit_for_downgrade("opencode", -1, "timeout", ""), -1)
+
+    def test_effective_exit_for_downgrade_opencode_exit0_quota_treated_as_failure(self) -> None:
+        stderr = "Error: You've reached your usage limit for this billing cycle. Upgrade to get more."
+        self.assertEqual(_effective_exit_for_downgrade("opencode", 0, stderr, ""), 1)
+
+    def test_effective_exit_for_downgrade_opencode_exit0_no_quota_unchanged(self) -> None:
+        self.assertEqual(_effective_exit_for_downgrade("opencode", 0, "normal output", ""), 0)
+        self.assertEqual(_effective_exit_for_downgrade("opencode", 0, "Error: something else", ""), 0)
+
+    def test_effective_exit_for_downgrade_claude_exit0_rate_limit_treated_as_failure(self) -> None:
+        stderr = "API Error: Rate limit reached"
+        self.assertEqual(_effective_exit_for_downgrade("claude", 0, stderr, ""), 1)
+
+    def test_effective_exit_for_downgrade_claude_exit0_no_api_error_unchanged(self) -> None:
+        self.assertEqual(_effective_exit_for_downgrade("claude", 0, "normal output", ""), 0)
+
+    def test_effective_exit_for_downgrade_codex_exit0_invalid_responses_api_treated_as_failure(self) -> None:
+        stderr = '{"error":{"message":"Invalid Responses API request"}}'
+        self.assertEqual(_effective_exit_for_downgrade("codex", 0, stderr, ""), 1)
+
+    def test_effective_exit_for_downgrade_gemini_exit0_error_when_talking_treated_as_failure(self) -> None:
+        stderr = "Error when talking to Gemini API Full report at /tmp/x.json"
+        self.assertEqual(_effective_exit_for_downgrade("gemini", 0, stderr, ""), 1)
+
+    def test_opencode_exit0_is_failure_requires_error_and_quota(self) -> None:
+        check = AGENT_EXIT0_FAILURE_CHECKS["opencode"]
+        self.assertTrue(check("Error: You've reached your usage limit.", ""))
+        self.assertTrue(check("Error: quota exceeded", ""))
+        self.assertFalse(check("", ""))
+        # Must have "error:" and a quota phrase; "usage limit" alone without "error:" is not enough
+        self.assertFalse(check("The usage limit for this month is 100 (no error line).", ""))
+
+    def test_claude_exit0_is_failure_requires_api_error_and_rate_limit(self) -> None:
+        check = AGENT_EXIT0_FAILURE_CHECKS["claude"]
+        self.assertTrue(check("API Error: Rate limit reached", ""))
+        self.assertFalse(check("API Error: something else", ""))
+        self.assertFalse(check("Rate limit", ""))
+
+    def test_build_stuck_check_prompt_contains_agent_and_summary_filename(self) -> None:
+        prompt = _build_stuck_check_prompt("opencode", None, None)
+        self.assertIn("opencode", prompt)
+        self.assertIn(run_module.SUMMARY_FILENAME, prompt)
+        self.assertIn("previous_agent_stuck", prompt)
+        self.assertIn("(no log file)", prompt)
+
+    def test_build_stuck_check_prompt_includes_tail_of_logs(self) -> None:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False, encoding="utf-8") as f:
+            f.write("line1\nline2\nline3\n")
+            stderr_path = Path(f.name)
+        try:
+            prompt = _build_stuck_check_prompt("claude", None, stderr_path)
+            self.assertIn("line3", prompt)
+            self.assertIn("line2", prompt)
+        finally:
+            stderr_path.unlink(missing_ok=True)
+
+    def test_record_agent_exit_returns_false_when_single_agent(self) -> None:
+        run_module._AGENT_RUNTIME_STATE["available"] = ["claude"]
+        run_module._AGENT_RUNTIME_STATE["nonzero_streak"] = {"claude": 5}
+        run_module._AGENT_RUNTIME_STATE["active"] = "claude"
+        self.assertFalse(_record_agent_exit("claude", 1))
+        self.assertEqual(run_module._AGENT_RUNTIME_STATE["nonzero_streak"]["claude"], 6)
+
+    def test_record_agent_exit_returns_true_when_streak_reached_and_two_agents(self) -> None:
+        run_module._AGENT_RUNTIME_STATE["available"] = ["claude", "opencode"]
+        run_module._AGENT_RUNTIME_STATE["nonzero_streak"] = {"claude": 4, "opencode": 0}
+        run_module._AGENT_RUNTIME_STATE["active"] = "claude"
+        # threshold is 5: one more failure -> streak 5, should return True (run stuck-check)
+        self.assertTrue(_record_agent_exit("claude", 1))
+        self.assertEqual(run_module._AGENT_RUNTIME_STATE["nonzero_streak"]["claude"], 5)
+
+    def test_record_agent_exit_resets_streak_on_success(self) -> None:
+        run_module._AGENT_RUNTIME_STATE["available"] = ["claude", "opencode"]
+        run_module._AGENT_RUNTIME_STATE["nonzero_streak"] = {"claude": 3, "opencode": 0}
+        _record_agent_exit("claude", 0)
+        self.assertEqual(run_module._AGENT_RUNTIME_STATE["nonzero_streak"]["claude"], 0)
+
+    def test_record_agent_exit_returns_false_for_unknown_agent(self) -> None:
+        run_module._AGENT_RUNTIME_STATE["available"] = ["claude"]
+        run_module._AGENT_RUNTIME_STATE["nonzero_streak"] = {"claude": 0}
+        self.assertFalse(_record_agent_exit("unknown_agent", 1))
+
+    def test_maybe_rotate_after_stuck_check_no_switch_when_single_agent(self) -> None:
+        run_module._AGENT_RUNTIME_STATE["available"] = ["claude"]
+        run_module._AGENT_RUNTIME_STATE["active"] = "claude"
+        run_module._AGENT_RUNTIME_STATE["nonzero_streak"] = {"claude": 5}
+        with patch.object(run_module, "_run_stuck_check") as mock_run:
+            _maybe_rotate_after_stuck_check("claude", "run-1", None, None)
+            mock_run.assert_not_called()
+        self.assertEqual(run_module._AGENT_RUNTIME_STATE["active"], "claude")
+
+    def test_maybe_rotate_after_stuck_check_switches_when_stuck_confirmed(self) -> None:
+        run_module._AGENT_RUNTIME_STATE["available"] = ["claude", "opencode"]
+        run_module._AGENT_RUNTIME_STATE["active"] = "claude"
+        run_module._AGENT_RUNTIME_STATE["nonzero_streak"] = {"claude": 5, "opencode": 0}
+        with patch.object(run_module, "_run_stuck_check", return_value=(True, {"previous_agent_stuck": True, "reason": "quota"})):
+            _maybe_rotate_after_stuck_check("claude", "run-1", None, None)
+        self.assertEqual(run_module._AGENT_RUNTIME_STATE["active"], "opencode")
+
+    def test_maybe_rotate_after_stuck_check_no_switch_when_not_stuck_resets_streak(self) -> None:
+        run_module._AGENT_RUNTIME_STATE["available"] = ["claude", "opencode"]
+        run_module._AGENT_RUNTIME_STATE["active"] = "claude"
+        run_module._AGENT_RUNTIME_STATE["nonzero_streak"] = {"claude": 5, "opencode": 0}
+        with patch.object(run_module, "_run_stuck_check", return_value=(True, {"previous_agent_stuck": False, "reason": "transient"})):
+            _maybe_rotate_after_stuck_check("claude", "run-1", None, None)
+        self.assertEqual(run_module._AGENT_RUNTIME_STATE["active"], "claude")
+        self.assertEqual(run_module._AGENT_RUNTIME_STATE["nonzero_streak"]["claude"], 0)
+
+    def test_maybe_rotate_after_stuck_check_no_switch_when_stuck_check_fails_resets_streak(self) -> None:
+        run_module._AGENT_RUNTIME_STATE["available"] = ["claude", "opencode"]
+        run_module._AGENT_RUNTIME_STATE["active"] = "claude"
+        run_module._AGENT_RUNTIME_STATE["nonzero_streak"] = {"claude": 5, "opencode": 0}
+        with patch.object(run_module, "_run_stuck_check", return_value=(False, None)):
+            _maybe_rotate_after_stuck_check("claude", "run-1", None, None)
+        self.assertEqual(run_module._AGENT_RUNTIME_STATE["active"], "claude")
+        self.assertEqual(run_module._AGENT_RUNTIME_STATE["nonzero_streak"]["claude"], 0)
+
+
+def _make_mock_process(returncode: int = 0) -> MagicMock:
+    """Build a mock subprocess that completes immediately with given returncode; stdout/stderr readline returns ''."""
+    process = MagicMock()
+    process.returncode = returncode
+    process.wait = MagicMock(return_value=None)
+    process.kill = MagicMock()
+    process.stdin = MagicMock()
+    process.stdin.write = MagicMock()
+    process.stdin.close = MagicMock()
+    for pipe_name in ("stdout", "stderr"):
+        pipe = MagicMock()
+        pipe.readline = MagicMock(return_value="")
+        pipe.close = MagicMock()
+        setattr(process, pipe_name, pipe)
+    return process
+
+
+class InvokeAgentTests(unittest.TestCase):
+    """Tests for _invoke_agent: agent_override, timeout_override, and that rotation is not triggered when override is set."""
+
+    def setUp(self) -> None:
+        self._log_dir = Path(tempfile.mkdtemp(prefix="pdca_invoke_test_"))
+        self._orig_log_dir = run_module.LOG_DIR
+        run_module.LOG_DIR = self._log_dir
+
+    def tearDown(self) -> None:
+        run_module.LOG_DIR = self._orig_log_dir
+        shutil.rmtree(self._log_dir, ignore_errors=True)
+
+    def test_invoke_agent_with_agent_override_uses_that_agent(self) -> None:
+        """With agent_override=kimi, Popen is called with kimi's cmd (from AGENT_CONFIGS)."""
+        mock_process = _make_mock_process(returncode=0)
+        with patch.object(run_module.subprocess, "Popen", return_value=mock_process) as mock_popen:
+            agent, code, out, err, out_path, err_path = _invoke_agent(
+                "hello",
+                "pd",
+                "run-invoke-1",
+                worktree_path=None,
+                agent_override="kimi",
+            )
+        self.assertEqual(agent, "kimi")
+        self.assertEqual(code, 0)
+        mock_popen.assert_called_once()
+        call_args = mock_popen.call_args
+        cmd = call_args[0][0]
+        self.assertIsInstance(cmd, list)
+        self.assertEqual(cmd[0], AGENT_CONFIGS["kimi"]["cmd"][0], "cmd should start with kimi binary")
+        self.assertIn("hello", cmd, "prompt should be in cmd for arg-based agent")
+
+    def test_invoke_agent_with_agent_override_uses_timeout_override(self) -> None:
+        """With timeout_override=99, process.wait(timeout=99) is called."""
+        mock_process = _make_mock_process(returncode=0)
+        with patch.object(run_module.subprocess, "Popen", return_value=mock_process):
+            _invoke_agent(
+                "task",
+                "ca",
+                "run-invoke-2",
+                agent_override="kimi",
+                timeout_override=99,
+            )
+        mock_process.wait.assert_called_once()
+        self.assertEqual(mock_process.wait.call_args[1]["timeout"], 99)
+
+    def test_invoke_agent_with_agent_override_does_not_call_record_agent_exit(self) -> None:
+        """With agent_override, _record_agent_exit and _maybe_rotate_after_stuck_check must not be called."""
+        mock_process = _make_mock_process(returncode=1)
+        with patch.object(run_module.subprocess, "Popen", return_value=mock_process), patch.object(
+            run_module, "_record_agent_exit"
+        ) as mock_record, patch.object(
+            run_module, "_maybe_rotate_after_stuck_check"
+        ) as mock_rotate:
+            agent, code, _out, _err, _o, _e = _invoke_agent(
+                "fail",
+                "pd",
+                "run-invoke-3",
+                agent_override="kimi",
+            )
+        self.assertEqual(agent, "kimi")
+        self.assertEqual(code, 1)
+        mock_record.assert_not_called()
+        mock_rotate.assert_not_called()
+
+    def test_invoke_agent_with_agent_override_unknown_agent_returns_error(self) -> None:
+        """With agent_override to unknown agent, return error tuple without raising."""
+        agent, code, _out, err, out_path, err_path = _invoke_agent(
+            "x",
+            "pd",
+            "run-invoke-4",
+            agent_override="nonexistent_agent",
+        )
+        self.assertEqual(agent, "nonexistent_agent")
+        self.assertEqual(code, -1)
+        self.assertIn("Unknown agent", err)
+        self.assertIsNone(out_path)
+        self.assertIsNone(err_path)
+
+    def test_invoke_agent_with_agent_override_file_not_found_returns_error_no_mark_unavailable(self) -> None:
+        """With agent_override, FileNotFoundError from Popen returns error and does not call _mark_agent_unavailable."""
+        with patch.object(run_module.subprocess, "Popen", side_effect=FileNotFoundError("binary not found")), patch.object(
+            run_module, "_mark_agent_unavailable"
+        ) as mock_mark:
+            agent, code, _out, err, out_path, err_path = _invoke_agent(
+                "x",
+                "pd",
+                "run-invoke-5",
+                agent_override="kimi",
+            )
+        self.assertEqual(agent, "kimi")
+        self.assertEqual(code, -1)
+        self.assertIn("binary not found", err)
+        mock_mark.assert_not_called()
+
+    def test_invoke_agent_without_override_uses_active_agent(self) -> None:
+        """Without agent_override, _active_agent_name() is used and Popen receives that agent's cmd."""
+        run_module._AGENT_RUNTIME_STATE["available"] = ["kimi", "opencode"]
+        run_module._AGENT_RUNTIME_STATE["active"] = "kimi"
+        run_module._AGENT_RUNTIME_STATE["nonzero_streak"] = {"kimi": 0, "opencode": 0}
+        mock_process = _make_mock_process(returncode=0)
+        with patch.object(run_module.subprocess, "Popen", return_value=mock_process) as mock_popen:
+            agent, code, _out, _err, _o, _e = _invoke_agent("hello", "pd", "run-invoke-6", worktree_path=None)
+        self.assertEqual(agent, "kimi")
+        self.assertEqual(code, 0)
+        cmd = mock_popen.call_args[0][0]
+        self.assertEqual(cmd[0], AGENT_CONFIGS["kimi"]["cmd"][0])
+
+    def test_invoke_agent_without_override_calls_record_agent_exit_on_nonzero(self) -> None:
+        """Without agent_override, non-zero exit triggers _record_agent_exit (and maybe _maybe_rotate)."""
+        run_module._AGENT_RUNTIME_STATE["available"] = ["kimi"]
+        run_module._AGENT_RUNTIME_STATE["active"] = "kimi"
+        run_module._AGENT_RUNTIME_STATE["nonzero_streak"] = {"kimi": 0}
+        mock_process = _make_mock_process(returncode=2)
+        with patch.object(run_module.subprocess, "Popen", return_value=mock_process), patch.object(
+            run_module, "_record_agent_exit", return_value=False
+        ) as mock_record:
+            _invoke_agent("fail", "pd", "run-invoke-7", worktree_path=None)
+        mock_record.assert_called_once()
+        self.assertEqual(mock_record.call_args[0], ("kimi", 2))
+
+
+def _run_stuck_check_with_diagnostics(
+    daemon_module: object, root: Path, log_dir: Path, run_id: str, prompt: str
+) -> tuple[bool, dict[str, object] | None, str]:
+    """Run stuck-check with PROJECT_ROOT/LOG_DIR patched; return (ok, summary, diagnostic)."""
+    orig_root = daemon_module.PROJECT_ROOT
+    orig_log = daemon_module.LOG_DIR
+    orig_timeout = daemon_module.STUCK_CHECK_TIMEOUT_SECONDS
+    try:
+        daemon_module.PROJECT_ROOT = root
+        daemon_module.LOG_DIR = log_dir
+        daemon_module.STUCK_CHECK_TIMEOUT_SECONDS = 120
+        ok, summary = _run_stuck_check("kimi", prompt, run_id)
+    finally:
+        daemon_module.PROJECT_ROOT = orig_root
+        daemon_module.LOG_DIR = orig_log
+        daemon_module.STUCK_CHECK_TIMEOUT_SECONDS = orig_timeout
+
+    diag: list[str] = []
+    summary_path = root / daemon_module.SUMMARY_FILENAME
+    diag.append(f"summary_path exists={summary_path.exists()}")
+    if (log_dir / f"{run_id}.stderr.log").exists():
+        tail = (log_dir / f"{run_id}.stderr.log").read_text(encoding="utf-8", errors="replace").strip()
+        diag.append(f"stuck_check stderr (tail): {tail[-500:]!r}")
+    if summary_path.exists():
+        diag.append(f"summary content: {summary_path.read_text(encoding='utf-8', errors='replace')!r}")
+    return ok, summary, "; ".join(diag)
+
+
+@unittest.skipUnless(shutil.which("kimi"), "kimi CLI not on PATH")
+class StuckCheckKimiIntegrationTests(unittest.TestCase):
+    """Integration tests: run real Kimi agent to verify stuck-check on mocked previous-agent logs."""
+
+    def test_stuck_check_kimi_reports_stuck_when_logs_show_quota_error(self) -> None:
+        """Mock previous agent logs with quota error; run real kimi; expect previous_agent_stuck true."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            log_dir = root / "logs"
+            log_dir.mkdir()
+            prev_stdout = root / "prev.stdout.log"
+            prev_stderr = root / "prev.stderr.log"
+            prev_stdout.write_text("> build · k2p5\n", encoding="utf-8")
+            prev_stderr.write_text(
+                "Error: You've reached your usage limit for this billing cycle. "
+                "Your quota will be refreshed in the next cycle. Upgrade to get more: https://example.com\n",
+                encoding="utf-8",
+            )
+            prompt = _build_stuck_check_prompt("opencode", prev_stdout, prev_stderr)
+            self.assertIn("usage limit", prompt)
+            self.assertIn("Error:", prompt)
+
+            ok, summary, diag = _run_stuck_check_with_diagnostics(
+                run_module, root, log_dir, "test-stuck-check-stuck", prompt
+            )
+            self.assertTrue(ok, f"stuck-check run should succeed (exit 0 and valid summary). {diag}")
+            self.assertIsNotNone(summary)
+            self.assertIn("previous_agent_stuck", summary)
+            self.assertIs(
+                summary["previous_agent_stuck"],
+                True,
+                f"Logs show quota error; expected previous_agent_stuck true, got {summary!s}. {diag}",
+            )
+            self.assertIn("reason", summary)
+
+    def test_stuck_check_kimi_reports_not_stuck_when_logs_show_normal_output(self) -> None:
+        """Mock previous agent logs with normal output; run real kimi; expect previous_agent_stuck false."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            log_dir = root / "logs"
+            log_dir.mkdir()
+            prev_stdout = root / "prev.stdout.log"
+            prev_stderr = root / "prev.stderr.log"
+            prev_stdout.write_text(
+                "Listing directory contents.\n"
+                "total 4\ndrwxr-x 2 user group 4096 Jan 1 12:00 .\n"
+                "- file1.py\n- file2.txt\n",
+                encoding="utf-8",
+            )
+            prev_stderr.write_text("(no errors)\n", encoding="utf-8")
+            prompt = _build_stuck_check_prompt("opencode", prev_stdout, prev_stderr)
+
+            ok, summary, diag = _run_stuck_check_with_diagnostics(
+                run_module, root, log_dir, "test-stuck-check-not-stuck", prompt
+            )
+            self.assertTrue(ok, f"stuck-check run should succeed. {diag}")
+            self.assertIsNotNone(summary)
+            self.assertIn("previous_agent_stuck", summary)
+            self.assertIs(
+                summary["previous_agent_stuck"],
+                False,
+                f"Logs show normal output; expected previous_agent_stuck false, got {summary!s}. {diag}",
+            )
 
 
 if __name__ == "__main__":

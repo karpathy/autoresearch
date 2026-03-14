@@ -20,6 +20,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import matplotlib
+import pandas as pd
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
 from pdca_system.config import (
     TARGET_METRIC_KEY,
     TARGET_METRIC_LABEL,
@@ -105,6 +111,10 @@ def _env_int(name: str, default: int) -> int:
 
 
 AGENT_DOWNGRADE_NONZERO_STREAK = _env_int("PDCA_AGENT_DOWNGRADE_AFTER", 5)
+
+# Stuck-check: run backup agent to confirm previous agent was stuck before switching.
+STUCK_CHECK_TIMEOUT_SECONDS = _env_int("PDCA_STUCK_CHECK_TIMEOUT", 120)
+STUCK_CHECK_LOG_TAIL_LINES = 80
 
 
 def _run_agent_probe(cmd: list[str], timeout: float = AGENT_DETECT_TIMEOUT_SECONDS) -> tuple[bool, str]:
@@ -225,22 +235,124 @@ def _rotate_active_agent(reason: str) -> None:
             print(f"[daemon] agent downgrade: {current} -> {next_agent} ({reason})")
 
 
-def _record_agent_exit(agent_name: str, exit_code: int) -> None:
+def _record_agent_exit(agent_name: str, exit_code: int) -> bool:
+    """Update non-zero streak for agent. Returns True if caller should run stuck-check before switching (streak >= threshold and at least 2 agents). If only one agent, always returns False (continue on same agent)."""
     with _AGENT_HEALTH_LOCK:
         streak = dict(_AGENT_RUNTIME_STATE.get("nonzero_streak", {}))
         if agent_name not in streak:
-            return
+            return False
         if exit_code == 0:
             streak[agent_name] = 0
         else:
             streak[agent_name] = int(streak.get(agent_name, 0)) + 1
         _AGENT_RUNTIME_STATE["nonzero_streak"] = streak
         current_streak = streak[agent_name]
-    if exit_code != 0 and current_streak >= AGENT_DOWNGRADE_NONZERO_STREAK:
-        _rotate_active_agent(
-            f"{agent_name} non-zero exit streak={current_streak} "
-            f"(threshold={AGENT_DOWNGRADE_NONZERO_STREAK})"
-        )
+        available = list(_AGENT_RUNTIME_STATE.get("available", []))
+    if exit_code == 0 or current_streak < AGENT_DOWNGRADE_NONZERO_STREAK:
+        return False
+    if len(available) <= 1:
+        return False
+    return True
+
+
+def _build_stuck_check_prompt(
+    prev_agent: str,
+    stdout_path: Path | None,
+    stderr_path: Path | None,
+) -> str:
+    """Build prompt for backup agent: read tail of previous agent logs and ask to report if previous agent was stuck."""
+    def tail(path: Path | None, n: int) -> str:
+        if path is None or not path.exists():
+            return "(no log file)"
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            return "\n".join(lines[-n:]) if lines else "(empty)"
+        except OSError:
+            return "(read error)"
+
+    stdout_tail = tail(stdout_path, STUCK_CHECK_LOG_TAIL_LINES)
+    stderr_tail = tail(stderr_path, STUCK_CHECK_LOG_TAIL_LINES)
+    return (
+        "You are the backup code agent. The previous agent run used the agent named "
+        f"{prev_agent!r}. It exited with a non-zero or error state. Below are the last "
+        f"{STUCK_CHECK_LOG_TAIL_LINES} lines of its stdout and stderr.\n\n"
+        "--- STDOUT (tail) ---\n"
+        f"{stdout_tail}\n\n"
+        "--- STDERR (tail) ---\n"
+        f"{stderr_tail}\n\n"
+        "Decide whether the previous agent was stuck (e.g. quota, rate limit, auth failure, unrecoverable error). "
+        f"Write your conclusion to the file named {SUMMARY_FILENAME} in your current working directory. "
+        "Use this exact JSON shape and no other output:\n"
+        '{"previous_agent_stuck": true or false, "reason": "brief explanation", "checks": ["stuck_check"]}\n'
+        "Do not run any other tasks. Only write this file."
+    )
+
+
+def _run_stuck_check(
+    candidate_agent: str,
+    prompt: str,
+    run_id: str,
+) -> tuple[bool, dict[str, Any] | None]:
+    """Run candidate agent with stuck-check prompt; return (success, summary_dict). success=True when a valid summary with previous_agent_stuck key exists (even if process exited non-zero, e.g. stderr encoding)."""
+    _invoke_agent(
+        prompt,
+        "stuck_check",
+        run_id,
+        worktree_path=None,
+        agent_override=candidate_agent,
+        timeout_override=STUCK_CHECK_TIMEOUT_SECONDS,
+    )
+    summary_path = Path(PROJECT_ROOT) / SUMMARY_FILENAME
+    if not summary_path.exists():
+        return False, None
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False, None
+    if "previous_agent_stuck" not in summary:
+        return False, None
+    return True, summary
+
+
+def _maybe_rotate_after_stuck_check(
+    prev_agent: str,
+    run_id: str,
+    stdout_path: Path | None,
+    stderr_path: Path | None,
+) -> None:
+    """If backup agent confirms previous agent was stuck, switch; else reset streak and continue on same agent."""
+    with _AGENT_HEALTH_LOCK:
+        available = list(_AGENT_RUNTIME_STATE.get("available", []))
+    if len(available) <= 1:
+        return
+    try:
+        idx = available.index(prev_agent)
+    except ValueError:
+        return
+    candidate = available[(idx + 1) % len(available)]
+    prompt = _build_stuck_check_prompt(prev_agent, stdout_path, stderr_path)
+    stuck_check_run_id = f"{run_id}.stuck_check"
+    print(f"[daemon] running stuck-check with {candidate!r} (run_id={stuck_check_run_id})")
+    ok, summary = _run_stuck_check(candidate, prompt, stuck_check_run_id)
+    if not ok or not summary:
+        print("[daemon] stuck-check failed or no summary; not switching agent")
+        with _AGENT_HEALTH_LOCK:
+            streak = dict(_AGENT_RUNTIME_STATE.get("nonzero_streak", {}))
+            if prev_agent in streak:
+                streak[prev_agent] = 0
+                _AGENT_RUNTIME_STATE["nonzero_streak"] = streak
+        return
+    stuck = summary.get("previous_agent_stuck") is True
+    reason = summary.get("reason", "")
+    if stuck:
+        _rotate_active_agent(f"stuck check confirmed: {reason!s}")
+    else:
+        print(f"[daemon] stuck-check says previous agent not stuck ({reason!s}); not switching")
+        with _AGENT_HEALTH_LOCK:
+            streak = dict(_AGENT_RUNTIME_STATE.get("nonzero_streak", {}))
+            if prev_agent in streak:
+                streak[prev_agent] = 0
+                _AGENT_RUNTIME_STATE["nonzero_streak"] = streak
 
 
 def _signal_handler(_sig: int, _frame: Any) -> None:
@@ -322,6 +434,80 @@ def _combined_output(stdout: str, stderr: str) -> str:
     if stdout and stderr:
         return f"{stdout}\n{stderr}"
     return stdout or stderr
+
+
+# Agent-specific: when exit_code is 0, treat as failure for downgrade if output matches these.
+# Sources (web-confirmed):
+#   opencode: user run stderr "Error: You've reached your usage limit..."; GitHub anomalyco/opencode #3525, #877 (quota/usage limit).
+#   claude:   GitHub anthropics/claude-code #27336 "API Error: Rate limit reached".
+#   codex:    GitHub openai/codex #12114 "Invalid Responses API request" (OpenRouter/custom providers).
+#   gemini:   GitHub google-gemini/gemini-cli #6125 "Exiting with code 0 on API Error"; headless schema "error"/"ApiError".
+#   kimi:     GitHub MoonshotAI/kimi-cli #583, openclaw #41158 (rate limit / quota).
+def _opencode_exit0_is_failure(stderr: str, stdout: str) -> bool:
+    # OpenCode (with Kimi/Claude/etc.) can exit 0 while stderr has "Error: You've reached your usage limit..."
+    s = (stderr or "").strip()
+    if not s:
+        return False
+    lower = s.lower()
+    if "error:" not in lower:
+        return False
+    return (
+        "usage limit" in lower
+        or "quota" in lower
+        or "billing cycle" in lower
+        or "upgrade to get more" in lower
+        or "rate limit" in lower
+    )
+
+
+def _claude_exit0_is_failure(stderr: str, stdout: str) -> bool:
+    # Claude CLI: "API Error: Rate limit reached" and similar in stderr
+    s = ((stderr or "") + "\n" + (stdout or "")).lower()
+    return "api error" in s and ("rate limit" in s or "rate limit reached" in s)
+
+
+def _codex_exit0_is_failure(stderr: str, stdout: str) -> bool:
+    # Codex: "Invalid Responses API request" when using OpenRouter/custom providers
+    s = ((stderr or "") + "\n" + (stdout or "")).lower()
+    return "invalid responses api" in s or "invalid response" in s
+
+
+def _gemini_exit0_is_failure(stderr: str, stdout: str) -> bool:
+    # Gemini headless: sometimes exits 0 on API error (issue #6125); stderr "Error when talking to Gemini API" or JSON "error"/ApiError
+    s = ((stderr or "") + "\n" + (stdout or "")).lower()
+    if "error when talking to gemini api" in s:
+        return True
+    return '"error"' in s and ("apierror" in s or "autherror" in s or "auth error" in s)
+
+
+def _kimi_exit0_is_failure(stderr: str, stdout: str) -> bool:
+    # Kimi native CLI: less documented; check for explicit error line + quota/limit
+    s = (stderr or "").strip().lower()
+    if "error" not in s:
+        return False
+    return "quota" in s or "usage limit" in s or "rate limit" in s
+
+
+AGENT_EXIT0_FAILURE_CHECKS: dict[str, Any] = {
+    "opencode": _opencode_exit0_is_failure,
+    "claude": _claude_exit0_is_failure,
+    "codex": _codex_exit0_is_failure,
+    "gemini": _gemini_exit0_is_failure,
+    "kimi": _kimi_exit0_is_failure,
+}
+
+
+def _effective_exit_for_downgrade(
+    agent_name: str, exit_code: int, stderr: str, stdout: str
+) -> int:
+    """Return non-zero when we should treat this run as a failure for agent-rotation.
+    Uses agent-specific checks for exit-0-but-error-output (e.g. opencode quota)."""
+    if exit_code != 0:
+        return exit_code
+    check = AGENT_EXIT0_FAILURE_CHECKS.get(agent_name)
+    if not check or not check(stderr or "", stdout or ""):
+        return 0
+    return 1
 
 
 def _agent_failure_reason(exit_code: int, stdout: str, stderr: str) -> str:
@@ -414,28 +600,49 @@ def _sync_worktree_context(worktree_path: str | None) -> None:
 
 
 def _invoke_agent(
-    prompt: str, stage: str, run_id: str, worktree_path: str | None = None
+    prompt: str,
+    stage: str,
+    run_id: str,
+    worktree_path: str | None = None,
+    agent_override: str | None = None,
+    timeout_override: int | None = None,
 ) -> tuple[str, int, str, str, Path | None, Path | None]:
     attempted_agents: set[str] = set()
     while True:
-        agent_name = _active_agent_name()
-        if agent_name in attempted_agents:
-            return (
-                agent_name,
-                -1,
-                "",
-                "All detected agent backends failed to launch. See daemon logs for details.",
-                None,
-                None,
-            )
-        attempted_agents.add(agent_name)
+        if agent_override is not None:
+            agent_name = agent_override
+            if agent_name in attempted_agents:
+                return (
+                    agent_name,
+                    -1,
+                    "",
+                    "Agent failed to launch (override). See daemon logs for details.",
+                    None,
+                    None,
+                )
+            attempted_agents.add(agent_name)
+        else:
+            agent_name = _active_agent_name()
+            if agent_name in attempted_agents:
+                return (
+                    agent_name,
+                    -1,
+                    "",
+                    "All detected agent backends failed to launch. See daemon logs for details.",
+                    None,
+                    None,
+                )
+            attempted_agents.add(agent_name)
         config = AGENT_CONFIGS.get(agent_name)
         if config is None:
-            _mark_agent_unavailable(agent_name, "missing config entry")
+            if agent_override is None:
+                _mark_agent_unavailable(agent_name, "missing config entry")
+            else:
+                return (agent_name, -1, "", f"Unknown agent {agent_name!r}", None, None)
             continue
 
         cmd = list(config["cmd"])
-        timeout = _get_timeout(stage)
+        timeout = timeout_override if timeout_override is not None else _get_timeout(stage)
         cwd = _agent_cwd(worktree_path)
         # PYTHONUNBUFFERED=1 so child Python (e.g. uv run train.py) flushes stdout
         # immediately instead of block-buffering when stdout is a pipe; otherwise
@@ -474,11 +681,15 @@ def _invoke_agent(
         try:
             process = subprocess.Popen(cmd, **popen_kwargs)
         except FileNotFoundError:
-            _mark_agent_unavailable(agent_name, "binary not found during launch")
-            continue
+            if agent_override is None:
+                _mark_agent_unavailable(agent_name, "binary not found during launch")
+                continue
+            return (agent_name, -1, "", f"{agent_name!r} binary not found", None, None)
         except OSError as exc:
-            _mark_agent_unavailable(agent_name, f"launch error: {exc}")
-            continue
+            if agent_override is None:
+                _mark_agent_unavailable(agent_name, f"launch error: {exc}")
+                continue
+            return (agent_name, -1, "", str(exc), None, None)
 
         if config["via"] == "stdin" and process.stdin is not None:
             process.stdin.write(prompt)
@@ -527,11 +738,17 @@ def _invoke_agent(
                 stderr = f"{stderr}\n{timeout_message}"
             else:
                 stderr = timeout_message
-            _record_agent_exit(agent_name, -1)
+            if agent_override is None:
+                if _record_agent_exit(agent_name, -1):
+                    _maybe_rotate_after_stuck_check(agent_name, run_id, stdout_path, stderr_path)
             return agent_name, -1, stdout, stderr, stdout_path, stderr_path
 
-        _record_agent_exit(agent_name, int(process.returncode))
-        return agent_name, int(process.returncode), stdout, stderr, stdout_path, stderr_path
+        ret = int(process.returncode)
+        if agent_override is None:
+            effective = _effective_exit_for_downgrade(agent_name, ret, stderr, stdout)
+            if _record_agent_exit(agent_name, effective):
+                _maybe_rotate_after_stuck_check(agent_name, run_id, stdout_path, stderr_path)
+        return agent_name, ret, stdout, stderr, stdout_path, stderr_path
 
 
 def _build_metrics_recovery_prompt(task: dict[str, Any]) -> str:
@@ -680,7 +897,6 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
     # Worktree runs must stay entirely within the copied seed workspace to avoid external_directory requests.
     in_worktree = worktree_dir.resolve() != PROJECT_ROOT.resolve()
     if in_worktree:
-        context_protocol = "  - pdca_system/protocol.md"
         docs = "\n".join(f"  - pdca_system/{doc}" for doc in STAGE_DOCS[stage])
         task_block = (
             "Task content (provided inline; do not look up any external task file):\n"
@@ -694,7 +910,6 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
         )
         scope_note = "Do not edit files outside the worktree unless the prompt explicitly requires it.\n\n"
     else:
-        context_protocol = "  - pdca_system/protocol.md"
         docs = "\n".join(f"  - pdca_system/{doc}" for doc in STAGE_DOCS[stage])
         task_path_rel = f"  - {rel_task}"
         task_block = f"Task file:\n{task_path_rel}\n\nTask content:\n{task_json}\n\n"
@@ -829,15 +1044,6 @@ def _append_results_tsv(
 
 
 def _regenerate_progress_png() -> None:
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        import pandas as pd
-    except ImportError:
-        return
-
     if not RESULTS_TSV.exists():
         return
 
@@ -1143,7 +1349,7 @@ def main() -> None:
         available = list(_AGENT_RUNTIME_STATE.get("available", []))
         unavailable = dict(_AGENT_RUNTIME_STATE.get("unavailable", {}))
     print(
-        "[daemon] starting pdca-system daemon — "
+        "[daemon] starting pdca-system daemon - "
         f"agent={active}, available={available}, workers=PD/CA-GPU/CA-AUX/DIRECT"
     )
     if unavailable:
