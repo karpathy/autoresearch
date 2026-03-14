@@ -17,11 +17,29 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+import types as _types
+
+def _flash_attn_func(q, k, v, causal=True, window_size=(-1, -1)):
+    """PyTorch SDPA drop-in for flash_attn_func. q,k,v: (B, T, H, D)."""
+    B, T, Hq, D = q.shape
+    Hkv = k.shape[2]
+    q = q.transpose(1, 2)
+    k = k.transpose(1, 2)
+    v = v.transpose(1, 2)
+    if Hkv != Hq:
+        k = k.repeat_interleave(Hq // Hkv, dim=1)
+        v = v.repeat_interleave(Hq // Hkv, dim=1)
+    left, _ = window_size
+    if left < 0 or left >= T:
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=causal)
+    else:
+        mask = torch.ones(T, T, device=q.device, dtype=torch.bool).tril() & \
+               torch.ones(T, T, device=q.device, dtype=torch.bool).triu(-left)
+        bias = q.new_full((T, T), float('-inf')).masked_fill_(mask, 0.0)
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=bias)
+    return y.transpose(1, 2)
+
+fa3 = _types.SimpleNamespace(flash_attn_func=_flash_attn_func)
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
