@@ -10,7 +10,9 @@ os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
 import math
+import sys
 import time
+import argparse
 from dataclasses import dataclass, asdict
 
 import torch
@@ -451,6 +453,65 @@ DEPTH = 8               # number of transformer layers
 DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
 
 # ---------------------------------------------------------------------------
+# CLI flags
+# ---------------------------------------------------------------------------
+
+parser = argparse.ArgumentParser(description="Autoresearch training script", add_help=False)
+parser.add_argument("--profile", action="store_true",
+                    help="Profile a few warmup steps and print an LLM-readable Markdown "                         "table of top CUDA kernels, then exit.")
+_args, _ = parser.parse_known_args()
+PROFILE_MODE = _args.profile
+
+# ---------------------------------------------------------------------------
+# Profiler helper (runs only when --profile is passed)
+# ---------------------------------------------------------------------------
+
+def run_profiler(model, optimizer, train_loader_iter, grad_accum_steps, autocast_ctx, top_n=15):
+    """Profile a few training steps and print a Markdown summary for the LLM to read.
+
+    Usage: uv run train.py --profile
+    Prints a Markdown table of the top CUDA kernels by self-time so an AI agent can
+    identify hardware bottlenecks without needing trace visualization tools.
+    """
+    WARMUP, ACTIVE = 2, 5
+    schedule = torch.profiler.schedule(wait=0, warmup=WARMUP, active=ACTIVE, repeat=1)
+    activities = [torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]
+    print("
+## Profiler: running warmup steps (not counted in TIME_BUDGET)")
+    with torch.profiler.profile(activities=activities, schedule=schedule,
+                                record_shapes=False, with_stack=False) as prof:
+        for _step in range(WARMUP + ACTIVE):
+            x_p, y_p, _ = next(train_loader_iter)
+            for _ in range(grad_accum_steps):
+                with autocast_ctx:
+                    loss = model(x_p, y_p)
+                (loss / grad_accum_steps).backward()
+                x_p, y_p, _ = next(train_loader_iter)
+            optimizer.step()
+            model.zero_grad(set_to_none=True)
+            prof.step()
+
+    # Aggregate by CUDA self-time and render as Markdown table
+    key_avgs = prof.key_averages()
+    cuda_ops = [(e.key, e.self_cuda_time_total, e.count)
+                for e in key_avgs if e.self_cuda_time_total > 0]
+    cuda_ops.sort(key=lambda x: -x[1])
+    total_cuda_us = sum(t for _, t, _ in cuda_ops) or 1
+
+    print(f"
+## Top {top_n} CUDA kernels ({ACTIVE} profiled steps)
+")
+    print("| Rank | Kernel | Self CUDA (ms) | % of Total | Calls |")
+    print("|------|--------|---------------|------------|-------|")
+    for rank, (name, us, calls) in enumerate(cuda_ops[:top_n], 1):
+        ms = us / 1000
+        pct = 100 * us / total_cuda_us
+        short = (name[:52] + "..") if len(name) > 54 else name
+        print(f"| {rank} | `{short}` | {ms:.2f} | {pct:.1f}% | {calls} |")
+    print(f"
+_Total CUDA time: {total_cuda_us/1e6:.3f}s over {ACTIVE} steps_")
+
+# ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
 # ---------------------------------------------------------------------------
 
@@ -512,6 +573,11 @@ x, y, epoch = next(train_loader)  # prefetch first batch
 
 print(f"Time budget: {TIME_BUDGET}s")
 print(f"Gradient accumulation steps: {grad_accum_steps}")
+
+# If --profile flag is set, run profiler and exit without full training
+if PROFILE_MODE:
+    run_profiler(model, optimizer, train_loader, grad_accum_steps, autocast_ctx)
+    sys.exit(0)
 
 # Schedules (all based on progress = training_time / TIME_BUDGET)
 
