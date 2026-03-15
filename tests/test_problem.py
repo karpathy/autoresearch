@@ -62,7 +62,6 @@ class TestLoadFull:
         assert config.score.bounded is True
         assert config.git.base_branch == "main"
         assert config.git.proposal_pattern == "proposals/*"
-        assert len(config.constraints) == 2
 
 
 class TestValidation:

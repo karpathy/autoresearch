@@ -70,7 +70,7 @@ Every problem is a self-contained directory (typically its own git repo):
 
 ```
 my-problem/
-├── problem.yaml           # Problem definition (name, score direction, constraints)
+├── problem.yaml           # Problem definition (name, score direction)
 ├── agent_instructions.md  # Protocol for agents
 ├── state/                 # Mutable files — agents can create, modify, or delete
 ├── context/               # Read-only context (optional)

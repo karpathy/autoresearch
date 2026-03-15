@@ -9,9 +9,3 @@ score:
   direction: minimize
   description: "Median wall-clock time for fib(35) in seconds — lower is better"
   timeout: 60
-
-constraints:
-  - "fib(n) must return the correct Fibonacci number for any non-negative n"
-  - "The function signature must remain: def fib(n) -> int"
-  - "No hardcoding return values for specific inputs"
-  - "No reading from the scoring directory"

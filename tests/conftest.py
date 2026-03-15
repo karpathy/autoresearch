@@ -43,10 +43,6 @@ def full_problem_yaml():
         git:
           base_branch: main
           proposal_pattern: "proposals/*"
-
-        constraints:
-          - "All values must be finite"
-          - "Solution must be a list of exactly 10 floats"
     """)
 
 

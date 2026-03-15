@@ -8,6 +8,3 @@ score:
   direction: minimize
   description: "Total Euclidean tour distance — lower is better"
   bounded: true
-
-constraints:
-  - "Tour must be a valid permutation of [0..19] (each city visited exactly once)"

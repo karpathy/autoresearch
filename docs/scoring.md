@@ -30,7 +30,7 @@ Before writing code, answer these questions:
 
 **What does the number mean?** A score should have a clear interpretation. "Rastrigin function value at the solution point" is clear. "Quality" is not. If you can't explain what a 10% improvement means in concrete terms, your metric needs work.
 
-**What can agents exploit?** Agents will find the shortest path to a better number. If your metric is "lines of code" they'll delete everything. If it's "test pass rate" they'll delete the tests. Think adversarially: what's the dumbest way to improve this number? Then either close that loophole in the metric or add constraints.
+**What can agents exploit?** Agents will find the shortest path to a better number. If your metric is "lines of code" they'll delete everything. If it's "test pass rate" they'll delete the tests. Think adversarially: what's the dumbest way to improve this number? Then close that loophole in the scoring function.
 
 **Is the starting score meaningful?** The initial state should produce a valid, non-trivial score. If the baseline is already zero or infinity, agents have no gradient to follow. Seed `state/` with something reasonable but clearly improvable.
 

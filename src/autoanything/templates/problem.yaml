@@ -11,5 +11,3 @@ score:
 
 # git:
 #   base_branch: main
-# constraints:
-#   - "Describe rules agents must follow"

@@ -45,7 +45,7 @@ autoanything init my-problem --direction minimize
 cd my-problem
 
 # Edit the scaffolded files
-#   problem.yaml       — describe the problem, set constraints
+#   problem.yaml       — describe the problem
 #   state/             — set up the initial mutable state (any files)
 #   scoring/score.py   — implement your score() function
 
@@ -264,7 +264,7 @@ cd my-problem
 
 This scaffolds the full directory structure, initializes a git repo, and sets up `.gitignore` to exclude `scoring/` and `.autoanything/`. Then:
 
-1. **Edit `problem.yaml`** — describe the problem, set constraints.
+1. **Edit `problem.yaml`** — describe the problem.
 2. **Edit files in `state/`** — set up the initial mutable state. You can rename, add, or remove files here; the scoring function decides what to read.
 3. **Edit `scoring/score.py`** — implement your `score()` function. It must return a dict with at least the primary metric key (default: `"score"`).
 4. **Run `autoanything validate`** — check everything is wired up.

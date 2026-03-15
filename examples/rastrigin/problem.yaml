@@ -9,6 +9,3 @@ score:
   direction: minimize
   description: "Rastrigin function value — global minimum is 0.0 at the origin"
   bounded: true
-
-constraints:
-  - "Solution vector must have exactly 10 elements"

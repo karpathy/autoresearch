@@ -8,7 +8,3 @@ score:
   direction: minimize
   description: "Bounding box area + overlap penalty (10000 per overlapping pair) — lower is better"
   bounded: true
-
-constraints:
-  - "Placements must have exactly 12 entries matching the 12 rectangles"
-  - "Coordinates must be non-negative integers"

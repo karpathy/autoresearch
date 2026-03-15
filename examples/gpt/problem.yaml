@@ -10,8 +10,3 @@ score:
   direction: minimize
   description: "Validation bits per byte — measures how well the model compresses unseen text"
   bounded: false
-
-constraints:
-  - "Training must complete within the 5-minute time budget"
-  - "Only packages in pyproject.toml are available"
-  - "Requires NVIDIA GPU with CUDA"

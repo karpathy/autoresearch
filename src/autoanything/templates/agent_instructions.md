@@ -8,7 +8,7 @@ Optimize the score ({{direction}}).
 
 1. Pull the latest main branch.
 2. Create a branch: `proposals/<your-name>/<description>`
-3. Read `problem.yaml` for the full problem definition and constraints.
+3. Read `problem.yaml` for the full problem definition.
 4. Read files in `context/` for background information.
 5. Check `leaderboard.md` for the best scores and `history.md` for recent attempts.
 6. You may create, modify, or delete files in `state/`.
@@ -18,7 +18,7 @@ Optimize the score ({{direction}}).
 
 ## Files
 
-- `problem.yaml` — problem definition and constraints
+- `problem.yaml` — problem definition
 - `state/` — files you can modify (create, edit, or delete)
 - `context/` — read-only background information
 - `leaderboard.md` — best accepted scores

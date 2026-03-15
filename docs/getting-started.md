@@ -19,7 +19,7 @@ Follow the walkthrough in [create-problem.md](create-problem.md). The short vers
 autoanything init my-problem --direction minimize
 cd my-problem
 # Edit three things:
-#   problem.yaml       — describe the problem and constraints
+#   problem.yaml       — describe the problem
 #   state/             — put whatever files agents should optimize
 #   scoring/score.py   — implement your scoring function
 autoanything run -a "claude -p 'read agent_instructions.md and improve the solution'"

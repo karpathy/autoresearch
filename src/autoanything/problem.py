@@ -17,7 +17,7 @@ class ValidationError(Exception):
 
 
 # Known keys at each level — used to warn on unrecognized fields
-_TOP_LEVEL_KEYS = {"name", "description", "state", "mutable", "score", "git", "constraints"}
+_TOP_LEVEL_KEYS = {"name", "description", "state", "mutable", "score", "git"}
 _SCORE_KEYS = {"name", "direction", "description", "timeout", "bounded"}
 _GIT_KEYS = {"base_branch", "proposal_pattern"}
 
@@ -91,7 +91,6 @@ class ProblemConfig:
     state: list[str]
     score: ScoreConfig
     git: GitConfig = field(default_factory=GitConfig)
-    constraints: list[str] = field(default_factory=list)
 
     @property
     def mutable(self) -> list[str]:
@@ -184,14 +183,10 @@ def load_problem(path) -> ProblemConfig:
         proposal_pattern=git_data.get("proposal_pattern", "proposals/*"),
     )
 
-    # Constraints
-    constraints = data.get("constraints", [])
-
     return ProblemConfig(
         name=data["name"],
         description=data.get("description", ""),
         state=state,
         score=score_config,
         git=git_config,
-        constraints=constraints,
     )

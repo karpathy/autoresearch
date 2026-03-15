@@ -98,7 +98,7 @@ def init(name, parent_dir, direction):
     click.echo("")
     click.echo("Next steps:")
     click.echo(f"  cd {problem_dir}")
-    click.echo("  # Edit problem.yaml — describe the problem, set constraints")
+    click.echo("  # Edit problem.yaml — describe the problem")
     click.echo("  # Edit files in state/ — set up the initial mutable state")
     click.echo("  # Edit scoring/score.py — implement your score() function")
     click.echo("  autoanything validate    # check everything is wired up")

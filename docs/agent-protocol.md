@@ -29,7 +29,7 @@ Any files in `state/` — create, modify, or delete.
 
 ## Score
 
-See `problem.yaml` for the metric name, direction (minimize/maximize), and constraints.
+See `problem.yaml` for the metric name and direction (minimize/maximize).
 
 ## Strategy Tips
 

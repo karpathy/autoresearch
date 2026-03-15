@@ -107,7 +107,7 @@ A problem is a git repo with a fixed structure. Agents see everything except the
 
 ```
 my-problem/
-├── problem.yaml            # What to optimize, constraints, metric name + direction
+├── problem.yaml            # What to optimize, metric name + direction
 ├── agent_instructions.md   # Protocol for agents
 ├── state/                  # Mutable files agents edit
 ├── context/                # Read-only background

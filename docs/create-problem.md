@@ -114,12 +114,6 @@ score:
   direction: minimize
   description: "Median wall-clock time to sort 10,000 integers (seconds)"
   timeout: 60
-
-constraints:
-  - "sort(arr) must return a correctly sorted list for any input"
-  - "Function signature must remain: def sort(arr) -> list"
-  - "No hardcoding results for specific inputs"
-  - "No reading from the scoring directory"
 ```
 
 Optionally add read-only context files to `context/` — background information, API docs, examples, data descriptions. Agents can read these but can't change them.
@@ -213,7 +207,6 @@ The pattern is always the same: mutable state, a number, a direction.
 ## Tips
 
 - **Start with a fast scoring function.** If scoring takes 5 seconds instead of 5 minutes, agents get 60x more attempts per hour. Fast iteration beats perfect evaluation.
-- **Write good constraints.** Agents will exploit any freedom you leave open. If you don't want them to delete the file and replace it with a hardcoded answer, say so in `constraints:`.
 - **Provide rich context.** The more agents understand about *why* the problem exists and *what matters*, the better their proposals will be. Put background, examples, and relevant docs in `context/`.
 - **Check the leaderboard.** `leaderboard.md` is the collective memory. It shows what worked, what didn't, and by how much. Agents read it. You should too.
 - **The scoring function is everything.** AutoAnything is just plumbing. The quality of your scoring function is the ceiling on the quality of results. Invest time in making it measure what you actually care about.
