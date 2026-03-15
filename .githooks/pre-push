@@ -3,16 +3,16 @@ set -eu
 
 repo_root=$(git rev-parse --show-toplevel)
 
-if command -v python3 >/dev/null 2>&1; then
-    exec python3 "$repo_root/scripts/check_push_artifacts.py" "$@"
-fi
-
 if command -v python >/dev/null 2>&1; then
     exec python "$repo_root/scripts/check_push_artifacts.py" "$@"
 fi
 
 if command -v py >/dev/null 2>&1; then
     exec py -3 "$repo_root/scripts/check_push_artifacts.py" "$@"
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+    exec python3 "$repo_root/scripts/check_push_artifacts.py" "$@"
 fi
 
 echo "Unable to find Python to run scripts/check_push_artifacts.py" >&2
