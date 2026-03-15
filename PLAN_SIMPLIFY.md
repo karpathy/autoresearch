@@ -12,7 +12,7 @@ The goal is to make the problem definition as close to zero-configuration as pos
 
 Everything in `state/` is mutable. No need to list files in `problem.yaml`. The framework discovers state files by listing the directory. Agents know to edit files in `state/` by convention.
 
-This changes validation: instead of checking changed files against an explicit list, check that all changes have a `state/` path prefix. Simpler and more robust.
+This changes validation: instead of checking changed files against an explicit list, check that all changes have a `state/` path prefix. Simpler and more robust. This is intentionally more permissive than the old exact-set check — agents can create new files in `state/`, not just edit existing ones.
 
 ### 2. `scoring/score.py` replaces `scoring/score.sh`
 
@@ -37,6 +37,8 @@ subprocess.run(
     cwd=problem_dir, capture_output=True, text=True, timeout=timeout,
 )
 ```
+
+This works because Python 3 namespace packages resolve `scoring/score.py` from cwd without needing `__init__.py`. Same applies to `from state.solution import x` and `from context.problem import ...`.
 
 Non-Python scoring (benchmarks, training runs, API calls) still works — users just call `subprocess.run()` or whatever they need inside their `score()` function.
 
@@ -94,50 +96,59 @@ Most problems use `"score"` as their metric key. If the `score()` function retur
 
 ### `src/autoanything/problem.py`
 
-- Remove `state` as a required field in validation. Make it optional — if present, use it (backward compat); if absent, the framework discovers state files from `state/` directory.
+- Remove `state` as a required field in validation. Make it optional — if present in YAML, use it; if absent, populate eagerly by calling `get_state_files(path)` inside `load_problem()`. This way `config.state` is always populated and all downstream code keeps working.
 - Add a `get_state_files(problem_dir)` helper that lists `state/` contents (excluding `__pycache__`, `.pyc`, etc.).
-- Remove the `score.script` field from `ScoreConfig`. The framework always uses `scoring/score.py` (with a fallback to `scoring/score.sh` and `evaluator/score.sh` for backward compat during transition).
+- Remove the `score.script` field from `ScoreConfig`. The framework always uses `scoring/score.py`.
 - Default `score.name` to `"score"` instead of requiring it.
-- Remove `context:` / `readonly:` fields. They were documentation-only anyway. The `context` field on `ProblemConfig` can be populated by listing the `context/` directory if it exists.
-- Keep the `mutable` property on `ProblemConfig` but have it call `get_state_files()` when `state` list is empty.
+- Remove `context:` / `readonly:` fields from validation. They were documentation-only anyway.
+- Keep `ProblemConfig.state` as a field (populated at load time) and the `mutable` property as an alias.
 
 ### `src/autoanything/scoring.py`
 
 - Add a new `run_score_py()` function that invokes `scoring/score.py` via subprocess:
   - Runs `python -c "import json; from scoring.score import score; print(json.dumps(score()))"` in the problem directory
   - Parses the JSON output
-  - Returns `(score_value, metrics_dict, duration, error)` — same interface as current `run_score()`
-- Rename current `run_score()` to `run_score_sh()` (kept for backward compat).
-- New `run_score()` dispatches: tries `scoring/score.py` first, falls back to `scoring/score.sh` / `evaluator/score.sh`.
+  - Returns `(score_value, metrics_dict, duration, error)` — same return shape as current `run_score()`
+- Delete the old `run_score()` (no backward compat needed).
+- New `run_score(problem_dir, score_name, timeout)` takes `problem_dir` instead of a script path. It runs `scoring/score.py` via `run_score_py()`. Discovery is internal — callers just pass the problem directory.
 - `parse_score_output()` stays unchanged — still used to parse JSON from subprocess stdout.
 
 ### `src/autoanything/runner.py`
 
 - State file validation: instead of `config.state` set comparison, check that all changed file paths start with `state/`. Remove the `state_files = set(config.state)` / `invalid = all_changes - state_files` logic, replace with a path-prefix check.
-- Update `_scoring_dir()` to handle `scoring/score.py` (the parent dir is still `scoring/`).
-- The hide/restore scoring logic stays the same — it moves the `scoring/` directory, which now contains `score.py` instead of `score.sh`.
+- Simplify hide/restore scoring: hardcode `scoring/` as the directory to hide. Remove the `script_path` parameter from `_scoring_dir()`, `_hide_scoring()`, `_restore_scoring()`, and `_recover_scoring()` — they always operate on `scoring/`.
+- Update `run_score()` calls to use new signature: `run_score(problem_dir, score_name, timeout)` instead of `run_score(script, score_name, timeout, cwd)`.
 
 ### `src/autoanything/evaluator.py`
 
-- No structural changes. It calls `run_score()` which is updated in `scoring.py`. Everything flows through.
+- Update `run_score()` calls to use new signature: `run_score(problem_dir, score_name, timeout)`. Remove `script = os.path.join(problem_dir, config.score.script)` lines in both `establish_baseline()` and `evaluate_proposal()`.
+- The rest of the structure is unchanged — it still calls `run_score()` and handles the result the same way.
+
+### `src/autoanything/server.py`
+
+- **`validate_pr_files()`**: change from exact-file-set matching to path-prefix checking. Instead of `f not in mutable_files`, check `not f.startswith("state/")`. Remove the `mutable_files` parameter; the function just enforces the `state/` convention.
+- **`create_app()`**: remove `mutable_files = config.state` and `score_script = os.path.join(problem_dir, config.score.script)`. Use the new `run_score(problem_dir, score_name, timeout)` signature.
+- **Fallback block** (lines 170-175): remove the try/except fallback that hardcodes `scoring/score.sh` — the new `run_score()` handles everything internally.
+- Update the call to `validate_pr_files()` in `_evaluate_one_pr()` — no longer passes `mutable_files`.
 
 ### `src/autoanything/cli.py`
 
 **`init` command:**
 - Remove `--metric` flag (default is `"score"`; users can edit `problem.yaml` if different).
-- Remove `--direction` flag (default is `minimize`; users can edit `problem.yaml` if different). OR: keep `--direction` since it's one of the two fundamental inputs — but default to `minimize`.
-- Scaffold `scoring/score.py` instead of `scoring/score.sh`.
+- Keep `--direction` flag since it's one of the two fundamental inputs — default to `minimize`.
+- Scaffold `scoring/score.py` instead of `scoring/score.sh`. No `chmod` needed (it's not executed directly).
 - Updated `problem.yaml` template — smaller, no `state:` list.
 - Updated `agent_instructions.md` template — refers to `state/` directory convention.
 - Updated `.gitignore` template — same content, still hides `scoring/` and `.autoanything/`.
 
 **`validate` command:**
-- Check for `scoring/score.py` (with fallback acceptance of `scoring/score.sh` or `evaluator/score.sh`).
+- Check for `scoring/score.py` existence.
 - Remove check for individual state files from `config.state`. Instead verify `state/` directory exists and is non-empty.
+- Remove the executable permission check (`os.access(script_path, os.X_OK)`) — not relevant for `.py` files.
 - Adjust `.gitignore` check to look for `scoring/` (unchanged).
 
 **`score` command:**
-- Uses updated `run_score()` from `scoring.py`. No other changes needed.
+- Use new `run_score(problem_dir, score_name, timeout)` signature. Remove `script_path` construction from `config.score.script`.
 
 ### `src/autoanything/templates/`
 
@@ -166,10 +177,10 @@ description: >
 score:
   direction: {{direction}}
   description: "Describe what this metric measures"
+  # name: score             # metric key, default "score"
+  # timeout: 900            # seconds before scoring is killed
+  # bounded: false          # true if the metric has a known optimum
 
-# Optional overrides (uncomment to customize):
-# score.name: score         # metric key returned by score(), default "score"
-# score.timeout: 900        # seconds before scoring is killed
 # git:
 #   base_branch: main
 # constraints:
@@ -179,7 +190,7 @@ score:
 **`solution.py` (unchanged)**
 
 **`agent_instructions.md` (updated):**
-- Replace references to specific state files with "files in `state/`"
+- Replace "Modify only the files listed under `state:` in `problem.yaml`" with "You may create, modify, or delete files in `state/`"
 - Keep the rest of the protocol
 
 **`gitignore` (unchanged)**
@@ -226,6 +237,8 @@ def score():
     return {"score": tour_distance(tour)}
 ```
 
+Delete `evaluator/` directory.
+
 ### Examples: `examples/packing/`
 
 **`problem.yaml`** — same treatment.
@@ -238,9 +251,17 @@ def score():
     return {"score": evaluate_packing(placements)}
 ```
 
+Delete `evaluator/` directory.
+
 ### Examples: `examples/gpt/`
 
-**`problem.yaml`** — remove `mutable:`, `readonly:`. Keep `score.name: val_bpb` since it differs from default.
+**`problem.yaml`** — remove `mutable:`, `readonly:`. Keep `score.name: val_bpb` since it differs from default:
+```yaml
+score:
+  name: val_bpb
+  direction: minimize
+  ...
+```
 
 **`evaluator/score.sh` → `scoring/score.py`:**
 ```python
@@ -273,18 +294,20 @@ def score():
     }
 ```
 
+Delete `evaluator/` directory.
+
 ### Tests
 
 **`tests/conftest.py`:**
-- Update `minimal_problem_yaml` — remove `state:` field.
+- Update `minimal_problem_yaml` — remove `state:` and `score.name` fields.
 - Update `full_problem_yaml` — remove `state:`, `context:`, `score.script`.
 - Update `problem_dir` fixture — create `scoring/score.py` instead of `scoring/score.sh`.
 
 **`tests/test_problem.py`:**
 - Remove tests for missing/empty `state:` validation (it's no longer required in YAML).
 - Remove `TestMutableField` backward compat tests.
-- Remove `TestScoreFallback` tests for `evaluator/score.sh` (or keep as transition tests).
-- Update `test_default_script` — no longer a field.
+- Remove `TestScoreFallback` tests for `evaluator/score.sh`.
+- Remove `test_default_script` — no longer a field.
 - Add tests for `get_state_files()` discovery.
 - Keep validation tests for `name`, `score.direction`.
 
@@ -292,11 +315,11 @@ def score():
 - Add `TestRunScorePy` class testing the new `run_score_py()` function with a `scoring/score.py` file.
 - Keep `TestParseScoreOutput` unchanged.
 - Keep `TestIsBetter` unchanged.
-- Keep `TestRunScore` (bash) tests — the function still exists for backward compat.
+- Remove old `TestRunScore` (bash) tests — no backward compat needed.
 
 **`tests/test_cli.py`:**
 - `TestInit`: update to check for `scoring/score.py` instead of `scoring/score.sh`. Remove `test_custom_metric_and_direction` or update it. Update template rendering tests.
-- `TestValidate`: update expectations for new structure. Check for `scoring/score.py`.
+- `TestValidate`: update expectations for new structure. Check for `scoring/score.py`. Remove executable permission test.
 - `TestScore`: update fixtures to use `scoring/score.py`.
 
 **`tests/test_integration.py`:**
@@ -306,12 +329,17 @@ def score():
 **`tests/test_evaluator.py`:**
 - Mock config objects no longer need `score.script`. Update `_make_config()`.
 
+**`tests/test_server.py`:**
+- Update `validate_pr_files` tests to use path-prefix checking (no `mutable_files` parameter).
+- Update mock config objects — no `score.script` field.
+- Update any fixtures that construct score script paths.
+
 ### Documentation
 
 **`CLAUDE.md`:**
 - Update repository structure to show `scoring/score.py` instead of `scoring/score.sh`.
 - Update "How Problems Work" section — show simplified `problem.yaml`, `scoring/score.py` convention.
-- Update "Agent Protocol" — refer to `state/` directory not specific files.
+- Update "Agent Protocol" — refer to `state/` directory not specific files. "You may create, modify, or delete files in `state/`."
 - Remove `evaluator/` references.
 
 **`CREATE_PROBLEM.md`:**
@@ -320,25 +348,18 @@ def score():
 - Step 4 (verify): unchanged.
 - Update quick reference at bottom.
 
-## Backward Compatibility
-
-This is a pre-1.0 project. The plan is a clean cut-over, not a long deprecation cycle. However, the implementation should include minimal fallback logic:
-
-- `scoring.py` (`run_score`): try `scoring/score.py` first, fall back to `scoring/score.sh`, then `evaluator/score.sh`. This lets existing problem repos work without immediate changes.
-- `problem.py`: if `state:` is present in YAML, use it. If absent, discover from `state/` directory. Existing YAMLs with `state:` or `mutable:` still load fine.
-- `score.name`: default to `"score"` if not specified. Existing YAMLs that specify it still work.
-
 ## Execution Order
 
-1. `src/autoanything/problem.py` — make `state:` optional, add `get_state_files()`, default `score.name`, remove `score.script` requirement
-2. `src/autoanything/scoring.py` — add `run_score_py()`, update `run_score()` dispatch
-3. `src/autoanything/runner.py` — path-prefix validation for state changes
-4. `src/autoanything/evaluator.py` — minimal changes (uses updated `run_score`)
-5. `src/autoanything/templates/` — new `score.py`, updated `problem.yaml`, updated `agent_instructions.md`
-6. `src/autoanything/cli.py` — update `init` and `validate`
-7. `examples/` — convert all four examples
-8. `tests/` — update all test files
-9. `CLAUDE.md`, `CREATE_PROBLEM.md` — update docs
+1. `src/autoanything/problem.py` — make `state:` optional, add `get_state_files()`, default `score.name`, remove `score.script`
+2. `src/autoanything/scoring.py` — add `run_score_py()`, new `run_score()` with `problem_dir` signature
+3. `src/autoanything/runner.py` — path-prefix validation, simplified hide/restore, new `run_score()` signature
+4. `src/autoanything/evaluator.py` — new `run_score()` signature
+5. `src/autoanything/server.py` — path-prefix validation, new `run_score()` signature, remove `mutable_files`
+6. `src/autoanything/templates/` — new `score.py`, updated `problem.yaml`, updated `agent_instructions.md`
+7. `src/autoanything/cli.py` — update `init`, `validate`, and `score`
+8. `examples/` — convert all four examples, delete `evaluator/` directories
+9. `tests/` — update all test files including `test_server.py`
+10. `CLAUDE.md`, `CREATE_PROBLEM.md` — update docs
 
 ## Result
 
@@ -358,7 +379,7 @@ The problem directory:
 my-problem/
 ├── problem.yaml          # name, description, direction — that's it
 ├── agent_instructions.md # auto-generated
-├── state/                # mutable files (implicit)
+├── state/                # mutable files (agents can create, modify, delete)
 ├── context/              # read-only files (optional)
 ├── scoring/
 │   └── score.py          # implement score() → dict
