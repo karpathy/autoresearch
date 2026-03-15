@@ -110,7 +110,7 @@ def main() -> int:
     torch.set_float32_matmul_precision("high")
     device = torch.device("cuda")
     autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-    device_props = torch.cuda.get_device_properties(0)
+    device_props = torch.cuda.get_device_properties(torch.cuda.current_device())
     device_peak_flops = estimate_device_peak_flops(device_props)
 
     tokenizer = Tokenizer.from_directory()
@@ -123,6 +123,8 @@ def main() -> int:
         head_dim=runtime.model.head_dim,
         window_pattern=runtime.model.window_pattern,
         activation_checkpoint=runtime.model.activation_checkpoint,
+        ve_gate_channels=runtime.model.ve_gate_channels,
+        softcap=runtime.model.softcap,
     )
 
     print(f"Vocab size: {vocab_size:,}")

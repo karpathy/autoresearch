@@ -66,9 +66,11 @@ class GPTConfig:
     n_embd: int = 768
     window_pattern: str = "SSSL"
     activation_checkpoint: str = "none"
+    ve_gate_channels: int = 32
+    softcap: float = 15.0
 
 
-def build_model_config(*, depth, max_seq_len, vocab_size, aspect_ratio, head_dim, window_pattern, activation_checkpoint):
+def build_model_config(*, depth, max_seq_len, vocab_size, aspect_ratio, head_dim, window_pattern, activation_checkpoint, ve_gate_channels=32, softcap=15.0):
     # Width is derived from depth*aspect_ratio, then rounded to a whole number
     # of heads so the profile knobs stay simple while tensor shapes stay legal.
     base_dim = depth * aspect_ratio
@@ -83,10 +85,12 @@ def build_model_config(*, depth, max_seq_len, vocab_size, aspect_ratio, head_dim
         n_embd=model_dim,
         window_pattern=window_pattern,
         activation_checkpoint=activation_checkpoint,
+        ve_gate_channels=ve_gate_channels,
+        softcap=softcap,
     )
 
 
-def norm(x):
+def norm(x: torch.Tensor) -> torch.Tensor:
     return F.rms_norm(x, (x.size(-1),))
 
 
@@ -96,7 +100,7 @@ def has_ve(layer_idx, n_layer):
     return layer_idx % 2 == (n_layer - 1) % 2
 
 
-def apply_rotary_emb(x, cos, sin):
+def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
     assert x.ndim == 4
     d = x.shape[3] // 2
     x1, x2 = x[..., :d], x[..., d:]
@@ -119,10 +123,10 @@ class CausalSelfAttention(nn.Module):
         self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.ve_gate_channels = 32
+        self.ve_gate_channels = config.ve_gate_channels
         self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
-    def forward(self, x, ve, cos_sin, window_size):
+    def forward(self, x: torch.Tensor, ve: torch.Tensor | None, cos_sin: tuple[torch.Tensor, torch.Tensor], window_size: tuple[int, int]) -> torch.Tensor:
         bsz, seq_len, _ = x.size()
         q = self.c_q(x).view(bsz, seq_len, self.n_head, self.head_dim)
         k = self.c_k(x).view(bsz, seq_len, self.n_kv_head, self.head_dim)
@@ -150,7 +154,7 @@ class MLP(nn.Module):
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.c_fc(x)
         x = F.relu(x).square()
         return self.c_proj(x)
@@ -163,7 +167,7 @@ class Block(nn.Module):
         self.mlp = MLP(config)
         self.activation_checkpoint = config.activation_checkpoint
 
-    def forward(self, x, ve, cos_sin, window_size):
+    def forward(self, x: torch.Tensor, ve: torch.Tensor | None, cos_sin: tuple[torch.Tensor, torch.Tensor], window_size: tuple[int, int]) -> torch.Tensor:
         x = x + self.attn(norm(x), ve, cos_sin, window_size)
         mlp_input = norm(x)
         if self.activation_checkpoint == "mlp_only" and self.training and torch.is_grad_enabled():
@@ -359,7 +363,7 @@ class GPT(nn.Module):
             group["initial_lr"] = group["lr"]
         return optimizer
 
-    def forward_trunk(self, x, idx, cos, sin):
+    def forward_trunk(self, x: torch.Tensor, idx: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         cos_sin = cos, sin
         x0 = x
         for i, block in enumerate(self.transformer.h):
@@ -368,8 +372,8 @@ class GPT(nn.Module):
             x = block(x, ve, cos_sin, self.window_sizes[i])
         return norm(x)
 
-    def compute_loss(self, x, targets=None, reduction="mean"):
-        softcap = 15
+    def compute_loss(self, x: torch.Tensor, targets: torch.Tensor | None = None, reduction: str = "mean") -> torch.Tensor:
+        softcap = self.config.softcap
         if targets is not None:
             flat_hidden = x.reshape(-1, x.size(-1))
             flat_targets = targets.reshape(-1)
@@ -385,7 +389,7 @@ class GPT(nn.Module):
         logits = torch.tanh(logits / softcap) * softcap
         return logits
 
-    def forward(self, idx, targets=None, reduction="mean"):
+    def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None, reduction: str = "mean") -> torch.Tensor:
         _, seq_len = idx.size()
         assert seq_len <= self.cos.size(1)
         cos = self.cos[:, :seq_len]

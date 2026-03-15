@@ -14,7 +14,7 @@ POLAR_EXPRESS_COEFFS = [
 ]
 
 
-def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t):
+def adamw_step_fused(p: torch.Tensor, grad: torch.Tensor, exp_avg: torch.Tensor, exp_avg_sq: torch.Tensor, step_t: torch.Tensor, lr_t: torch.Tensor, beta1_t: torch.Tensor, beta2_t: torch.Tensor, eps_t: torch.Tensor, wd_t: torch.Tensor):
     p.mul_(1 - lr_t * wd_t)
     exp_avg.lerp_(grad, 1 - beta1_t)
     exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
@@ -26,16 +26,16 @@ def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_
 
 
 def muon_step_fused(
-    stacked_grads,
-    stacked_params,
-    momentum_buffer,
-    second_momentum_buffer,
-    momentum_t,
-    lr_t,
-    wd_t,
-    beta2_t,
-    ns_steps,
-    red_dim,
+    stacked_grads: torch.Tensor,
+    stacked_params: torch.Tensor,
+    momentum_buffer: torch.Tensor,
+    second_momentum_buffer: torch.Tensor,
+    momentum_t: torch.Tensor,
+    lr_t: torch.Tensor,
+    wd_t: torch.Tensor,
+    beta2_t: torch.Tensor,
+    ns_steps: int,
+    red_dim: int,
 ):
     momentum = momentum_t.to(stacked_grads.dtype)
     momentum_buffer.lerp_(stacked_grads, 1 - momentum)

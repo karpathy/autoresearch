@@ -122,6 +122,8 @@ WARMUP_RATIO = 0.0
 WARMDOWN_RATIO = 0.5
 FINAL_LR_FRAC = 0.0
 TARGET_MFU_PERCENT = 50.0
+VE_GATE_CHANNELS = 32
+SOFTCAP = 15.0
 
 
 def env_override_int(name: str, default: int) -> int:
@@ -206,6 +208,8 @@ def build_runtime_config(
         activation_checkpoint=env_override_str("ACTIVATION_CHECKPOINT", profile.activation_checkpoint),
         default_device_batch_size=profile.device_batch_size,
         device_batch_size=pick_device_batch_size(profile.device_batch_size),
+        ve_gate_channels=env_override_int("VE_GATE_CHANNELS", VE_GATE_CHANNELS),
+        softcap=env_override_float("SOFTCAP", SOFTCAP),
     )
     compile_settings = CompileSettings(
         model_backend=model_compile_backend,
