@@ -1,16 +1,17 @@
-"""Score.sh execution and JSON parsing.
+"""Scoring — run scoring/score.py and parse JSON output.
 
-Runs score.sh as a subprocess and extracts the metric value from
-the JSON on its last line of stdout.
+Runs the problem's score() function via subprocess and extracts
+the metric value from the JSON output.
 """
 
 import json
 import subprocess
+import sys
 import time
 
 
 def parse_score_output(stdout: str, score_name: str):
-    """Extract metric value from score.sh stdout.
+    """Extract metric value from scoring subprocess stdout.
 
     Searches from the last line backward for a JSON object containing
     the named metric.
@@ -36,14 +37,17 @@ def parse_score_output(stdout: str, score_name: str):
     return None, None
 
 
-def run_score(script: str, score_name: str, timeout: int, cwd: str):
-    """Run a scoring script and return results.
+def run_score(problem_dir: str, score_name: str, timeout: int):
+    """Run scoring/score.py and return results.
+
+    Invokes the score() function from scoring/score.py in a subprocess,
+    with the problem directory as cwd so that imports from state/ and
+    context/ resolve correctly.
 
     Args:
-        script: Path to the scoring script.
+        problem_dir: Path to the problem directory.
         score_name: Metric key to extract from JSON output.
         timeout: Seconds before scoring is killed.
-        cwd: Working directory for the script.
 
     Returns:
         (score, metrics, duration_seconds, error_message)
@@ -51,8 +55,9 @@ def run_score(script: str, score_name: str, timeout: int, cwd: str):
     t0 = time.time()
     try:
         result = subprocess.run(
-            ["bash", script],
-            capture_output=True, text=True, cwd=cwd,
+            [sys.executable, "-c",
+             "import json; from scoring.score import score; print(json.dumps(score()))"],
+            capture_output=True, text=True, cwd=problem_dir,
             timeout=timeout,
         )
         duration = time.time() - t0

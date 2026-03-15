@@ -20,10 +20,7 @@ def minimal_problem_yaml():
     return textwrap.dedent("""\
         name: my-problem
         description: Minimize the cost function.
-        state:
-          - state/solution.py
         score:
-          name: cost
           direction: minimize
     """)
 
@@ -36,19 +33,11 @@ def full_problem_yaml():
         description: >
           A fully specified test problem for validation.
 
-        state:
-          - state/solution.py
-          - state/config.py
-
-        context:
-          - context/background.py
-
         score:
           name: cost
           direction: minimize
           description: "Total cost"
           timeout: 300
-          script: scoring/score.sh
           bounded: true
 
         git:
@@ -81,13 +70,11 @@ def problem_dir(tmp_path, full_problem_yaml):
     # scoring/
     scoring_dir = tmp_path / "scoring"
     scoring_dir.mkdir()
-    score_sh = scoring_dir / "score.sh"
-    score_sh.write_text(textwrap.dedent("""\
-        #!/usr/bin/env bash
-        set -euo pipefail
-        echo '{"cost": 42.5, "iterations": 100}'
+    score_py = scoring_dir / "score.py"
+    score_py.write_text(textwrap.dedent("""\
+        def score():
+            return {"cost": 42.5, "iterations": 100}
     """))
-    score_sh.chmod(0o755)
 
     # .gitignore
     (tmp_path / ".gitignore").write_text("scoring/\n.autoanything/\n")

@@ -161,13 +161,12 @@ class TestWebhookSignature:
 
 
 class TestPRValidation:
-    """PR file validation — only mutable files should be modified."""
+    """PR file validation — only state/ files should be modified."""
 
     def test_validate_allowed_files(self):
         from autoanything.server import validate_pr_files
         ok, msg = validate_pr_files(
             modified=["state/solution.py"],
-            mutable_files=["state/solution.py", "state/config.py"],
         )
         assert ok is True
 
@@ -175,7 +174,13 @@ class TestPRValidation:
         from autoanything.server import validate_pr_files
         ok, msg = validate_pr_files(
             modified=["state/solution.py", "context/background.py"],
-            mutable_files=["state/solution.py"],
         )
         assert ok is False
         assert "context/background.py" in msg
+
+    def test_new_state_files_allowed(self):
+        from autoanything.server import validate_pr_files
+        ok, msg = validate_pr_files(
+            modified=["state/solution.py", "state/new_file.py"],
+        )
+        assert ok is True

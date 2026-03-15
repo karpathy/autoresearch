@@ -22,35 +22,32 @@ class TestInitToScore:
     """Full workflow: init a problem, add scoring logic, run score."""
 
     def test_init_then_validate(self, runner, tmp_path):
-        """init creates a problem that passes validate (minus score.sh content)."""
+        """init creates a problem that passes validate (minus score.py content)."""
         runner.invoke(cli, ["init", "test-prob", "--dir", str(tmp_path)])
         prob_dir = tmp_path / "test-prob"
 
-        # Add real scoring logic to the scaffold score.sh
-        score_sh = prob_dir / "scoring" / "score.sh"
-        score_sh.write_text(
-            '#!/usr/bin/env bash\necho \'{"score": 42.0}\'\n'
+        # Add real scoring logic to the scaffold score.py
+        score_py = prob_dir / "scoring" / "score.py"
+        score_py.write_text(
+            'def score():\n    return {"score": 42.0}\n'
         )
-        score_sh.chmod(0o755)
 
         result = runner.invoke(cli, ["validate", "--dir", str(prob_dir)])
         assert result.exit_code == 0
 
     def test_init_then_score(self, runner, tmp_path):
-        """init + add real scoring → autoanything score works."""
+        """init + add real scoring -> autoanything score works."""
         runner.invoke(cli, [
             "init", "test-prob",
             "--dir", str(tmp_path),
-            "--metric", "score",
             "--direction", "minimize",
         ])
         prob_dir = tmp_path / "test-prob"
 
-        score_sh = prob_dir / "scoring" / "score.sh"
-        score_sh.write_text(
-            '#!/usr/bin/env bash\necho \'{"score": 42.0}\'\n'
+        score_py = prob_dir / "scoring" / "score.py"
+        score_py.write_text(
+            'def score():\n    return {"score": 42.0}\n'
         )
-        score_sh.chmod(0o755)
 
         result = runner.invoke(cli, ["score", "--dir", str(prob_dir)])
         assert result.exit_code == 0
@@ -75,7 +72,6 @@ class TestExistingProblemStructure:
         config = load_problem(problem_dir)
         assert config.name  # has a name
         assert config.score.direction in ("minimize", "maximize")
-        assert len(config.state) > 0
 
 
 class TestPackageInstallable:

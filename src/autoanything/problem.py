@@ -1,7 +1,7 @@
 """Problem configuration — load and validate problem.yaml.
 
-Replaces the old string-matching parsers (load_direction, load_score_name)
-with proper PyYAML parsing and validation.
+State files are discovered from the state/ directory by convention.
+Scoring always uses scoring/score.py (no script path in config).
 """
 
 import os
@@ -15,6 +15,34 @@ class ValidationError(Exception):
     """Raised when problem.yaml is missing required fields or has invalid values."""
 
 
+# Files/dirs to skip when discovering state files
+_STATE_IGNORE = {"__pycache__", ".pyc", ".pyo", "__init__.py"}
+
+
+def get_state_files(problem_dir) -> list[str]:
+    """Discover mutable files by listing the state/ directory.
+
+    Returns paths relative to problem_dir, e.g. ["state/solution.py"].
+    Excludes __pycache__, .pyc, .pyo files.
+    """
+    state_dir = Path(problem_dir) / "state"
+    if not state_dir.is_dir():
+        return []
+
+    result = []
+    for root, dirs, files in os.walk(state_dir):
+        # Prune __pycache__ dirs
+        dirs[:] = [d for d in dirs if d not in _STATE_IGNORE]
+        for f in files:
+            if f in _STATE_IGNORE or f.endswith((".pyc", ".pyo")):
+                continue
+            full = Path(root) / f
+            rel = full.relative_to(problem_dir)
+            result.append(str(rel))
+
+    return sorted(result)
+
+
 @dataclass
 class ScoreConfig:
     """Scoring configuration from problem.yaml."""
@@ -22,12 +50,11 @@ class ScoreConfig:
     direction: str
     description: str = ""
     timeout: int = 900
-    script: str = "scoring/score.sh"
     bounded: bool = False
 
     @property
     def name(self) -> str:
-        """The metric key in score.sh JSON output."""
+        """The metric key in score output."""
         return self.score_name
 
 
@@ -46,12 +73,11 @@ class ProblemConfig:
     state: list[str]
     score: ScoreConfig
     git: GitConfig = field(default_factory=GitConfig)
-    context: list[str] = field(default_factory=list)
     constraints: list[str] = field(default_factory=list)
 
     @property
     def mutable(self) -> list[str]:
-        """Backward compatibility alias for state."""
+        """Alias for state."""
         return self.state
 
 
@@ -84,22 +110,19 @@ def load_problem(path) -> ProblemConfig:
     if not data.get("name"):
         raise ValidationError("problem.yaml: 'name' is required")
 
-    # Required: state (with backward compat for 'mutable')
+    # State: from YAML if present, otherwise discover from state/ directory
     state = data.get("state") or data.get("mutable")
-    if not state or (isinstance(state, list) and len(state) == 0):
-        raise ValidationError(
-            "problem.yaml: 'state' is required (non-empty list of mutable file paths)"
-        )
-    if not isinstance(state, list):
-        raise ValidationError("problem.yaml: 'state' must be a list")
+    if state is not None:
+        if not isinstance(state, list):
+            raise ValidationError("problem.yaml: 'state' must be a list")
+    else:
+        # Discover from state/ directory
+        state = get_state_files(path)
 
     # Required: score section
     score_data = data.get("score")
     if not score_data or not isinstance(score_data, dict):
         raise ValidationError("problem.yaml: 'score' section is required")
-
-    if not score_data.get("name"):
-        raise ValidationError("problem.yaml: 'score.name' is required")
 
     if not score_data.get("direction"):
         raise ValidationError("problem.yaml: 'score.direction' is required")
@@ -111,19 +134,14 @@ def load_problem(path) -> ProblemConfig:
             f"got '{direction}'"
         )
 
-    # Determine score script with fallback
-    script = score_data.get("script", "scoring/score.sh")
-    if script == "scoring/score.sh" and not (path / script).exists():
-        fallback = "evaluator/score.sh"
-        if (path / fallback).exists():
-            script = fallback
+    # score.name defaults to "score"
+    score_name = score_data.get("name", "score")
 
     score_config = ScoreConfig(
-        score_name=score_data["name"],
+        score_name=score_name,
         direction=direction,
         description=score_data.get("description", ""),
         timeout=score_data.get("timeout", 900),
-        script=script,
         bounded=score_data.get("bounded", False),
     )
 
@@ -136,9 +154,6 @@ def load_problem(path) -> ProblemConfig:
         proposal_pattern=git_data.get("proposal_pattern", "proposals/*"),
     )
 
-    # Context (with backward compat for 'readonly')
-    context = data.get("context") or data.get("readonly") or []
-
     # Constraints
     constraints = data.get("constraints", [])
 
@@ -148,6 +163,5 @@ def load_problem(path) -> ProblemConfig:
         state=state,
         score=score_config,
         git=git_config,
-        context=context,
         constraints=constraints,
     )

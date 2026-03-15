@@ -28,8 +28,7 @@ def eval_db(tmp_path):
 def _make_config(**overrides):
     """Build a mock ProblemConfig with sensible defaults."""
     defaults = dict(
-        score=MagicMock(name="cost", script="scoring/score.sh", timeout=900,
-                        direction="minimize"),
+        score=MagicMock(name="cost", timeout=900, direction="minimize"),
         git=MagicMock(base_branch="main"),
     )
     defaults.update(overrides)
@@ -179,8 +178,7 @@ class TestEvaluateProposal:
             conn, branch="proposals/agent/test", commit_sha="prop4",
             direction="maximize", problem_dir=str(tmp_path),
             config=_make_config(
-                score=MagicMock(name="accuracy", script="scoring/score.sh", timeout=900,
-                                direction="maximize"),
+                score=MagicMock(name="accuracy", timeout=900, direction="maximize"),
             ),
         )
 

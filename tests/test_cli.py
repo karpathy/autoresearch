@@ -37,11 +37,12 @@ class TestInit:
         runner.invoke(cli, ["init", "my-problem", "--dir", str(tmp_path)])
         assert (tmp_path / "my-problem" / "scoring").is_dir()
 
-    def test_creates_score_sh(self, runner, tmp_path):
+    def test_creates_score_py(self, runner, tmp_path):
         runner.invoke(cli, ["init", "my-problem", "--dir", str(tmp_path)])
-        score_sh = tmp_path / "my-problem" / "scoring" / "score.sh"
-        assert score_sh.exists()
-        assert os.access(str(score_sh), os.X_OK)
+        score_py = tmp_path / "my-problem" / "scoring" / "score.py"
+        assert score_py.exists()
+        content = score_py.read_text()
+        assert "def score()" in content
 
     def test_creates_gitignore(self, runner, tmp_path):
         runner.invoke(cli, ["init", "my-problem", "--dir", str(tmp_path)])
@@ -55,16 +56,16 @@ class TestInit:
         runner.invoke(cli, ["init", "my-problem", "--dir", str(tmp_path)])
         assert (tmp_path / "my-problem" / "agent_instructions.md").exists()
 
-    def test_custom_metric_and_direction(self, runner, tmp_path):
+    def test_direction_in_templates(self, runner, tmp_path):
         runner.invoke(cli, [
             "init", "my-problem",
             "--dir", str(tmp_path),
-            "--metric", "accuracy",
             "--direction", "maximize",
         ])
         content = (tmp_path / "my-problem" / "problem.yaml").read_text()
-        assert "accuracy" in content
         assert "maximize" in content
+        instructions = (tmp_path / "my-problem" / "agent_instructions.md").read_text()
+        assert "maximize" in instructions
 
     def test_initializes_git_repo(self, runner, tmp_path):
         runner.invoke(cli, ["init", "my-problem", "--dir", str(tmp_path)])
@@ -74,20 +75,7 @@ class TestInit:
         result = runner.invoke(cli, ["init", "my-problem", "--dir", str(tmp_path)])
         assert "Next steps" in result.output
         assert "autoanything validate" in result.output
-        assert "autoanything score" in result.output
-
-    def test_templates_render_metric(self, runner, tmp_path):
-        runner.invoke(cli, [
-            "init", "my-problem",
-            "--dir", str(tmp_path),
-            "--metric", "accuracy",
-            "--direction", "maximize",
-        ])
-        score_sh = (tmp_path / "my-problem" / "scoring" / "score.sh").read_text()
-        assert "accuracy" in score_sh
-        instructions = (tmp_path / "my-problem" / "agent_instructions.md").read_text()
-        assert "accuracy" in instructions
-        assert "maximize" in instructions
+        assert "score.py" in result.output
 
     def test_refuses_existing_directory(self, runner, tmp_path):
         (tmp_path / "my-problem").mkdir()
@@ -107,24 +95,24 @@ class TestValidate:
         assert result.exit_code != 0
         assert "problem.yaml" in result.output
 
-    def test_missing_state_files_fails(self, runner, tmp_path, full_problem_yaml):
+    def test_missing_state_dir_fails(self, runner, tmp_path, full_problem_yaml):
         (tmp_path / "problem.yaml").write_text(full_problem_yaml)
+        (tmp_path / "scoring").mkdir()
+        (tmp_path / "scoring" / "score.py").write_text("def score(): return {}\n")
         # state/ dir missing
         result = runner.invoke(cli, ["validate", "--dir", str(tmp_path)])
         assert result.exit_code != 0
 
-    def test_missing_score_script_warns(self, runner, tmp_path, full_problem_yaml):
+    def test_missing_score_py_fails(self, runner, tmp_path, full_problem_yaml):
         (tmp_path / "problem.yaml").write_text(full_problem_yaml)
         (tmp_path / "state").mkdir()
         (tmp_path / "state" / "solution.py").write_text("x = 1\n")
-        (tmp_path / "state" / "config.py").write_text("y = 2\n")
         # scoring/ missing
         result = runner.invoke(cli, ["validate", "--dir", str(tmp_path)])
         assert result.exit_code != 0 or "score" in result.output.lower()
 
     def test_scoring_tracked_by_git_warns(self, runner, problem_dir):
         """If scoring/ files are tracked by git, validate should warn."""
-        # Init a git repo and track scoring/
         import subprocess
         subprocess.run(["git", "init", "-b", "main"], cwd=str(problem_dir), check=True,
                        capture_output=True)
@@ -151,14 +139,14 @@ class TestValidate:
 
 
 class TestScore:
-    """autoanything score runs score.sh once and prints the result."""
+    """autoanything score runs scoring once and prints the result."""
 
     def test_runs_and_prints_score(self, runner, problem_dir):
         result = runner.invoke(cli, ["score", "--dir", str(problem_dir)])
         assert result.exit_code == 0
         assert "42.5" in result.output
 
-    def test_missing_score_script_fails(self, runner, tmp_path, minimal_problem_yaml):
+    def test_missing_score_py_fails(self, runner, tmp_path, minimal_problem_yaml):
         (tmp_path / "problem.yaml").write_text(minimal_problem_yaml)
         result = runner.invoke(cli, ["score", "--dir", str(tmp_path)])
         assert result.exit_code != 0

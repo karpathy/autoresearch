@@ -2,7 +2,7 @@
 
 ## Objective
 
-Optimize the metric `{{metric}}` ({{direction}}).
+Optimize the score ({{direction}}).
 
 ## Protocol
 
@@ -11,7 +11,7 @@ Optimize the metric `{{metric}}` ({{direction}}).
 3. Read `problem.yaml` for the full problem definition and constraints.
 4. Read files in `context/` for background information.
 5. Check `leaderboard.md` for the best scores and `history.md` for recent attempts.
-6. Modify only the files listed under `state:` in `problem.yaml`.
+6. You may create, modify, or delete files in `state/`.
 7. Commit with a clear message explaining your approach.
 8. Push your branch or open a PR targeting main.
 9. The evaluator will score your submission and update the leaderboard.
@@ -19,7 +19,7 @@ Optimize the metric `{{metric}}` ({{direction}}).
 ## Files
 
 - `problem.yaml` — problem definition and constraints
-- `state/` — files you can modify
+- `state/` — files you can modify (create, edit, or delete)
 - `context/` — read-only background information
 - `leaderboard.md` — best accepted scores
 - `history.md` — recent attempts with scores and outcomes

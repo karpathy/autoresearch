@@ -4,7 +4,6 @@ Provides commands: init, validate, score, evaluate, serve, history, leaderboard.
 """
 
 import os
-import stat
 import subprocess
 import sys
 from importlib import resources
@@ -38,11 +37,7 @@ def _resolve_db_path(problem_dir: str, db: str | None) -> str:
     """Resolve the database path from --db flag or default location."""
     if db:
         return db
-    # Prefer .autoanything/history.db; fall back to evaluator/history.db if it exists
     new_path = os.path.join(problem_dir, ".autoanything", "history.db")
-    old_path = os.path.join(problem_dir, "evaluator", "history.db")
-    if os.path.exists(old_path) and not os.path.exists(new_path):
-        return old_path
     os.makedirs(os.path.dirname(new_path), exist_ok=True)
     return new_path
 
@@ -60,17 +55,16 @@ def main():
 @main.command()
 @click.argument("name")
 @click.option("--dir", "parent_dir", default=".", help="Parent directory for the new problem.")
-@click.option("--metric", default="score", help="Metric name (key in score.sh JSON output).")
 @click.option("--direction", default="minimize", type=click.Choice(["minimize", "maximize"]),
               help="Score direction.")
-def init(name, parent_dir, metric, direction):
+def init(name, parent_dir, direction):
     """Scaffold a new problem directory."""
     problem_dir = os.path.join(parent_dir, name)
     if os.path.exists(problem_dir):
         click.echo(f"Error: directory '{problem_dir}' already exists.", err=True)
         sys.exit(1)
 
-    subs = {"name": name, "metric": metric, "direction": direction}
+    subs = {"name": name, "direction": direction}
 
     os.makedirs(problem_dir)
     os.makedirs(os.path.join(problem_dir, "state"))
@@ -85,10 +79,8 @@ def init(name, parent_dir, metric, direction):
     with open(os.path.join(problem_dir, "state", "solution.py"), "w") as f:
         f.write(_load_template("solution.py"))
 
-    score_sh = os.path.join(problem_dir, "scoring", "score.sh")
-    with open(score_sh, "w") as f:
-        f.write(_render_template("score.sh", **subs))
-    os.chmod(score_sh, os.stat(score_sh).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    with open(os.path.join(problem_dir, "scoring", "score.py"), "w") as f:
+        f.write(_load_template("score.py"))
 
     with open(os.path.join(problem_dir, "agent_instructions.md"), "w") as f:
         f.write(_render_template("agent_instructions.md", **subs))
@@ -108,7 +100,7 @@ def init(name, parent_dir, metric, direction):
     click.echo(f"  cd {problem_dir}")
     click.echo("  # Edit problem.yaml — describe the problem, set constraints")
     click.echo("  # Edit state/solution.py — set up the initial state")
-    click.echo("  # Edit scoring/score.sh — implement your scoring function")
+    click.echo("  # Edit scoring/score.py — implement your score() function")
     click.echo("  autoanything validate    # check everything is wired up")
     click.echo("  autoanything score       # run scoring once as a sanity check")
 
@@ -130,17 +122,17 @@ def validate(problem_dir):
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
-    # Check state files exist
-    for f in config.state:
-        if not os.path.exists(os.path.join(problem_dir, f)):
-            errors.append(f"State file not found: {f}")
+    # Check state/ directory exists and is non-empty
+    state_dir = os.path.join(problem_dir, "state")
+    if not os.path.isdir(state_dir):
+        errors.append("state/ directory not found")
+    elif not os.listdir(state_dir):
+        errors.append("state/ directory is empty")
 
-    # Check score script
-    script_path = os.path.join(problem_dir, config.score.script)
-    if not os.path.exists(script_path):
-        errors.append(f"Score script not found: {config.score.script}")
-    elif not os.access(script_path, os.X_OK):
-        warnings.append(f"Score script not executable: {config.score.script}")
+    # Check scoring/score.py
+    score_py = os.path.join(problem_dir, "scoring", "score.py")
+    if not os.path.exists(score_py):
+        errors.append("Score script not found: scoring/score.py")
 
     # Check .gitignore
     gitignore_path = os.path.join(problem_dir, ".gitignore")
@@ -177,7 +169,7 @@ def validate(problem_dir):
 @main.command()
 @click.option("--dir", "problem_dir", default=".", help="Problem directory.")
 def score(problem_dir):
-    """Run score.sh once and print the result."""
+    """Run scoring once and print the result."""
     from autoanything.scoring import run_score as _run_score
 
     try:
@@ -186,14 +178,13 @@ def score(problem_dir):
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
-    script_path = os.path.join(problem_dir, config.score.script)
-    if not os.path.exists(script_path):
-        click.echo(f"Error: Score script not found: {config.score.script}", err=True)
+    score_py = os.path.join(problem_dir, "scoring", "score.py")
+    if not os.path.exists(score_py):
+        click.echo("Error: Score script not found: scoring/score.py", err=True)
         sys.exit(1)
 
     score_val, metrics, duration, error = _run_score(
-        script_path, score_name=config.score.name,
-        timeout=config.score.timeout, cwd=problem_dir,
+        problem_dir, score_name=config.score.name, timeout=config.score.timeout,
     )
 
     if error:
@@ -352,9 +343,9 @@ def run(problem_dir, agent, iterations, max_crashes, db):
     """Run the local optimization loop with an agent command.
 
     The agent command runs in the problem directory and should modify only the
-    state files listed in problem.yaml. Scoring is hidden from the agent during
-    execution. The framework handles branching, scoring, merging improvements,
-    and updating the leaderboard.
+    state files. Scoring is hidden from the agent during execution. The
+    framework handles branching, scoring, merging improvements, and updating
+    the leaderboard.
 
     Examples:
 

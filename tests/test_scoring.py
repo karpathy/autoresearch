@@ -1,7 +1,7 @@
-"""Tests for autoanything.scoring — score.sh execution and JSON parsing.
+"""Tests for autoanything.scoring — score.py execution and JSON parsing.
 
-The scoring module runs score.sh as a subprocess and extracts the metric
-value from the JSON on its last line of stdout.
+The scoring module runs scoring/score.py as a subprocess and extracts
+the metric value from the JSON output.
 """
 
 import json
@@ -14,7 +14,7 @@ from autoanything.scoring import run_score, parse_score_output, is_better
 
 
 class TestParseScoreOutput:
-    """Extract metric value from score.sh stdout."""
+    """Extract metric value from scoring subprocess stdout."""
 
     def test_single_line_json(self):
         stdout = '{"cost": 42.5}\n'
@@ -56,66 +56,85 @@ class TestParseScoreOutput:
         assert score == 12.5 or score is None  # implementation choice
 
 
-class TestRunScore:
-    """Run score.sh as a subprocess and capture results."""
+class TestRunScorePy:
+    """Run scoring/score.py as a subprocess and capture results."""
 
     def test_successful_scoring(self, tmp_path):
-        script = tmp_path / "score.sh"
-        script.write_text(textwrap.dedent("""\
-            #!/usr/bin/env bash
-            echo '{"cost": 42.5}'
+        scoring_dir = tmp_path / "scoring"
+        scoring_dir.mkdir()
+        (scoring_dir / "score.py").write_text(textwrap.dedent("""\
+            def score():
+                return {"cost": 42.5}
         """))
-        script.chmod(0o755)
 
         score, metrics, duration, error = run_score(
-            str(script), score_name="cost", timeout=30, cwd=str(tmp_path),
+            str(tmp_path), score_name="cost", timeout=30,
         )
         assert score == 42.5
         assert error is None
         assert duration > 0
 
     def test_script_failure(self, tmp_path):
-        script = tmp_path / "score.sh"
-        script.write_text(textwrap.dedent("""\
-            #!/usr/bin/env bash
-            echo "something went wrong" >&2
-            exit 1
+        scoring_dir = tmp_path / "scoring"
+        scoring_dir.mkdir()
+        (scoring_dir / "score.py").write_text(textwrap.dedent("""\
+            def score():
+                raise RuntimeError("something went wrong")
         """))
-        script.chmod(0o755)
 
         score, metrics, duration, error = run_score(
-            str(script), score_name="cost", timeout=30, cwd=str(tmp_path),
+            str(tmp_path), score_name="cost", timeout=30,
         )
         assert score is None
         assert error is not None
 
     def test_script_timeout(self, tmp_path):
-        script = tmp_path / "score.sh"
-        script.write_text(textwrap.dedent("""\
-            #!/usr/bin/env bash
-            sleep 60
+        scoring_dir = tmp_path / "scoring"
+        scoring_dir.mkdir()
+        (scoring_dir / "score.py").write_text(textwrap.dedent("""\
+            import time
+            def score():
+                time.sleep(60)
+                return {"cost": 0}
         """))
-        script.chmod(0o755)
 
         score, metrics, duration, error = run_score(
-            str(script), score_name="cost", timeout=1, cwd=str(tmp_path),
+            str(tmp_path), score_name="cost", timeout=1,
         )
         assert score is None
         assert "timeout" in error.lower() or "timed out" in error.lower()
 
     def test_no_json_in_output(self, tmp_path):
-        script = tmp_path / "score.sh"
-        script.write_text(textwrap.dedent("""\
-            #!/usr/bin/env bash
-            echo "all done, no JSON here"
+        scoring_dir = tmp_path / "scoring"
+        scoring_dir.mkdir()
+        (scoring_dir / "score.py").write_text(textwrap.dedent("""\
+            def score():
+                return {"wrong_key": 42}
         """))
-        script.chmod(0o755)
 
         score, metrics, duration, error = run_score(
-            str(script), score_name="cost", timeout=30, cwd=str(tmp_path),
+            str(tmp_path), score_name="cost", timeout=30,
         )
         assert score is None
-        assert error is not None
+
+    def test_imports_from_state(self, tmp_path):
+        """score.py can import from state/ directory."""
+        scoring_dir = tmp_path / "scoring"
+        scoring_dir.mkdir()
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "solution.py").write_text("x = 42.5\n")
+        (scoring_dir / "score.py").write_text(textwrap.dedent("""\
+            def score():
+                from state.solution import x
+                return {"cost": x}
+        """))
+
+        score, metrics, duration, error = run_score(
+            str(tmp_path), score_name="cost", timeout=30,
+        )
+        assert score == 42.5
+        assert error is None
 
 
 class TestIsBetter:

@@ -15,7 +15,7 @@ autoanything/
 │   ├── evaluator.py          # Polling evaluation loop
 │   ├── runner.py             # Local optimization loop (autoanything run)
 │   ├── server.py             # Webhook server (FastAPI)
-│   ├── scoring.py            # Run score.sh, parse JSON output
+│   ├── scoring.py            # Run scoring/score.py, parse JSON output
 │   ├── problem.py            # Parse + validate problem.yaml (PyYAML)
 │   ├── leaderboard.py        # Render leaderboard.md and history.md from DB
 │   ├── plotting.py           # Progress chart generation (matplotlib)
@@ -26,7 +26,7 @@ autoanything/
 │   ├── tsp/                  # Traveling salesman, 20 cities (score: ~1914 → ~680)
 │   ├── packing/              # Rectangle packing, 12 rects (score: 13250 → ~6975)
 │   └── gpt/                  # GPT pretraining, val_bpb (~1.15 → ?, requires GPU)
-└── tests/                   # Test suite (106 tests)
+└── tests/                   # Test suite
 ```
 
 ## Commands
@@ -66,19 +66,20 @@ Every problem is a self-contained directory (typically its own git repo):
 my-problem/
 ├── problem.yaml           # Problem definition (name, score direction, constraints)
 ├── agent_instructions.md  # Protocol for agents
-├── state/*.py             # Mutable file(s) agents edit
-├── context/*.py           # Read-only context
-├── scoring/score.sh       # GITIGNORED — scoring script (outputs JSON on last line)
+├── state/                 # Mutable files — agents can create, modify, or delete
+├── context/               # Read-only context (optional)
+├── scoring/
+│   └── score.py           # GITIGNORED — implement score() → dict
 └── .autoanything/         # GITIGNORED — evaluator state (history.db)
 ```
 
-The evaluator is problem-agnostic — it reads the score metric name from `problem.yaml` and delegates scoring to `score.sh`. Reference examples live in `examples/` in this repo; runnable problem repos live at [derby-examples](https://github.com/kousun12/derby-examples).
+The evaluator is problem-agnostic — it reads the score metric name from `problem.yaml` and runs `scoring/score.py`. The `score()` function returns a dict with the metric key. Reference examples live in `examples/` in this repo; runnable problem repos live at [derby-examples](https://github.com/kousun12/derby-examples).
 
 ## Agent Protocol
 
 1. Pull latest master, create branch: `proposals/<name>/<description>`
 2. Read `problem.yaml`, `context/`, `leaderboard.md`, and `history.md` for context
-3. Modify ONLY the files listed under `state:` (or `mutable:`) in `problem.yaml`
+3. You may create, modify, or delete files in `state/`
 4. Commit with a clear message explaining the approach
 5. Push the branch or open a PR targeting master — the evaluator scores it and merges if improved
 
@@ -87,7 +88,7 @@ The evaluator is problem-agnostic — it reads the score metric name from `probl
 - **Three modes**: local loop (`autoanything run`), polling (`autoanything evaluate`), or webhook (`autoanything serve`)
 - **Local loop**: runs a user-provided agent command repeatedly — the framework handles branching, scoring, merging improvements, and leaderboard. Scoring directory is hidden from the agent during execution. Agent gets env vars: `AUTOANYTHING_ITERATION`, `AUTOANYTHING_SCORE`, `AUTOANYTHING_DIRECTION`, `AUTOANYTHING_METRIC`, `AUTOANYTHING_PROBLEM`.
 - **Serial evaluation**: one proposal at a time, no race conditions
-- **Blind scoring**: agents never see `evaluator/` or `scoring/` (gitignored; physically hidden during `run`)
+- **Blind scoring**: agents never see `scoring/` (gitignored; physically hidden during `run`)
 - **SQLite history**: all evaluations recorded in `.autoanything/history.db`
 - **Auto-leaderboard**: `leaderboard.md` (best scores) and `history.md` (recent attempts) updated after each evaluation
 

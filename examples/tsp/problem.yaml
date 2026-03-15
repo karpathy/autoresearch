@@ -4,15 +4,8 @@ description: >
   to the start. The cities have fixed coordinates defined in context/cities.py.
   Modify the tour permutation in state/tour.py.
 
-mutable:
-  - state/tour.py
-
-readonly:
-  - context/cities.py
-
 score:
   direction: minimize
-  name: score
   description: "Total Euclidean tour distance — lower is better"
   bounded: true
 
@@ -20,6 +13,4 @@ git:
   base_branch: master
 
 constraints:
-  - "Must not modify files outside of state/"
   - "Tour must be a valid permutation of [0..19] (each city visited exactly once)"
-  - "No external dependencies required"

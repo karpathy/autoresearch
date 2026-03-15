@@ -22,9 +22,9 @@ from autoanything.leaderboard import export_leaderboard, export_history
 from autoanything.scoring import run_score, is_better
 
 
-def _scoring_dir(problem_dir, script_path):
-    """Get the scoring directory from the script path."""
-    return os.path.dirname(os.path.join(problem_dir, script_path))
+def _scoring_dir(problem_dir):
+    """The scoring directory path."""
+    return os.path.join(problem_dir, "scoring")
 
 
 def _hidden_path(problem_dir):
@@ -32,9 +32,9 @@ def _hidden_path(problem_dir):
     return os.path.join(problem_dir, ".autoanything", "_scoring")
 
 
-def _hide_scoring(problem_dir, script_path):
+def _hide_scoring(problem_dir):
     """Move scoring directory into .autoanything/_scoring to hide from agents."""
-    src = _scoring_dir(problem_dir, script_path)
+    src = _scoring_dir(problem_dir)
     if not os.path.isdir(src):
         return False
     dst = _hidden_path(problem_dir)
@@ -44,9 +44,9 @@ def _hide_scoring(problem_dir, script_path):
     return True
 
 
-def _restore_scoring(problem_dir, script_path):
+def _restore_scoring(problem_dir):
     """Restore scoring directory from hidden location."""
-    dst = _scoring_dir(problem_dir, script_path)
+    dst = _scoring_dir(problem_dir)
     src = _hidden_path(problem_dir)
     if not os.path.exists(src):
         return
@@ -55,10 +55,10 @@ def _restore_scoring(problem_dir, script_path):
     shutil.move(src, dst)
 
 
-def _recover_scoring(problem_dir, script_path):
+def _recover_scoring(problem_dir):
     """Recover scoring if left hidden from a previous interrupted run."""
     hidden = _hidden_path(problem_dir)
-    scoring = _scoring_dir(problem_dir, script_path)
+    scoring = _scoring_dir(problem_dir)
     if os.path.exists(hidden) and not os.path.isdir(scoring):
         shutil.move(hidden, scoring)
         print("Recovered scoring directory from previous interrupted run.")
@@ -78,14 +78,13 @@ def run_local(problem_dir, config, db_path, agent_command,
     """
     base_branch = config.git.base_branch
     score_name = config.score.name
-    script = os.path.join(problem_dir, config.score.script)
     timeout = config.score.timeout
     direction = config.score.direction
     leaderboard_path = os.path.join(problem_dir, "leaderboard.md")
     history_path = os.path.join(problem_dir, "history.md")
 
     # Recover scoring if hidden from a previous interrupted run
-    _recover_scoring(problem_dir, config.score.script)
+    _recover_scoring(problem_dir)
 
     conn = init_db(db_path)
 
@@ -101,7 +100,7 @@ def run_local(problem_dir, config, db_path, agent_command,
 
         commit_sha = get_head_commit(cwd=problem_dir)
         score_val, metrics, duration, error = run_score(
-            script, score_name=score_name, timeout=timeout, cwd=problem_dir,
+            problem_dir, score_name=score_name, timeout=timeout,
         )
 
         if error or score_val is None:
@@ -157,7 +156,7 @@ def run_local(problem_dir, config, db_path, agent_command,
             git("checkout", "-b", branch, cwd=problem_dir)
 
             # Hide scoring, run agent, restore scoring
-            hidden = _hide_scoring(problem_dir, config.score.script)
+            hidden = _hide_scoring(problem_dir)
             try:
                 agent_env = {
                     **os.environ,
@@ -175,7 +174,7 @@ def run_local(problem_dir, config, db_path, agent_command,
                 )
             finally:
                 if hidden:
-                    _restore_scoring(problem_dir, config.score.script)
+                    _restore_scoring(problem_dir)
 
             # --- Detect what the agent changed ---
 
@@ -208,9 +207,8 @@ def run_local(problem_dir, config, db_path, agent_command,
                 if committed_out:
                     all_changes.update(committed_out.splitlines())
 
-            # Validate only state files were touched
-            state_files = set(config.state)
-            invalid = all_changes - state_files
+            # Validate only state/ files were touched (path-prefix check)
+            invalid = {f for f in all_changes if not f.startswith("state/")}
             if invalid:
                 print(f"  INVALID: modified non-state files: {invalid}")
                 git("checkout", ".", cwd=problem_dir, check=False)
@@ -231,7 +229,7 @@ def run_local(problem_dir, config, db_path, agent_command,
 
             print("  Scoring...")
             score_val, metrics, duration, error = run_score(
-                script, score_name=score_name, timeout=timeout, cwd=problem_dir,
+                problem_dir, score_name=score_name, timeout=timeout,
             )
 
             if error or score_val is None:
@@ -286,7 +284,7 @@ def run_local(problem_dir, config, db_path, agent_command,
             git("checkout", base_branch, cwd=problem_dir, check=False)
         except Exception:
             pass
-        _recover_scoring(problem_dir, config.score.script)
+        _recover_scoring(problem_dir)
     finally:
         incumbent = get_incumbent(conn)
         if incumbent:

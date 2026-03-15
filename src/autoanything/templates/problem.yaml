@@ -2,25 +2,14 @@ name: {{name}}
 description: >
   Describe what agents are optimizing.
 
-# Files agents can modify
-state:
-  - state/solution.py
-
-# Read-only context files (optional)
-context: []
-
-# Scoring configuration
 score:
-  name: {{metric}}                  # metric key in score.sh JSON output
-  direction: {{direction}}          # "minimize" or "maximize"
+  direction: {{direction}}
   description: "Describe what this metric measures"
-  timeout: 900                      # seconds before scoring is killed
+  # name: score             # metric key, default "score"
+  # timeout: 900            # seconds before scoring is killed
+  # bounded: false          # true if the metric has a known optimum
 
-# Git configuration (defaults shown)
-git:
-  base_branch: main                 # branch that tracks the best state
-  proposal_pattern: "proposals/*"   # branch pattern for proposals
-
-# Constraints (documentation for agents, not enforced by framework)
-constraints:
-  - "Must not modify files outside of state/"
+# git:
+#   base_branch: main
+# constraints:
+#   - "Describe rules agents must follow"

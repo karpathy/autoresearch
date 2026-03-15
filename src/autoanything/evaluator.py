@@ -41,7 +41,6 @@ def establish_baseline(conn, problem_dir: str, config):
     """
     base_branch = config.git.base_branch
     score_name = config.score.name
-    script = os.path.join(problem_dir, config.score.script)
     timeout = config.score.timeout
     leaderboard_path = os.path.join(problem_dir, "leaderboard.md")
 
@@ -53,10 +52,10 @@ def establish_baseline(conn, problem_dir: str, config):
     commit_sha = get_head_commit(cwd=problem_dir)
 
     print(f"Commit: {commit_sha[:7]}")
-    print("Running score.sh...")
+    print("Running scoring...")
 
     score, metrics, duration, error = run_score(
-        script, score_name=score_name, timeout=timeout, cwd=problem_dir,
+        problem_dir, score_name=score_name, timeout=timeout,
     )
 
     if score is not None:
@@ -92,7 +91,6 @@ def evaluate_proposal(conn, branch: str, commit_sha: str, direction: str,
     """
     base_branch = config.git.base_branch
     score_name = config.score.name
-    script = os.path.join(problem_dir, config.score.script)
     timeout = config.score.timeout
     leaderboard_path = os.path.join(problem_dir, "leaderboard.md")
 
@@ -114,7 +112,7 @@ def evaluate_proposal(conn, branch: str, commit_sha: str, direction: str,
         return
 
     score, metrics, duration, error = run_score(
-        script, score_name=score_name, timeout=timeout, cwd=problem_dir,
+        problem_dir, score_name=score_name, timeout=timeout,
     )
 
     # Return to main branch

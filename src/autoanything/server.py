@@ -25,22 +25,21 @@ from autoanything.scoring import run_score, is_better
 logger = logging.getLogger("autoanything.server")
 
 
-def validate_pr_files(modified: list[str], mutable_files: list[str]) -> tuple[bool, str]:
-    """Check that only allowed files were modified.
+def validate_pr_files(modified: list[str]) -> tuple[bool, str]:
+    """Check that only state/ files were modified.
 
     Args:
         modified: List of file paths modified in the PR.
-        mutable_files: List of allowed mutable file paths.
 
     Returns:
-        (ok, message) — ok is True if all files are allowed.
+        (ok, message) — ok is True if all files are in state/.
     """
-    disallowed = [f for f in modified if f not in mutable_files]
+    disallowed = [f for f in modified if not f.startswith("state/")]
     if disallowed:
         return False, (
-            "This PR modifies files outside the allowed set:\n"
+            "This PR modifies files outside of `state/`:\n"
             f"```\n{chr(10).join(disallowed)}\n```\n"
-            f"Only these files may be modified: {', '.join(mutable_files)}"
+            "Only files in `state/` may be modified."
         )
     return True, ""
 
@@ -162,17 +161,13 @@ def create_app(problem_dir: str, webhook_secret: str = None,
     try:
         config = load_problem(problem_dir)
         base_branch = config.git.base_branch
-        mutable_files = config.state
         direction = config.score.direction
         score_name = config.score.name
-        score_script = os.path.join(problem_dir, config.score.script)
         score_timeout = config.score.timeout
     except Exception:
         base_branch = "main"
-        mutable_files = []
         direction = "minimize"
         score_name = "score"
-        score_script = os.path.join(problem_dir, "scoring", "score.sh")
         score_timeout = 900
 
     if db_path is None:
@@ -215,7 +210,7 @@ def create_app(problem_dir: str, webhook_secret: str = None,
             modified = None
 
         if modified is not None:
-            ok, msg = validate_pr_files(modified, mutable_files)
+            ok, msg = validate_pr_files(modified)
             if not ok:
                 comment = (
                     "## AutoAnything Evaluation\n\n"
@@ -254,8 +249,7 @@ def create_app(problem_dir: str, webhook_secret: str = None,
         description = pr_info.get("title", f"PR #{pr_number}")
 
         score, metrics, duration, error = run_score(
-            score_script, score_name=score_name,
-            timeout=score_timeout, cwd=problem_dir,
+            problem_dir, score_name=score_name, timeout=score_timeout,
         )
 
         # Return to base branch

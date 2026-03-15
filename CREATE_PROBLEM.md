@@ -7,7 +7,7 @@ The whole process takes about five minutes.
 ## What you need
 
 1. **Something to optimize.** A file (or files) where changes should improve a measurable outcome.
-2. **A scoring function.** A script that evaluates the current state and outputs a number. Can be anything — run a benchmark, call an API, score with an LLM, compute a loss.
+2. **A scoring function.** A Python function that evaluates the current state and returns a dict with a number. Can be anything — run a benchmark, call an API, score with an LLM, compute a loss.
 3. **A direction.** Is lower better (minimize) or higher better (maximize)?
 
 That's it. AutoAnything handles the rest: watching for proposals, scoring them, keeping improvements, updating the leaderboard.
@@ -23,7 +23,7 @@ uv tool install autoanything
 ## Step 2: Scaffold the problem
 
 ```bash
-autoanything init my-problem --metric cost --direction minimize
+autoanything init my-problem --direction minimize
 cd my-problem
 ```
 
@@ -37,7 +37,7 @@ my-problem/
 │   └── solution.py         # Mutable file agents will edit — replace with your state
 ├── context/                # Read-only background for agents — add files here
 ├── scoring/
-│   └── score.sh            # Private scoring script — implement this
+│   └── score.py            # Private scoring function — implement this
 ├── .gitignore              # Pre-configured to hide scoring/ and .autoanything/
 └── .autoanything/           # Evaluator state (created automatically)
 ```
@@ -50,7 +50,7 @@ Edit the three files that matter:
 
 ### `state/solution.py` — what agents change
 
-Replace the placeholder with your starting state. This can be any file (or multiple files) — a config, a prompt, a Python module, a YAML file. Agents will modify this to improve the score.
+Replace the placeholder with your starting state. This can be any file (or multiple files) — a config, a prompt, a Python module, a YAML file. Agents will modify files in `state/` to improve the score.
 
 ```python
 # Example: a prompt template agents will optimize
@@ -59,29 +59,28 @@ You are a helpful assistant. Answer the user's question accurately and concisely
 """
 ```
 
-You can have multiple state files. List them all in `problem.yaml` under `state:`.
+You can have multiple state files — just put them all in `state/`. The framework discovers them automatically.
 
-### `scoring/score.sh` — how you measure
+### `scoring/score.py` — how you measure
 
-This script runs the current state and outputs a JSON object on its last line. The JSON must include the metric key from `problem.yaml`.
+This file defines a `score()` function that returns a dict with at least the primary metric key (default: `"score"`).
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+```python
+def score():
+    # Import from state/ and context/ as needed
+    from state.solution import PROMPT
+    import subprocess
 
-# Run your evaluation however you want.
-# The only contract: last line of stdout is JSON with the metric key.
+    # Run your evaluation however you want
+    result = subprocess.run(["python", "scoring/evaluate.py"], capture_output=True, text=True)
+    cost = float(result.stdout.strip())
 
-# Example: run a Python evaluation script
-python scoring/evaluate.py
-
-# The Python script's last print should be something like:
-#   {"cost": 42.7, "iterations": 100}
+    return {"score": cost, "iterations": 100}
 ```
 
 The scoring code is **never committed** — it stays on the evaluation machine. Agents can't see it. This is intentional: blind scoring prevents overfitting to the evaluation function.
 
-You can use any language, call any API, use private test data — whatever produces the number. The only rule: last line of stdout is JSON.
+You can use any language via subprocess, call any API, use private test data — whatever produces the number. The only rule: `score()` returns a dict.
 
 ### `problem.yaml` — tie it together
 
@@ -92,14 +91,7 @@ description: >
   Lower is better. The scoring function runs the prompt against 100 test
   cases and measures average token cost.
 
-state:
-  - state/solution.py
-
-context:
-  - context/examples.md
-
 score:
-  name: cost
   direction: minimize
   description: "Average token cost across 100 test cases"
   timeout: 300
@@ -209,7 +201,7 @@ The pattern is always the same: mutable state, a number, a direction.
 
 ```bash
 # Scaffold
-autoanything init <name> --metric <key> --direction <min|max>
+autoanything init <name> --direction <min|max>
 
 # Develop
 autoanything validate          # check structure
