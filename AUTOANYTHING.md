@@ -93,7 +93,7 @@ This works for anything you can articulate values about:
 - **An API design** — scored on consistency, discoverability, naming conventions, and error handling philosophy
 - **A legal brief** — scored on argument strength, precedent usage, counterargument anticipation, and conciseness
 
-The scoring function for these is more complex than a benchmark — it's a pipeline. Read the artifact, construct dimension-specific prompts, call an LLM judge (potentially multiple times for stability), parse the scores, apply the weight vector, and output the weighted sum. But from the framework's perspective, it's still just `score.sh` returning a JSON number. The machinery inside the black box is irrelevant.
+The scoring function for these is more complex than a benchmark — it's a pipeline. Read the artifact, construct dimension-specific prompts, call an LLM judge (potentially multiple times for stability), parse the scores, apply the weight vector, and output the weighted sum. But from the framework's perspective, it's still just `score.py` returning a JSON number. The machinery inside the black box is irrelevant.
 
 What makes this powerful is that the weights encode values the agents can't see. You might weight originality at 3x and conciseness at 0.5x, and the agents will converge on bold, expansive writing without ever being told to. Change the weights and the same swarm of agents will produce something entirely different. The values live in the scoring function, not in the agents — which is exactly where they should be, because it means you can change what "better" means without rewriting any agent instructions.
 
@@ -114,7 +114,7 @@ my-problem/
 ├── leaderboard.md          # Auto-updated scoreboard
 │
 ├── scoring/                # GITIGNORED — only on the evaluation machine
-│   └── score.sh            # The private scoring function
+│   └── score.py            # The private scoring function
 └── .autoanything/          # GITIGNORED — evaluator state
     └── history.db          # SQLite evaluation history
 ```

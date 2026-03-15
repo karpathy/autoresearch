@@ -20,7 +20,7 @@ readonly:
 
 score:
   direction: minimize    # or: maximize
-  name: score            # metric name (key in JSON output from score.sh)
+  name: score            # metric name (key in dict returned by score.py)
   description: "What this metric measures"
   bounded: true          # true if there's a known optimum
 

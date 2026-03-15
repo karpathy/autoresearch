@@ -44,17 +44,22 @@ A git repo is already initialized.
 
 ## Step 3: Define the problem
 
-Edit the three files that matter:
+Edit the three files that matter. Here's a complete, runnable example — a sorting algorithm that agents optimize for speed.
 
 ### `state/solution.py` — what agents change
 
-Replace the placeholder with your starting state. This can be any file (or multiple files) — a config, a prompt, a Python module, a YAML file. Agents will modify files in `state/` to improve the score.
+Replace the placeholder with your starting state. This is the file (or files) agents will modify to improve the score.
 
 ```python
-# Example: a prompt template agents will optimize
-PROMPT = """
-You are a helpful assistant. Answer the user's question accurately and concisely.
-"""
+def sort(arr):
+    """Sort a list of numbers. Bubble sort — correct but slow."""
+    arr = list(arr)
+    n = len(arr)
+    for i in range(n):
+        for j in range(0, n - i - 1):
+            if arr[j] > arr[j + 1]:
+                arr[j], arr[j + 1] = arr[j + 1], arr[j]
+    return arr
 ```
 
 You can have multiple state files — just put them all in `state/`. The framework discovers them automatically.
@@ -64,16 +69,32 @@ You can have multiple state files — just put them all in `state/`. The framewo
 This file defines a `score()` function that returns a dict with at least the primary metric key (default: `"score"`).
 
 ```python
+import random
+import time
+import statistics
+
+
 def score():
-    # Import from state/ and context/ as needed
-    from state.solution import PROMPT
-    import subprocess
+    from state.solution import sort
 
-    # Run your evaluation however you want
-    result = subprocess.run(["python", "scoring/evaluate.py"], capture_output=True, text=True)
-    cost = float(result.stdout.strip())
+    # Validate correctness
+    cases = [[], [1], [3, 1, 2], list(range(100, 0, -1)), [5] * 50]
+    for case in cases:
+        result = sort(case)
+        if result != sorted(case):
+            return {"score": 999.0, "error": f"Wrong output for {case[:5]}..."}
 
-    return {"score": cost, "iterations": 100}
+    # Benchmark: sort 10,000 random integers, take median of 5 runs
+    random.seed(42)
+    test_data = [random.randint(0, 100000) for _ in range(10000)]
+    times = []
+    for _ in range(5):
+        t0 = time.perf_counter()
+        sort(test_data)
+        elapsed = time.perf_counter() - t0
+        times.append(elapsed)
+
+    return {"score": round(statistics.median(times), 6)}
 ```
 
 The scoring code is **never committed** — it stays on the evaluation machine. Agents can't see it. This is intentional: blind scoring prevents overfitting to the evaluation function.
@@ -83,23 +104,25 @@ You can use any language via subprocess, call any API, use private test data —
 ### `problem.yaml` — tie it together
 
 ```yaml
-name: my-problem
+name: sort-speed
 description: >
-  Optimize the prompt template to minimize cost on the evaluation set.
-  Lower is better. The scoring function runs the prompt against 100 test
-  cases and measures average token cost.
+  Optimize the sorting implementation in state/solution.py for speed.
+  The scoring function validates correctness, then benchmarks sorting
+  10,000 random integers. Lower time is better.
 
 score:
   direction: minimize
-  description: "Average token cost across 100 test cases"
-  timeout: 300
+  description: "Median wall-clock time to sort 10,000 integers (seconds)"
+  timeout: 60
 
 constraints:
-  - "Prompt must be under 2000 tokens"
-  - "Must not include instructions to ignore scoring"
+  - "sort(arr) must return a correctly sorted list for any input"
+  - "Function signature must remain: def sort(arr) -> list"
+  - "No hardcoding results for specific inputs"
+  - "No reading from the scoring directory"
 ```
 
-Add any read-only context files to `context/` — background information, API docs, examples, data descriptions. Agents can read these but can't change them.
+Optionally add read-only context files to `context/` — background information, API docs, examples, data descriptions. Agents can read these but can't change them.
 
 ## Step 4: Verify it works
 

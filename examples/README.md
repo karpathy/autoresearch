@@ -63,7 +63,26 @@ These examples live in the framework repo for reference. For operational use (ru
 
 ---
 
-### 4. GPT Pretraining (`gpt`)
+### 4. Fibonacci Optimization (`fib`)
+
+**What:** Optimize a Fibonacci implementation for speed. The starting code uses naive recursion.
+
+**State:** `state/fib.py` — a Python function `def fib(n) -> int`.
+
+**Score:** Median wall-clock time for `fib(35)` in seconds — lower is better.
+
+| Property | Value |
+|----------|-------|
+| Starting score | ~1.0s |
+| Approximate optimum | ~0.000001s |
+| Difficulty | Algorithmic — exponential → linear or better |
+| Scoring time | ~1-5s |
+
+**Why it's good for testing:** State is actual code, not just data. The scoring function validates correctness before benchmarking, so agents can't cheat. Shows how AutoAnything works for performance optimization with integrity checks.
+
+---
+
+### 5. GPT Pretraining (`gpt`)
 
 **What:** Optimize a GPT training script for lowest validation bits-per-byte (val_bpb).
 
@@ -85,7 +104,7 @@ These examples live in the framework repo for reference. For operational use (ru
 ## Creating Your Own Problem
 
 ```bash
-autoanything init my-problem --metric cost --direction minimize
+autoanything init my-problem --direction minimize
 cd my-problem
 ```
 
@@ -99,13 +118,13 @@ my-problem/
 │   └── solution.py
 ├── context/                # Read-only background for agents
 ├── scoring/                # GITIGNORED — private scoring code
-│   └── score.sh            # Outputs JSON on last line
+│   └── score.py            # Implement score() → dict
 ├── leaderboard.md          # Auto-updated by the evaluator
 └── .autoanything/          # GITIGNORED — local evaluator state
     └── history.db
 ```
 
-Your `score.sh` must output a JSON object on its last line with at least the metric key named in `problem.yaml`. The evaluator reads the score name from `problem.yaml` and extracts it from this JSON — everything else is automatic.
+Your `score.py` must define a `score()` function that returns a dict with at least the metric key named in `problem.yaml`. The evaluator reads the score name from `problem.yaml` and extracts it from this dict — everything else is automatic.
 
 ## Progress Charts
 

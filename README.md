@@ -191,9 +191,55 @@ Read agent_instructions.md and start optimizing. Check the leaderboard first.
 
 Agents create branches like `proposals/agent-1/higher-lr` and push them, or open PRs targeting main. The evaluator picks them up automatically.
 
+### Agent environment variables
+
+When using `autoanything run`, the framework sets these environment variables before each agent invocation:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `AUTOANYTHING_ITERATION` | Current iteration number (1-indexed) | `3` |
+| `AUTOANYTHING_SCORE` | Current best score | `169.743` |
+| `AUTOANYTHING_DIRECTION` | Optimization direction | `minimize` |
+| `AUTOANYTHING_METRIC` | Name of the score metric | `score` |
+| `AUTOANYTHING_PROBLEM` | Problem name from `problem.yaml` | `rastrigin` |
+
+### Writing a custom agent
+
+An agent can be any command — a shell script, a Python script, a call to an AI tool. The agent runs in the problem directory, modifies files in `state/`, and exits. The framework handles branching, scoring, and merging.
+
+A minimal shell script agent:
+
+```bash
+#!/bin/bash
+# agent.sh — read the current score, tweak state/solution.py, commit
+echo "Iteration $AUTOANYTHING_ITERATION, current best: $AUTOANYTHING_SCORE"
+
+python3 -c "
+import random
+# Read current state, make a random perturbation
+exec(open('state/solution.py').read())
+x = [v + random.gauss(0, 0.5) for v in x]
+with open('state/solution.py', 'w') as f:
+    f.write(f'x = {x}\n')
+"
+
+git add state/solution.py
+git commit -m "Perturbation attempt $AUTOANYTHING_ITERATION"
+```
+
+```bash
+autoanything run -a "./agent.sh" -n 20
+```
+
+For AI-powered agents, the command can be anything that reads the problem and modifies state:
+
+```bash
+autoanything run -a "claude -p 'read agent_instructions.md and improve the solution'" -n 10
+```
+
 ## Example problems
 
-The [`examples/`](examples/) directory contains four reference problems showing the structure:
+The [`examples/`](examples/) directory contains five reference problems showing the structure:
 
 | Problem | Description | Starting → Optimum | Requirements |
 |---------|-------------|-------------------|-------------|
