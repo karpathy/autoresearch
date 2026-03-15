@@ -38,6 +38,17 @@ Each experiment runs on a single GPU. The training script runs for a **fixed tim
 
 **The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
 
+## Compute Constraints (DGX Spark GB10)
+
+You are running on an NVIDIA DGX Spark GB10 system, which has a deeply unique profile: **128GB of Unified VRAM** but only roughly **1 PetaFLOP of FP4 compute performance** (about 1/9th the raw compute of an H100).
+
+Because of the 5-minute fixed training budget, **you are highly compute-bottlenecked, but memory-abundant.** Keep the following rules in mind:
+
+1. **Trade Memory for Compute**: Favor techniques that use more VRAM (you have plenty!) if they allow the model to run faster or learn more efficiently per FLOP.
+2. **Batch Size Tuning**: You will process fewer tokens per second than the default H100 profile. To ensure the model actually takes a meaningful number of optimization steps in 5 minutes, you should strongly consider drastically lowering `TOTAL_BATCH_SIZE` (e.g. from `2**19` down to `2**16` or `2**15`).
+3. **Model Complexity (`DEPTH`)**: If the optimizer is barely stepping, try reducing `DEPTH` (e.g., from 8 to 6 or 4).
+4. **Attention Pattern**: Note that `WINDOW_PATTERN` has already been fixed to `"L"` (full contextual attention) because custom sliding window PyTorch codegen struggles on this platform. Stick with standard causal attention.
+
 ## Output format
 
 Once the script finishes it prints a summary like this:
@@ -55,10 +66,10 @@ num_params_M:     50.3
 depth:            8
 ```
 
-Note that the script is configured to always stop after 5 minutes, so depending on the computing platform of this computer the numbers might look different. You can extract the key metric from the log file:
+Note that the script is configured to always stop after 5 minutes, so depending on the computing platform of this computer the numbers might look different. You can extract the key metrics from the log file:
 
-```
-grep "^val_bpb:" run.log
+```bash
+grep "^val_bpb:\|^peak_vram_mb:" run.log
 ```
 
 ## Logging results
