@@ -136,6 +136,46 @@ class TestRunScorePy:
         assert score == 42.5
         assert error is None
 
+    def test_scoring_from_custom_dir(self, tmp_path):
+        """run_score works when scoring lives outside the problem root."""
+        hidden = tmp_path / ".autoanything" / "_scoring"
+        hidden.mkdir(parents=True)
+        (hidden / "score.py").write_text(textwrap.dedent("""\
+            def score():
+                return {"cost": 99.0}
+        """))
+
+        # No scoring/ in the problem root
+        assert not (tmp_path / "scoring").exists()
+
+        score, metrics, duration, error = run_score(
+            str(tmp_path), score_name="cost", timeout=30,
+            scoring_dir=str(hidden),
+        )
+        assert score == 99.0
+        assert error is None
+
+    def test_custom_dir_imports_from_state(self, tmp_path):
+        """Scoring from a custom dir can still import from state/."""
+        hidden = tmp_path / ".autoanything" / "_scoring"
+        hidden.mkdir(parents=True)
+        (hidden / "score.py").write_text(textwrap.dedent("""\
+            def score():
+                from state.solution import x
+                return {"cost": x}
+        """))
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "solution.py").write_text("x = 77.0\n")
+
+        score, metrics, duration, error = run_score(
+            str(tmp_path), score_name="cost", timeout=30,
+            scoring_dir=str(hidden),
+        )
+        assert score == 77.0
+        assert error is None
+
 
 class TestIsBetter:
     """Score comparison respects direction."""

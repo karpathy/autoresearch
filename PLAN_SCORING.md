@@ -5,21 +5,25 @@
 Scoring code (`scoring/score.py`) is the black-box metric that drives optimization. Agents must never see it. Today this is enforced two ways:
 
 1. **Gitignore**: `scoring/` is in `.gitignore`, so it's never committed to working branches.
-2. **Physical hide/restore** (local loop only): During `autoanything run`, `runner.py` uses `shutil.move()` to relocate `scoring/` to `.autoanything/_scoring/` before the agent runs, then moves it back for scoring.
+2. **Move-once hiding** (local loop only): During `autoanything run`, `runner.py` moves `scoring/` to `.autoanything/_scoring/` once before entering the loop, and restores it when the loop ends. Scoring is loaded from the hidden location via sys.path injection.
 
-The hide/restore approach is a filesystem mutation that can go wrong if the process is interrupted. Recovery logic exists (`_recover_scoring` in `runner.py:58-64`), but it's the kind of thing that bites you. Scoring is also completely unversioned — it's an untracked file on disk with no history.
+Scoring is completely unversioned — it's an untracked file on disk with no history. It can't be diffed, distributed, or experimented with.
+
+### What's already been done
+
+The per-iteration hide/restore dance has been eliminated. `run_score()` now accepts a `scoring_dir` parameter and uses sys.path injection to load scoring from any location on disk (see `scoring.py:41-76`). The runner moves scoring once at the start of the loop and restores it in a `finally` block (see `runner.py:96-104, 254-259`). This reduced filesystem mutations from 2N (two per iteration) to 2 (one move, one restore), and the interrupt window is minimal.
+
+This plan covers the next step: moving scoring to a dedicated git branch for versioning, distribution, and experimentation.
 
 ## Motivation
 
-1. **Eliminate the hide/restore dance.** No more `shutil.move()` that can fail mid-operation. Scoring doesn't exist on working branches by construction — it lives on a dedicated git branch and is pulled on demand.
+1. **Version-controlled scoring.** Currently if the evaluator's disk dies, scoring is gone. With a branch, scoring has full git history, diffs, and is distributed with `git clone`.
 
-2. **Version-controlled scoring.** Currently if the evaluator's disk dies, scoring is gone. With a branch, scoring has full git history, diffs, and is distributed with `git clone`.
+2. **Scoring experimentation.** Different scoring branches enable A/B testing of scoring functions. `--scoring-branch scoring/v2` on the CLI switches the metric entirely — no code changes, no file swaps. Two evaluators can run simultaneously with different scoring functions against the same problem.
 
-3. **Scoring experimentation.** Different scoring branches enable A/B testing of scoring functions. `--scoring-branch scoring/v2` on the CLI switches the metric entirely — no code changes, no file swaps. Two evaluators can run simultaneously with different scoring functions against the same problem.
+3. **Multi-evaluator consistency.** Multiple machines running evaluation currently need `scoring/score.py` distributed out of band. With branch-based scoring, `git fetch` is all you need.
 
-4. **Multi-evaluator consistency.** Multiple machines running evaluation currently need `scoring/score.py` distributed out of band. With branch-based scoring, `git fetch` is all you need.
-
-5. **Cleaner agent isolation.** Agents can't accidentally see scoring because it doesn't exist on any working branch. No filesystem tricks needed, no recovery logic.
+4. **Cleaner agent isolation.** Agents can't accidentally see scoring because it doesn't exist on any working branch. No filesystem tricks needed.
 
 ## Design
 
@@ -27,46 +31,23 @@ The hide/restore approach is a filesystem mutation that can go wrong if the proc
 
 Scoring code lives on a dedicated orphan branch (default: `scoring`). Working branches (main, proposals/*) never have `scoring/` committed. The `.gitignore` still excludes `scoring/` as a safety net.
 
-When the evaluator needs to score:
+### Runtime mechanism
+
+Scoring is extracted from the branch once (at evaluator startup or loop start) into `.autoanything/_scoring/` and loaded from there via the existing `scoring_dir` parameter on `run_score()`. No per-iteration git operations or filesystem mutations.
 
 ```python
-# 1. Overlay scoring from the scoring branch into the working tree
+# One-time extraction (at startup)
 git("checkout", scoring_branch, "--", "scoring/", cwd=problem_dir)
+shutil.move(os.path.join(problem_dir, "scoring"),
+            os.path.join(problem_dir, ".autoanything", "_scoring"))
+git("reset", "HEAD", "--", "scoring/", cwd=problem_dir, check=False)
 
-# 2. Run scoring (unchanged — still imports from scoring.score, cwd=problem_dir)
-score_val, metrics, duration, error = run_score(problem_dir, ...)
-
-# 3. Clean up — remove overlay and unstage
-shutil.rmtree(os.path.join(problem_dir, "scoring"))
-git("reset", "HEAD", "--", "scoring/", cwd=problem_dir)
+# Per-iteration scoring (already works — no changes needed)
+run_score(problem_dir, score_name=score_name, timeout=timeout,
+          scoring_dir=os.path.join(problem_dir, ".autoanything", "_scoring"))
 ```
 
-This is a context manager:
-
-```python
-@contextmanager
-def scoring_context(problem_dir: str, scoring_branch: str = "scoring"):
-    """Temporarily overlay scoring code from the scoring branch."""
-    scoring_dir = os.path.join(problem_dir, "scoring")
-    # Clean up stray scoring dir from a previous interrupted run
-    if os.path.isdir(scoring_dir):
-        shutil.rmtree(scoring_dir)
-    git("checkout", scoring_branch, "--", "scoring/", cwd=problem_dir)
-    try:
-        yield
-    finally:
-        if os.path.isdir(scoring_dir):
-            shutil.rmtree(scoring_dir)
-        git("reset", "HEAD", "--", "scoring/", cwd=problem_dir, check=False)
-```
-
-### Failure mode comparison
-
-| Scenario | Current (hide/restore) | Branch-based |
-|----------|----------------------|-------------|
-| Interrupted during agent run | `scoring/` is missing; needs `_recover_scoring()` to move it back from `.autoanything/_scoring/` | `scoring/` doesn't exist — nothing to recover |
-| Interrupted during scoring | `scoring/` is present; fine | Stray `scoring/` dir — gitignored, deleted on next run |
-| Concurrent runs | Both try to move the same directory — race condition | Both checkout from branch — safe (separate working trees) |
+The `run_score` sys.path injection (already implemented) handles the import resolution. No `scoring_context` context manager is needed — the extraction happens once, the hidden directory persists for the session.
 
 ### Config changes
 
@@ -107,9 +88,9 @@ The result: `main` has no `scoring/` directory; `scoring` branch has only `scori
 
 Support both modes with a simple priority:
 
-1. If `--scoring-branch` is passed, use it.
-2. If `score.branch` is set in `problem.yaml`, use it.
-3. If neither is set and a local `scoring/` directory exists on disk, use it directly (legacy mode — no branch checkout needed).
+1. If `--scoring-branch` is passed, use it (extract from branch).
+2. If `score.branch` is set in `problem.yaml`, use it (extract from branch).
+3. If neither is set and a local `scoring/` directory exists on disk, use it directly (legacy mode — no branch extraction needed, move-once still applies in the local loop).
 4. If neither is set and no local `scoring/` exists, try the `scoring` branch by convention.
 
 This means existing problems with `scoring/` on disk keep working with zero changes. The migration path is: move your `scoring/` onto a branch when you're ready.
@@ -118,92 +99,44 @@ This means existing problems with `scoring/` on disk keep working with zero chan
 
 ## Implementation Plan
 
-### Phase 1: Scoring context manager (new utility)
+### Phase 1: Config + branch extraction utility
 
 **Files:**
-- `src/autoanything/scoring.py` — add `scoring_context()` context manager and a helper `resolve_scoring_branch()` that implements the priority logic above
 - `src/autoanything/problem.py` — add optional `branch` field to `ScoreConfig` (default: `None`)
-
-**`scoring_context` behavior:**
-- Takes `problem_dir`, `scoring_branch` (optional)
-- If `scoring_branch` is `None` and `scoring/` exists on disk, yield immediately (legacy mode — no-op)
-- If `scoring_branch` is `None` and `scoring/` does not exist, try branch named `scoring`
-- If a branch is specified or resolved, checkout `scoring/` from that branch, yield, then clean up
-- On cleanup: `shutil.rmtree(scoring/)` + `git reset HEAD -- scoring/` to unstage
-- On entry: if stray `scoring/` exists, remove it first (recovery from interrupted run)
+- `src/autoanything/scoring.py` — add `extract_scoring_from_branch(problem_dir, branch)` that checks out scoring from the branch into `.autoanything/_scoring/` and returns the path. Add `resolve_scoring(problem_dir, scoring_branch_override, config)` that implements the priority logic above.
 
 **`ScoreConfig` change:**
 - Add `branch: str | None = None` field
 - Parse from `score.branch` in `problem.yaml`
 
-**Tests:**
-- `tests/test_scoring.py` — add tests for `scoring_context`:
-  - Legacy mode: `scoring/` on disk, no branch → no-op
-  - Branch mode: no `scoring/` on disk, branch exists → checks out and cleans up
-  - Cleanup on exception: scoring dir removed even if inner code raises
-  - Recovery: stray `scoring/` dir cleaned up on entry
+**`extract_scoring_from_branch` behavior:**
+- Checkout `scoring/` from the branch into the working tree
+- Move it to `.autoanything/_scoring/`
+- `git reset HEAD -- scoring/` to unstage
+- Return the path to `.autoanything/_scoring/`
 
-### Phase 2: Wire into runner.py
+**`resolve_scoring` behavior:**
+- Check override → config → on-disk → convention branch
+- Return the resolved `scoring_dir` path (or `None` for default)
+
+**Tests:**
+- `tests/test_scoring.py` — tests for `extract_scoring_from_branch` (requires a git repo fixture with a scoring branch)
+- `tests/test_problem.py` — test that `score.branch` parses correctly from YAML
+
+### Phase 2: Wire into runner.py, evaluator.py, server.py
 
 **Files:**
-- `src/autoanything/runner.py` — replace hide/restore with `scoring_context`
+- `src/autoanything/runner.py` — use `resolve_scoring()` at the top of `run_local()` to determine where scoring lives. If scoring comes from a branch, extract once; the existing move-once logic handles the rest.
+- `src/autoanything/evaluator.py` — use `resolve_scoring()` in `establish_baseline()` and `evaluate_proposal()`, pass `scoring_dir` to `run_score()`
+- `src/autoanything/server.py` — use `resolve_scoring()` in `create_app()`, pass `scoring_dir` through to `_evaluate_one_pr()` and its `run_score()` calls
 
-**Changes:**
-- Delete `_scoring_dir()`, `_hidden_path()`, `_hide_scoring()`, `_restore_scoring()`, `_recover_scoring()` (lines 25-64, ~40 lines removed)
-- In `run_local()`:
-  - Remove `_recover_scoring()` call at the top
-  - Remove the `_hide_scoring` / `_restore_scoring` bracket around agent execution (lines 159-177). Agent runs no longer need scoring hidden — it doesn't exist on working branches.
-  - Wrap the `run_score()` call (line 231-233) in `scoring_context()`
-  - Remove `_recover_scoring()` from the `KeyboardInterrupt` handler
-- Accept `scoring_branch` parameter in `run_local()`, passed from CLI
-
-**Before (current):**
-```python
-hidden = _hide_scoring(problem_dir)
-try:
-    subprocess.run(agent_command, ...)
-finally:
-    if hidden:
-        _restore_scoring(problem_dir)
-
-# ... later ...
-score_val, metrics, duration, error = run_score(problem_dir, ...)
-```
-
-**After:**
-```python
-subprocess.run(agent_command, ...)
-
-# ... later ...
-with scoring_context(problem_dir, scoring_branch):
-    score_val, metrics, duration, error = run_score(problem_dir, ...)
-```
+**Key insight:** The `run_score(scoring_dir=...)` parameter already works (implemented). This phase is just about resolving _where_ scoring lives (branch vs disk) and passing that path through.
 
 **Tests:**
-- No dedicated `test_runner.py` exists currently; runner tests would be integration-level
-- Existing `test_scoring.py` tests for `run_score` remain unchanged
-- The `scoring_context` tests from Phase 1 cover the new logic
+- `tests/test_evaluator.py` — mock targets stay the same (`autoanything.evaluator.run_score`). These tests mock `run_score` so they don't exercise the branch extraction — that's tested in Phase 1.
+- `tests/test_server.py` — same; server tests mock at a higher level
 
-### Phase 3: Wire into evaluator.py and server.py
-
-**Files:**
-- `src/autoanything/evaluator.py` — wrap `run_score` calls in `scoring_context`
-- `src/autoanything/server.py` — wrap `run_score` calls in `scoring_context`
-
-**evaluator.py changes:**
-- `establish_baseline()` (line 57): wrap `run_score` call in `scoring_context()`
-- `evaluate_proposal()` (line 114): wrap `run_score` call in `scoring_context()`
-- Accept `scoring_branch` parameter, threaded from `run_evaluator()` and CLI
-
-**server.py changes:**
-- `_evaluate_one_pr()` (line 251): wrap `run_score` call in `scoring_context()`
-- Thread `scoring_branch` through `create_app()` → worker → `_evaluate_one_pr()`
-
-**Tests:**
-- `tests/test_evaluator.py` — mock targets stay the same (`autoanything.evaluator.run_score`). The `scoring_context` is tested separately. These tests mock `run_score` so they don't exercise the context manager — that's fine, it's tested in Phase 1.
-- `tests/test_server.py` — same story; the server tests mock at a higher level
-
-### Phase 4: CLI and init changes
+### Phase 3: CLI and init changes
 
 **Files:**
 - `src/autoanything/cli.py` — add `--scoring-branch` option to `run`, `evaluate`, `serve`, `score`, `validate`; update `init` to create scoring branch
@@ -222,14 +155,14 @@ Added to: `run`, `evaluate`, `serve`, `score`, `validate`.
   - Write `scoring/score.py` from template
   - Commit
   - Switch back to `main`
-- The `scoring/` directory on `main` is created only if needed for backwards compat, or omitted entirely (preferred — cleaner)
+- The `scoring/` directory on `main` is omitted (preferred — cleaner)
 - Update printed "Next steps" to mention the scoring branch:
   ```
   # Edit scoring: git checkout scoring && edit scoring/score.py && git commit && git checkout main
   ```
 
 **`score` command changes:**
-- Wrap `run_score` call in `scoring_context(problem_dir, scoring_branch)`
+- Use `resolve_scoring()` to find scoring, pass `scoring_dir` to `run_score`
 
 **`validate` command changes:**
 - Instead of checking for `scoring/score.py` on disk, also check the scoring branch
@@ -247,7 +180,7 @@ Added to: `run`, `evaluate`, `serve`, `score`, `validate`.
 - `tests/conftest.py`:
   - `problem_dir` fixture: add a `scoring` branch with `scoring/score.py` in addition to (or instead of) the on-disk scoring directory. For backwards-compat tests, keep the on-disk variant as a separate fixture.
 
-### Phase 5: Template and doc updates
+### Phase 4: Template and doc updates
 
 **Files:**
 - `src/autoanything/templates/gitignore` — keep `scoring/` (now serves as a safety net rather than the primary mechanism)
@@ -281,7 +214,7 @@ scoring/
 
 **CLAUDE.md updates:**
 - Problem structure diagram: note that `scoring/` lives on a dedicated branch, not on main
-- Evaluator design: replace "Blind scoring: agents never see scoring/ (gitignored; physically hidden during run)" with "Blind scoring: scoring code lives on a dedicated branch and is overlaid only during evaluation"
+- Evaluator design: replace "Blind scoring: agents never see scoring/ (gitignored; physically hidden during run)" with "Blind scoring: scoring code lives on a dedicated branch and is loaded via sys.path injection during evaluation"
 - Add note about `--scoring-branch` for experimentation
 
 **SCORE_DOCS.md updates:**
@@ -293,7 +226,7 @@ scoring/
 
 ## Migration path for existing problems
 
-Existing problems with `scoring/` on disk continue to work unchanged (legacy mode in `scoring_context`). To migrate:
+Existing problems with `scoring/` on disk continue to work unchanged (legacy mode). To migrate:
 
 ```bash
 cd my-problem

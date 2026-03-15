@@ -5,6 +5,7 @@ the metric value from the JSON output.
 """
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -37,26 +38,39 @@ def parse_score_output(stdout: str, score_name: str):
     return None, None
 
 
-def run_score(problem_dir: str, score_name: str, timeout: int):
+def run_score(problem_dir: str, score_name: str, timeout: int,
+              scoring_dir: str | None = None):
     """Run scoring/score.py and return results.
 
     Invokes the score() function from scoring/score.py in a subprocess,
     with the problem directory as cwd so that imports from state/ and
     context/ resolve correctly.
 
+    The scoring directory can live anywhere on disk — sys.path injection
+    ensures the import resolves regardless of location.
+
     Args:
         problem_dir: Path to the problem directory.
         score_name: Metric key to extract from JSON output.
         timeout: Seconds before scoring is killed.
+        scoring_dir: Path to the scoring directory. Defaults to
+            problem_dir/scoring.
 
     Returns:
         (score, metrics, duration_seconds, error_message)
     """
+    if scoring_dir is None:
+        scoring_dir = os.path.join(problem_dir, "scoring")
+    scoring_parent = os.path.dirname(os.path.abspath(scoring_dir))
+    scoring_pkg = os.path.basename(scoring_dir)
+
     t0 = time.time()
     try:
         result = subprocess.run(
             [sys.executable, "-c",
-             "import json; from scoring.score import score; print(json.dumps(score()))"],
+             f"import sys; sys.path.insert(0, {scoring_parent!r}); "
+             f"import json; from {scoring_pkg}.score import score; "
+             "print(json.dumps(score()))"],
             capture_output=True, text=True, cwd=problem_dir,
             timeout=timeout,
         )

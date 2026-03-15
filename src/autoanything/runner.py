@@ -2,8 +2,8 @@
 
 The agent command is a black box: it runs in the problem directory, modifies
 state files, and exits. The framework handles branching, scoring, merging,
-and leaderboard updates. Scoring is hidden from the agent by temporarily
-moving the scoring directory out of sight during agent execution.
+and leaderboard updates. Scoring is moved out of sight once before the loop
+starts and loaded via sys.path injection during scoring.
 """
 
 import os
@@ -20,48 +20,6 @@ from autoanything.history import (
 )
 from autoanything.leaderboard import export_leaderboard, export_history
 from autoanything.scoring import run_score, is_better
-
-
-def _scoring_dir(problem_dir):
-    """The scoring directory path."""
-    return os.path.join(problem_dir, "scoring")
-
-
-def _hidden_path(problem_dir):
-    """Where scoring gets stashed during agent runs."""
-    return os.path.join(problem_dir, ".autoanything", "_scoring")
-
-
-def _hide_scoring(problem_dir):
-    """Move scoring directory into .autoanything/_scoring to hide from agents."""
-    src = _scoring_dir(problem_dir)
-    if not os.path.isdir(src):
-        return False
-    dst = _hidden_path(problem_dir)
-    if os.path.exists(dst):
-        shutil.rmtree(dst)
-    shutil.move(src, dst)
-    return True
-
-
-def _restore_scoring(problem_dir):
-    """Restore scoring directory from hidden location."""
-    dst = _scoring_dir(problem_dir)
-    src = _hidden_path(problem_dir)
-    if not os.path.exists(src):
-        return
-    if os.path.exists(dst):
-        shutil.rmtree(dst)
-    shutil.move(src, dst)
-
-
-def _recover_scoring(problem_dir):
-    """Recover scoring if left hidden from a previous interrupted run."""
-    hidden = _hidden_path(problem_dir)
-    scoring = _scoring_dir(problem_dir)
-    if os.path.exists(hidden) and not os.path.isdir(scoring):
-        shutil.move(hidden, scoring)
-        print("Recovered scoring directory from previous interrupted run.")
 
 
 def run_local(problem_dir, config, db_path, agent_command,
@@ -83,8 +41,12 @@ def run_local(problem_dir, config, db_path, agent_command,
     leaderboard_path = os.path.join(problem_dir, "leaderboard.md")
     history_path = os.path.join(problem_dir, "history.md")
 
-    # Recover scoring if hidden from a previous interrupted run
-    _recover_scoring(problem_dir)
+    # Recover scoring if left hidden from a previous interrupted run
+    scoring_src = os.path.join(problem_dir, "scoring")
+    scoring_hidden = os.path.join(problem_dir, ".autoanything", "_scoring")
+    if os.path.isdir(scoring_hidden) and not os.path.isdir(scoring_src):
+        shutil.move(scoring_hidden, scoring_src)
+        print("Recovered scoring directory from previous interrupted run.")
 
     conn = init_db(db_path)
 
@@ -131,6 +93,16 @@ def run_local(problem_dir, config, db_path, agent_command,
     iteration = 0
     consecutive_crashes = 0
 
+    # Move scoring out of sight for the duration of the loop.
+    # It stays hidden until the loop ends — run_score uses sys.path
+    # injection to load it from the hidden location.
+    scoring_dir = None
+    if os.path.isdir(scoring_src):
+        if os.path.exists(scoring_hidden):
+            shutil.rmtree(scoring_hidden)
+        shutil.move(scoring_src, scoring_hidden)
+        scoring_dir = scoring_hidden
+
     try:
         while True:
             if max_iterations is not None and iteration >= max_iterations:
@@ -155,26 +127,20 @@ def run_local(problem_dir, config, db_path, agent_command,
             # Create proposal branch
             git("checkout", "-b", branch, cwd=problem_dir)
 
-            # Hide scoring, run agent, restore scoring
-            hidden = _hide_scoring(problem_dir)
-            try:
-                agent_env = {
-                    **os.environ,
-                    "AUTOANYTHING_ITERATION": str(iteration),
-                    "AUTOANYTHING_SCORE": str(incumbent["score"]),
-                    "AUTOANYTHING_DIRECTION": direction,
-                    "AUTOANYTHING_METRIC": score_name,
-                    "AUTOANYTHING_PROBLEM": config.name,
-                }
+            agent_env = {
+                **os.environ,
+                "AUTOANYTHING_ITERATION": str(iteration),
+                "AUTOANYTHING_SCORE": str(incumbent["score"]),
+                "AUTOANYTHING_DIRECTION": direction,
+                "AUTOANYTHING_METRIC": score_name,
+                "AUTOANYTHING_PROBLEM": config.name,
+            }
 
-                print(f"Running agent...")
-                subprocess.run(
-                    agent_command, shell=True,
-                    cwd=problem_dir, env=agent_env,
-                )
-            finally:
-                if hidden:
-                    _restore_scoring(problem_dir)
+            print(f"Running agent...")
+            subprocess.run(
+                agent_command, shell=True,
+                cwd=problem_dir, env=agent_env,
+            )
 
             # --- Detect what the agent changed ---
 
@@ -230,6 +196,7 @@ def run_local(problem_dir, config, db_path, agent_command,
             print("  Scoring...")
             score_val, metrics, duration, error = run_score(
                 problem_dir, score_name=score_name, timeout=timeout,
+                scoring_dir=scoring_dir,
             )
 
             if error or score_val is None:
@@ -284,8 +251,12 @@ def run_local(problem_dir, config, db_path, agent_command,
             git("checkout", base_branch, cwd=problem_dir, check=False)
         except Exception:
             pass
-        _recover_scoring(problem_dir)
     finally:
+        # Restore scoring to its original location
+        if scoring_dir and os.path.isdir(scoring_hidden):
+            if os.path.exists(scoring_src):
+                shutil.rmtree(scoring_src)
+            shutil.move(scoring_hidden, scoring_src)
         incumbent = get_incumbent(conn)
         if incumbent:
             print(f"\nFinal score: {incumbent['score']:.6f}")
