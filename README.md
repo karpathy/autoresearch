@@ -8,9 +8,9 @@ The insight wasn't the ML part. It was the loop: propose a change, score it agai
 
 | GPT Training (val BPB) | Rastrigin Function (10-D) |
 |:---:|:---:|
-| ![GPT training optimization](progress.png) | ![Rastrigin function minimization](test_progress_rastrigin.png) |
+| ![GPT training optimization](images/progress.png) | ![Rastrigin function minimization](images/test_progress_rastrigin.png) |
 | **Traveling Salesman (20 cities)** | **Rectangle Packing (12 rects)** |
-| ![TSP route optimization](test_progress_tsp.png) | ![Rectangle packing optimization](test_progress_packing.png) |
+| ![TSP route optimization](images/test_progress_tsp.png) | ![Rectangle packing optimization](images/test_progress_packing.png) |
 
 *Each chart shows the same pattern: agents propose changes (grey dots), the evaluator keeps only improvements (green dots), and the best score ratchets monotonically in one direction.*
 
