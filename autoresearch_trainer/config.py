@@ -60,7 +60,6 @@ class BenchmarkSettings:
 
 @dataclass(frozen=True)
 class OptimizationSettings:
-    total_batch_size: int
     embedding_lr: float
     unembedding_lr: float
     matrix_lr: float
@@ -78,6 +77,7 @@ class RuntimeConfig:
     experiment_profile: str
     time_budget: int
     grad_accum_steps_override: int
+    seed: int
     model: ModelSettings
     compile: CompileSettings
     benchmark: BenchmarkSettings
@@ -115,7 +115,6 @@ EXPERIMENT_PROFILES = {
 
 HEAD_DIM = 128
 TIME_BUDGET_DEFAULT = 300
-TOTAL_BATCH_SIZE = 2**19
 EMBEDDING_LR = 0.6
 UNEMBEDDING_LR = 0.004
 MATRIX_LR = 0.04
@@ -129,6 +128,7 @@ MUON_WARMUP_STEPS = 300
 TARGET_MFU_PERCENT = 50.0
 VE_GATE_CHANNELS = 32
 SOFTCAP = 15.0
+SEED_DEFAULT = 1337
 
 
 def env_override_int(name: str, default: int) -> int:
@@ -139,11 +139,6 @@ def env_override_int(name: str, default: int) -> int:
 def env_override_str(name: str, default: str) -> str:
     override = os.environ.get(name)
     return override if override is not None else default
-
-
-def env_override_float(name: str, default: float) -> float:
-    override = os.environ.get(name)
-    return float(override) if override is not None else default
 
 
 def env_override_float(name: str, default: float) -> float:
@@ -191,13 +186,19 @@ def parse_args(available_inductor_modes: list[str]) -> argparse.Namespace:
         "--grad-accum-steps",
         type=int,
         default=1,
-        help="Gradient accumulation steps. Default 1 is the validated high-throughput setting.",
+        help="Gradient accumulation steps per optimizer step. This is the effective batch-size knob beyond DEVICE_BATCH_SIZE x MAX_SEQ_LEN.",
     )
     parser.add_argument(
         "--optimizer-compile-backend",
         choices=OPTIMIZER_COMPILE_BACKEND_CHOICES,
         default="inductor",
         help="Control optimizer fused-step compilation separately from model compilation.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=SEED_DEFAULT,
+        help="Random seed for model initialization and any stochastic runtime behavior.",
     )
     args = parser.parse_args()
     if args.benchmark_steps < 0:
@@ -246,7 +247,6 @@ def build_runtime_config(
         target_mfu_percent=TARGET_MFU_PERCENT,
     )
     optimization_settings = OptimizationSettings(
-        total_batch_size=TOTAL_BATCH_SIZE,
         embedding_lr=EMBEDDING_LR,
         unembedding_lr=UNEMBEDDING_LR,
         matrix_lr=MATRIX_LR,
@@ -262,6 +262,7 @@ def build_runtime_config(
         experiment_profile=args.experiment_profile,
         time_budget=env_override_int("TIME_BUDGET", TIME_BUDGET_DEFAULT),
         grad_accum_steps_override=args.grad_accum_steps,
+        seed=env_override_int("SEED", args.seed),
         model=model_settings,
         compile=compile_settings,
         benchmark=benchmark_settings,

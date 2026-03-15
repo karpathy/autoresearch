@@ -134,17 +134,24 @@ class CausalSelfAttention(nn.Module):
         v = self.c_v(x).view(bsz, seq_len, self.n_kv_head, self.head_dim)
 
         if ve is not None:
-            ve = ve.view(bsz, seq_len, self.n_kv_head, self.head_dim)
+            ve = ve.view(bsz, seq_len, self.n_kv_head, self.head_dim).to(v.dtype)
             gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))
-            v = v + gate.unsqueeze(-1) * ve
+            v = v + gate.unsqueeze(-1).to(v.dtype) * ve
 
         cos, sin = cos_sin
         q = apply_rotary_emb(q, cos, sin)
         k = apply_rotary_emb(k, cos, sin)
         q = norm(q)
         k = norm(k)
+        attn_input_dtype = q.dtype
+        if q.is_cuda and q.dtype not in (torch.float16, torch.bfloat16):
+            q = q.bfloat16()
+            k = k.bfloat16()
+            v = v.bfloat16()
 
         y = self.attention_op(q, k, v, causal=True, window_size=window_size)
+        if y.dtype != attn_input_dtype:
+            y = y.to(attn_input_dtype)
         y = y.contiguous().view(bsz, seq_len, -1)
         return self.c_proj(y)
 
@@ -238,6 +245,8 @@ class GPT(nn.Module):
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
+        # These embeddings stay in bf16 for the fast training path; eager
+        # forwards are promoted back to fp32 before they hit fp32 linear layers.
         self.transformer.wte.to(dtype=torch.bfloat16)
         for ve in self.value_embeds.values():
             ve.to(dtype=torch.bfloat16)
@@ -397,5 +406,7 @@ class GPT(nn.Module):
         sin = self.sin[:, :seq_len]
         x = self.transformer.wte(idx)
         x = norm(x)
+        if not torch.is_autocast_enabled() and x.dtype != self.lm_head.weight.dtype:
+            x = x.to(self.lm_head.weight.dtype)
         x = self.forward_trunk(x, idx, cos, sin)
         return self.compute_loss(x, targets=targets, reduction=reduction)

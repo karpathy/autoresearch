@@ -55,7 +55,10 @@ val_bpb:          0.997900
 training_seconds: 300.1
 total_seconds:    325.9
 peak_vram_mb:     45060.2
-mfu_percent:      39.80
+warmup_excluded_tok_per_sec: 123456
+warmup_excluded_mfu_percent: 39.80
+end_to_end_tok_per_sec: 110000
+end_to_end_mfu_percent: 35.60
 total_tokens_M:   499.6
 num_steps:        953
 num_params_M:     50.3

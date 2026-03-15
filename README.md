@@ -12,7 +12,7 @@ The repo is still intentionally small, but the training runtime is now split int
 
 - **`prepare.py`** — fixed constants, one-time data prep, tokenizer training, dataloader, and evaluation. This remains the evaluation harness.
 - **`train.py`** — tiny entrypoint that configures the environment and forwards into the trainer package.
-- **`autoresearch_trainer/`** — model, optimizer, compile integration, runtime loop, and validated experiment profiles.
+- **`autoresearch_trainer/`** — model, optimizer, compile integration, runtime loop, mmap train-token cache, and validated experiment profiles.
 - **`program.md`** — baseline instructions for an autonomous coding agent.
 - **`benchmarks/`** — curated benchmark history plus the distilled findings from recent tuning work.
 
@@ -85,6 +85,7 @@ The `program.md` file is essentially a super lightweight "skill".
 prepare.py                 — fixed data prep + evaluation harness
 train.py                   — thin entrypoint
 autoresearch_trainer/      — modular training runtime
+    token_cache.py         — mmap train-token cache + random token-window loader
     utils/platform.py      — isolated OS and environment hacks
 benchmarks/                — benchmark archive + preserved findings
 program.md                 — agent instructions
@@ -99,7 +100,7 @@ vendor/                    — optional untracked local wheel cache
 - **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
 - **Validated profiles.** High-throughput and high-MFU settings are kept as named profiles instead of being scattered through ad-hoc notes.
 - **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
-- **Agent-Ready Analytics.** The trainer automatically emits structured `metrics.jsonl` files per run so that external swarms, reinforcement scripts, or plotting utilities can ingest throughput, loss, and MFU histories deterministically without manual log scraping.
+- **Agent-Ready Analytics.** The trainer automatically emits structured `metrics.jsonl` files per run, split into `warmup_excluded` and `end_to_end` groups so external swarms or plotting utilities can compare steady-state and full-run behavior without manual log scraping.
 
 ## Windows notes
 
@@ -119,7 +120,7 @@ Seeing as there seems to be a lot of interest in tinkering with autoresearch on 
 4. Also in `prepare.py`, you'll want to decrease `EVAL_TOKENS` so that your validation loss is evaluated on a lot less data.
 5. In `train.py`, the primary single knob that controls model complexity is the `DEPTH` (default 8, here). A lot of variables are just functions of this, so e.g. lower it down to e.g. 4.
 6. You'll want to most likely use `WINDOW_PATTERN` of just "L", because "SSSL" uses alternating banded attention pattern that may be very inefficient for you. Try it.
-7. You'll want to lower `TOTAL_BATCH_SIZE` a lot, but keep it powers of 2, e.g. down to `2**14` (~16K) or so even, hard to tell.
+7. The effective tokens per optimizer step are `DEVICE_BATCH_SIZE * MAX_SEQ_LEN * grad_accum_steps`. On smaller machines, lower `DEVICE_BATCH_SIZE` first and only raise `--grad-accum-steps` if you explicitly want more accumulation.
 
 I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
 

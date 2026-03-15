@@ -115,8 +115,8 @@ class MuonAdamW(torch.optim.Optimizer):
             state = self.state[p]
             if not state:
                 state["step"] = 0
-                state["exp_avg"] = torch.zeros_like(p)
-                state["exp_avg_sq"] = torch.zeros_like(p)
+                state["exp_avg"] = torch.zeros_like(p, dtype=torch.float32)
+                state["exp_avg_sq"] = torch.zeros_like(p, dtype=torch.float32)
             state["step"] += 1
             self._adamw_step_t.fill_(state["step"])
             self._adamw_lr_t.fill_(group["lr"])
@@ -124,9 +124,10 @@ class MuonAdamW(torch.optim.Optimizer):
             self._adamw_beta2_t.fill_(group["betas"][1])
             self._adamw_eps_t.fill_(group["eps"])
             self._adamw_wd_t.fill_(group["weight_decay"])
+            grad = p.grad if p.grad.dtype == torch.float32 else p.grad.float()
             self._adamw_step_fn(
                 p,
-                p.grad,
+                grad,
                 state["exp_avg"],
                 state["exp_avg_sq"],
                 self._adamw_step_t,
@@ -144,17 +145,30 @@ class MuonAdamW(torch.optim.Optimizer):
         p = params[0]
         state = self.state[p]
         num_params = len(params)
-        shape, device, dtype = p.shape, p.device, p.dtype
+        shape, device = p.shape, p.device
         if "momentum_buffer" not in state:
-            state["momentum_buffer"] = torch.zeros(num_params, *shape, dtype=dtype, device=device)
+            state["momentum_buffer"] = torch.zeros(num_params, *shape, dtype=torch.float32, device=device)
         if "second_momentum_buffer" not in state:
             state_shape = (num_params, shape[-2], 1) if shape[-2] >= shape[-1] else (num_params, 1, shape[-1])
-            state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
+            state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=torch.float32, device=device)
+        active_indices = [idx for idx, param in enumerate(params) if param.grad is not None]
+        if not active_indices:
+            return
         red_dim = -1 if shape[-2] >= shape[-1] else -2
         # Grouping same-shaped matrices lets Muon update them as one compiled
         # stack, which is much friendlier to torch.compile than per-parameter Python loops.
-        stacked_grads = torch.stack([param.grad for param in params])
-        stacked_params = torch.stack(params)
+        active_params = [params[idx] for idx in active_indices]
+        stacked_grads = torch.stack([param.grad.float() for param in active_params])
+        stacked_params = torch.stack(active_params)
+        scatter_state_back = len(active_params) != len(params)
+        if scatter_state_back:
+            index_tensor = torch.tensor(active_indices, device=device, dtype=torch.long)
+            momentum_buffer = state["momentum_buffer"].index_select(0, index_tensor).clone()
+            second_momentum_buffer = state["second_momentum_buffer"].index_select(0, index_tensor).clone()
+        else:
+            index_tensor = None
+            momentum_buffer = state["momentum_buffer"]
+            second_momentum_buffer = state["second_momentum_buffer"]
         self._muon_momentum_t.fill_(group["momentum"])
         self._muon_beta2_t.fill_(group["beta2"] if group["beta2"] is not None else 0.0)
         self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1]) ** 0.5)
@@ -162,8 +176,8 @@ class MuonAdamW(torch.optim.Optimizer):
         self._muon_step_fn(
             stacked_grads,
             stacked_params,
-            state["momentum_buffer"],
-            state["second_momentum_buffer"],
+            momentum_buffer,
+            second_momentum_buffer,
             self._muon_momentum_t,
             self._muon_lr_t,
             self._muon_wd_t,
@@ -171,7 +185,10 @@ class MuonAdamW(torch.optim.Optimizer):
             group["ns_steps"],
             red_dim,
         )
-        torch._foreach_copy_(params, list(stacked_params.unbind(0)))
+        if scatter_state_back:
+            state["momentum_buffer"].index_copy_(0, index_tensor, momentum_buffer)
+            state["second_momentum_buffer"].index_copy_(0, index_tensor, second_momentum_buffer)
+        torch._foreach_copy_(active_params, list(stacked_params.unbind(0)))
 
     @torch.no_grad()
     def step(self):

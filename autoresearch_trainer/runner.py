@@ -3,13 +3,14 @@ from __future__ import annotations
 import gc
 import json
 import math
+import random
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any
 
 import torch
 
-from prepare import Tokenizer, evaluate_bpb, make_dataloader
+from prepare import Tokenizer, evaluate_bpb
 
 from .compile import (
     AVAILABLE_INDUCTOR_MODES,
@@ -28,11 +29,18 @@ from .model import (
     estimate_device_peak_flops,
     norm,
     resolve_attention_backend,
-    target_tok_per_sec_for_mfu,
 )
+from .token_cache import ensure_train_token_cache, make_token_window_loader
 
 
 H100_BF16_PEAK_FLOPS = 989.5e12
+
+
+def set_random_seed(seed: int) -> None:
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 @dataclass
@@ -42,6 +50,7 @@ class TrainingState:
     t_start: float = 0.0
     t_start_training: float = 0.0
     steady_training_time: float = 0.0
+    end_to_end_training_time: float = 0.0
     measured_steps: int = 0
     lossf_mean: float | None = None
     last_dt: float = 0.0
@@ -119,6 +128,38 @@ class Trainer:
             * max(runtime.grad_accum_steps_override, 1)
         )
 
+    def _aggregate_rate_metrics(self, completed_steps: int):
+        total_batch_size = self.actual_total_batch_size
+        instant_tok_per_sec = total_batch_size / self.state.last_dt if self.state.last_dt > 0 else None
+        instant_mfu = compute_mfu(self.device_peak_flops, self.num_flops_per_token, instant_tok_per_sec)
+        warmup_tok_per_sec = (
+            total_batch_size * self.state.measured_steps / self.state.steady_training_time
+            if self.state.measured_steps > 0 and self.state.steady_training_time > 0
+            else None
+        )
+        warmup_mfu = compute_mfu(self.device_peak_flops, self.num_flops_per_token, warmup_tok_per_sec)
+        end_to_end_tok_per_sec = (
+            total_batch_size * completed_steps / self.state.end_to_end_training_time
+            if completed_steps > 0 and self.state.end_to_end_training_time > 0
+            else None
+        )
+        end_to_end_mfu = compute_mfu(self.device_peak_flops, self.num_flops_per_token, end_to_end_tok_per_sec)
+        return {
+            "instant": {"tok_per_sec": instant_tok_per_sec, "mfu": instant_mfu},
+            "warmup_excluded": {
+                "tok_per_sec": warmup_tok_per_sec,
+                "mfu": warmup_mfu,
+                "steps": self.state.measured_steps,
+                "seconds": self.state.steady_training_time,
+            },
+            "end_to_end": {
+                "tok_per_sec": end_to_end_tok_per_sec,
+                "mfu": end_to_end_mfu,
+                "steps": completed_steps,
+                "seconds": self.state.end_to_end_training_time,
+            },
+        }
+
     def _build_lr_scheduler(self):
         opt = self.runtime.optimization
         def lr_func(step, total_steps):
@@ -154,28 +195,39 @@ class Trainer:
                 dynamic=False,
             )
 
-        def run_microstep(x, y):
-            with autocast_ctx:
-                loss = model_for_execution(x, y)
-            (loss / grad_accum_steps).backward()
-            return loss.detach()
-
         def run_trunk_forward(x, idx, cos, sin):
             return raw_model.forward_trunk(x, idx, cos, sin)
 
-        microstep_fn = run_microstep
         trunk_fn = run_trunk_forward
-        
-        if runtime.compile.use_compiled_microstep:
-            microstep_fn = maybe_compile_function(
-                run_microstep,
+        if runtime.compile.use_compiled_trunk:
+            trunk_fn = maybe_compile_function(
+                run_trunk_forward,
                 backend=runtime.compile.model_backend,
                 compile_mode=runtime.compile.mode,
                 dynamic=False,
             )
-        elif runtime.compile.use_compiled_trunk:
-            trunk_fn = maybe_compile_function(
-                run_trunk_forward,
+
+        def run_forward(idx, targets, reduction: str = "mean"):
+            if runtime.compile.use_compiled_trunk:
+                seq_len = idx.size(1)
+                cos = raw_model.cos[:, :seq_len]
+                sin = raw_model.sin[:, :seq_len]
+                x = raw_model.transformer.wte(idx)
+                x = norm(x)
+                x = trunk_fn(x, idx, cos, sin)
+                return raw_model.compute_loss(x, targets=targets, reduction=reduction)
+            return model_for_execution(idx, targets, reduction=reduction)
+
+        def run_microstep(x, y):
+            with autocast_ctx:
+                loss = run_forward(x, y)
+            (loss / grad_accum_steps).backward()
+            return loss.detach()
+
+        microstep_fn = run_microstep
+        if runtime.compile.use_compiled_microstep:
+            microstep_fn = maybe_compile_function(
+                run_microstep,
                 backend=runtime.compile.model_backend,
                 compile_mode=runtime.compile.mode,
                 dynamic=False,
@@ -184,23 +236,29 @@ class Trainer:
         model_for_eval = model_for_execution if runtime.compile.use_compiled_model else raw_model
         return model_for_execution, model_for_eval, microstep_fn, trunk_fn
 
-    def _log_metrics(self, tokenizer: Tokenizer, epoch: int):
+    def _log_metrics(self, epoch: int):
         runtime = self.runtime
         state = self.state
-        
-        total_batch_size = self.actual_total_batch_size
-        tok_per_sec = total_batch_size / state.last_dt if state.last_dt > 0 else 0.0
-        device_mfu = compute_mfu(self.device_peak_flops, self.num_flops_per_token, tok_per_sec)
-        h100_mfu = compute_mfu(H100_BF16_PEAK_FLOPS, self.num_flops_per_token, tok_per_sec)
+        completed_steps = state.step + 1
+        metrics_groups = self._aggregate_rate_metrics(completed_steps)
+        instant = metrics_groups["instant"]
+        warmup_excluded = metrics_groups["warmup_excluded"]
+        end_to_end = metrics_groups["end_to_end"]
         
         # Format strings
-        tok_per_sec_str = f"{tok_per_sec:,.0f}"
-        device_mfu_str = f"{device_mfu:.1f}%"
-        h100_mfu_str = f"{h100_mfu:.1f}%" if h100_mfu is not None else "n/a"
+        inst_tok_per_sec_str = f"{instant['tok_per_sec']:,.0f}" if instant["tok_per_sec"] is not None else "n/a"
+        warmup_tok_per_sec_str = (
+            f"{warmup_excluded['tok_per_sec']:,.0f}" if warmup_excluded["tok_per_sec"] is not None else "warming"
+        )
+        end_to_end_tok_per_sec_str = (
+            f"{end_to_end['tok_per_sec']:,.0f}" if end_to_end["tok_per_sec"] is not None else "n/a"
+        )
+        warmup_mfu_str = f"{warmup_excluded['mfu']:.1f}%" if warmup_excluded["mfu"] is not None else "warming"
+        end_to_end_mfu_str = f"{end_to_end['mfu']:.1f}%" if end_to_end["mfu"] is not None else "n/a"
         
         if runtime.benchmark.enabled:
-            remaining_str = f"{max(runtime.benchmark.steps - (state.step + 1), 0)} steps"
-            progress_str = f"{100 * (state.step + 1) / runtime.benchmark.steps:.1f}%"
+            remaining_str = f"{max(runtime.benchmark.steps - completed_steps, 0)} steps"
+            progress_str = f"{100 * completed_steps / runtime.benchmark.steps:.1f}%"
         else:
             remaining_str = f"{max(0.0, runtime.time_budget - state.elapsed_training_time):.0f}s"
             progress_str = f"{100 * state.elapsed_training_time / runtime.time_budget:.1f}%"
@@ -208,7 +266,9 @@ class Trainer:
         loss_str = f"{state.lossf_mean:.6f}" if state.lossf_mean is not None else "n/a"
         print(
             f"step {state.step:05d} ({progress_str}) | loss: {loss_str} | dt: {state.last_dt*1000:.0f}ms | "
-            f"tok/sec: {tok_per_sec_str} | mfu: {device_mfu_str} | h100_mfu: {h100_mfu_str} | "
+            f"inst tok/sec: {inst_tok_per_sec_str} | warm tok/sec: {warmup_tok_per_sec_str} | "
+            f"e2e tok/sec: {end_to_end_tok_per_sec_str} | warm mfu: {warmup_mfu_str} | "
+            f"e2e mfu: {end_to_end_mfu_str} | "
             f"epoch: {epoch} | remaining: {remaining_str}",
             flush=True,
         )
@@ -219,11 +279,15 @@ class Trainer:
             "progress": progress_str,
             "loss": state.lossf_mean,
             "dt_ms": state.last_dt * 1000,
-            "tok_per_sec": tok_per_sec,
-            "mfu": device_mfu,
-            "h100_mfu": h100_mfu,
             "epoch": epoch,
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "instant": {
+                "tok_per_sec": instant["tok_per_sec"],
+                "mfu": instant["mfu"],
+                "h100_mfu": compute_mfu(H100_BF16_PEAK_FLOPS, self.num_flops_per_token, instant["tok_per_sec"]),
+            },
+            "warmup_excluded": warmup_excluded,
+            "end_to_end": end_to_end,
         }
         with open("metrics.jsonl", "a") as f:
             f.write(json.dumps(metrics) + "\n")
@@ -231,6 +295,9 @@ class Trainer:
     def train(self, tokenizer: Tokenizer, train_loader: Any):
         runtime = self.runtime
         state = self.state
+        self.raw_model.train()
+        if self.model_for_execution is not self.raw_model and hasattr(self.model_for_execution, "train"):
+            self.model_for_execution.train()
         
         # actual_total_batch_size is already computed in __init__; just use it.
         actual_total_batch_size = self.actual_total_batch_size
@@ -271,6 +338,7 @@ class Trainer:
             t_step_end = time.time()
             dt = t_step_end - t_step_start
             state.last_dt = dt
+            state.end_to_end_training_time += dt
             
             # Update metrics
             loss_val = loss.item() if loss is not None else 0.0
@@ -290,7 +358,7 @@ class Trainer:
                         (runtime.benchmark.enabled and state.step + 1 >= runtime.benchmark.steps))
             
             if should_log:
-                self._log_metrics(tokenizer, epoch)
+                self._log_metrics(epoch)
 
             # GC Management
             if state.step == 0:
@@ -337,15 +405,25 @@ def main() -> int:
         optimizer_compile_backend=optimizer_compile_backend,
         vocab_size=tokenizer.get_vocab_size()
     )
+    set_random_seed(runtime.seed)
+
+    train_cache = ensure_train_token_cache(tokenizer)
+    cache_status = "built" if train_cache.built else "using"
+    print(
+        f"Train token cache: {cache_status} {train_cache.cache_path} "
+        f"({train_cache.num_tokens:,} tokens)",
+        flush=True,
+    )
     
     # Initialize Trainer
     trainer = Trainer(runtime)
     
-    train_loader = make_dataloader(
-        tokenizer,
+    train_loader = make_token_window_loader(
+        train_cache,
         runtime.model.device_batch_size,
         runtime.model.max_seq_len,
-        "train",
+        device=trainer.device,
+        seed=runtime.seed + 1,
     )
     
     # Train
@@ -354,6 +432,7 @@ def main() -> int:
     # Final Eval & Stats
     val_bpb = None
     if not runtime.benchmark.enabled:
+        trainer.raw_model.eval()
         trainer.model_for_eval.eval()
         with trainer.autocast_ctx:
             val_bpb = evaluate_bpb(trainer.model_for_eval, tokenizer, runtime.model.device_batch_size)
@@ -367,11 +446,22 @@ def _report_final_stats(trainer, state, val_bpb):
     runtime = trainer.runtime
     t_end = time.time()
     total_batch_size = trainer.actual_total_batch_size
-    
-    steady_tok_per_sec = (total_batch_size * state.measured_steps / state.steady_training_time 
-                         if state.steady_training_time > 0 and state.measured_steps > 0 else None)
-    
-    steady_state_mfu = compute_mfu(trainer.device_peak_flops, trainer.num_flops_per_token, steady_tok_per_sec)
+    end_to_end_tok_per_sec = (
+        total_batch_size * state.step / state.end_to_end_training_time
+        if state.end_to_end_training_time > 0 and state.step > 0
+        else None
+    )
+    warmup_excluded_tok_per_sec = (
+        total_batch_size * state.measured_steps / state.steady_training_time
+        if state.steady_training_time > 0 and state.measured_steps > 0
+        else None
+    )
+    end_to_end_mfu = compute_mfu(trainer.device_peak_flops, trainer.num_flops_per_token, end_to_end_tok_per_sec)
+    warmup_excluded_mfu = compute_mfu(
+        trainer.device_peak_flops,
+        trainer.num_flops_per_token,
+        warmup_excluded_tok_per_sec,
+    )
     peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
     print("---")
@@ -379,8 +469,26 @@ def _report_final_stats(trainer, state, val_bpb):
     print(f"profile:          {runtime.experiment_profile}")
     print(f"val_bpb:          {val_bpb:.6f}" if val_bpb is not None else "val_bpb:          skipped")
     print(f"total_seconds:    {t_end - state.t_start:.1f}")
-    print(f"steady_tok_per_sec: {steady_tok_per_sec:,.0f}" if steady_tok_per_sec is not None else "tok_per_sec:      n/a")
-    print(f"mfu_percent:      {steady_state_mfu:.2f}" if steady_state_mfu is not None else "mfu_percent:      n/a")
+    print(
+        f"warmup_excluded_tok_per_sec: {warmup_excluded_tok_per_sec:,.0f}"
+        if warmup_excluded_tok_per_sec is not None
+        else "warmup_excluded_tok_per_sec: n/a"
+    )
+    print(
+        f"warmup_excluded_mfu_percent: {warmup_excluded_mfu:.2f}"
+        if warmup_excluded_mfu is not None
+        else "warmup_excluded_mfu_percent: n/a"
+    )
+    print(
+        f"end_to_end_tok_per_sec: {end_to_end_tok_per_sec:,.0f}"
+        if end_to_end_tok_per_sec is not None
+        else "end_to_end_tok_per_sec: n/a"
+    )
+    print(
+        f"end_to_end_mfu_percent: {end_to_end_mfu:.2f}"
+        if end_to_end_mfu is not None
+        else "end_to_end_mfu_percent: n/a"
+    )
     print(f"total_tokens_M:   {state.step * total_batch_size / 1e6:.1f}")
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
     print("---")
