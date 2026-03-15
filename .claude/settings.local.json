@@ -15,7 +15,8 @@
       "Bash(clear:*)",
       "Bash(git add:*)",
       "Bash(git remote:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(git push:*)"
     ]
   }
 }
