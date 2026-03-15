@@ -17,6 +17,9 @@ score:
   description: "Rastrigin function value — global minimum is 0.0 at the origin"
   bounded: true
 
+git:
+  base_branch: master
+
 constraints:
   - "Must not modify files outside of state/"
   - "Solution vector must have exactly 10 elements"

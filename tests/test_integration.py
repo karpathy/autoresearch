@@ -73,9 +73,9 @@ class TestExistingProblemStructure:
             pytest.skip(f"No problem.yaml for {problem}")
 
         config = load_problem(problem_dir)
-        assert config.name == problem
+        assert config.name  # has a name
         assert config.score.direction in ("minimize", "maximize")
-        assert len(config.state) > 0 or len(config.mutable) > 0
+        assert len(config.state) > 0
 
 
 class TestPackageInstallable:

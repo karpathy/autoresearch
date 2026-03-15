@@ -17,6 +17,9 @@ score:
   description: "Validation bits per byte — measures how well the model compresses unseen text"
   bounded: false
 
+git:
+  base_branch: master
+
 constraints:
   - "Training must complete within the 5-minute time budget"
   - "Only packages in pyproject.toml are available"

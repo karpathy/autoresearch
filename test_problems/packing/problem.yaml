@@ -16,6 +16,9 @@ score:
   description: "Bounding box area + overlap penalty (10000 per overlapping pair) — lower is better"
   bounded: true
 
+git:
+  base_branch: master
+
 constraints:
   - "Must not modify files outside of state/"
   - "Placements must have exactly 12 entries matching the 12 rectangles"

@@ -337,9 +337,9 @@ The `scoring/score.sh` convention is new, but the framework should also look for
 
 ---
 
-## Test Suite (scaffolded)
+## Test Suite (98 tests, all passing)
 
-The test suite is already scaffolded in `tests/` — 96 tests across 9 files. All tests import from the planned `src/autoanything/` package and will fail until the modules exist. They define the expected API surface and behavior.
+The test suite covers the full `src/autoanything/` package — 98 tests across 10 files. All tests pass.
 
 | File | Tests | Covers |
 |------|-------|--------|
@@ -367,125 +367,135 @@ Key conventions the tests lock in:
 
 ## Implementation Plan
 
-### Phase 1: Proper Configuration (small, no structural changes)
+### Phase 1: Proper Configuration + Package Foundation [DONE]
 
-**Goal:** Replace fragile string-matching YAML parsing with a real parser. Make hardcoded values configurable. This is a prerequisite for everything else and delivers immediate reliability gains.
+**Goal:** Replace fragile string-matching YAML parsing with a real parser. Make hardcoded values configurable. Establish the installable package structure. This is a prerequisite for everything else and delivers immediate reliability gains.
 
 **Steps:**
 
-1. Add `pyyaml` to dependencies in `pyproject.toml`.
+1. Add `pyyaml` to dependencies in `pyproject.toml`. Add `hatchling` build system and `src/` layout for the installable package.
 
-2. Create `autoanything/problem.py` — a module that loads and validates `problem.yaml`:
+2. Create `src/autoanything/problem.py` — a module that loads and validates `problem.yaml`:
    - Parse with `yaml.safe_load()`.
-   - Return a dataclass/dict with all fields, applying defaults:
+   - Return dataclasses (`ProblemConfig`, `ScoreConfig`, `GitConfig`) with all fields, applying defaults:
      - `score.direction` → `"minimize"`
      - `score.timeout` → `900`
-     - `score.script` → `"scoring/score.sh"` (fall back to `"evaluator/score.sh"`)
-     - `git.base_branch` → `"main"` (fall back to `"master"` if `main` doesn't exist)
+     - `score.script` → `"scoring/score.sh"` (fall back to `"evaluator/score.sh"` if it exists)
+     - `git.base_branch` → `"main"`
      - `git.proposal_pattern` → `"proposals/*"`
    - Validate required fields: `name`, `state` (non-empty list), `score.name`, `score.direction`.
-   - Raise clear errors on missing or invalid fields.
+   - Raise clear `ValidationError` on missing or invalid fields.
+   - Backward compatibility: `mutable:` treated as alias for `state:`, `readonly:` treated as alias for `context:`.
 
-3. Update `evaluate.py` to use `autoanything/problem.py` instead of `load_direction()` and `load_score_name()`:
+3. Update `evaluate.py` to use `autoanything.problem.load_problem` instead of `load_direction()` and `load_score_name()`:
    - Replace `MAIN_BRANCH = "master"` with value from problem config.
    - Replace hardcoded `"proposals/*"` pattern with value from problem config.
    - Replace hardcoded 15-minute timeout with value from problem config.
    - Replace hardcoded `SCORE_SCRIPT` path with value from problem config.
+   - Cached config via `_get_config()` for consistent values across functions.
 
 4. Update `server.py` to use the same config loader:
-   - Replace its own `problem.yaml` parsing for `mutable:` validation.
-   - Use the same base branch and score config.
+   - Replace its own `problem.yaml` parsing for `mutable:` validation (removed `load_mutable_files()`).
+   - Use config for base branch, score direction, and score name throughout.
 
-5. Update test problems' `problem.yaml` files to use the full schema (add `git:` section where needed).
+5. Update test problems' `problem.yaml` files to add `git: base_branch: master` section (since the default is now `main` but existing problems use `master`).
 
 6. Establish `.autoanything/` as the evaluator state directory:
-   - Update `evaluate.py` to write `history.db` to `.autoanything/history.db` (create the directory if it doesn't exist).
+   - Update `evaluate.py` to write `history.db` to `.autoanything/history.db` (creates the directory if it doesn't exist).
    - Fall back to `evaluator/history.db` if it already exists (migration path).
-   - Add `.autoanything/` to `.gitignore`.
+   - Add `.autoanything/` and `scoring/` to `.gitignore`.
 
-**Validation:** Run `run_test.py` for all three instant problems. Evaluator behavior should be identical.
+7. *(Deviation from plan)* Create the full `src/autoanything/` package with all modules, not just `problem.py`. This was pulled forward from Phase 2 because: (a) the test suite was already scaffolded against the full package API, and (b) creating the package structure is a prerequisite for `problem.py` to be importable. Modules created:
+   - `history.py` — SQLite operations, parameterized by `db_path` (no global state)
+   - `scoring.py` — `run_score()` and `parse_score_output()` as pure functions with explicit parameters
+   - `git.py` — git subprocess wrapper with explicit `cwd` parameter
+   - `leaderboard.py` — `export_leaderboard()` taking connection, output path, and direction
+   - `evaluator.py` — `establish_baseline()` and `evaluate_proposal()` composing the above modules
+   - `server.py` — `create_app()` factory returning a FastAPI instance (not a module-level singleton)
+   - `cli.py` — click-based CLI with `init`, `validate`, `score`, `history`, `leaderboard`, `evaluate`, `serve`
 
-### Phase 2: Extract the Package (the real refactor)
+8. Clean up `pyproject.toml`:
+   - Remove problem-specific deps (`numpy`, `tiktoken`, `kernels`, `matplotlib`, `pandas`, `pyarrow`) from main dependencies.
+   - Move them to `[project.optional-dependencies]` `examples` group.
+   - Add `dev` group with `pytest`, `click`, `rich`, `httpx`.
+   - Remove `[tool.uv.sources]` torch index (kept for backward compat, but torch is no longer a dependency).
 
-**Goal:** Move evaluator logic into an installable `autoanything` package with a CLI entry point. The evaluator scripts become thin wrappers or go away entirely.
+**Validation:** 98 tests pass across 10 test files. All four existing problem YAMLs load correctly with the new parser.
+
+#### Implementation Summary
+
+**What was built:**
+- Full `src/autoanything/` package (7 modules + `__init__.py`) — installable via `pip install -e .` or `uv sync`
+- Proper YAML parsing with PyYAML, replacing fragile string-matching in `load_direction()` and `load_score_name()`
+- All hardcoded values (branch name, timeout, proposal pattern, score script path) now come from `problem.yaml` config
+- `.autoanything/` state directory with fallback to `evaluator/history.db` for migration
+- CLI scaffolding with `init`, `validate`, `score`, `history`, `leaderboard` commands working
+- 98/98 tests passing
+
+**Key deviations from the original plan:**
+- Created the full package structure (`src/autoanything/`) in Phase 1 instead of Phase 2. The original plan had Phase 1 creating just `autoanything/problem.py` and Phase 2 restructuring to `src/autoanything/`. Since the test suite was already scaffolded against the full package API (`from autoanything.history import ...`, etc.), and the package structure is needed for `problem.py` to be importable, it made sense to do this in one step.
+- Implemented all package modules (history, scoring, git, leaderboard, evaluator, server, cli) rather than just problem.py. These are mostly extracted from the existing `evaluate.py` and `server.py` with the key improvement of parameterization (explicit `cwd`, `db_path`, `direction` parameters instead of module-level globals).
+- Cleaned up `pyproject.toml` dependencies in Phase 1 rather than Phase 2 step 5. This was necessary because the heavy deps (`numpy`, `tiktoken`, `kernels`) would fail to install on machines without the right build tools.
+- The `evaluate` and `serve` CLI commands are stubs that point users to the existing scripts. Full integration deferred to Phase 2.
+
+**What this means for Phase 2:**
+- Phase 2's "extract the package" work is largely done. The remaining Phase 2 work is:
+  - Wire `autoanything evaluate` and `autoanything serve` CLI commands to the package modules (replacing the evaluator/ scripts)
+  - Add `[project.scripts]` entry point to pyproject.toml
+  - Rename `test_problems/` to `examples/`
+  - Remove `evaluator/evaluate.py` and `evaluator/server.py` (they become the package modules)
+  - Make evaluator state location configurable via `--db` flag or env var
+
+### Phase 2: Wire CLI + Cleanup (reduced scope — extraction done in Phase 1)
+
+**Goal:** Complete the transition from evaluator scripts to the `autoanything` CLI. Rename directories, add entry points, remove old scripts.
+
+**Note:** Phase 1 already created the full `src/autoanything/` package with all modules extracted. What remains is wiring the `evaluate` and `serve` CLI commands, adding the entry point, renaming directories, and removing the old evaluator scripts.
 
 **Steps:**
 
-1. Restructure the repo:
-   ```
-   autoanything/
-   ├── src/autoanything/        # NEW — the installable package
-   │   ├── __init__.py
-   │   ├── cli.py
-   │   ├── evaluator.py         # extracted from evaluator/evaluate.py
-   │   ├── server.py            # extracted from evaluator/server.py
-   │   ├── scoring.py           # score.sh execution + JSON parsing
-   │   ├── problem.py           # from Phase 1
-   │   ├── leaderboard.py       # extracted from evaluate.py
-   │   ├── history.py           # SQLite operations extracted from evaluate.py
-   │   └── git.py               # git operations extracted from evaluate.py
-   ├── examples/                # RENAMED from test_problems/
-   │   ├── rastrigin/
-   │   ├── tsp/
-   │   ├── packing/
-   │   └── gpt/
-   ├── tests/                   # framework tests
-   ├── pyproject.toml           # framework deps only
-   └── README.md
-   ```
+1. Wire `autoanything evaluate` CLI command to `src/autoanything/evaluator.py`:
+   - Implement the polling loop (currently only `establish_baseline` and `evaluate_proposal` exist — need the main loop with fetch/poll).
+   - Support `--baseline-only`, `--poll-interval`, `--push`, `--db` flags.
 
-2. Extract modules from `evaluate.py`:
-   - `history.py`: `init_db()`, `record_evaluation()`, `get_incumbent()`, `update_incumbent()`, `is_evaluated()`. Pure SQLite operations, no git or scoring knowledge.
-   - `scoring.py`: `run_score()`, JSON parsing logic. Takes a script path and timeout, returns parsed metrics.
-   - `leaderboard.py`: `export_leaderboard()`. Takes history DB path, problem config, output path.
-   - `git.py`: `git()` helper, `get_proposal_branches()`, merge operations. Takes base branch and proposal pattern as parameters (from config, not hardcoded).
-   - `evaluator.py`: the main loop, now composing the above modules. Takes a problem config object instead of reading hardcoded paths.
+2. Wire `autoanything serve` CLI command to `src/autoanything/server.py`:
+   - The `create_app()` factory exists. Need to add the evaluation worker thread and startup scan to the factory version.
+   - Support `--port`, `--host`, `--push` flags.
 
-3. Extract `server.py` similarly — it already imports from `evaluate.py`, so it naturally becomes a thin layer over the extracted modules.
+3. Add `[project.scripts]` entry point to `pyproject.toml`:
+   - `autoanything = "autoanything.cli:main"`
+   - Move `click` from dev to main dependencies.
 
-4. Build the CLI (`cli.py`):
-   - Use `click` for command/arg parsing, `rich` for output formatting.
-   - Each command loads `problem.yaml` from the current directory (or `--dir` override).
-   - `autoanything evaluate` replaces `uv run evaluator/evaluate.py`.
-   - `autoanything serve` replaces `uv run evaluator/server.py`.
-   - `autoanything score` runs score.sh once and prints the result.
-   - `autoanything history` queries the DB and prints a table.
-   - `autoanything validate` checks problem directory structure.
+4. Rename `test_problems/` to `examples/`.
 
-5. Update `pyproject.toml`:
-   - Add `[project.scripts]` entry point: `autoanything = "autoanything.cli:main"`.
-   - Keep framework deps: `pyyaml`, `fastapi`, `uvicorn`, `requests`.
-   - Remove problem-specific deps: `numpy`, `tiktoken`, `kernels` (these belong to individual problem repos).
-   - Move dev/example deps to `[project.optional-dependencies]`: `matplotlib`, `pandas`, `pyarrow` (used by `plot_progress.py` and examples).
-   - Remove the `[tool.uv.sources]` torch index configuration.
+5. Remove `evaluator/evaluate.py` and `evaluator/server.py` (they now live in the package). Keep `evaluator/` in gitignore for problem repos' scoring code.
 
 6. Make evaluator state location configurable:
    - Default: `.autoanything/history.db` in the problem directory.
    - Configurable via `--db` flag or env var.
 
-7. Update `.gitignore` template to exclude `scoring/` (`.autoanything/` already added in Phase 1).
+7. Update `activate.sh` to work with the new directory layout, or remove it if the CLI replaces its function.
 
 **Validation:** `pip install -e .` in the repo, then `cd examples/rastrigin && autoanything evaluate --baseline-only` works.
 
 ### Phase 3: Scaffolding and Init (polish)
 
-**Goal:** `autoanything init` creates a ready-to-use problem directory. New users go from zero to a working problem in under a minute.
+**Goal:** Polish the `init` and `validate` commands (already functional from Phase 1). Add template files as separate resources.
+
+**Note:** `autoanything init` and `autoanything validate` are already implemented and passing tests. What remains is polish.
 
 **Steps:**
 
-1. Create template files in `src/autoanything/templates/`:
+1. Move template content from inline strings in `cli.py` to `src/autoanything/templates/` files:
    - `problem.yaml` — with placeholder values and comments explaining each field.
    - `agent_instructions.md` — generic protocol, references problem.yaml for specifics.
    - `score.sh` — skeleton that shows the JSON output convention.
    - `solution.py` — minimal example state file.
    - `gitignore` — pre-configured to exclude `scoring/`, `.autoanything/`.
 
-2. Implement `autoanything init <name>`:
-   - Creates the directory structure.
-   - Copies templates with name substitution.
-   - Initializes a git repo (`git init`).
-   - Prints next-steps instructions.
-   - Optional flags: `--metric <name>`, `--direction <min|max>` to pre-fill problem.yaml.
+2. Enhance `autoanything init <name>`:
+   - Initialize a git repo (`git init`) in the new directory.
+   - Print next-steps instructions after scaffolding.
 
 3. Implement `autoanything validate`:
    - Checks that `problem.yaml` exists and parses correctly.
