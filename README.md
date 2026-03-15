@@ -279,6 +279,8 @@ score:
   direction: minimize
 ```
 
+For a full walkthrough with a complete runnable example, see [docs/create-problem.md](docs/create-problem.md). For guidance on writing scoring functions (including LLM-as-judge patterns), see [docs/scoring.md](docs/scoring.md).
+
 ## Design principles
 
 ### Minimum time to optimization
@@ -342,6 +344,16 @@ The weights encode values the agents can't see. Weight originality at 3x and the
 The quality of the scoring function is the ceiling on the quality of the results. A bad metric optimized ruthlessly produces paperclips — a system that scores well but misses the point. Whatever number you pick, agents will exploit every degree of freedom it leaves open.
 
 This is a feature, not a bug. It forces you to think hard about what "better" means before you start. And if your metric is good, relentless optimization is exactly what you want.
+
+## Docs
+
+| Document | Description |
+|----------|-------------|
+| [Getting started](docs/getting-started.md) | Install, try a demo, create your first problem |
+| [Create a problem](docs/create-problem.md) | Step-by-step walkthrough with a runnable example |
+| [Scoring](docs/scoring.md) | Writing scoring functions, LLM-as-judge patterns |
+| [Agent protocol](docs/agent-protocol.md) | How agents participate in a problem |
+| [Design](docs/autoanything.md) | Philosophy and principles behind the framework |
 
 ## License
 
