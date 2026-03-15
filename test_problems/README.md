@@ -1,11 +1,11 @@
-# Test Problems
+# Problems
 
-Three toy optimization problems for testing the AutoAnything framework. They require no GPU, no data download, and score instantly — perfect for developing and debugging the evaluator, agent protocol, and git workflow.
+All optimization problems for the AutoAnything framework live here. Each follows the same structure, scores via the same evaluator, and is activated the same way.
 
 ## Quick Start
 
 ```bash
-# Activate a test problem (copies files into place)
+# Activate a problem (copies files into the repo root)
 bash test_problems/activate.sh rastrigin
 
 # Verify scoring works
@@ -15,11 +15,11 @@ bash evaluator/score.sh
 uv run evaluator/evaluate.py --baseline-only
 uv run evaluator/evaluate.py
 
-# Restore the real GPT pretraining problem when done
-git checkout -- problem.yaml agent_instructions.md state/ context/
+# Switch to a different problem
+bash test_problems/activate.sh tsp
 ```
 
-## Problems
+## Available Problems
 
 ### 1. Rastrigin Function Minimization (`rastrigin`)
 
@@ -76,6 +76,58 @@ git checkout -- problem.yaml agent_instructions.md state/ context/
 
 **Why it's good for testing:** More structured state (tuples with multiple fields). Has soft constraints (overlaps penalized, not rejected). Tests that agents can work with composite state and multi-objective scoring.
 
+---
+
+### 4. GPT Pretraining (`gpt`)
+
+**What:** Optimize a GPT training script for lowest validation bits-per-byte (val_bpb).
+
+**State:** `state/train.py` — full model architecture, optimizer, hyperparameters, training loop.
+
+**Score:** val_bpb — lower is better.
+
+| Property | Value |
+|----------|-------|
+| Starting score | ~1.15 |
+| Optimum | Unknown (unbounded) |
+| Difficulty | Large search space, slow evaluation |
+| Scoring time | ~5 minutes |
+
+**Requirements:** NVIDIA GPU with CUDA (tested on H100), data download via `uv run context/prepare.py`.
+
+**Why it's useful:** The original real-world use case. Tests the full framework under realistic conditions with expensive scoring and complex state.
+
+## Creating Your Own Problem
+
+Every problem is a directory with the same layout:
+
+```
+test_problems/<name>/
+├── problem.yaml           # Problem definition
+├── agent_instructions.md  # Protocol for agents
+├── state/*.py             # Mutable file(s) agents edit
+├── context/*.py           # Read-only context
+└── evaluator/score.sh     # Scoring script
+```
+
+Your `score.sh` must output a JSON object on its last line with at least the metric key named in `problem.yaml`. The evaluator reads the score name from `problem.yaml` and extracts it from this JSON — everything else is automatic.
+
+Example for a minimization problem:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(cd "$(dirname "$0")/.." && pwd)"
+python3 -c "
+import json, sys
+sys.path.insert(0, 'context')
+sys.path.insert(0, 'state')
+from problem import evaluate
+from solution import x
+print(json.dumps({'score': evaluate(x)}))
+"
+```
+
 ## Simulated Test Runs
 
 `run_test.py` simulates an end-to-end optimization run with fake agent submissions and generates a progress chart. Runs in a temp directory — does not touch the repo working tree.
@@ -102,27 +154,4 @@ Requires `matplotlib` (add with `uv add matplotlib` if not already in deps).
 ```bash
 uv run test_problems/plot_progress.py evaluator/history.db
 uv run test_problems/plot_progress.py evaluator/history.db -o chart.png --title "My Run"
-```
-
-## File Structure
-
-Each test problem mirrors the repo's main structure:
-
-```
-test_problems/<name>/
-├── problem.yaml           # Problem definition
-├── agent_instructions.md  # Protocol for agents
-├── state/*.py             # Mutable file(s) agents edit
-├── context/*.py           # Read-only context
-└── evaluator/score.sh     # Scoring script
-```
-
-`activate.sh` copies these into the repo root. The evaluator (`evaluate.py`, `server.py`) is problem-agnostic — it reads the score key name from `problem.yaml` and delegates scoring to `score.sh`.
-
-## Restoring the Real Problem
-
-The GPT pretraining files are tracked by git. After testing:
-
-```bash
-git checkout -- problem.yaml agent_instructions.md state/ context/
 ```

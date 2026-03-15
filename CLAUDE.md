@@ -4,53 +4,49 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-AutoAnything — a framework for autonomous optimization via AI agents. Agents propose changes, an evaluator scores them against a black-box metric, and only improvements are kept. Currently configured for the GPT pretraining use case (optimizing val_bpb). Based on [karpathy/nanochat](https://github.com/karpathy/nanochat).
+AutoAnything — a framework for autonomous optimization via AI agents. Agents propose changes, an evaluator scores them against a black-box metric, and only improvements are kept. Any optimization problem with a scoring function can be plugged in.
 
 ## Repository Structure
 
 ```
 autoanything/
-├── problem.yaml             # Problem definition (what to optimize, constraints, score direction)
-├── agent_instructions.md    # Protocol for agents (how to participate)
-├── leaderboard.md           # Auto-updated scoreboard (exported by evaluator)
-├── state/
-│   └── train.py             # MUTABLE — the only file agents modify
-├── context/
-│   └── prepare.py           # READ-ONLY — constants, data loading, evaluation
+├── problem.yaml             # Problem definition (template; populated by activate.sh)
+├── agent_instructions.md    # Protocol for agents (generic; populated by activate.sh)
+├── leaderboard.md           # Auto-updated scoreboard
+├── state/                   # MUTABLE — file(s) agents modify (populated by activate.sh)
+├── context/                 # READ-ONLY — background for agents (populated by activate.sh)
 ├── evaluator/               # GITIGNORED — private scoring code + history DB
-│   ├── score.sh              # Runs training, extracts metrics as JSON
+│   ├── score.sh              # Runs scoring, extracts metrics as JSON
 │   ├── evaluate.py           # Serial evaluation loop (poll, score, merge/discard)
 │   ├── server.py             # Webhook-driven web evaluator (PR-based workflow)
 │   └── history.db            # SQLite evaluation history (created on first run)
-└── test_problems/           # Toy problems for framework testing (no GPU needed)
-    ├── activate.sh           # Switch repo to a test problem
+└── test_problems/           # All optimization problems
+    ├── activate.sh           # Switch repo to a problem
     ├── rastrigin/            # 10-D function minimization (score: ~170 → 0)
     ├── tsp/                  # Traveling salesman, 20 cities (score: ~1914 → ~680)
-    └── packing/              # Rectangle packing, 12 rects (score: 13250 → ~6975)
+    ├── packing/              # Rectangle packing, 12 rects (score: 13250 → ~6975)
+    └── gpt/                  # GPT pretraining, val_bpb (~1.15 → ?, requires GPU)
 ```
 
 ## Commands
 
 ```bash
 uv sync                                    # install dependencies
-uv run context/prepare.py                  # one-time: download data shards + train BPE tokenizer
-uv run context/prepare.py --num-shards 8   # download fewer shards for testing
-uv run state/train.py                      # run a single training experiment (5 min)
-uv run state/train.py > run.log 2>&1       # run with output capture
-grep "^val_bpb:\|^peak_vram_mb:" run.log   # extract key metrics
+
+# Activate a problem (copies files into root)
+bash test_problems/activate.sh rastrigin   # or: tsp, packing, gpt
+bash evaluator/score.sh                    # verify scoring works
 
 # Evaluator (run on the scoring machine, not by agents)
-uv run evaluator/evaluate.py               # start the serial evaluation loop (polls for branches)
+uv run evaluator/evaluate.py               # start the serial evaluation loop
 uv run evaluator/evaluate.py --baseline-only  # just establish the baseline score
 uv run evaluator/evaluate.py --push        # push leaderboard updates to origin
 uv run evaluator/server.py                 # start the webhook-driven web evaluator
 uv run evaluator/server.py --push          # web evaluator with auto-push
 
-# Test problems (no GPU needed, instant scoring — use for framework development)
-bash test_problems/activate.sh rastrigin   # activate a test problem (also: tsp, packing)
-bash evaluator/score.sh                    # verify scoring works
-uv run evaluator/evaluate.py --baseline-only  # establish baseline
-git checkout -- problem.yaml agent_instructions.md state/ context/  # restore GPT problem
+# GPT problem only (after activating gpt)
+uv run context/prepare.py                  # one-time: download data + train tokenizer
+uv run state/train.py                      # run a single training experiment (~5 min)
 
 # Simulated test run (generates progress chart, doesn't touch working tree)
 uv run test_problems/run_test.py rastrigin              # run with 15 submissions
@@ -59,26 +55,26 @@ uv run test_problems/run_test.py packing --include-failures  # with crash submis
 uv run test_problems/plot_progress.py evaluator/history.db   # chart from real evaluator
 ```
 
-## Architecture
+## How Problems Work
 
-Two files matter for agents:
+Every problem follows the same structure — a directory under `test_problems/` with:
 
-- **`context/prepare.py`** (READ-ONLY) — Constants (`MAX_SEQ_LEN=2048`, `TIME_BUDGET=300`, `EVAL_TOKENS`), data download, BPE tokenizer training, `Tokenizer` class, `make_dataloader()`, and `evaluate_bpb()`. Data cached in `~/.cache/autoresearch/`. Do not modify.
-- **`state/train.py`** (AGENT-EDITABLE) — The only file agents modify. Contains GPT model (`GPTConfig`, `CausalSelfAttention`, `MLP`, `Block`, `GPT`), `MuonAdamW` optimizer (Muon for 2D matrix params, AdamW for everything else), hyperparameters section, and training loop. Uses Flash Attention 3 via `kernels` package.
+```
+test_problems/<name>/
+├── problem.yaml           # Problem definition (name, score direction, constraints)
+├── agent_instructions.md  # Protocol for agents
+├── state/*.py             # Mutable file(s) agents edit
+├── context/*.py           # Read-only context
+└── evaluator/score.sh     # Scoring script (outputs JSON on last line)
+```
 
-Key model details in `state/train.py`:
-- Model dim derived from depth: `model_dim = DEPTH * ASPECT_RATIO` (rounded to HEAD_DIM multiple)
-- Activation: `relu().square()` (ReGLU variant)
-- Value Embeddings (ResFormer) on alternating layers with learned gating
-- Residual lambdas (`resid_lambdas`, `x0_lambdas`) for per-layer residual stream mixing
-- Sliding window attention pattern (`SSSL` = 3 short + 1 long, last layer always long)
-- Logit soft-capping at 15
+`activate.sh` copies these into the repo root. The evaluator (`evaluate.py`, `server.py`) is problem-agnostic — it reads the score metric name from `problem.yaml` and delegates scoring to `score.sh`.
 
-## Agent Protocol (from agent_instructions.md)
+## Agent Protocol
 
 1. Pull latest master, create branch: `proposals/<name>/<description>`
 2. Read `problem.yaml`, `context/`, and `leaderboard.md` for context
-3. Modify ONLY `state/train.py`
+3. Modify ONLY the files listed under `mutable` in `problem.yaml`
 4. Commit with a clear message explaining the approach
 5. Push the branch or open a PR targeting master — the evaluator scores it and merges if improved
 
@@ -90,24 +86,13 @@ Key model details in `state/train.py`:
 - **SQLite history**: all evaluations recorded in `evaluator/history.db`
 - **Auto-leaderboard**: `leaderboard.md` updated after each evaluation
 
-## Key Constraints
+## Available Problems
 
-- Training always runs exactly 5 minutes (wall clock, excluding first 10 warmup steps)
-- Only packages in `pyproject.toml` are available (PyTorch 2.9.1, kernels, numpy, etc.)
-- Requires NVIDIA GPU with CUDA (Flash Attention 3; uses Hopper-specific kernel on H100)
-- Fast-fail: training aborts if loss is NaN or >100
-- Simplicity criterion: prefer simpler code at equal performance
+| Problem | Description | Starting → Optimum | Requirements |
+|---------|-------------|-------------------|-------------|
+| `rastrigin` | Minimize 10-D Rastrigin function (many local minima) | ~169.7 → 0.0 | None |
+| `tsp` | Shortest tour of 20 fixed cities | ~1914 → ~680 | None |
+| `packing` | Pack 12 rectangles into smallest bounding box | 13250 → ~6975 | None |
+| `gpt` | Optimize GPT training script (val_bpb) | ~1.15 → ? | NVIDIA GPU |
 
-## Test Problems
-
-Three toy optimization problems live in `test_problems/` for testing the framework without a GPU. Each scores instantly (<1ms), requires no dependencies, and exercises the full evaluator loop.
-
-| Problem | Description | Starting → Optimum |
-|---------|-------------|-------------------|
-| `rastrigin` | Minimize 10-D Rastrigin function (many local minima) | ~169.7 → 0.0 |
-| `tsp` | Shortest tour of 20 fixed cities | ~1914 → ~680 |
-| `packing` | Pack 12 rectangles into smallest bounding box | 13250 → ~6975 |
-
-Activate with `bash test_problems/activate.sh <name>`. Restore with `git checkout`. See `test_problems/README.md` for full details.
-
-The evaluator (`evaluate.py`, `server.py`) is problem-agnostic — it reads the score metric name from `problem.yaml` and delegates scoring to `score.sh`.
+The first three score instantly (<1ms) and need no GPU — use them for framework development. The `gpt` problem is the real-world use case (~5 min scoring, GPU required).

@@ -1,24 +1,25 @@
-name: gpt-pretraining
+# problem.yaml — Define your optimization problem.
+#
+# Activate a built-in problem:
+#   bash test_problems/activate.sh <problem>
+#
+# Or define your own by filling in this template:
+
+name: my-problem
 description: >
-  Optimize a GPT training script for lowest validation bits-per-byte (val_bpb).
-  Training runs for a fixed 5-minute time budget on a single GPU. You can change
-  anything in the mutable files: model architecture, optimizer, hyperparameters,
-  batch size, model size, etc. The evaluation metric is val_bpb — lower is better.
+  Describe what you're optimizing and how agents should approach it.
 
 mutable:
-  - state/train.py
+  - state/solution.py    # File(s) agents can modify
 
 readonly:
-  - context/prepare.py
+  - context/problem.py   # Read-only context files
 
 score:
-  direction: minimize
-  name: val_bpb
-  description: "Validation bits per byte — measures how well the model compresses unseen text"
-  bounded: false
+  direction: minimize    # or: maximize
+  name: score            # metric name (key in JSON output from score.sh)
+  description: "What this metric measures"
+  bounded: true          # true if there's a known optimum
 
 constraints:
-  - "Training must complete within the 5-minute time budget"
-  - "Only packages in pyproject.toml are available"
   - "Must not modify files outside of state/"
-  - "Requires NVIDIA GPU with CUDA"
