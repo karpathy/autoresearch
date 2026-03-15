@@ -67,12 +67,15 @@ def run_score(problem_dir: str, score_name: str, timeout: int,
     t0 = time.time()
     try:
         result = subprocess.run(
-            [sys.executable, "-c",
+            [sys.executable, "-B", "-c",
              f"import sys; sys.path.insert(0, {scoring_parent!r}); "
+             f"sys.dont_write_bytecode = True; "
+             f"import importlib; importlib.invalidate_caches(); "
              f"import json; from {scoring_pkg}.score import score; "
              "print(json.dumps(score()))"],
             capture_output=True, text=True, cwd=problem_dir,
             timeout=timeout,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         )
         duration = time.time() - t0
 
