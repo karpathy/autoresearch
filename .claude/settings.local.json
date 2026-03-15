@@ -13,7 +13,9 @@
       "Bash(curl:*)",
       "Bash(ls:*)",
       "Bash(clear:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git remote:*)",
+      "Bash(git rm:*)"
     ]
   }
 }
