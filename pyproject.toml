@@ -13,6 +13,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "pyyaml>=6.0",
     "requests>=2.32.0",
+    "matplotlib>=3.10",
     "rich>=13.0",
     "uvicorn>=0.34.0",
 ]

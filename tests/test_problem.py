@@ -4,6 +4,8 @@ The problem module is the single source of truth for configuration.
 State files are discovered from the state/ directory by convention.
 """
 
+import warnings
+
 import pytest
 import textwrap
 
@@ -183,3 +185,39 @@ class TestGetStateFiles:
         """))
         config = load_problem(tmp_path)
         assert config.state == ["state/solution.py"]
+
+
+class TestUnknownKeys:
+    """Unknown keys in problem.yaml should produce warnings."""
+
+    def test_unknown_top_level_key(self, tmp_path):
+        (tmp_path / "problem.yaml").write_text(textwrap.dedent("""\
+            name: test
+            description: Has extra field.
+            bogus_field: hello
+            score:
+              direction: minimize
+        """))
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            load_problem(tmp_path)
+        assert any("bogus_field" in str(warning.message) for warning in w)
+
+    def test_unknown_score_key(self, tmp_path):
+        (tmp_path / "problem.yaml").write_text(textwrap.dedent("""\
+            name: test
+            score:
+              direction: minimize
+              extra: true
+        """))
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            load_problem(tmp_path)
+        assert any("extra" in str(warning.message) for warning in w)
+
+    def test_no_warning_for_valid_keys(self, tmp_path, full_problem_yaml):
+        (tmp_path / "problem.yaml").write_text(full_problem_yaml)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            load_problem(tmp_path)
+        assert len(w) == 0

@@ -22,6 +22,21 @@ from autoanything.leaderboard import export_leaderboard, export_history
 from autoanything.scoring import run_score, is_better
 
 
+_FRAMEWORK_PREFIXES = ("scoring/", ".autoanything/", ".git/")
+_FRAMEWORK_NAMES = {".DS_Store", ".gitignore"}
+
+
+def _is_framework_artifact(path: str) -> bool:
+    """Return True if *path* is a framework/OS artifact, not an agent change."""
+    if "__pycache__" in path:
+        return True
+    if any(path.startswith(p) for p in _FRAMEWORK_PREFIXES):
+        return True
+    if path in _FRAMEWORK_NAMES:
+        return True
+    return False
+
+
 def run_local(problem_dir, config, db_path, agent_command,
               max_iterations=None, max_consecutive_crashes=5):
     """Run the local optimization loop.
@@ -145,14 +160,25 @@ def run_local(problem_dir, config, db_path, agent_command,
 
             # --- Detect what the agent changed ---
 
-            # Uncommitted changes to tracked files only
+            # Uncommitted changes: tracked modifications + new untracked files
             diff_out = git("diff", "--name-only", cwd=problem_dir).stdout.strip()
             staged_out = git("diff", "--cached", "--name-only", cwd=problem_dir).stdout.strip()
+            untracked_out = git(
+                "ls-files", "--others", "--exclude-standard",
+                cwd=problem_dir,
+            ).stdout.strip()
             uncommitted = set()
             if diff_out:
                 uncommitted.update(diff_out.splitlines())
             if staged_out:
                 uncommitted.update(staged_out.splitlines())
+            if untracked_out:
+                uncommitted.update(untracked_out.splitlines())
+            # Ignore framework artifacts
+            uncommitted = {
+                f for f in uncommitted
+                if not _is_framework_artifact(f)
+            }
 
             # Did the agent commit?
             base_sha = git("rev-parse", base_branch, cwd=problem_dir).stdout.strip()
@@ -173,6 +199,12 @@ def run_local(problem_dir, config, db_path, agent_command,
                 ).stdout.strip()
                 if committed_out:
                     all_changes.update(committed_out.splitlines())
+
+            # Ignore framework artifacts (scoring cache, __pycache__)
+            all_changes = {
+                f for f in all_changes
+                if not _is_framework_artifact(f)
+            }
 
             # Validate only state/ files were touched (path-prefix check)
             invalid = {f for f in all_changes if not f.startswith("state/")}

@@ -378,6 +378,173 @@ def run(problem_dir, agent, iterations, max_crashes, db):
     )
 
 
+@main.command(name="try")
+@click.argument("problem", type=click.Choice(["rastrigin", "tsp", "packing"]))
+@click.option("--dir", "target_dir", default=None,
+              help="Target directory (default: /tmp/<problem>).")
+@click.option("-n", "--iterations", default=20, help="Number of iterations (default: 20).")
+def try_problem(problem, target_dir, iterations):
+    """Try an example problem with a built-in demo agent.
+
+    Sets up a fresh copy of the example, runs a simple random agent,
+    generates a progress chart, and opens it.
+
+    Examples:
+
+        autoanything try rastrigin
+
+        autoanything try tsp --dir ./my-tsp -n 50
+    """
+    import shutil
+    import platform
+
+    examples_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "examples")
+
+    # Resolve source — handle both dev (source tree) and installed (package resources)
+    source_dir = os.path.join(examples_dir, problem)
+    if not os.path.isdir(source_dir):
+        click.echo(f"Error: example '{problem}' not found at {source_dir}", err=True)
+        sys.exit(1)
+
+    if target_dir is None:
+        target_dir = os.path.join("/tmp", problem)
+
+    # Clean up previous run
+    if os.path.exists(target_dir):
+        shutil.rmtree(target_dir)
+
+    # Copy example
+    shutil.copytree(source_dir, target_dir)
+
+    # Write .gitignore
+    with open(os.path.join(target_dir, ".gitignore"), "w") as f:
+        f.write("scoring/\n.autoanything/\n__pycache__/\n*.pyc\n.DS_Store\n")
+
+    # Init git repo
+    subprocess.run(["git", "init", "-b", "main"], cwd=target_dir,
+                   capture_output=True, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=target_dir,
+                   capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "autoanything@example.com"],
+                   cwd=target_dir, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "autoanything"],
+                   cwd=target_dir, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=target_dir,
+                   capture_output=True, check=True)
+
+    # Write demo agent script
+    agent_script = os.path.join(target_dir, ".autoanything", "agent.py")
+    os.makedirs(os.path.dirname(agent_script), exist_ok=True)
+
+    agents = {
+        "rastrigin": '''\
+import random, json, os
+
+# Read current best solution
+try:
+    exec(open("state/solution.py").read())
+    current = x
+except Exception:
+    current = [0.0] * 10
+
+# Perturb each value with decreasing step size
+iteration = int(os.environ.get("AUTOANYTHING_ITERATION", "1"))
+step = max(0.5, 3.0 / (1 + iteration * 0.1))
+vals = [v + random.gauss(0, step) for v in current]
+vals = [max(-5.12, min(5.12, v)) for v in vals]
+
+with open("state/solution.py", "w") as f:
+    f.write("x = " + repr(vals) + "\\n")
+''',
+        "tsp": '''\
+import random
+
+# Read current tour
+exec(open("state/tour.py").read())
+current = list(tour)
+
+# Apply random 2-opt swap
+n = len(current)
+i, j = sorted(random.sample(range(n), 2))
+current[i:j+1] = reversed(current[i:j+1])
+
+with open("state/tour.py", "w") as f:
+    f.write("tour = " + repr(current) + "\\n")
+''',
+        "packing": '''\
+import random
+
+# Read current placements
+exec(open("state/packing.py").read())
+current = list(placements)
+
+# Pick a random rectangle and nudge its position or toggle rotation
+i = random.randint(0, len(current) - 1)
+x, y, rotated = current[i]
+x = max(0, x + random.randint(-10, 10))
+y = max(0, y + random.randint(-10, 10))
+if random.random() < 0.3:
+    rotated = not rotated
+current[i] = (x, y, rotated)
+
+with open("state/packing.py", "w") as f:
+    f.write("placements = " + repr(current) + "\\n")
+''',
+    }
+
+    with open(agent_script, "w") as f:
+        f.write(agents[problem])
+
+    click.echo(f"Set up {problem} in {target_dir}")
+    click.echo(f"Running {iterations} iterations with demo agent...\n")
+
+    # Run the optimization loop
+    try:
+        config = load_problem(target_dir)
+    except (FileNotFoundError, ValidationError) as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    db_path = _resolve_db_path(target_dir, None)
+
+    from autoanything.runner import run_local
+    run_local(
+        problem_dir=target_dir,
+        config=config,
+        db_path=db_path,
+        agent_command=f"python {agent_script}",
+        max_iterations=iterations,
+    )
+
+    # Generate chart
+    from autoanything.plotting import generate_chart
+    chart_path = os.path.join(target_dir, ".autoanything", "progress.png")
+    try:
+        generate_chart(
+            db_path, chart_path,
+            title=f"{problem} — demo run",
+            direction=config.score.direction,
+            score_label=config.score.description or config.score.name,
+        )
+        click.echo(f"\nChart saved to {chart_path}")
+    except Exception as e:
+        click.echo(f"Chart generation failed: {e}", err=True)
+        return
+
+    # Try to open the chart
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            subprocess.run(["open", chart_path], check=False)
+        elif system == "Linux":
+            subprocess.run(["xdg-open", chart_path], check=False)
+        elif system == "Windows":
+            os.startfile(chart_path)
+    except Exception:
+        pass
+
+
 @main.command()
 @click.option("--dir", "problem_dir", default=".", help="Problem directory.")
 @click.option("--port", default=8000, help="Port (default: 8000).")

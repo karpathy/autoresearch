@@ -5,6 +5,7 @@ Scoring always uses scoring/score.py (no script path in config).
 """
 
 import os
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -13,6 +14,23 @@ import yaml
 
 class ValidationError(Exception):
     """Raised when problem.yaml is missing required fields or has invalid values."""
+
+
+# Known keys at each level — used to warn on unrecognized fields
+_TOP_LEVEL_KEYS = {"name", "description", "state", "mutable", "score", "git", "constraints"}
+_SCORE_KEYS = {"name", "direction", "description", "timeout", "bounded"}
+_GIT_KEYS = {"base_branch", "proposal_pattern"}
+
+
+def _warn_unknown_keys(data: dict, known: set[str], section: str = "") -> None:
+    """Emit a warning for any keys in *data* not in *known*."""
+    unknown = set(data) - known
+    if unknown:
+        prefix = f"problem.yaml [{section}]" if section else "problem.yaml"
+        warnings.warn(
+            f"{prefix}: unrecognized keys: {', '.join(sorted(unknown))}",
+            stacklevel=3,
+        )
 
 
 # Files/dirs to skip when discovering state files
@@ -106,6 +124,8 @@ def load_problem(path) -> ProblemConfig:
     if not isinstance(data, dict):
         raise ValidationError("problem.yaml must be a YAML mapping")
 
+    _warn_unknown_keys(data, _TOP_LEVEL_KEYS)
+
     # Required: name
     if not data.get("name"):
         raise ValidationError("problem.yaml: 'name' is required")
@@ -126,6 +146,8 @@ def load_problem(path) -> ProblemConfig:
 
     if not score_data.get("direction"):
         raise ValidationError("problem.yaml: 'score.direction' is required")
+
+    _warn_unknown_keys(score_data, _SCORE_KEYS, "score")
 
     direction = score_data["direction"]
     if direction not in ("minimize", "maximize"):
@@ -149,6 +171,8 @@ def load_problem(path) -> ProblemConfig:
     git_data = data.get("git", {})
     if not isinstance(git_data, dict):
         git_data = {}
+
+    _warn_unknown_keys(git_data, _GIT_KEYS, "git")
 
     base_branch = git_data.get("base_branch")
     if not base_branch:
