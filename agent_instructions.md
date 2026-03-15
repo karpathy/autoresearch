@@ -19,11 +19,11 @@ current incumbent.
 
 ## What You Can Change
 
-Only the files listed under `mutable` in `problem.yaml`.
+Any files in `state/` — create, modify, or delete.
 
 ## What You Cannot Change
 
-- Files under `context/` — read-only background
+- Files outside `state/` — including `context/` (read-only background)
 - `problem.yaml` — the problem definition
 - Dependencies — only packages in `pyproject.toml` are available
 

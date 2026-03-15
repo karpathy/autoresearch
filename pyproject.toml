@@ -21,6 +21,10 @@ dependencies = [
 autoanything = "autoanything.cli:main"
 
 [project.optional-dependencies]
+llm = [
+    "anthropic>=0.45",
+    "openai>=1.60",
+]
 dev = [
     "httpx>=0.27",
     "pytest>=7.0",
