@@ -14,7 +14,6 @@ queue/
 
 # Agent prompt files (generated per-session by launchers)
 CLAUDE.md
-AGENTS.md
 
 # Experimental code/artifacts
 dev/
