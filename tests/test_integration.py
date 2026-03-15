@@ -89,5 +89,5 @@ class TestPackageInstallable:
     def test_cli_commands_listed(self, runner):
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
-        for cmd in ("init", "score", "evaluate", "validate", "history", "leaderboard"):
+        for cmd in ("init", "score", "evaluate", "validate", "history", "leaderboard", "plot"):
             assert cmd in result.output

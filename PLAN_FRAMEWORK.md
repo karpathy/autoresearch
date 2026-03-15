@@ -563,7 +563,7 @@ Key conventions the tests lock in:
 - Phase 4 (migration/cleanup) is unchanged — `activate.sh`, `run_test.py`, and `plot_progress.py` decisions remain.
 - Phase 5 (docs) can reference `src/autoanything/templates/` as the canonical source for problem structure documentation. The `agent_instructions.md` template is now comprehensive enough to serve as the template referenced in Phase 5 step 3.
 
-### Phase 4: Migration and Cleanup
+### Phase 4: Migration and Cleanup [DONE]
 
 **Goal:** Clean up remaining legacy artifacts and migrate standalone scripts.
 
@@ -571,23 +571,53 @@ Key conventions the tests lock in:
 
 **Steps:**
 
-1. Decide on `activate.sh` — keep it in `examples/` for now (it's still useful for the framework repo's own development), or replace with an `autoanything activate` CLI command.
+1. Kept `activate.sh` in `examples/` as-is — it's still useful for the framework repo's own development (switching between example problems). Not worth an `autoanything activate` CLI command since it's framework-development tooling, not user-facing.
 
-2. Convert `examples/run_test.py` into either:
-   - `autoanything test` CLI command, or
-   - A standalone script in `examples/` that imports from the `autoanything` package.
+2. Refactored `examples/run_test.py` to import from the `autoanything` package:
+   - Replaced inline `init_db()` and `record_eval()` with `autoanything.history.init_db` and `autoanything.history.record_evaluation`.
+   - Replaced `sys.path` hack for `plot_progress` import with direct `from autoanything.plotting import generate_chart`.
+   - Kept inline scoring functions (rastrigin, tsp, packing) — these are intentionally inlined for test isolation and don't belong in the framework package.
+   - Kept as a standalone script in `examples/` rather than a CLI command, because it bundles problem-specific scoring logic that doesn't belong in the framework.
 
-3. Convert `examples/plot_progress.py` into either:
-   - `autoanything plot` CLI command, or
-   - A standalone script in `examples/`.
+3. Moved `generate_chart()` from `examples/plot_progress.py` into the package as `src/autoanything/plotting.py`:
+   - Added `autoanything plot` CLI command with auto-detection of direction and score label from `problem.yaml`.
+   - CLI supports `--db`, `-o`, `--title`, `--direction`, `--score-label` flags.
+   - Changed `generate_chart()` to raise `ImportError`/`ValueError` instead of calling `sys.exit(1)` — callers handle user-facing errors.
+   - Made `examples/plot_progress.py` a thin wrapper that imports from `autoanything.plotting`.
 
-**Validation:** Examples directory works standalone, `run_test.py` and `plot_progress.py` migrated or refactored.
+4. Updated `CLAUDE.md`:
+   - Added `plotting.py` to repository structure.
+   - Added `autoanything plot` to the Commands section.
+   - Updated test count to 106.
+
+**Validation:** 106 tests pass across 10 test files. All three test problems (`rastrigin`, `tsp`, `packing`) run correctly with `run_test.py`. Chart generation fails gracefully when matplotlib is not installed.
+
+#### Implementation Summary
+
+**What was built:**
+- `src/autoanything/plotting.py` — `generate_chart()` function extracted from `examples/plot_progress.py` into the package, with proper exception handling (raises instead of `sys.exit`).
+- `autoanything plot` CLI command — generates progress charts from evaluation history, with auto-detection of score direction and label from `problem.yaml`.
+- `examples/run_test.py` refactored — removed 30 lines of duplicated DB code (`init_db`, `record_eval`) and `sys.path` hack, replaced with package imports.
+- `examples/plot_progress.py` simplified — now a thin 30-line wrapper around `autoanything.plotting.generate_chart`.
+- 2 new tests: `TestPlot.test_no_history_fails`, `TestPlot.test_plot_help`.
+- 106/106 tests passing.
+
+**Key deviations from the original plan:**
+- `run_test.py` stays as a standalone script rather than becoming `autoanything test`. The script bundles problem-specific scoring functions (rastrigin, TSP, packing) that are intentionally inlined for isolation — these don't belong in the framework package. Making it a CLI command would mean shipping problem-specific code in the framework.
+- `plot_progress.py` became both an `autoanything plot` CLI command AND a thin wrapper script (rather than choosing one or the other). The CLI command is the primary interface; the script exists for backward compatibility and for users who want to call it directly without the `autoanything` CLI.
+- `generate_chart()` was refactored to raise exceptions instead of calling `sys.exit(1)`. This makes it usable as a library function (called by `run_test.py`) without killing the calling process.
+- `activate.sh` left completely unchanged. It's framework-development tooling that works well as-is.
+
+**What this means for Phase 5:**
+- Phase 5 (docs) should reference `autoanything plot` in the README quick start and CLI reference.
+- The `plot_progress.py` standalone script is now a thin wrapper, so docs can point to either `autoanything plot` or `uv run examples/plot_progress.py`.
+- `CLAUDE.md` is already updated — Phase 5 only needs `README.md` rewrite and `MIGRATING.md`.
 
 ### Phase 5: Documentation Update
 
 **Goal:** Rewrite remaining documentation to reflect the new installable-framework structure.
 
-**Note:** `CLAUDE.md` was already updated in Phase 2 to reflect the new structure and CLI commands.
+**Note:** `CLAUDE.md` was already updated in Phases 2 and 4 to reflect the new structure and CLI commands (including the `plot` command).
 
 **Steps:**
 
@@ -595,6 +625,7 @@ Key conventions the tests lock in:
    - Installation: `pip install autoanything` / `uv tool install autoanything`
    - Quick start: `autoanything init`, edit files, `autoanything score`, `autoanything evaluate`
    - Problem structure overview (what goes in a problem directory)
+   - CLI reference including `autoanything plot` for progress charts
    - Link to `examples/` for reference problems
    - Remove all references to `evaluator/evaluate.py`, `evaluator/server.py`
 
@@ -602,6 +633,7 @@ Key conventions the tests lock in:
    - Move your problem files into their own directory
    - Move `evaluator/score.sh` to `scoring/score.sh`
    - Install `autoanything` and use CLI commands instead of running scripts directly
+   - Use `autoanything plot` instead of `python examples/plot_progress.py`
    - The `evaluator/` directory at repo root is no longer needed
 
 3. Update `agent_instructions.md` template in `src/autoanything/templates/` to reference the CLI commands.

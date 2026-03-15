@@ -200,3 +200,16 @@ class TestLeaderboard:
         result = runner.invoke(cli, ["leaderboard", "--dir", str(problem_dir)])
         assert result.exit_code == 0
         assert (problem_dir / "leaderboard.md").exists()
+
+
+class TestPlot:
+    """autoanything plot generates a progress chart."""
+
+    def test_no_history_fails(self, runner, problem_dir):
+        result = runner.invoke(cli, ["plot", "--dir", str(problem_dir)])
+        assert result.exit_code != 0
+
+    def test_plot_help(self, runner):
+        result = runner.invoke(cli, ["plot", "--help"])
+        assert result.exit_code == 0
+        assert "progress chart" in result.output.lower() or "chart" in result.output.lower()

@@ -266,6 +266,52 @@ def leaderboard(problem_dir, db):
 
 @main.command()
 @click.option("--dir", "problem_dir", default=".", help="Problem directory.")
+@click.option("--db", default=None, help="Path to history database.")
+@click.option("-o", "--output", default=None, help="Output PNG path (default: <db_dir>/progress.png).")
+@click.option("--title", default=None, help="Custom chart title.")
+@click.option("--direction", default=None,
+              type=click.Choice(["minimize", "maximize"]),
+              help="Score direction (auto-detected from problem.yaml if available).")
+@click.option("--score-label", default=None, help="Y-axis label (default: metric name or 'Score').")
+def plot(problem_dir, db, output, title, direction, score_label):
+    """Generate a progress chart from evaluation history."""
+    from autoanything.plotting import generate_chart
+
+    db_path = _resolve_db_path(problem_dir, db)
+    if not os.path.exists(db_path):
+        click.echo("No evaluation history yet.", err=True)
+        sys.exit(1)
+
+    # Auto-detect direction and score label from problem.yaml if available
+    if direction is None or score_label is None:
+        try:
+            config = load_problem(problem_dir)
+            if direction is None:
+                direction = config.score.direction
+            if score_label is None:
+                score_label = config.score.description or config.score.name
+        except Exception:
+            if direction is None:
+                direction = "minimize"
+            if score_label is None:
+                score_label = "Score"
+
+    if output is None:
+        output = os.path.join(os.path.dirname(db_path), "progress.png")
+
+    try:
+        generate_chart(db_path, output, title, direction, score_label)
+    except ImportError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Chart saved to {output}")
+
+
+@main.command()
+@click.option("--dir", "problem_dir", default=".", help="Problem directory.")
 @click.option("--baseline-only", is_flag=True, help="Establish baseline and exit.")
 @click.option("--push", is_flag=True, help="Push results to origin.")
 @click.option("--poll-interval", default=30, help="Seconds between polls (default: 30).")

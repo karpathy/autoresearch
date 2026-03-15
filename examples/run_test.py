@@ -16,12 +16,11 @@ import math
 import os
 import random
 import shutil
-import sqlite3
 import sys
 import tempfile
-from datetime import datetime, timezone
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+from autoanything.history import init_db, record_evaluation
+from autoanything.plotting import generate_chart
 
 
 # ---------------------------------------------------------------------------
@@ -371,43 +370,6 @@ def gen_packing(n, include_failures, seed):
 
 
 # ---------------------------------------------------------------------------
-# Database (same schema as evaluator/evaluate.py for chart compatibility)
-# ---------------------------------------------------------------------------
-
-def init_db(db_path):
-    conn = sqlite3.connect(db_path)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS evaluations (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            commit_sha       TEXT NOT NULL,
-            branch           TEXT NOT NULL,
-            score            REAL,
-            status           TEXT NOT NULL,
-            description      TEXT,
-            submitted_at     TEXT,
-            evaluated_at     TEXT,
-            duration_seconds REAL,
-            error_message    TEXT,
-            metrics_json     TEXT
-        )
-    """)
-    conn.commit()
-    return conn
-
-
-def record_eval(conn, desc, status, score, branch="test", error=None):
-    now = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        "INSERT INTO evaluations "
-        "(commit_sha, branch, score, status, description, "
-        " submitted_at, evaluated_at, duration_seconds, error_message) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("test", branch, score, status, desc, now, now, 0.0, error),
-    )
-    conn.commit()
-
-
-# ---------------------------------------------------------------------------
 # Problem registry
 # ---------------------------------------------------------------------------
 
@@ -485,7 +447,7 @@ def main():
 
     # Score and record baseline
     baseline = prob["score_fn"](initial_state)
-    record_eval(conn, "baseline", "baseline", baseline, branch="master")
+    record_evaluation(conn, "test", "master", baseline, "baseline", "baseline", 0.0)
     incumbent = baseline
     print(f"  {'BL':>3s}  {'BASELINE':8s}  {baseline:>12.4f}  baseline")
 
@@ -494,8 +456,10 @@ def main():
 
     for i, (desc, candidate) in enumerate(submissions, 1):
         if candidate is None:
-            record_eval(conn, desc, "crash", None,
-                        branch=f"proposals/agent/{desc}", error="Invalid state")
+            record_evaluation(
+                conn, "test", f"proposals/agent/{desc}", None, "crash",
+                desc, 0.0, error_message="Invalid state",
+            )
             n_crashed += 1
             print(f"  {i:>3d}  {'CRASH':8s}  {'':>12s}  {desc}")
             continue
@@ -503,21 +467,27 @@ def main():
         try:
             score = prob["score_fn"](candidate)
         except Exception as e:
-            record_eval(conn, desc, "crash", None,
-                        branch=f"proposals/agent/{desc}", error=str(e))
+            record_evaluation(
+                conn, "test", f"proposals/agent/{desc}", None, "crash",
+                desc, 0.0, error_message=str(e),
+            )
             n_crashed += 1
             print(f"  {i:>3d}  {'CRASH':8s}  {'':>12s}  {desc}: {e}")
             continue
 
         if score < incumbent:
-            record_eval(conn, desc, "accepted", score,
-                        branch=f"proposals/agent/{desc}")
+            record_evaluation(
+                conn, "test", f"proposals/agent/{desc}", score, "accepted",
+                desc, 0.0,
+            )
             incumbent = score
             n_accepted += 1
             print(f"  {i:>3d}  {'ACCEPTED':8s}  {score:>12.4f}  {desc}")
         else:
-            record_eval(conn, desc, "rejected", score,
-                        branch=f"proposals/agent/{desc}")
+            record_evaluation(
+                conn, "test", f"proposals/agent/{desc}", score, "rejected",
+                desc, 0.0,
+            )
             n_rejected += 1
             print(f"  {i:>3d}  {'rejected':8s}  {score:>12.4f}  {desc}")
 
@@ -529,8 +499,6 @@ def main():
 
     # Generate chart
     try:
-        sys.path.insert(0, SCRIPT_DIR)
-        from plot_progress import generate_chart
         generate_chart(
             db_path, output,
             title=(f"{prob['name']}: {len(submissions) + 1} Experiments, "

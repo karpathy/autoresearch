@@ -17,6 +17,7 @@ autoanything/
 │   ├── scoring.py            # Run score.sh, parse JSON output
 │   ├── problem.py            # Parse + validate problem.yaml (PyYAML)
 │   ├── leaderboard.py        # Render leaderboard.md from history
+│   ├── plotting.py           # Progress chart generation (matplotlib)
 │   ├── history.py            # SQLite history management
 │   └── git.py                # Git operations (subprocess wrappers)
 ├── problem.yaml             # Problem definition (populated by activate.sh)
@@ -33,7 +34,7 @@ autoanything/
 │   ├── tsp/                  # Traveling salesman, 20 cities (score: ~1914 → ~680)
 │   ├── packing/              # Rectangle packing, 12 rects (score: 13250 → ~6975)
 │   └── gpt/                  # GPT pretraining, val_bpb (~1.15 → ?, requires GPU)
-└── tests/                   # Test suite (101 tests)
+└── tests/                   # Test suite (106 tests)
 ```
 
 ## Commands
@@ -56,11 +57,15 @@ autoanything serve --push                  # web evaluator with auto-push
 uv run context/prepare.py                  # one-time: download data + train tokenizer
 uv run state/train.py                      # run a single training experiment (~5 min)
 
+# Progress charts
+autoanything plot                         # chart from .autoanything/history.db
+autoanything plot --db path/to/history.db  # chart from a specific database
+autoanything plot -o chart.png            # save to a specific path
+
 # Simulated test run (generates progress chart, doesn't touch working tree)
 uv run examples/run_test.py rastrigin              # run with 15 submissions
 uv run examples/run_test.py tsp -n 20              # more submissions
 uv run examples/run_test.py packing --include-failures  # with crash submissions
-uv run examples/plot_progress.py evaluator/history.db   # chart from real evaluator
 ```
 
 ## How Problems Work
