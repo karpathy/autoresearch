@@ -22,7 +22,7 @@ def git(*args, cwd: str, check: bool = True):
         capture_output=True, text=True, cwd=cwd,
     )
     if check and result.returncode != 0:
-        raise __subprocess.CalledProcessError(
+        raise _subprocess.CalledProcessError(
             result.returncode, ["git"] + list(args),
             output=result.stdout, stderr=result.stderr,
         )

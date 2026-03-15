@@ -526,20 +526,41 @@ Key conventions the tests lock in:
 
 4. Move `test_problems/plot_progress.py` to `src/autoanything/` or make it a CLI command (`autoanything plot`).
 
-5. Update README.md:
-   - Installation: `pip install autoanything`
-   - Quick start: `autoanything init`, edit files, `autoanything evaluate`
-   - Link to examples for reference problems.
+**Validation:** Old evaluator scripts removed, examples directory works standalone, `run_test.py` and `plot_progress.py` migrated.
 
-6. Update CLAUDE.md to reflect new structure and commands.
+### Phase 5: Documentation Update
 
-7. Add a `MIGRATING.md` for anyone who forked the old structure, explaining:
-   - Move your problem files into their own directory.
-   - Move `evaluator/score.sh` to `scoring/score.sh`.
-   - Install `autoanything` and use CLI commands instead of running scripts directly.
-   - The `evaluator/` directory at repo root is no longer needed.
+**Goal:** Rewrite all documentation to reflect the new installable-framework structure. After Phase 4 removes the old code, the docs should match the current reality.
 
-### Phase 5: Extended Features (future, not blocking)
+**Steps:**
+
+1. Rewrite `README.md`:
+   - Installation: `pip install autoanything` / `uv tool install autoanything`
+   - Quick start: `autoanything init`, edit files, `autoanything score`, `autoanything evaluate`
+   - Problem structure overview (what goes in a problem directory)
+   - Link to `examples/` for reference problems
+   - Remove all references to `activate.sh`, `evaluator/evaluate.py`, `evaluator/server.py`
+
+2. Rewrite `CLAUDE.md`:
+   - Update repository structure to reflect `src/autoanything/`, `examples/`, removal of `evaluator/`
+   - Update commands section: replace `uv run evaluator/evaluate.py` with `autoanything evaluate`, etc.
+   - Update problem structure to show `scoring/` instead of `evaluator/score.sh`
+   - Update agent protocol if any steps changed
+   - Remove references to `activate.sh`
+
+3. Add `MIGRATING.md` for anyone who forked the old structure:
+   - Move your problem files into their own directory
+   - Move `evaluator/score.sh` to `scoring/score.sh`
+   - Install `autoanything` and use CLI commands instead of running scripts directly
+   - The `evaluator/` directory at repo root is no longer needed
+
+4. Update `agent_instructions.md` template in `src/autoanything/templates/` to reference the CLI commands.
+
+5. Review and update any inline help text in CLI commands (`--help` output) for accuracy.
+
+**Validation:** All docs reference the new structure. No mentions of `activate.sh`, `evaluator/evaluate.py`, or `evaluator/server.py` remain outside of `MIGRATING.md`.
+
+### Phase 6: Extended Features (future, not blocking)
 
 Ideas that become natural once the framework exists, but aren't needed for launch:
 

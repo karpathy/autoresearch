@@ -55,18 +55,18 @@ name = "autoanything"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "fastapi" },
     { name = "pyyaml" },
     { name = "requests" },
+    { name = "rich" },
     { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
 dev = [
-    { name = "click" },
     { name = "httpx" },
     { name = "pytest" },
-    { name = "rich" },
 ]
 examples = [
     { name = "kernels" },
@@ -81,7 +81,7 @@ examples = [
 
 [package.metadata]
 requires-dist = [
-    { name = "click", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "click", specifier = ">=8.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "kernels", marker = "extra == 'examples'", specifier = ">=0.11.7" },
@@ -92,7 +92,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "requests", specifier = ">=2.32.0" },
-    { name = "rich", marker = "extra == 'dev'", specifier = ">=13.0" },
+    { name = "rich", specifier = ">=13.0" },
     { name = "tiktoken", marker = "extra == 'examples'", specifier = ">=0.11.0" },
     { name = "uvicorn", specifier = ">=0.34.0" },
 ]
