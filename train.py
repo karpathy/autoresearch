@@ -25,6 +25,7 @@ inductor_config.coordinate_descent_tuning = True       # fine-tune tile sizes pe
 inductor_config.max_autotune_gemm_backends = "CUTLASS,Triton,ATen"  # include CUTLASS SM100 kernels
 inductor_config.epilogue_fusion = True                 # fuse pointwise ops into matmul epilogues
 inductor_config.aggressive_fusion = True               # fuse more ops into fewer kernels
+inductor_config.shape_padding = True                   # pad matrices to tensor core tile boundaries
 
 from kernels import get_kernel
 cap = torch.cuda.get_device_capability()
@@ -106,18 +107,23 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = self.n_embd // self.n_head
         assert self.n_embd % self.n_head == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
-        self.c_q = nn.Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
-        self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
-        self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
+        # Fused QKV: single GEMM (d → 3d) instead of three separate (d → d) GEMMs
+        # torch.compile does NOT auto-fuse separate Linears with different weight tensors
+        self.q_dim = self.n_head * self.head_dim
+        self.k_dim = self.n_kv_head * self.head_dim
+        self.v_dim = self.n_kv_head * self.head_dim
+        self.c_qkv = nn.Linear(self.n_embd, self.q_dim + self.k_dim + self.v_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 32
         self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
     def forward(self, x, ve, cos_sin, window_size, block_mask=None):
         B, T, C = x.size()
-        q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
-        k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
-        v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
+        qkv = self.c_qkv(x)
+        q, k, v = qkv.split([self.q_dim, self.k_dim, self.v_dim], dim=-1)
+        q = q.view(B, T, self.n_head, self.head_dim)
+        k = k.view(B, T, self.n_kv_head, self.head_dim)
+        v = v.view(B, T, self.n_kv_head, self.head_dim)
 
         # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
         if ve is not None:
@@ -204,9 +210,7 @@ class GPT(nn.Module):
         n_embd = self.config.n_embd
         s = 3**0.5 * n_embd**-0.5
         for block in self.transformer.h:
-            torch.nn.init.uniform_(block.attn.c_q.weight, -s, s)
-            torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
-            torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
+            torch.nn.init.uniform_(block.attn.c_qkv.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight)
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
@@ -638,15 +642,28 @@ grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
 # Only for Blackwell (SM100+) where FP8 tensor cores are mature
 USE_FP8 = cap[0] >= 10 and config.n_embd >= 1024  # skip for tiny models (FP8 scaling overhead)
 if USE_FP8:
-    from torchao.float8 import convert_to_float8_training, Float8LinearConfig
-    fp8_config = Float8LinearConfig(pad_inner_dim=True)
-    # Skip ve_gate layers (32-wide, too narrow for FP8 benefit)
-    def _fp8_module_filter(mod, fqn):
-        return isinstance(mod, nn.Linear) and "ve_gate" not in fqn
-    convert_to_float8_training(model, config=fp8_config, module_filter_fn=_fp8_module_filter)
-    # Adjust peak FLOPS for FP8 (B200: 10,000 TFLOPS FP8 vs 4,500 BF16)
-    GPU_PEAK_FLOPS = GPU_PEAK_FLOPS * 2.22  # 10000/4500 ≈ 2.22
-    print(f"FP8 training enabled (skipping ve_gate layers, peak adjusted to {GPU_PEAK_FLOPS/1e12:.0f} TFLOPS)")
+    # Try MXFP8 first (per-block-of-32 scaling, better precision than per-tensor FP8)
+    _using_mxfp8 = False
+    try:
+        from torchao.prototype.mx_formats.mx_linear import MXLinearConverter
+        mx_converter = MXLinearConverter("mxfp8_cublas")
+        # Skip ve_gate layers (32-wide, too narrow for FP8 benefit)
+        def _mx_filter(mod, fqn):
+            return isinstance(mod, nn.Linear) and "ve_gate" not in fqn
+        mx_converter.convert(model, module_filter_fn=_mx_filter)
+        _using_mxfp8 = True
+        GPU_PEAK_FLOPS = GPU_PEAK_FLOPS * 2.22  # 10000/4500 ≈ 2.22
+        print(f"MXFP8 training enabled (per-block-of-32 scaling, peak {GPU_PEAK_FLOPS/1e12:.0f} TFLOPS)")
+    except (ImportError, Exception) as e:
+        # Fall back to standard per-tensor FP8
+        print(f"MXFP8 unavailable ({e}), falling back to standard FP8")
+        from torchao.float8 import convert_to_float8_training, Float8LinearConfig
+        fp8_config = Float8LinearConfig(pad_inner_dim=True)
+        def _fp8_module_filter(mod, fqn):
+            return isinstance(mod, nn.Linear) and "ve_gate" not in fqn
+        convert_to_float8_training(model, config=fp8_config, module_filter_fn=_fp8_module_filter)
+        GPU_PEAK_FLOPS = GPU_PEAK_FLOPS * 2.22  # 10000/4500 ≈ 2.22
+        print(f"FP8 training enabled (per-tensor scaling, peak {GPU_PEAK_FLOPS/1e12:.0f} TFLOPS)")
 else:
     print(f"FP8 disabled (cap={cap}, n_embd={config.n_embd})")
 
