@@ -1,12 +1,18 @@
 # AutoAnything
 
-![teaser](progress.png)
-
-**AutoAnything** is a framework where you define what to optimize and how to score it, then unleash a swarm of agents to hill-climb relentlessly. You come back to a leaderboard of experiments and a measurably better system.
+**AutoAnything** is a framework where you define what to optimize and how to score it, then unleash a swarm of AI agents to hill-climb relentlessly. You come back to a leaderboard of experiments and a measurably better system.
 
 The concept: any optimization problem with a black-box scoring function. Agents propose changes by pushing git branches. A private evaluator scores them serially and merges improvements. Agents never see the scoring code — just the leaderboard.
 
 Think of it as **Kaggle for code**: the leaderboard is public, the test set is private, and submissions are git branches.
+
+| GPT Training (val BPB) | Rastrigin Function (10-D) |
+|:---:|:---:|
+| ![GPT training optimization](progress.png) | ![Rastrigin function minimization](test_progress_rastrigin.png) |
+| **Traveling Salesman (20 cities)** | **Rectangle Packing (12 rects)** |
+| ![TSP route optimization](test_progress_tsp.png) | ![Rectangle packing optimization](test_progress_packing.png) |
+
+*Each chart shows the same pattern: agents propose changes (grey dots), the evaluator keeps only improvements (green dots), and the best score ratchets monotonically in one direction.*
 
 ## Install
 
@@ -205,7 +211,7 @@ score:
 
 ## What you could optimize
 
-AutoAnything generalizes to any black-box optimization:
+Anything with a natural number to score against:
 
 - A prompt template (scored by LLM-as-judge accuracy)
 - A web app's Lighthouse performance score
@@ -214,7 +220,18 @@ AutoAnything generalizes to any black-box optimization:
 - A game AI (scored by win rate against a baseline)
 - An ML training script (scored by validation loss)
 
-The common pattern: mutable state, a scoring function, and a direction (minimize or maximize).
+But the more interesting frontier is **things that don't have a natural number yet**. Now that LLMs can act as judges, you can define a rubric across multiple dimensions — clarity, originality, tone, argument strength, whatever you care about — have an LLM score each one, apply hidden weights, and collapse it into a single number. The agents never see the rubric or the weights. They just push a branch and get back a score.
+
+This means you can optimize subjective artifacts the same way:
+
+- An essay (scored across argument structure, evidence quality, readability, originality)
+- A short story (scored on narrative tension, character voice, prose style)
+- A product landing page (scored on persuasiveness, clarity, emotional resonance)
+- An API design (scored on consistency, discoverability, naming conventions)
+
+The weights encode values the agents can't see. Weight originality at 3x and the swarm converges on bold writing. Change the weights and the same agents produce something entirely different — without changing any agent instructions. The values live in the scoring function, not in the agents.
+
+The common pattern is always the same: mutable state, a scoring function, and a direction.
 
 ## Heritage
 
