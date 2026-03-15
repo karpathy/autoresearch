@@ -1,5 +1,9 @@
 # Plan: AutoAnything as an Installable Framework
 
+## Design Principles
+
+- **Use modern tooling (2026 standards).** `uv` over pip/conda/poetry. `uv_build` over setuptools/hatchling. Lean on conventions and zero-config defaults where possible. When choosing between tools or approaches, pick the one a new project would adopt today, not the legacy-compatible option.
+
 ## The Problem
 
 AutoAnything is currently a **repo you fork**. To use it, you clone the whole thing, run `activate.sh` to copy problem files into the repo root, and run evaluator scripts from hardcoded paths. This works for developing the framework itself, but it doesn't scale to the vision: many people, many problems, a population of agents submitting solutions.
@@ -373,7 +377,7 @@ Key conventions the tests lock in:
 
 **Steps:**
 
-1. Add `pyyaml` to dependencies in `pyproject.toml`. Add `hatchling` build system and `src/` layout for the installable package.
+1. Add `pyyaml` to dependencies in `pyproject.toml`. Add `uv_build` build backend (uv's native build system — zero-config for standard `src/` layout) and `src/` layout for the installable package.
 
 2. Create `src/autoanything/problem.py` — a module that loads and validates `problem.yaml`:
    - Parse with `yaml.safe_load()`.

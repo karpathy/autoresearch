@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.7.2,<0.8"]
+build-backend = "uv_build"
 
 [project]
 name = "autoanything"
@@ -30,9 +30,6 @@ examples = [
     "pyarrow>=21.0.0",
     "tiktoken>=0.11.0",
 ]
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/autoanything"]
 
 [tool.uv.sources]
 torch = [
