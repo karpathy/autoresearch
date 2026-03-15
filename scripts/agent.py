@@ -1269,6 +1269,16 @@ def main():
                 sample = str(results.get("sample_text", ""))[:300]
                 if sample:
                     state["sample_text"] = sample
+                # Sanity check: val_bpb must be positive and realistic
+                if val_bpb <= 0 or val_bpb > 20:
+                    add_log(f"BOGUS: val_bpb={val_bpb:.6f} is nonsensical — treating as crash")
+                    log_result(sha, val_bpb, memory_gb, "crash", f"{description} [bogus val_bpb={val_bpb:.6f}]", sample)
+                    set_phase("CRASH")
+                    git_revert()
+                    clear_crash_state()
+                    log_to_file(f"Elapsed: {time.time() - t0:.0f}s")
+                    continue
+
                 improved = val_bpb < best_bpb
 
                 if improved:
@@ -1410,6 +1420,16 @@ def _run_text_mode(args, state, call_llm, add_log, on_training_line, t_start):
             val_bpb = results["val_bpb"]
             memory_gb = float(results.get("peak_vram_mb", 0)) / 1024
             sample = str(results.get("sample_text", ""))[:300]
+            # Sanity check: val_bpb must be positive and realistic
+            if val_bpb <= 0 or val_bpb > 20:
+                print(f"  BOGUS: val_bpb={val_bpb:.6f} is nonsensical — treating as crash")
+                log_result(sha, val_bpb, memory_gb, "crash", f"{description} [bogus val_bpb={val_bpb:.6f}]")
+                git_revert()
+                clear_crash_state()
+                print(f"  Elapsed: {time.time() - t0:.0f}s")
+                history = get_results_history()
+                continue
+
             if val_bpb < best_bpb:
                 best_bpb = val_bpb
                 log_result(sha, val_bpb, memory_gb, "keep", description, sample)
