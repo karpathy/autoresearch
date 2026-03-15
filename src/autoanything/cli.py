@@ -1,0 +1,401 @@
+"""CLI entry point — click-based command-line interface.
+
+Provides commands: init, validate, score, evaluate, serve, history, leaderboard.
+"""
+
+import os
+import stat
+import subprocess
+import sys
+from importlib import resources
+
+import click
+
+from autoanything.problem import load_problem, ValidationError
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+_TEMPLATES_PKG = "autoanything.templates"
+
+
+def _load_template(filename: str) -> str:
+    """Load a template file from the autoanything.templates package."""
+    return resources.files(_TEMPLATES_PKG).joinpath(filename).read_text()
+
+
+def _render_template(filename: str, **kwargs: str) -> str:
+    """Load a template and substitute {{key}} placeholders."""
+    text = _load_template(filename)
+    for key, value in kwargs.items():
+        text = text.replace("{{" + key + "}}", value)
+    return text
+
+
+def _resolve_db_path(problem_dir: str, db: str | None) -> str:
+    """Resolve the database path from --db flag or default location."""
+    if db:
+        return db
+    # Prefer .autoanything/history.db; fall back to evaluator/history.db if it exists
+    new_path = os.path.join(problem_dir, ".autoanything", "history.db")
+    old_path = os.path.join(problem_dir, "evaluator", "history.db")
+    if os.path.exists(old_path) and not os.path.exists(new_path):
+        return old_path
+    os.makedirs(os.path.dirname(new_path), exist_ok=True)
+    return new_path
+
+
+# ---------------------------------------------------------------------------
+# CLI group
+# ---------------------------------------------------------------------------
+
+
+@click.group()
+def main():
+    """AutoAnything — autonomous optimization via AI agents."""
+
+
+@main.command()
+@click.argument("name")
+@click.option("--dir", "parent_dir", default=".", help="Parent directory for the new problem.")
+@click.option("--metric", default="score", help="Metric name (key in score.sh JSON output).")
+@click.option("--direction", default="minimize", type=click.Choice(["minimize", "maximize"]),
+              help="Score direction.")
+def init(name, parent_dir, metric, direction):
+    """Scaffold a new problem directory."""
+    problem_dir = os.path.join(parent_dir, name)
+    if os.path.exists(problem_dir):
+        click.echo(f"Error: directory '{problem_dir}' already exists.", err=True)
+        sys.exit(1)
+
+    subs = {"name": name, "metric": metric, "direction": direction}
+
+    os.makedirs(problem_dir)
+    os.makedirs(os.path.join(problem_dir, "state"))
+    os.makedirs(os.path.join(problem_dir, "context"))
+    os.makedirs(os.path.join(problem_dir, "scoring"))
+    os.makedirs(os.path.join(problem_dir, ".autoanything"))
+
+    # Write files from templates
+    with open(os.path.join(problem_dir, "problem.yaml"), "w") as f:
+        f.write(_render_template("problem.yaml", **subs))
+
+    with open(os.path.join(problem_dir, "state", "solution.py"), "w") as f:
+        f.write(_load_template("solution.py"))
+
+    score_sh = os.path.join(problem_dir, "scoring", "score.sh")
+    with open(score_sh, "w") as f:
+        f.write(_render_template("score.sh", **subs))
+    os.chmod(score_sh, os.stat(score_sh).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    with open(os.path.join(problem_dir, "agent_instructions.md"), "w") as f:
+        f.write(_render_template("agent_instructions.md", **subs))
+
+    with open(os.path.join(problem_dir, ".gitignore"), "w") as f:
+        f.write(_load_template("gitignore"))
+
+    # Initialize a git repo
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=problem_dir, capture_output=True, check=True,
+    )
+
+    click.echo(f"Created problem '{name}' in {problem_dir}")
+    click.echo("")
+    click.echo("Next steps:")
+    click.echo(f"  cd {problem_dir}")
+    click.echo("  # Edit problem.yaml — describe the problem, set constraints")
+    click.echo("  # Edit state/solution.py — set up the initial state")
+    click.echo("  # Edit scoring/score.sh — implement your scoring function")
+    click.echo("  autoanything validate    # check everything is wired up")
+    click.echo("  autoanything score       # run scoring once as a sanity check")
+
+
+@main.command()
+@click.option("--dir", "problem_dir", default=".", help="Problem directory to validate.")
+def validate(problem_dir):
+    """Check that the problem directory is well-formed."""
+    errors = []
+    warnings = []
+
+    # Check problem.yaml
+    try:
+        config = load_problem(problem_dir)
+    except FileNotFoundError:
+        click.echo("Error: problem.yaml not found.", err=True)
+        sys.exit(1)
+    except ValidationError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    # Check state files exist
+    for f in config.state:
+        if not os.path.exists(os.path.join(problem_dir, f)):
+            errors.append(f"State file not found: {f}")
+
+    # Check score script
+    script_path = os.path.join(problem_dir, config.score.script)
+    if not os.path.exists(script_path):
+        errors.append(f"Score script not found: {config.score.script}")
+    elif not os.access(script_path, os.X_OK):
+        warnings.append(f"Score script not executable: {config.score.script}")
+
+    # Check .gitignore
+    gitignore_path = os.path.join(problem_dir, ".gitignore")
+    if os.path.exists(gitignore_path):
+        gitignore = open(gitignore_path).read()
+        if "scoring" not in gitignore:
+            warnings.append(".gitignore does not exclude scoring/")
+    else:
+        warnings.append("No .gitignore found")
+
+    # Check if scoring/ is tracked by git
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "scoring/"],
+            capture_output=True, text=True, cwd=problem_dir,
+        )
+        if result.stdout.strip():
+            warnings.append(f"scoring/ files are tracked by git: {result.stdout.strip()}")
+    except Exception:
+        pass
+
+    if warnings:
+        for w in warnings:
+            click.echo(f"Warning: {w}")
+
+    if errors:
+        for e in errors:
+            click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    click.echo("Validation passed.")
+
+
+@main.command()
+@click.option("--dir", "problem_dir", default=".", help="Problem directory.")
+def score(problem_dir):
+    """Run score.sh once and print the result."""
+    from autoanything.scoring import run_score as _run_score
+
+    try:
+        config = load_problem(problem_dir)
+    except (FileNotFoundError, ValidationError) as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    script_path = os.path.join(problem_dir, config.score.script)
+    if not os.path.exists(script_path):
+        click.echo(f"Error: Score script not found: {config.score.script}", err=True)
+        sys.exit(1)
+
+    score_val, metrics, duration, error = _run_score(
+        script_path, score_name=config.score.name,
+        timeout=config.score.timeout, cwd=problem_dir,
+    )
+
+    if error:
+        click.echo(f"Error: {error}", err=True)
+        sys.exit(1)
+
+    click.echo(f"{config.score.name}: {score_val}")
+    if metrics:
+        for k, v in metrics.items():
+            if k != config.score.name:
+                click.echo(f"  {k}: {v}")
+    click.echo(f"Duration: {duration:.1f}s")
+
+
+@main.command()
+@click.option("--dir", "problem_dir", default=".", help="Problem directory.")
+@click.option("--db", default=None, help="Path to history database.")
+def history(problem_dir, db):
+    """Print evaluation history."""
+    from autoanything.history import init_db as _init_db
+
+    db_path = _resolve_db_path(problem_dir, db)
+    if not os.path.exists(db_path):
+        click.echo("No evaluation history yet.")
+        return
+
+    conn = _init_db(db_path)
+    rows = conn.execute("""
+        SELECT score, status, branch, description, evaluated_at
+        FROM evaluations ORDER BY id DESC LIMIT 50
+    """).fetchall()
+    conn.close()
+
+    if not rows:
+        click.echo("No evaluations recorded.")
+        return
+
+    click.echo(f"{'Score':>12} {'Status':<10} {'Branch':<35} {'Description'}")
+    click.echo("-" * 80)
+    for s, status, branch, desc, when in rows:
+        score_str = f"{s:.6f}" if s is not None else "crash"
+        click.echo(f"{score_str:>12} {status:<10} {branch:<35} {desc or ''}")
+
+
+@main.command()
+@click.option("--dir", "problem_dir", default=".", help="Problem directory.")
+@click.option("--db", default=None, help="Path to history database.")
+def leaderboard(problem_dir, db):
+    """Regenerate leaderboard.md from history."""
+    from autoanything.history import init_db as _init_db
+    from autoanything.leaderboard import export_leaderboard as _export
+
+    try:
+        config = load_problem(problem_dir)
+    except (FileNotFoundError, ValidationError) as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    db_path = _resolve_db_path(problem_dir, db)
+    if not os.path.exists(db_path):
+        click.echo("No evaluation history yet.")
+        return
+
+    conn = _init_db(db_path)
+    output_path = os.path.join(problem_dir, "leaderboard.md")
+    _export(conn, output_path, direction=config.score.direction)
+    conn.close()
+    click.echo(f"Leaderboard written to {output_path}")
+
+
+@main.command()
+@click.option("--dir", "problem_dir", default=".", help="Problem directory.")
+@click.option("--db", default=None, help="Path to history database.")
+@click.option("-o", "--output", default=None, help="Output PNG path (default: <db_dir>/progress.png).")
+@click.option("--title", default=None, help="Custom chart title.")
+@click.option("--direction", default=None,
+              type=click.Choice(["minimize", "maximize"]),
+              help="Score direction (auto-detected from problem.yaml if available).")
+@click.option("--score-label", default=None, help="Y-axis label (default: metric name or 'Score').")
+def plot(problem_dir, db, output, title, direction, score_label):
+    """Generate a progress chart from evaluation history."""
+    from autoanything.plotting import generate_chart
+
+    db_path = _resolve_db_path(problem_dir, db)
+    if not os.path.exists(db_path):
+        click.echo("No evaluation history yet.", err=True)
+        sys.exit(1)
+
+    # Auto-detect direction and score label from problem.yaml if available
+    if direction is None or score_label is None:
+        try:
+            config = load_problem(problem_dir)
+            if direction is None:
+                direction = config.score.direction
+            if score_label is None:
+                score_label = config.score.description or config.score.name
+        except Exception:
+            if direction is None:
+                direction = "minimize"
+            if score_label is None:
+                score_label = "Score"
+
+    if output is None:
+        output = os.path.join(os.path.dirname(db_path), "progress.png")
+
+    try:
+        generate_chart(db_path, output, title, direction, score_label)
+    except ImportError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Chart saved to {output}")
+
+
+@main.command()
+@click.option("--dir", "problem_dir", default=".", help="Problem directory.")
+@click.option("--baseline-only", is_flag=True, help="Establish baseline and exit.")
+@click.option("--push", is_flag=True, help="Push results to origin.")
+@click.option("--poll-interval", default=30, help="Seconds between polls (default: 30).")
+@click.option("--db", default=None, help="Path to history database.")
+def evaluate(problem_dir, baseline_only, push, poll_interval, db):
+    """Start the polling evaluator (watches for proposal branches)."""
+    from autoanything.evaluator import run_evaluator
+
+    try:
+        config = load_problem(problem_dir)
+    except FileNotFoundError:
+        click.echo("Error: No problem.yaml found. Set up a problem first.", err=True)
+        sys.exit(1)
+    except ValidationError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    db_path = _resolve_db_path(problem_dir, db)
+
+    run_evaluator(
+        problem_dir=problem_dir,
+        config=config,
+        db_path=db_path,
+        baseline_only=baseline_only,
+        push=push,
+        poll_interval=poll_interval,
+    )
+
+
+@main.command()
+@click.option("--dir", "problem_dir", default=".", help="Problem directory.")
+@click.option("--port", default=8000, help="Port (default: 8000).")
+@click.option("--host", default="0.0.0.0", help="Host (default: 0.0.0.0).")
+@click.option("--push", is_flag=True, help="Push leaderboard updates to origin.")
+@click.option("--db", default=None, help="Path to history database.")
+def serve(problem_dir, port, host, push, db):
+    """Start the webhook server."""
+    import logging
+
+    from autoanything.history import init_db as _init_db, get_incumbent as _get_incumbent
+    from autoanything.server import create_app
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
+    slogger = logging.getLogger("autoanything.server")
+
+    webhook_secret = os.environ.get("WEBHOOK_SECRET")
+    if not webhook_secret:
+        slogger.warning(
+            "WEBHOOK_SECRET not set — accepting all webhook requests without verification"
+        )
+
+    db_path = _resolve_db_path(problem_dir, db)
+
+    # Require an existing baseline
+    conn = _init_db(db_path)
+    incumbent = _get_incumbent(conn)
+    conn.close()
+    if incumbent is None:
+        click.echo(
+            "Error: No baseline found. Run 'autoanything evaluate --baseline-only' first.",
+            err=True,
+        )
+        sys.exit(1)
+
+    try:
+        config = load_problem(problem_dir)
+    except Exception:
+        config = None
+
+    slogger.info("Incumbent: %.6f (%s)", incumbent["score"], incumbent["commit_sha"][:7])
+    slogger.info("Push: %s", "enabled" if push else "disabled")
+    if config:
+        slogger.info("Base branch: %s", config.git.base_branch)
+    slogger.info("Starting server on %s:%d", host, port)
+
+    app = create_app(
+        problem_dir=problem_dir,
+        webhook_secret=webhook_secret,
+        db_path=db_path,
+        push=push,
+    )
+
+    import uvicorn
+    uvicorn.run(app, host=host, port=port, log_level="info")

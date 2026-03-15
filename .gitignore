@@ -13,7 +13,6 @@ results/
 queue/
 
 # Agent prompt files (generated per-session by launchers)
-CLAUDE.md
 AGENTS.md
 
 # Experimental code/artifacts
@@ -21,3 +20,9 @@ dev/
 
 # Results file
 results.tsv
+
+# Evaluator (private — scoring code, DB, logs)
+evaluator/
+scoring/
+.autoanything/
+.DS_Store

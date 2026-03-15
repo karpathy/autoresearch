@@ -1,0 +1,26 @@
+name: rectangle-packing
+description: >
+  Pack 12 rectangles into the smallest possible bounding box with no overlaps.
+  Rectangle sizes are fixed in context/problem.py. You control the (x, y)
+  position and rotation of each rectangle in state/packing.py.
+
+mutable:
+  - state/packing.py
+
+readonly:
+  - context/problem.py
+
+score:
+  direction: minimize
+  name: score
+  description: "Bounding box area + overlap penalty (10000 per overlapping pair) — lower is better"
+  bounded: true
+
+git:
+  base_branch: master
+
+constraints:
+  - "Must not modify files outside of state/"
+  - "Placements must have exactly 12 entries matching the 12 rectangles"
+  - "Coordinates must be non-negative integers"
+  - "No external dependencies required"

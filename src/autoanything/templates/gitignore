@@ -1,0 +1,5 @@
+# Private scoring code — never commit this
+scoring/
+
+# Evaluator state (history database, logs)
+.autoanything/

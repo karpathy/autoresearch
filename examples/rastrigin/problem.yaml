@@ -1,0 +1,26 @@
+name: rastrigin
+description: >
+  Minimize the Rastrigin function in 10 dimensions. This is a classic
+  multimodal optimization benchmark with many local minima. The global
+  minimum is 0.0 at the origin (all zeros). Modify the solution vector
+  in state/solution.py.
+
+mutable:
+  - state/solution.py
+
+readonly:
+  - context/problem.py
+
+score:
+  direction: minimize
+  name: score
+  description: "Rastrigin function value — global minimum is 0.0 at the origin"
+  bounded: true
+
+git:
+  base_branch: master
+
+constraints:
+  - "Must not modify files outside of state/"
+  - "Solution vector must have exactly 10 elements"
+  - "No external dependencies required"
