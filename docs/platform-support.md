@@ -1,6 +1,6 @@
 # Platform Support
 
-Autoresearch automatically detects your hardware at startup via `platform_config.py` and configures device, attention backend, compilation, and recommended hyperparameters.
+Autoresearch automatically detects your hardware at startup via `platform_config.py` and loads platform-specific training defaults from `configs/{platform}.toml`. This configures device, attention backend, compilation, and recommended hyperparameters.
 
 ## Supported Platforms
 
@@ -59,6 +59,33 @@ CPU fallback for development and CI. Not recommended for real training.
 | Sliding window attention | No — full context via SDPA |
 
 Defaults: depth=2, batch=4096, seq_len=64.
+
+## Platform Config Files
+
+Training hyperparameters (batch size, learning rates, window pattern, etc.) are loaded from TOML files in `configs/`:
+
+| File | Platform | Key Differences |
+|---|---|---|
+| `configs/cuda.toml` | Linux + NVIDIA CUDA | `total_batch_size=524288`, `window_pattern="SSSL"`, `device_batch_size=128` |
+| `configs/mps.toml` | macOS Apple Silicon | `total_batch_size=65536`, `window_pattern="L"`, `device_batch_size=16` |
+| `configs/cpu.toml` | CPU fallback | `total_batch_size=4096`, `window_pattern="L"`, `device_batch_size=4`, `head_dim=64` |
+
+The correct file is loaded automatically by `train.py` based on `PLATFORM.kind`. The agent overrides any value by editing the constant in `train.py` directly.
+
+MPS defaults are derived from the [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) fork.
+
+### Precedence (highest wins)
+
+1. **Environment variables** (`AUTORESEARCH_DEPTH`, `AUTORESEARCH_DEVICE_BATCH`)
+2. **`train.py` hardcoded overrides** (agent edits these)
+3. **TOML config file** (loaded based on platform)
+
+### Parameters NOT in TOML
+
+| Parameter | Source | Rationale |
+|---|---|---|
+| `DEPTH` | `PLATFORM.recommended_depth` / env var | Varies by VRAM/memory tier within same platform |
+| `MODEL_NAME` | `AUTORESEARCH_MODEL` env var | User/agent choice, not platform-dependent |
 
 ## Environment Variable Overrides
 

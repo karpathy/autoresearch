@@ -20,7 +20,7 @@ If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/s
 
 ## Quick start
 
-**Requirements:** Python 3.10+, [uv](https://docs.astral.sh/uv/), and one of:
+**Requirements:** Python 3.11+, [uv](https://docs.astral.sh/uv/), and one of:
 - **Linux** with an NVIDIA GPU (tested on H100) — full performance
 - **macOS Apple Silicon** (M1/M2/M3/M4) — MPS backend, reduced scale
 - **macOS Intel / Linux CPU** — CPU fallback, for development and testing
@@ -97,7 +97,7 @@ Autoresearch now runs on multiple platforms. Platform detection is automatic via
 | macOS Apple Silicon | MPS | No (SDPA fallback) | No | Development, small experiments |
 | macOS Intel / CPU | CPU | No (SDPA fallback) | No | Testing, CI |
 
-The platform auto-sets reasonable defaults for depth, batch size, and sequence length based on available hardware. Override via environment variables:
+Training hyperparameters (batch size, learning rates, window pattern, etc.) are loaded automatically from `configs/{platform}.toml` — CUDA gets H100-class defaults, MPS gets Apple Silicon defaults (from the [miolini fork](https://github.com/miolini/autoresearch-macos)), CPU gets minimal test settings. Override via environment variables:
 
 ```bash
 AUTORESEARCH_DEPTH=4 AUTORESEARCH_DEVICE_BATCH=8 uv run train.py
@@ -107,15 +107,14 @@ See [docs/platform-support.md](docs/platform-support.md) for full details.
 
 ### Tips for smaller compute
 
-For Macbooks and small GPUs, also consider:
+For Macbooks and small GPUs, the MPS/CPU config files already set conservative defaults. You can further tune by:
 
 1. Use a dataset with less entropy, e.g. [TinyStories](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean).
 2. Decrease `vocab_size` (4096, 2048, 1024, or even byte-level 256).
 3. Lower `MAX_SEQ_LEN` in `prepare.py` (down to 256 etc.) and increase `DEVICE_BATCH_SIZE` to compensate.
 4. Decrease `EVAL_TOKENS` in `prepare.py` for faster validation.
 5. Lower `DEPTH` (the platform auto-detects a reasonable default).
-6. Use `WINDOW_PATTERN = "L"` (full context) instead of `"SSSL"` (sliding window may be inefficient without FA3).
-7. Lower `TOTAL_BATCH_SIZE` (keep powers of 2, e.g. `2**14` ~16K).
+6. Edit `configs/mps.toml` or `configs/cpu.toml` to change defaults permanently.
 
 ## Notable forks
 

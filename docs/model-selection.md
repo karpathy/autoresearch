@@ -87,6 +87,8 @@ From `train.py`, the model is selected via:
 MODEL_NAME = os.environ.get("AUTORESEARCH_MODEL", "nanochat")
 ```
 
+Hyperparameters like `ASPECT_RATIO`, `HEAD_DIM`, `TOTAL_BATCH_SIZE`, and learning rates are loaded from `configs/{platform}.toml` (see [docs/platform-support.md](platform-support.md#platform-config-files)). The agent overrides any value by editing the constant in `train.py` directly.
+
 For `nanochat`, `train.py` uses `build_model_config()` with its hyperparameters (`DEPTH`, `ASPECT_RATIO`, `HEAD_DIM`, etc.). For other models, it uses `create_model()` with `vocab_size`, `n_layer=DEPTH`, and `sequence_len=MAX_SEQ_LEN`.
 
 ## Adding a New Model
