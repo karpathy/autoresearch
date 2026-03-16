@@ -1199,6 +1199,10 @@ def main():
 
         best_bpb = min(r["val_bpb"] for r in history if r["val_bpb"] < 999)
         state["best_bpb"] = best_bpb
+        # Show best result's sample text
+        best_sample = next((r["sample_text"] for r in history if r["val_bpb"] == best_bpb and r.get("sample_text")), "")
+        if best_sample:
+            state["sample_text"] = best_sample
         add_log(f"Current best: val_bpb = {best_bpb:.6f} | {len(history)} experiments so far")
         refresh()
 
@@ -1285,7 +1289,7 @@ def main():
             # Train
             set_phase("TRAINING")
             state["metrics"] = None
-            state["sample_text"] = ""
+            # state["sample_text"] preserved — shows best result
             state["loss_history"] = []
             write_crash_state(i + 1, description, "TRAINING")
             refresh()
@@ -1328,9 +1332,9 @@ def main():
                 val_bpb = results["val_bpb"]
                 memory_gb = float(results.get("peak_vram_mb", 0)) / 1024
                 sample = str(results.get("sample_text", ""))[:300]
-                if sample:
-                    state["sample_text"] = sample
-                improved = 0 < val_bpb < best_bpb  # val_bpb must be positive and better than best
+                improved = 0 < val_bpb < best_bpb
+                if sample and improved:
+                    state["sample_text"] = sample  # val_bpb must be positive and better than best
 
                 if improved:
                     best_bpb = val_bpb
