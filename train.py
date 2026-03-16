@@ -138,9 +138,6 @@ class Block(nn.Module):
         self.mlp = MLP(config)
 
     def forward(self, x, ve, cos_sin, window_size):
-        # Stochastic depth: randomly skip layers during training
-        if self.training and torch.rand(1).item() < 0.1:
-            return x  # skip this layer with 10% probability
         x = x + self.attn(norm(x), ve, cos_sin, window_size)
         x = x + self.mlp(norm(x))
         return x
