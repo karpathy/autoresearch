@@ -20,7 +20,7 @@ import torch.nn.functional as F
 # Platform & GPU capability checks
 _WIN32 = sys.platform == "win32"
 _USE_SDPA = False
-if _WIN32 or _USE_SDPA:
+if _WIN32:
     torch.compile = lambda f=None, **kwargs: f if f is not None else (lambda fn: fn)
     _USE_SDPA = True
 else:
@@ -121,14 +121,13 @@ class MLP(nn.Module):
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
-        self.dropout = nn.Dropout(0.1)
 
     def forward(self, x):
+        residual = x
         x = self.c_fc(x)
-        x = F.silu(x)
-        x = self.dropout(x)
+        x = F.relu(x).square()
         x = self.c_proj(x)
-        return x
+        return x + residual
 
 
 class Block(nn.Module):
@@ -273,11 +272,16 @@ class GPT(nn.Module):
         param_groups = [
             dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.002),
-            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.001),
+            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=matrix_params, lr=matrix_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
         ]
+        for shape in sorted({p.shape for p in matrix_params}):
+            group_params = [p for p in matrix_params if p.shape == shape]
+            param_groups.append(dict(
+                kind='muon', params=group_params, lr=matrix_lr,
+                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+            ))
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
@@ -298,16 +302,13 @@ class GPT(nn.Module):
         x = norm(x)
 
         softcap = 15
-        logits = F.linear(x, self.transformer.wte.weight)
+        logits = self.lm_head(x)
         logits = logits.float()
         logits = softcap * torch.tanh(logits / softcap)
 
         if targets is not None:
-            # Dynamic label smoothing: start at 0.1, decay to 0.0
-            progress = min(total_training_time / TIME_BUDGET if 'total_training_time' in globals() else 0.0, 1.0)
-            label_smoothing = 0.1 * (1.0 - progress)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
-                                   ignore_index=-1, reduction=reduction, label_smoothing=label_smoothing)
+                                   ignore_index=-1, reduction=reduction)
             return loss
         return logits
 
@@ -456,7 +457,7 @@ HEAD_DIM = 128          # target head dimension for attention
 WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**17 # ~131K tokens per optimizer step (halved for 2x more steps)
+TOTAL_BATCH_SIZE = 2**18 # ~262K tokens per optimizer step (halved for 2x more steps)
 EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
@@ -498,14 +499,14 @@ def _auto_gpu_config(vram_mb):
         depth, batch = 10, 12
     else:                   # 8GB (RTX 3070, 3060 8GB)
         depth, batch = 8, 8
-    vram_limit = vram_mb  # no VRAM limit — pegging VRAM is safe, only temp matters
+    vram_limit = vram_mb
     return depth, batch, vram_limit
 
 _auto_depth, _auto_batch, _auto_vram_limit = _auto_gpu_config(_gpu_vram_mb)
 
 # Env vars override auto-detection if set
 DEPTH = int(os.environ.get("AUTORESEARCH_DEPTH", str(_auto_depth)))
-DEVICE_BATCH_SIZE = int(os.environ.get("AUTORESEARCH_BATCH_SIZE", str(8)))
+DEVICE_BATCH_SIZE = int(os.environ.get("AUTORESEARCH_BATCH_SIZE", str(_auto_batch)))
 VRAM_LIMIT_MB = int(os.environ.get("AUTORESEARCH_VRAM_LIMIT", str(_auto_vram_limit)))
 
 print(f"Config: DEPTH={DEPTH}, DEVICE_BATCH_SIZE={DEVICE_BATCH_SIZE}, VRAM_LIMIT={VRAM_LIMIT_MB}MB")
@@ -636,12 +637,8 @@ def get_lr_multiplier(progress):
     elif progress < 1.0 - WARMDOWN_RATIO:
         return 1.0
     else:
-        # Cosine annealing with restarts in cooldown phase
-        cooldown_progress = (progress - (1.0 - WARMDOWN_RATIO)) / WARMDOWN_RATIO
-        # Two restarts during cooldown
-        cycle_progress = (cooldown_progress * 3) % 1.0
-        cosine_factor = 0.5 * (1 + torch.cos(torch.tensor(3.14159 * cycle_progress)).item())
-        return FINAL_LR_FRAC + (1.0 - FINAL_LR_FRAC) * cosine_factor
+        cooldown = (1.0 - progress) / WARMDOWN_RATIO
+        return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
 
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
