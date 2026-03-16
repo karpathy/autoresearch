@@ -127,7 +127,7 @@ class MLP(nn.Module):
 
     def forward(self, x):
         residual = x
-        gate = F.silu(self.c_gate(x))
+        gate = F.relu(self.c_gate(x)).square()
         x = self.c_fc(x) * gate
         x = self.c_proj(x)
         return x + residual
