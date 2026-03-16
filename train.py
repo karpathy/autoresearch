@@ -295,6 +295,9 @@ class GPT(nn.Module):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i])
+            # Store middle layer output for auxiliary loss
+            if i == self.config.n_layer // 2:
+                self._aux_layer_output = norm(x)
         x = norm(x)
 
         softcap = 15
@@ -306,8 +309,20 @@ class GPT(nn.Module):
             # Dynamic label smoothing: start at 0.1, decay to 0.0
             progress = min(total_training_time / TIME_BUDGET if 'total_training_time' in globals() else 0.0, 1.0)
             label_smoothing = 0.1 * (1.0 - progress)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
-                                   ignore_index=-1, reduction=reduction, label_smoothing=label_smoothing)
+            main_loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
+                                       ignore_index=-1, reduction=reduction, label_smoothing=label_smoothing)
+            
+            # Auxiliary loss on middle layer representation
+            if hasattr(self, '_aux_layer_output'):
+                aux_logits = F.linear(self._aux_layer_output, self.transformer.wte.weight)
+                aux_logits = aux_logits.float()
+                aux_logits = softcap * torch.tanh(aux_logits / softcap)
+                aux_loss = F.cross_entropy(aux_logits.view(-1, aux_logits.size(-1)), targets.view(-1),
+                                         ignore_index=-1, reduction=reduction, label_smoothing=label_smoothing)
+                aux_weight = 0.3 * (1.0 - progress)  # Decay auxiliary loss weight over time
+                loss = main_loss + aux_weight * aux_loss
+            else:
+                loss = main_loss
             return loss
         return logits
 
