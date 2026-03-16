@@ -122,11 +122,13 @@ class MLP(nn.Module):
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_gate = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        self.dropout = nn.Dropout(0.05)
 
     def forward(self, x):
         residual = x
         gate = F.silu(self.c_gate(x))
         x = self.c_fc(x) * gate
+        x = self.dropout(x)
         x = self.c_proj(x)
         return x + residual
 
