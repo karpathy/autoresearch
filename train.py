@@ -296,10 +296,17 @@ class GPT(nn.Module):
         x = self.transformer.wte(idx)
         x = norm(x)
         x0 = x
+        aux_loss = 0
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i])
+            # Add auxiliary loss at middle layer
+            if targets is not None and i == self.config.n_layer // 2:
+                aux_logits = self.lm_head(norm(x))
+                aux_logits = aux_logits.float()
+                aux_logits = 15 * torch.tanh(aux_logits / 15)
+                aux_loss = 0.3 * F.cross_entropy(aux_logits.view(-1, aux_logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=reduction)
         x = norm(x)
 
         softcap = 15
@@ -310,7 +317,7 @@ class GPT(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
                                    ignore_index=-1, reduction=reduction)
-            return loss
+            return loss + aux_loss
         return logits
 
 # ---------------------------------------------------------------------------
