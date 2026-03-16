@@ -6,7 +6,7 @@ Once you've run 50+ experiments, the results.tsv file becomes hard to read by ha
 
 val_bpb measures validation bits per byte. Lower is better. It tells you how efficiently the model compresses unseen text.
 
-Small deltas matter. A drop from 0.998 to 0.995 looks tiny but represents a meaningful improvement in next token prediction quality. The evaluation in prepare.py is fixed and deterministic, so the only variable across runs is what you changed in train.py. That said, GPU nondeterminism and data ordering still introduce jitter.
+Small deltas matter. A drop from 0.998 to 0.995 looks tiny but represents a meaningful improvement in next token prediction quality. The evaluation in prepare.py is fixed and deterministic, so the only variable across runs is what you changed in train.py. That said, GPU nondeterminism (cuDNN, floating point ordering) still introduces some jitter.
 
 ## The noise floor
 
