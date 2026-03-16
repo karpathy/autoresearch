@@ -274,6 +274,7 @@ results/
     "loss_trend": "improving",
     "grad_norm_max": 3.2
   },
+  "rationale_tag": "ablate_lr_near_failure",
   "rationale": "Testing lower LR after run 0 showed instability at 0.06",
   "wasted": false,
   "delta_from_best": -0.048,
@@ -409,7 +410,8 @@ class RunConfig:
     batch_size: int
     warmup: float
     seed: int
-    rationale_tag: str = ""  # Written before the run; used for wasted-run exception audit
+    rationale_tag: str = ""  # Short structured label for audit/exception logic (e.g., "ablate_lr_near_failure")
+    rationale: str = ""      # Optional human-readable explanation stored in run artifacts
 
 @dataclass
 class RunResults:
@@ -424,6 +426,11 @@ class RunResults:
 
 @dataclass
 class PredictionResult:
+    # expected_outcome quantitative definitions (ε = 0.02 val_bpb):
+    #   "improve"  — val_bpb beats current best by more than ε
+    #   "marginal" — within ±ε of current best
+    #   "regress"  — worse than current best by more than ε
+    #   "diverge"  — NaN / unstable / catastrophic loss growth (>10× initial)
     expected_outcome: str    # "improve" | "regress" | "diverge" | "marginal"
     confidence: float
     similar_runs: list[int]
