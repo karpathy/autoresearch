@@ -632,17 +632,14 @@ print(f"Gradient accumulation steps: {grad_accum_steps}")
 
 # Schedules (all based on progress = training_time / TIME_BUDGET)
 
-def get_lr_multiplier(progress, step_num):
+def get_lr_multiplier(progress):
     if progress < WARMUP_RATIO:
-        base_mult = progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
+        return progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
     elif progress < 1.0 - WARMDOWN_RATIO:
-        base_mult = 1.0
+        return 1.0
     else:
         cooldown = (1.0 - progress) / WARMDOWN_RATIO
-        base_mult = cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
-    # Apply exponential decay on top of base schedule
-    exp_decay = 0.99 ** step_num
-    return base_mult * exp_decay
+        return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
 
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
@@ -679,7 +676,7 @@ while True:
 
     # Progress and schedules
     progress = min(total_training_time / TIME_BUDGET, 1.0)
-    lrm = get_lr_multiplier(progress, step)
+    lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
     for group in optimizer.param_groups:
