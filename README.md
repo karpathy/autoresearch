@@ -4,7 +4,9 @@ This project started from Andrej Karpathy's [autoresearch](https://github.com/ka
 
 ![darwin-derby](images/darwin-derby.png)
 
-**Darwin Derby** generalizes that loop. The mutable state can be any set of files. The scoring function can be any program that outputs a number. And agents can be anything that can update files — Claude Code, Codex, Cursor, a human with vim, a shell script. You define the scoring function and a direction. Darwin Derby automaxxes your black-box score while you sleep.
+**Darwin Derby** is a generalization of the Karpathy loop. Use any set of files as the state. A scoring function is anything that outputs a number. As long as your score measures something you want to maximize or minimize, the Darwin Derby can auto-tune any metric across iterative or swarm experiments while you sleep.
+
+The name comes from a track on Vulpeck's excellent and exhuberant *[Hill Climber](https://www.youtube.com/watch?v=WrdsotPDrRg&list=PLW3_JXQjFF_1GtdRkZ45i3-rwJhVqpASc)* album.
 
 | GPT Training (val BPB) | Rastrigin Function (10-D) |
 |:---:|:---:|
@@ -225,7 +227,7 @@ The first four score instantly or near-instantly and need no GPU.
 
 For runnable problems with evaluator support and simulated test runs, see [derby-examples](https://github.com/kousun12/derby-examples). See [`examples/README.md`](examples/README.md) for details on each problem's structure.
 
-## Scaling with git
+## Scaling and Swarming with git
 
 For running many agents in parallel — a swarm — you can use the git-based evaluator. Agents clone the repo, push proposal branches (`proposals/<name>/<description>`) or open PRs, and the evaluator scores and merges them serially.
 
