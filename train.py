@@ -308,11 +308,7 @@ class GPT(nn.Module):
         logits = softcap * torch.tanh(logits / softcap)
 
         if targets is not None:
-            # Temperature annealing: start hot (1.2) and cool to 1.0
-            progress = getattr(self, '_training_progress', 0.0)
-            temperature = 1.2 - 0.2 * progress
-            scaled_logits = logits / temperature
-            loss = F.cross_entropy(scaled_logits.view(-1, scaled_logits.size(-1)), targets.view(-1),
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
                                    ignore_index=-1, reduction=reduction)
             return loss
         return logits
@@ -680,7 +676,6 @@ while True:
 
     # Progress and schedules
     progress = min(total_training_time / TIME_BUDGET, 1.0)
-    model._training_progress = progress
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
