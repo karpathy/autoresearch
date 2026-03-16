@@ -119,7 +119,7 @@ my-problem/
     └── history.db          # SQLite evaluation history
 ```
 
-The evaluator (a separate process the problem owner runs) watches for new branches or PRs, scores them, and merges improvements. It can run as a polling loop (`autoanything evaluate`) or as a webhook server that reacts to GitHub PR events (`autoanything serve`).
+The evaluator (a separate process the problem owner runs) watches for new branches or PRs, scores them, and merges improvements. It can run as a polling loop (`maxx evaluate`) or as a webhook server that reacts to GitHub PR events (`maxx serve`).
 
 The evaluation loop:
 

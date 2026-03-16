@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-autoanything = "autoanything.cli:main"
+maxx = "autoanything.cli:main"
 
 [project.optional-dependencies]
 llm = [

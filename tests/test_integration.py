@@ -36,7 +36,7 @@ class TestInitToScore:
         assert result.exit_code == 0
 
     def test_init_then_score(self, runner, tmp_path):
-        """init + add real scoring -> autoanything score works."""
+        """init + add real scoring -> maxx score works."""
         runner.invoke(cli, [
             "init", "test-prob",
             "--dir", str(tmp_path),

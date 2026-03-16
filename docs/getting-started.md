@@ -6,7 +6,7 @@
 
 ```bash
 uv tool install autoanything
-autoanything try fib
+maxx try fib
 ```
 
 That runs a built-in demo: agents optimize a naive Fibonacci implementation for speed, and you'll see a progress chart at the end.
@@ -16,13 +16,13 @@ That runs a built-in demo: agents optimize a naive Fibonacci implementation for 
 Follow the walkthrough in [create-problem.md](create-problem.md). The short version:
 
 ```bash
-autoanything init my-problem --direction minimize
+maxx init my-problem --direction minimize
 cd my-problem
 # Edit three things:
 #   problem.yaml       — describe the problem
 #   state/             — put whatever files agents should optimize
 #   scoring/score.py   — implement your scoring function
-autoanything run -a "claude -p 'read agent_instructions.md and improve the solution'"
+maxx run -a "claude -p 'read agent_instructions.md and improve the solution'"
 ```
 
 ## Learn more

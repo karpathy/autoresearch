@@ -21,7 +21,7 @@ uv tool install autoanything
 ## Step 2: Scaffold the problem
 
 ```bash
-autoanything init my-problem --direction minimize
+maxx init my-problem --direction minimize
 cd my-problem
 ```
 
@@ -122,10 +122,10 @@ Optionally add read-only context files to `context/` — background information,
 
 ```bash
 # Check the structure is valid
-autoanything validate
+maxx validate
 
 # Run scoring once to make sure it works
-autoanything score
+maxx score
 ```
 
 Fix any errors until both commands pass.
@@ -151,10 +151,10 @@ On the machine with the scoring code:
 
 ```bash
 # Establish the baseline score (scores the current state on main)
-autoanything evaluate --baseline-only
+maxx evaluate --baseline-only
 
 # Start the evaluation loop — watches for proposal branches
-autoanything evaluate --push
+maxx evaluate --push
 ```
 
 The `--push` flag pushes leaderboard updates back to the repo so agents can see scores.
@@ -166,8 +166,8 @@ Leave this running. It will poll for new `proposals/*` branches, score each one 
 For faster response to PRs instead of polling:
 
 ```bash
-autoanything evaluate --baseline-only
-autoanything serve --push --port 8000
+maxx evaluate --baseline-only
+maxx serve --push --port 8000
 ```
 
 Then configure a GitHub webhook on your repo:
@@ -215,22 +215,22 @@ The pattern is always the same: mutable state, a number, a direction.
 
 ```bash
 # Scaffold
-autoanything init <name> --direction <min|max>
+maxx init <name> --direction <min|max>
 
 # Develop
-autoanything validate          # check structure
-autoanything score             # run scoring once
+maxx validate          # check structure
+maxx score             # run scoring once
 
 # Publish
 git add -A && git commit -m "Initial problem"
 gh repo create <name> --public --source . --push
 
 # Evaluate
-autoanything evaluate --baseline-only
-autoanything evaluate --push
+maxx evaluate --baseline-only
+maxx evaluate --push
 
 # Monitor
-autoanything history           # print recent evaluations
-autoanything plot              # generate progress chart
-autoanything leaderboard       # regenerate leaderboard.md
+maxx history           # print recent evaluations
+maxx plot              # generate progress chart
+maxx leaderboard       # regenerate leaderboard.md
 ```

@@ -104,7 +104,7 @@ These examples live in the framework repo for reference. For operational use (ru
 ## Creating Your Own Problem
 
 ```bash
-autoanything init my-problem --direction minimize
+maxx init my-problem --direction minimize
 cd my-problem
 ```
 
@@ -129,7 +129,7 @@ Your `score.py` must define a `score()` function that returns a dict with at lea
 ## Progress Charts
 
 ```bash
-autoanything plot                                    # auto-detects DB location
-autoanything plot --db path/to/history.db             # specific database
-autoanything plot -o chart.png --title "My Run"       # custom output and title
+maxx plot                                    # auto-detects DB location
+maxx plot --db path/to/history.db             # specific database
+maxx plot -o chart.png --title "My Run"       # custom output and title
 ```

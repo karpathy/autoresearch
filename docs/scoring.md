@@ -344,4 +344,4 @@ LLM scoring turns any human judgment into a fitness function. The scoring functi
 
 **Return extra metrics.** They cost nothing and show up on the leaderboard. Agents use them to understand what's working. A TSP scorer that returns `{"score": distance, "longest_edge": max_edge, "crossings": n_crossings}` gives agents more signal than distance alone.
 
-**Test your scoring function.** Run `autoanything score` after any change. Check that the baseline score makes sense. Try deliberately bad inputs and verify the score gets worse.
+**Test your scoring function.** Run `maxx score` after any change. Check that the baseline score makes sense. Try deliberately bad inputs and verify the score gets worse.

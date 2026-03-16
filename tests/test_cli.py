@@ -18,7 +18,7 @@ def runner():
 
 
 class TestInit:
-    """autoanything init <name> scaffolds a new problem directory."""
+    """maxx init <name> scaffolds a new problem directory."""
 
     def test_creates_directory(self, runner, tmp_path):
         result = runner.invoke(cli, ["init", "my-problem", "--dir", str(tmp_path)])
@@ -74,7 +74,7 @@ class TestInit:
     def test_prints_next_steps(self, runner, tmp_path):
         result = runner.invoke(cli, ["init", "my-problem", "--dir", str(tmp_path)])
         assert "Next steps" in result.output
-        assert "autoanything validate" in result.output
+        assert "maxx validate" in result.output
         assert "score.py" in result.output
 
     def test_refuses_existing_directory(self, runner, tmp_path):
@@ -84,7 +84,7 @@ class TestInit:
 
 
 class TestValidate:
-    """autoanything validate checks problem directory structure."""
+    """maxx validate checks problem directory structure."""
 
     def test_valid_problem_passes(self, runner, problem_dir):
         result = runner.invoke(cli, ["validate", "--dir", str(problem_dir)])
@@ -139,7 +139,7 @@ class TestValidate:
 
 
 class TestScore:
-    """autoanything score runs scoring once and prints the result."""
+    """maxx score runs scoring once and prints the result."""
 
     def test_runs_and_prints_score(self, runner, problem_dir):
         result = runner.invoke(cli, ["score", "--dir", str(problem_dir)])
@@ -153,7 +153,7 @@ class TestScore:
 
 
 class TestHistory:
-    """autoanything history prints evaluation history."""
+    """maxx history prints evaluation history."""
 
     def test_empty_history(self, runner, problem_dir):
         result = runner.invoke(cli, ["history", "--dir", str(problem_dir)])
@@ -175,7 +175,7 @@ class TestHistory:
 
 
 class TestLeaderboard:
-    """autoanything leaderboard regenerates leaderboard.md."""
+    """maxx leaderboard regenerates leaderboard.md."""
 
     def test_generates_leaderboard(self, runner, problem_dir):
         from autoanything.history import init_db, record_evaluation, update_incumbent
@@ -191,7 +191,7 @@ class TestLeaderboard:
 
 
 class TestPlot:
-    """autoanything plot generates a progress chart."""
+    """maxx plot generates a progress chart."""
 
     def test_no_history_fails(self, runner, problem_dir):
         result = runner.invoke(cli, ["plot", "--dir", str(problem_dir)])

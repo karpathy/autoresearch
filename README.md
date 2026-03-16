@@ -16,6 +16,8 @@ The insight wasn't the ML part. It was the loop: propose a change, score it agai
 
 ## Install
 
+> **Note:** The repository and Python package are called `autoanything`. The CLI command it installs is `maxx`.
+
 ```bash
 uv tool install autoanything
 ```
@@ -23,7 +25,7 @@ uv tool install autoanything
 For development (editable install):
 
 ```bash
-git clone https://github.com/robgon/autoanything
+git clone https://github.com/kousun12/autoanything
 cd autoanything
 uv sync
 ```
@@ -33,15 +35,15 @@ uv sync
 Try an example problem in one command:
 
 ```bash
-autoanything try fib              # built-in demo agent, generates progress chart
-autoanything try rastrigin --claude  # use Claude as the agent
+maxx try fib              # built-in demo agent, generates progress chart
+maxx try rastrigin --claude  # use Claude as the agent
 ```
 
 Or create your own problem:
 
 ```bash
 # Create a new problem
-autoanything init my-problem --direction minimize
+maxx init my-problem --direction minimize
 cd my-problem
 
 # Edit the scaffolded files
@@ -50,13 +52,13 @@ cd my-problem
 #   scoring/score.py   — implement your score() function
 
 # Check everything is wired up
-autoanything validate
+maxx validate
 
 # Run scoring once as a sanity check
-autoanything score
+maxx score
 
 # Run a local optimization loop — single machine, one agent
-autoanything run -a "claude -p 'read agent_instructions.md and improve the solution'"
+maxx run -a "claude -p 'read agent_instructions.md and improve the solution'"
 ```
 
 The `run` command handles everything: it runs your agent, scores the result, keeps improvements, updates the leaderboard, and loops. The scoring directory is hidden from the agent during execution. This is the simplest way to use AutoAnything.
@@ -64,8 +66,8 @@ The `run` command handles everything: it runs your agent, scores the result, kee
 To scale up to multiple agents submitting concurrently, use the evaluator:
 
 ```bash
-autoanything evaluate --baseline-only   # establish baseline
-autoanything evaluate                   # start evaluation loop (watches for proposal branches)
+maxx evaluate --baseline-only   # establish baseline
+maxx evaluate                   # start evaluation loop (watches for proposal branches)
 ```
 
 ## How it works
@@ -127,18 +129,18 @@ The `scoring/` directory is never committed — it exists only on the evaluation
 
 | Command | Description |
 |---------|-------------|
-| `autoanything try <problem>` | Try an example problem (demo agent, generates chart) |
-| `autoanything try <problem> --claude` | Try an example with Claude as the agent |
-| `autoanything init <name>` | Scaffold a new problem directory |
-| `autoanything validate` | Check that the problem directory is well-formed |
-| `autoanything score` | Run `scoring/score.py` once and print the result |
-| `autoanything run -a "<cmd>"` | Run the local optimization loop with an agent command |
-| `autoanything evaluate` | Start the polling evaluator (watches for proposal branches) |
-| `autoanything evaluate --baseline-only` | Establish baseline score and exit |
-| `autoanything serve` | Start the webhook server (receives PR events) |
-| `autoanything history` | Print evaluation history from the DB |
-| `autoanything leaderboard` | Regenerate `leaderboard.md` from history |
-| `autoanything plot` | Generate a progress chart from evaluation history |
+| `maxx try <problem>` | Try an example problem (demo agent, generates chart) |
+| `maxx try <problem> --claude` | Try an example with Claude as the agent |
+| `maxx init <name>` | Scaffold a new problem directory |
+| `maxx validate` | Check that the problem directory is well-formed |
+| `maxx score` | Run `scoring/score.py` once and print the result |
+| `maxx run -a "<cmd>"` | Run the local optimization loop with an agent command |
+| `maxx evaluate` | Start the polling evaluator (watches for proposal branches) |
+| `maxx evaluate --baseline-only` | Establish baseline score and exit |
+| `maxx serve` | Start the webhook server (receives PR events) |
+| `maxx history` | Print evaluation history from the DB |
+| `maxx leaderboard` | Regenerate `leaderboard.md` from history |
+| `maxx plot` | Generate a progress chart from evaluation history |
 
 All commands operate on the current directory by default (overridable with `--dir`).
 
@@ -147,24 +149,24 @@ All commands operate on the current directory by default (overridable with `--di
 **Local loop** — single machine, one agent, fully automated:
 
 ```bash
-autoanything run -a "./my_agent.sh"                           # run until stopped
-autoanything run -a "python optimize.py" -n 50                # limit to 50 iterations
-autoanything run -a "claude -p 'improve the solution'" -n 10  # use any command as the agent
+maxx run -a "./my_agent.sh"                           # run until stopped
+maxx run -a "python optimize.py" -n 50                # limit to 50 iterations
+maxx run -a "claude -p 'improve the solution'" -n 10  # use any command as the agent
 ```
 
 **Polling** — watches for proposal branches matching `proposals/*`:
 
 ```bash
-autoanything evaluate --baseline-only   # establish baseline
-autoanything evaluate                   # start evaluation loop
-autoanything evaluate --push            # push leaderboard updates to origin
+maxx evaluate --baseline-only   # establish baseline
+maxx evaluate                   # start evaluation loop
+maxx evaluate --push            # push leaderboard updates to origin
 ```
 
 **Webhook** — receives GitHub PR events via HTTP:
 
 ```bash
-autoanything evaluate --baseline-only   # establish baseline first
-autoanything serve --push               # start webhook server
+maxx evaluate --baseline-only   # establish baseline first
+maxx serve --push               # start webhook server
 
 # Configure the GitHub webhook:
 #   URL: https://<your-domain>/webhook
@@ -176,9 +178,9 @@ autoanything serve --push               # start webhook server
 ### Progress charts
 
 ```bash
-autoanything plot                         # chart from .autoanything/history.db
-autoanything plot --db path/to/history.db  # chart from a specific database
-autoanything plot -o chart.png            # save to a specific path
+maxx plot                         # chart from .autoanything/history.db
+maxx plot --db path/to/history.db  # chart from a specific database
+maxx plot -o chart.png            # save to a specific path
 ```
 
 ## Running agents
@@ -193,7 +195,7 @@ Agents create branches like `proposals/agent-1/higher-lr` and push them, or open
 
 ### Agent environment variables
 
-When using `autoanything run`, the framework sets these environment variables before each agent invocation:
+When using `maxx run`, the framework sets these environment variables before each agent invocation:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
@@ -228,13 +230,13 @@ git commit -m "Perturbation attempt $AUTOANYTHING_ITERATION"
 ```
 
 ```bash
-autoanything run -a "./agent.sh" -n 20
+maxx run -a "./agent.sh" -n 20
 ```
 
 For AI-powered agents, the command can be anything that reads the problem and modifies state:
 
 ```bash
-autoanything run -a "claude -p 'read agent_instructions.md and improve the solution'" -n 10
+maxx run -a "claude -p 'read agent_instructions.md and improve the solution'" -n 10
 ```
 
 ## Example problems
@@ -258,7 +260,7 @@ For runnable problems with evaluator support and simulated test runs, see [derby
 The fastest way:
 
 ```bash
-autoanything init my-problem --direction minimize
+maxx init my-problem --direction minimize
 cd my-problem
 ```
 
@@ -267,8 +269,8 @@ This scaffolds the full directory structure, initializes a git repo, and sets up
 1. **Edit `problem.yaml`** — describe the problem.
 2. **Edit files in `state/`** — set up the initial mutable state. You can rename, add, or remove files here; the scoring function decides what to read.
 3. **Edit `scoring/score.py`** — implement your `score()` function. It must return a dict with at least the primary metric key (default: `"score"`).
-4. **Run `autoanything validate`** — check everything is wired up.
-5. **Run `autoanything score`** — run scoring once as a sanity check.
+4. **Run `maxx validate`** — check everything is wired up.
+5. **Run `maxx score`** — run scoring once as a sanity check.
 
 A minimal `problem.yaml`:
 

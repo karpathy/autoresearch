@@ -101,8 +101,8 @@ def init(name, parent_dir, direction):
     click.echo("  # Edit problem.yaml — describe the problem")
     click.echo("  # Edit files in state/ — set up the initial mutable state")
     click.echo("  # Edit scoring/score.py — implement your score() function")
-    click.echo("  autoanything validate    # check everything is wired up")
-    click.echo("  autoanything score       # run scoring once as a sanity check")
+    click.echo("  maxx validate    # check everything is wired up")
+    click.echo("  maxx score       # run scoring once as a sanity check")
 
 
 @main.command()
@@ -349,11 +349,11 @@ def run(problem_dir, agent, iterations, max_crashes, db):
 
     Examples:
 
-        autoanything run -a "./optimize.sh"
+        maxx run -a "./optimize.sh"
 
-        autoanything run -a "python my_agent.py" -n 50
+        maxx run -a "python my_agent.py" -n 50
 
-        autoanything run -a "claude -p 'improve the solution'" -n 10
+        maxx run -a "claude -p 'improve the solution'" -n 10
     """
     from autoanything.runner import run_local
 
@@ -418,11 +418,11 @@ def try_problem(problem, target_dir, iterations, agent_override, use_claude):
 
     Examples:
 
-        autoanything try rastrigin
+        maxx try rastrigin
 
-        autoanything try fib --claude
+        maxx try fib --claude
 
-        autoanything try tsp -a "python my_agent.py" -n 10
+        maxx try tsp -a "python my_agent.py" -n 10
     """
     import shutil
     import platform
@@ -655,7 +655,7 @@ def serve(problem_dir, port, host, push, db):
     conn.close()
     if incumbent is None:
         click.echo(
-            "Error: No baseline found. Run 'autoanything evaluate --baseline-only' first.",
+            "Error: No baseline found. Run 'maxx evaluate --baseline-only' first.",
             err=True,
         )
         sys.exit(1)

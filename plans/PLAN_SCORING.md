@@ -5,7 +5,7 @@
 Scoring code (`scoring/score.py`) is the black-box metric that drives optimization. Agents must never see it. Today this is enforced two ways:
 
 1. **Gitignore**: `scoring/` is in `.gitignore`, so it's never committed to working branches.
-2. **Move-once hiding** (local loop only): During `autoanything run`, `runner.py` moves `scoring/` to `.autoanything/_scoring/` once before entering the loop, and restores it when the loop ends. Scoring is loaded from the hidden location via sys.path injection.
+2. **Move-once hiding** (local loop only): During `maxx run`, `runner.py` moves `scoring/` to `.autoanything/_scoring/` once before entering the loop, and restores it when the loop ends. Scoring is loaded from the hidden location via sys.path injection.
 
 Scoring is completely unversioned — it's an untracked file on disk with no history. It can't be diffed, distributed, or experimented with.
 
@@ -63,13 +63,13 @@ score:
 CLI commands gain `--scoring-branch` to override:
 
 ```bash
-autoanything run -a "./agent.sh" --scoring-branch scoring/v2
-autoanything evaluate --scoring-branch scoring/experimental
-autoanything serve --scoring-branch scoring/strict
-autoanything score --scoring-branch scoring    # default
+maxx run -a "./agent.sh" --scoring-branch scoring/v2
+maxx evaluate --scoring-branch scoring/experimental
+maxx serve --scoring-branch scoring/strict
+maxx score --scoring-branch scoring    # default
 ```
 
-### `autoanything init` changes
+### `maxx init` changes
 
 Init creates the scoring branch as an orphan branch with the template `score.py`:
 
@@ -176,7 +176,7 @@ Added to: `run`, `evaluate`, `serve`, `score`, `validate`.
   - `TestValidate`: update `test_missing_score_py_fails` to account for branch-based scoring. Add test for branch-based validation.
   - `TestScore`: update to work with scoring on a branch (may need a git repo fixture)
 - `tests/test_integration.py`:
-  - `TestInitToScore`: update — after init, scoring is on a branch. The test should checkout scoring, write the real `score()`, commit, checkout main, then run `autoanything score`.
+  - `TestInitToScore`: update — after init, scoring is on a branch. The test should checkout scoring, write the real `score()`, commit, checkout main, then run `maxx score`.
 - `tests/conftest.py`:
   - `problem_dir` fixture: add a `scoring` branch with `scoring/score.py` in addition to (or instead of) the on-disk scoring directory. For backwards-compat tests, keep the on-disk variant as a separate fixture.
 
@@ -240,7 +240,7 @@ git commit -m "Move scoring to dedicated branch"
 git checkout main
 
 # Verify
-autoanything score   # should auto-detect the scoring branch
+maxx score   # should auto-detect the scoring branch
 ```
 
 No changes to `problem.yaml` are required — the default branch name `scoring` is resolved by convention.
@@ -249,6 +249,6 @@ No changes to `problem.yaml` are required — the default branch name `scoring` 
 
 1. **Orphan branch vs regular branch?** Orphan keeps the scoring branch's history completely separate from main's history. Regular branch means scoring shares the initial commit with main. Orphan is cleaner but slightly more ceremony. Recommendation: orphan.
 
-2. **Should `autoanything edit-scoring` be a convenience command?** Switching to the scoring branch, editing, committing, and switching back is more ceremony than editing a local file. A helper command could smooth this. Could be a fast follow-up, not required for the initial implementation.
+2. **Should `maxx edit-scoring` be a convenience command?** Switching to the scoring branch, editing, committing, and switching back is more ceremony than editing a local file. A helper command could smooth this. Could be a fast follow-up, not required for the initial implementation.
 
 3. **Remote scoring branches.** For problems hosted on GitHub, the scoring branch would be pushed. This means anyone with repo access can see the scoring code (on that branch). This is fine for most use cases but worth noting — if scoring must be truly secret, the branch can be kept local or in a separate private repo. Not a blocker.

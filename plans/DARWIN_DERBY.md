@@ -63,9 +63,9 @@ The CLI is `derby`. Five characters. Compare:
 
 ```bash
 # Before
-autoanything evaluate --baseline-only
-autoanything score
-autoanything serve
+maxx evaluate --baseline-only
+maxx score
+maxx serve
 
 # After
 derby evaluate --baseline-only
