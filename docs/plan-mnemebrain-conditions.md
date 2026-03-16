@@ -26,7 +26,8 @@ Scientific comparison: does structured belief memory improve autonomous ML exper
 ### Condition A — No Memory, No Guidance
 - **What:** Plain train.py. No sidecar. No history. No suggestions.
 - **Changes to train.py:** None
-- **Post-run:** Results printed to stdout only
+- **During execution:** No memory, no guidance — stdout behavior unchanged
+- **Post-run artifacting:** `NullHooks` writes a run result JSON to `results/` for analysis only (invisible to the operator during experiment sessions)
 - **Purpose:** Raw baseline — how well does a human do with no memory?
 
 ### Condition B — Structured Logging (Control)
@@ -91,8 +92,10 @@ The human operator learns across conditions — running A first, then B, then C,
 - Seed group 4: D → A → B → C
 
 **Isolation rules:**
-- Independent decision logs per condition — no cross-condition note sharing
-- Between-condition cooldown: operator should not carry forward "hunches" from one condition's session into the next
+- Each condition gets its own **decision sheet** (a separate document/file)
+- Before each run, write rationale in that condition's sheet only
+- No access to prior-condition sheets during an active session
+- Decision sheets are the auditable record — reviewers can verify no cross-condition leakage
 - All decision rationale must be written down before the run starts (forces explicit reasoning, prevents implicit memory leakage)
 
 ## Config Search Space
@@ -181,7 +184,7 @@ type: INFERENCE
 context: { warmup: "0" }
 ```
 
-Note: `truth_state` is a Belnap four-valued state (TRUE, FALSE, BOTH, NONE). `polarity` is per-evidence (SUPPORTS or ATTACKS). BOTH emerges from conflicting evidence on broad claims — contextual revision is the mechanism that resolves BOTH into conditional TRUE/FALSE claims with narrower scope.
+Note: `truth_state` is a Belnap four-valued state (TRUE, FALSE, BOTH, NEITHER). `polarity` is per-evidence (SUPPORTS or ATTACKS). BOTH emerges from conflicting evidence on broad claims — contextual revision is the mechanism that resolves BOTH into conditional TRUE/FALSE claims with narrower scope.
 
 This third level is crucial — it prevents overgeneralization and demonstrates belief model advantage. The key insight: MnemeBrain doesn't just store contradictions, it *resolves* them by discovering the contextual variable that explains the divergence.
 
@@ -201,10 +204,10 @@ This third level is crucial — it prevents overgeneralization and demonstrates 
    - Exact duplicate of a previously tested config with no new rationale
 
    **Exception:** A run near a known-bad config is **not wasted** if:
-   - It has a documented rationale tag (hypothesis written before the run), AND
+   - `rationale_tag` is non-empty in `RunConfig` (hypothesis written before the run), AND
    - At least one focal parameter changed beyond a "meaningful step" threshold (see Config Search Space section)
 
-   This exception protects deliberate ablation probes near failure boundaries.
+   This exception protects deliberate ablation probes near failure boundaries. The `rationale_tag` field makes this auditable.
 
 ### Condition D Only
 6. **Recommendation hit rate** — How often did the suggested change improve results?
@@ -378,7 +381,10 @@ The N=5 pilot is **not** a confirmatory significance test. It estimates:
 **Promotion to full run (N=20) requires ALL of:**
 1. Hooks are stable — zero crashes across pilot runs
 2. Telemetry is complete — all fields populated in experiment_log.jsonl
-3. Directional separation appears — at least one primary metric shows consistent ordering across conditions
+3. Directional separation appears — at least **two** of the following show consistent ordering across conditions:
+   - runs-to-threshold
+   - best achieved val_bpb
+   - wasted-run rate
 4. Estimated effect size justifies compute — Cohen's d > 0.3 estimated from pilot variance, suggesting the full run has reasonable power
 
 If the pilot shows no directional signal at all, revisit the experimental design before scaling up.
@@ -403,6 +409,7 @@ class RunConfig:
     batch_size: int
     warmup: float
     seed: int
+    rationale_tag: str = ""  # Written before the run; used for wasted-run exception audit
 
 @dataclass
 class RunResults:
@@ -421,12 +428,14 @@ class PredictionResult:
     confidence: float
     similar_runs: list[int]
     risks: list[str]
+    source_run_ids: list[int] = field(default_factory=list)  # Which prior runs informed this prediction
 
 @dataclass
 class RecommendationResult:
     suggested_change: str
     rationale: list[str]
     risk_level: str          # "low" | "medium" | "high"
+    source_run_ids: list[int] = field(default_factory=list)  # Which prior runs informed this recommendation
 
 @dataclass
 class PreRunContext:
@@ -654,9 +663,15 @@ Applied 5 design patches based on two rounds of review:
 | 4. Typed hooks API | Updated: "mnemebrain_hooks.py" | Raw dicts → `RunConfig`, `RunResults`, `PreRunContext`, `PredictionResult`, `RecommendationResult` dataclasses |
 | 5. Level 3 beliefs | Updated: "Belief Schema Level 3" | Contextualized claims now resolve BOTH → conditional TRUE/FALSE, demonstrating revision mechanism |
 | 6. Results directory | New: "Results Directory" | Structured `results/` dir with per-run JSONs, summaries, comparisons, and `results_analyzer.py` |
+| 7. NEITHER terminology | Updated: all Belnap references | `NONE` → `NEITHER` (standard Belnap term) |
+| 8. Sheet isolation | Updated: "Condition Order Control" | Cooldown rule → auditable decision-sheet isolation per condition |
+| 9. Pilot gate tightened | Updated: "Pilot Promotion Criteria" | 1 metric → 2-of-3 metrics required for promotion |
+| 10. Condition A clarity | Updated: "Condition A" | Disambiguated: stdout-only during session, JSON written post-run for analysis only |
+| 11. `rationale_tag` | Updated: `RunConfig` | First-class field for wasted-run exception audit |
+| 12. `source_run_ids` | Updated: `PredictionResult`, `RecommendationResult` | Traceability for Condition D outputs |
 
 Additional refinements:
 - Wasted-run exception for deliberate ablation probes (documented hypothesis + meaningful parameter change)
 - D* positioned as pre-registered supplemental condition, not part of core A/B/C/D ladder
 
-**Status: Ready for Step 1 implementation.**
+**Status: Design frozen. Ready for Step 1 implementation.**
