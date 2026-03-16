@@ -17,15 +17,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Windows: no Triton/flash-attn3 kernels available
+# Platform & GPU capability checks
 _WIN32 = sys.platform == "win32"
-if _WIN32:
+_USE_SDPA = False
+if _WIN32 or _USE_SDPA:
     torch.compile = lambda f=None, **kwargs: f if f is not None else (lambda fn: fn)
+    _USE_SDPA = True
 else:
     from kernels import get_kernel
     cap = torch.cuda.get_device_capability()
-    repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-    fa3 = get_kernel(repo).flash_attn_interface
+    if cap[0] >= 10:  # Blackwell (SM 100+): no flash-attn3 kernels yet
+        _USE_SDPA = True
+    else:
+        repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+        fa3 = get_kernel(repo).flash_attn_interface
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -94,7 +99,7 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        if _WIN32:
+        if _WIN32 or _USE_SDPA:
             q = q.transpose(1, 2)
             k = k.transpose(1, 2)
             v = v.transpose(1, 2)
@@ -116,13 +121,14 @@ class MLP(nn.Module):
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        self.dropout = nn.Dropout(0.1)
 
     def forward(self, x):
-        residual = x
         x = self.c_fc(x)
-        x = F.relu(x).square()
+        x = F.silu(x)
+        x = self.dropout(x)
         x = self.c_proj(x)
-        return x + residual
+        return x
 
 
 class Block(nn.Module):
@@ -267,16 +273,11 @@ class GPT(nn.Module):
         param_groups = [
             dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.001),
-            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.001),
+            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.002),
+            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=matrix_params, lr=matrix_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
         ]
-        for shape in sorted({p.shape for p in matrix_params}):
-            group_params = [p for p in matrix_params if p.shape == shape]
-            param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
-            ))
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
@@ -297,13 +298,13 @@ class GPT(nn.Module):
         x = norm(x)
 
         softcap = 15
-        logits = self.lm_head(x)
+        logits = F.linear(x, self.transformer.wte.weight)
         logits = logits.float()
         logits = softcap * torch.tanh(logits / softcap)
 
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
-                                   ignore_index=-1, reduction=reduction)
+                                   ignore_index=-1, reduction=reduction, label_smoothing=0.1)
             return loss
         return logits
 
@@ -494,7 +495,7 @@ def _auto_gpu_config(vram_mb):
         depth, batch = 10, 12
     else:                   # 8GB (RTX 3070, 3060 8GB)
         depth, batch = 8, 8
-    vram_limit = vram_mb - 500
+    vram_limit = vram_mb  # no VRAM limit — pegging VRAM is safe, only temp matters
     return depth, batch, vram_limit
 
 _auto_depth, _auto_batch, _auto_vram_limit = _auto_gpu_config(_gpu_vram_mb)

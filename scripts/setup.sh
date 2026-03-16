@@ -59,16 +59,35 @@ if [[ "$(uname -s)" != "Linux" ]]; then
     exit 1
 fi
 
-# Check for NVIDIA GPU
-if ! command -v nvidia-smi &>/dev/null; then
+# Check for NVIDIA GPU (handle WSL lib path not on PATH)
+if command -v nvidia-smi &>/dev/null; then
+    NVIDIA_SMI="nvidia-smi"
+elif [[ -x /usr/lib/wsl/lib/nvidia-smi ]]; then
+    export PATH="/usr/lib/wsl/lib:$PATH"
+    NVIDIA_SMI="nvidia-smi"
+    warn "Added /usr/lib/wsl/lib to PATH (nvidia-smi was not on PATH)."
+    warn "To make this permanent: echo 'export PATH=/usr/lib/wsl/lib:\$PATH' >> ~/.bashrc"
+else
     error "nvidia-smi not found. Make sure NVIDIA drivers are installed on Windows."
     error "Download from: https://www.nvidia.com/drivers"
+    error ""
+    error "If using an older WSL distro (e.g. Ubuntu 20.04), try upgrading:"
+    error "  wsl --install Ubuntu-22.04    (from PowerShell)"
     exit 1
 fi
 
-GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
-GPU_VRAM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)
+GPU_NAME=$($NVIDIA_SMI --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+GPU_VRAM=$($NVIDIA_SMI --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)
 info "GPU detected: ${GPU_NAME} (${GPU_VRAM} MB VRAM)"
+
+# Detect GPU architecture for flash-attn3 compatibility
+GPU_ARCH=$($NVIDIA_SMI --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1)
+if [[ -n "$GPU_ARCH" ]]; then
+    GPU_MAJOR=$(echo "$GPU_ARCH" | cut -d. -f1)
+    if (( GPU_MAJOR >= 10 )); then
+        info "Blackwell GPU detected (SM ${GPU_ARCH}) — will use PyTorch SDPA attention backend."
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Interactive prompts (skipped if --auto or flags provided)

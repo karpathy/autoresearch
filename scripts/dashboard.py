@@ -63,7 +63,19 @@ def get_gpu_stats():
 GPU_TEMP_WARN = 75
 GPU_TEMP_PAUSE = 80
 GPU_TEMP_ABORT = 90
-VRAM_LIMIT_MB = 7500
+
+# Auto-detect GPU VRAM (leave 500MB headroom)
+if _nvml_available:
+    _gpu_mem = pynvml.nvmlDeviceGetMemoryInfo(_nvml_handle)
+    _gpu_vram_total = _gpu_mem.total // (1024 * 1024)
+    VRAM_LIMIT_MB = _gpu_vram_total - 500
+    GPU_NAME = pynvml.nvmlDeviceGetName(_nvml_handle)
+    if isinstance(GPU_NAME, bytes):
+        GPU_NAME = GPU_NAME.decode()
+else:
+    VRAM_LIMIT_MB = 7500
+    GPU_NAME = "Unknown GPU"
+    _gpu_vram_total = 8192
 
 # ---------------------------------------------------------------------------
 # Training output parser
@@ -179,7 +191,7 @@ def build_dashboard(metrics, gpu, loss_history, log_lines, status):
     # GPU panel
     temp = gpu.get("temp")
     vram_used = gpu.get("vram_used_mb", 0)
-    vram_total = gpu.get("vram_total_mb", 8192)
+    vram_total = gpu.get("vram_total_mb", _gpu_vram_total)
     util = gpu.get("gpu_util", 0)
     vram_pct = (vram_used / vram_total * 100) if vram_total > 0 else 0
 
@@ -209,7 +221,7 @@ def build_dashboard(metrics, gpu, loss_history, log_lines, status):
         vram_style = "green"
 
     gpu_lines = Text()
-    gpu_lines.append(f"\n  RTX 3070 (8GB)\n\n", style="bold")
+    gpu_lines.append(f"\n  {GPU_NAME}\n\n", style="bold")
     gpu_lines.append(f"  Temp:  ")
     gpu_lines.append(f"{temp_str}\n", style=temp_style)
     gpu_lines.append(f"  VRAM:  ")
