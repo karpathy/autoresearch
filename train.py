@@ -686,10 +686,13 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
-    # Apply exponential decay factor to learning rates
-    exp_decay = 0.9999 ** step
-    for group in optimizer.param_groups:
-        group["lr"] *= exp_decay
+    # Add gradient noise with cosine annealing schedule
+    noise_scale = 0.01 * (0.5 * (1 + torch.cos(torch.tensor(progress * 3.14159))))
+    if noise_scale > 1e-6:
+        for param in model.parameters():
+            if param.grad is not None:
+                noise = torch.randn_like(param.grad) * noise_scale
+                param.grad.add_(noise)
     
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
     optimizer.step()
