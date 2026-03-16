@@ -27,8 +27,8 @@ uv tool install darwinderby[llm]
 From source:
 
 ```bash
-git clone https://github.com/kousun12/autoanything
-cd autoanything
+git clone https://github.com/kousun12/darwin-derby
+cd darwin-derby
 uv tool install -e ".[llm]"
 ```
 

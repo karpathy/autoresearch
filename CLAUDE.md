@@ -9,7 +9,7 @@ Darwin Derby — a framework for autonomous optimization via AI agents. Agents p
 ## Repository Structure
 
 ```
-autoanything/
+darwin-derby/
 ├── src/darwinderby/        # Installable package (the framework)
 │   ├── cli.py                # CLI entry point (click)
 │   ├── evaluator.py          # Polling evaluation loop
