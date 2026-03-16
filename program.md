@@ -1,114 +1,96 @@
-# autoresearch
+# autoresearch — agent instructions
 
-This is an experiment to have the LLM do its own research.
+## 1. Orientation (do this first, every run)
 
-## Setup
+Before making any changes, read and understand the codebase:
 
-To set up a new experiment, work with the user to:
+1. Read `ground.json` — the user-owned, read-only configuration:
+   - `mode`: `"test"` or `"train"` — determines which time budget applies.
+   - `training.time_budget_test` / `training.time_budget_train` — the wall-clock seconds the training loop is allowed to run. **Respect this strictly.**
+   - `training.max_seq_len` — sequence length, fixed.
+   - `processor` — dtype, compile, flash_attention, peak_flops overrides (all `"auto"` by default).
+2. Read `model.json` — your hyperparameter file (you own this):
+   - `architecture`: depth, aspect_ratio, head_dim, window_pattern.
+   - `optimization`: batch sizes, learning rates, weight decay, adam betas, warmup/warmdown ratios, final_lr_frac.
+   - `evaluation`: batch_size, tokens (for the fast eval after training).
+3. Read `prepare.py` — understand but **never edit**:
+   - Exports: `MAX_SEQ_LEN`, `TIME_BUDGET`, `PLATFORM`, `Tokenizer`, `make_dataloader`, `evaluate_bpb`, `get_token_bytes`.
+   - `PLATFORM` dict: device, dtype, use_grad_scaler, attention, compile, peak_flops (auto-detected from GPU hardware specs).
+4. Read `train.py` — the model and training loop (you own this):
+   - Loads all hyperparameters from `model.json` at startup.
+   - Imports platform config from `prepare.py`.
+   - Prints a `---` separator followed by key=value summary lines at the end of training.
+5. Note the key metric: **`val_bpb`** (bits per byte) — lower is better. This is printed by `train.py` after the training loop completes.
 
-1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar5`). The branch `autoresearch/<tag>` must not already exist — this is a fresh run.
-2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
-3. **Read the in-scope files**: The repo is small. Read these files for full context:
-   - `README.md` — repository context.
-   - `prepare.py` — fixed constants, data prep, tokenizer, dataloader, evaluation. Do not modify.
-   - `train.py` — the file you modify. Model architecture, optimizer, training loop.
-4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
-5. **Initialize results.tsv**: Create `results.tsv` with just the header row. The baseline will be recorded after the first run.
-6. **Confirm and go**: Confirm setup looks good.
+## 2. Decision metrics
 
-Once you get confirmation, kick off the experimentation.
+Use these to guide your experiment choices:
 
-## Experimentation
+| Metric | Source | Meaning |
+|---|---|---|
+| `val_bpb` | train.py stdout | Primary objective — minimize this |
+| `peak_vram_mb` | train.py stdout | Must not OOM — watch this when increasing batch/model size |
+| `mfu_percent` | train.py stdout | Hardware utilization — indicates if compute is bottlenecked |
+| `training_seconds` | train.py stdout | Must stay within `TIME_BUDGET` |
+| `total_tokens_M` | train.py stdout | Throughput — more tokens = more learning within budget |
+| `num_params_M` | train.py stdout | Model capacity — larger is not always better under time constraint |
 
-Each experiment runs on a single GPU. The training script runs for a **fixed time budget of 5 minutes** (wall clock training time, excluding startup/compilation). You launch it simply as: `uv run train.py`.
+## 3. File ownership
 
-**What you CAN do:**
-- Modify `train.py` — this is the only file you edit. Everything is fair game: model architecture, optimizer, hyperparameters, training loop, batch size, model size, etc.
+| File | Owner | Editable | Purpose |
+|---|---|---|---|
+| `ground.json` | User | **NO** | Platform config, data paths, time budgets |
+| `prepare.py` | User | **NO** | Data prep, tokenizer, dataloader, eval, platform detection |
+| `model.json` | Agent | **YES** | Architecture + optimization hyperparameters |
+| `train.py` | Agent | **YES** | Model definition, optimizer, training loop |
+| `results.tsv` | Agent | **YES** | Experiment log — append only |
+| `program.md` | User | **NO** | This document |
 
-**What you CANNOT do:**
-- Modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, tokenizer, and training constants (time budget, sequence length, etc).
-- Install new packages or add dependencies. You can only use what's already in `pyproject.toml`.
-- Modify the evaluation harness. The `evaluate_bpb` function in `prepare.py` is the ground truth metric.
+## 4. Execution sequence
 
-**The goal is simple: get the lowest val_bpb.** Since the time budget is fixed, you don't need to worry about training time — it's always 5 minutes. Everything is fair game: change the architecture, the optimizer, the hyperparameters, the batch size, the model size. The only constraint is that the code runs without crashing and finishes within the time budget.
+### First run (setup)
 
-**VRAM** is a soft constraint. Some increase is acceptable for meaningful val_bpb gains, but it should not blow up dramatically.
+1. Run `uv run prepare.py` to ensure data and tokenizer are cached.
+2. Initialize `results.tsv` with this exact header (tab-separated):
 
-**Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome — that's a simplification win. When evaluating whether to keep a change, weigh the complexity cost against the improvement magnitude. A 0.001 val_bpb improvement that adds 20 lines of hacky code? Probably not worth it. A 0.001 val_bpb improvement from deleting code? Definitely keep. An improvement of ~0 but much simpler code? Keep.
+   ```
+   run_id val_bpb peak_vram_mb mfu_percent training_seconds total_tokens_M num_params_M status description
+   ```
 
-**The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
+3. Run `uv run train.py`, capturing stdout to `sessions/<run_id>.log`.
+   - `run_id` = short git commit hash or a timestamp tag — unique per run.
+4. Parse the `---` block from the log to extract metrics.
+5. Append one row to `results.tsv` with the extracted values and `status=baseline`.
 
-## Output format
+### Subsequent runs (experiment loop)
 
-Once the script finishes it prints a summary like this:
+1. Form one hypothesis from the current code and most recent run metrics.
+2. Edit `model.json` and/or `train.py`.
+3. Commit with a message describing the hypothesis.
+4. Run `uv run train.py`, capturing stdout to `sessions/<run_id>.log` (use the new commit hash as `run_id`).
+5. Parse the `---` block. Extract `val_bpb`, `peak_vram_mb`, `mfu_percent`, `training_seconds`, `total_tokens_M`, `num_params_M`.
+6. Append one row to `results.tsv`:
+   - `status=keep` if val_bpb improved.
+   - `status=discard` if val_bpb did not improve.
+   - `status=crash` if the run failed.
+7. If `discard` or `crash`: revert with `git reset --hard HEAD~1`.
+8. Continue to next hypothesis.
 
-```
----
-val_bpb:          0.997900
-training_seconds: 300.1
-total_seconds:    325.9
-peak_vram_mb:     45060.2
-mfu_percent:      39.80
-total_tokens_M:   499.6
-num_steps:        953
-num_params_M:     50.3
-depth:            8
-```
+## 5. Logging rules
 
-Note that the script is configured to always stop after 5 minutes, so depending on the computing platform of this computer the numbers might look different. You can extract the key metric from the log file:
+- Every run MUST have its own log file: `sessions/<run_id>.log`.
+- Every run MUST have exactly one row appended to `results.tsv`.
+- The `run_id` in `results.tsv` must match the log filename (without `.log`).
+- Never overwrite or delete previous log files or results rows.
 
-```
-grep "^val_bpb:" run.log
-```
+## 6. Constraints
 
-## Logging results
+1. **Time budget**: `train.py` self-enforces via `TIME_BUDGET` from `ground.json`. Do not circumvent this.
+2. **No new packages**: use only what is already installed in the environment.
+3. **Do not edit** `ground.json`, `prepare.py`, or `program.md`.
+4. **Prefer simpler changes** when two options yield similar `val_bpb`.
+5. **VRAM**: if a run OOMs, reduce `device_batch_size` in `model.json` or model size before retrying.
 
-When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated — commas break in descriptions).
+## 7. Autonomy
 
-The TSV has a header row and 5 columns:
-
-```
-commit	val_bpb	memory_gb	status	description
-```
-
-1. git commit hash (short, 7 chars)
-2. val_bpb achieved (e.g. 1.234567) — use 0.000000 for crashes
-3. peak memory in GB, round to .1f (e.g. 12.3 — divide peak_vram_mb by 1024) — use 0.0 for crashes
-4. status: `keep`, `discard`, or `crash`
-5. short text description of what this experiment tried
-
-Example:
-
-```
-commit	val_bpb	memory_gb	status	description
-a1b2c3d	0.997900	44.0	keep	baseline
-b2c3d4e	0.993200	44.2	keep	increase LR to 0.04
-c3d4e5f	1.005000	44.0	discard	switch to GeLU activation
-d4e5f6g	0.000000	0.0	crash	double model width (OOM)
-```
-
-## The experiment loop
-
-The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
-
-LOOP FOREVER:
-
-1. Look at the git state: the current branch/commit we're on
-2. Tune `train.py` with an experimental idea by directly hacking the code.
-3. git commit
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
-8. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
-9. If val_bpb is equal or worse, you git reset back to where you started
-
-The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
-
-**Timeout**: Each experiment should take ~5 minutes total (+ a few seconds for startup and eval overhead). If a run exceeds 10 minutes, kill it and treat it as a failure (discard and revert).
-
-**Crashes**: If a run crashes (OOM, or a bug, or etc.), use your judgment: If it's something dumb and easy to fix (e.g. a typo, a missing import), fix it and re-run. If the idea itself is fundamentally broken, just skip it, log "crash" as the status in the tsv, and move on.
-
-**NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
-
-As an example use case, a user might leave you running while they sleep. If each experiment takes you ~5 minutes then you can run approx 12/hour, for a total of about 100 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
+Continue iterating experiments until manually stopped. Do not pause for permission between runs.
