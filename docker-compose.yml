@@ -1,0 +1,83 @@
+# docker-compose.yml
+# Full autoresearch-mnemebrain stack
+#
+# Services:
+#   mnemebrain-backend  — MnemeBrain belief memory API (port 8000)
+#   mnemebrain-sidecar  — Autoresearch bridge sidecar (port 7432)
+#   autoresearch        — The training loop (GPU required)
+#
+# Usage:
+#   docker compose up mnemebrain-backend mnemebrain-sidecar   # start memory stack
+#   docker compose run --rm autoresearch python agent_runner.py --backend claude-api
+#
+# Mac without NVIDIA GPU:
+#   Run mnemebrain-backend + mnemebrain-sidecar in Docker.
+#   Run autoresearch natively (MPS or CPU) on the Mac host,
+#   pointing MNEMEBRAIN_URL=http://localhost:8000.
+
+version: "3.9"
+
+services:
+
+  # ── MnemeBrain belief memory backend ─────────────────────────────
+  mnemebrain-backend:
+    image: python:3.12-slim
+    working_dir: /app
+    command: >
+      bash -c "pip install mnemebrain-lite --quiet &&
+               python -m mnemebrain_core"
+    ports:
+      - "8000:8000"
+    volumes:
+      - mnemebrain-data:/app/.mnemebrain
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── MnemeBrain sidecar ────────────────────────────────────────────
+  mnemebrain-sidecar:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: python -m mnemebrain_sidecar
+    ports:
+      - "7432:7432"
+    environment:
+      MNEMEBRAIN_URL: "http://mnemebrain-backend:8000"
+      SIDECAR_PORT: "7432"
+    depends_on:
+      mnemebrain-backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Autoresearch training loop (GPU required) ─────────────────────
+  autoresearch:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      MNEMEBRAIN_URL: "http://mnemebrain-backend:8000"
+      MNEMEBRAIN_SIDECAR_URL: "http://mnemebrain-sidecar:7432"
+    volumes:
+      - ./results:/app/results
+      - autoresearch-cache:/app/.cache
+    depends_on:
+      - mnemebrain-sidecar
+    profiles:
+      - gpu   # only start with: docker compose --profile gpu up
+
+volumes:
+  mnemebrain-data:
+  autoresearch-cache:
