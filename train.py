@@ -313,11 +313,6 @@ class GPT(nn.Module):
         logits = self.lm_head(x)
         logits = logits.float()
         logits = softcap * torch.tanh(logits / softcap)
-        
-        # Temperature scaling during training
-        if self.training and hasattr(self, '_training_progress'):
-            temp = 0.9 + 0.1 * self._training_progress  # 0.9 -> 1.0
-            logits = logits / temp
 
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
@@ -688,7 +683,6 @@ while True:
 
     # Progress and schedules
     progress = min(total_training_time / TIME_BUDGET, 1.0)
-    model._training_progress = progress
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
