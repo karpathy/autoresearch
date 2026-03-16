@@ -4,6 +4,7 @@ Cherry-picked and simplified from nanochat.
 Usage: uv run train.py
 """
 
+import contextlib
 import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
@@ -80,6 +81,8 @@ device = PLATFORM.device
 autocast_dtype = torch.bfloat16 if PLATFORM.supports_bf16 else (torch.float16 if PLATFORM.supports_fp16 else torch.float32)
 if PLATFORM.kind == "cpu":
     autocast_ctx = torch.autocast(device_type="cpu", enabled=False)
+elif PLATFORM.kind == "mps":
+    autocast_ctx = contextlib.nullcontext()
 else:
     autocast_ctx = torch.amp.autocast(device_type=PLATFORM.kind, dtype=autocast_dtype)
 H100_BF16_PEAK_FLOPS = 989.5e12

@@ -23,8 +23,8 @@ fi
 
 if [[ $# -gt 0 ]]; then
     # Non-interactive: pass the user's message as -p
-    exec claude --append-system-prompt-file "$PERSONA_FILE" -p "$*"
+    exec claude --append-system-prompt-file "$PERSONA_FILE" -p "$*" --allow-dangerously-skip-permissions 
 else
     # Interactive mode
-    exec claude --append-system-prompt-file "$PERSONA_FILE"
+    exec claude --append-system-prompt-file "$PERSONA_FILE" --allow-dangerously-skip-permissions 
 fi

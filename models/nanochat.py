@@ -17,6 +17,13 @@ import torch.nn.functional as F
 
 from platform_config import PLATFORM
 
+# Low-precision dtype: bf16 on CUDA, fp16 on MPS, fp32 on CPU
+_LOW_DTYPE = (
+    torch.bfloat16 if PLATFORM.supports_bf16
+    else torch.float16 if PLATFORM.supports_fp16
+    else torch.float32
+)
+
 # ---------------------------------------------------------------------------
 # Flash Attention backend (optional — falls back to SDPA)
 # ---------------------------------------------------------------------------
@@ -200,10 +207,10 @@ class GPT(nn.Module):
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
-        # Cast embeddings to bf16
-        self.transformer.wte.to(dtype=torch.bfloat16)
+        # Cast embeddings to low-precision dtype
+        self.transformer.wte.to(dtype=_LOW_DTYPE)
         for ve in self.value_embeds.values():
-            ve.to(dtype=torch.bfloat16)
+            ve.to(dtype=_LOW_DTYPE)
 
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
         if device is None:
@@ -213,7 +220,7 @@ class GPT(nn.Module):
         t = torch.arange(seq_len, dtype=torch.float32, device=device)
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.bfloat16(), sin.bfloat16()
+        cos, sin = cos.to(_LOW_DTYPE), sin.to(_LOW_DTYPE)
         cos, sin = cos[None, :, None, :], sin[None, :, None, :]
         return cos, sin
 
@@ -273,11 +280,11 @@ class GPT(nn.Module):
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
         param_groups = [
-            dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-7, weight_decay=0.0),
+            dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-7, weight_decay=0.0),
+            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-7, weight_decay=0.0),
+            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-7, weight_decay=0.0),
+            dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-7, weight_decay=0.0),
         ]
         for shape in sorted({p.shape for p in matrix_params}):
             group_params = [p for p in matrix_params if p.shape == shape]
@@ -329,6 +336,10 @@ polar_express_coeffs = [
 ]
 
 def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t):
+    dt = p.dtype
+    step_t, lr_t = step_t.to(dtype=dt), lr_t.to(dtype=dt)
+    beta1_t, beta2_t = beta1_t.to(dtype=dt), beta2_t.to(dtype=dt)
+    eps_t, wd_t = eps_t.to(dtype=dt), wd_t.to(dtype=dt)
     p.mul_(1 - lr_t * wd_t)
     exp_avg.lerp_(grad, 1 - beta1_t)
     exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
@@ -345,7 +356,7 @@ def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momen
     momentum_buffer.lerp_(stacked_grads, 1 - momentum)
     g = stacked_grads.lerp_(momentum_buffer, momentum)
     # Polar express orthogonalization
-    X = g.bfloat16()
+    X = g.to(_LOW_DTYPE)
     X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.02 + 1e-6)
     if g.size(-2) > g.size(-1):
         for a, b, c in polar_express_coeffs[:ns_steps]:
@@ -366,10 +377,10 @@ def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momen
     v_norm = v_norm_sq.sqrt()
     lerp_weight = (1 - beta2).to(second_momentum_buffer.dtype)
     second_momentum_buffer.lerp_(v_mean.to(dtype=second_momentum_buffer.dtype), lerp_weight)
-    step_size = second_momentum_buffer.clamp_min(1e-10).rsqrt()
+    step_size = second_momentum_buffer.clamp_min(1e-7).rsqrt()
     scaled_sq_sum = (v_mean * red_dim_size) * step_size.float().square()
     v_norm_new = scaled_sq_sum.sum(dim=(-2, -1), keepdim=True).sqrt()
-    final_scale = step_size * (v_norm / v_norm_new.clamp_min(1e-10))
+    final_scale = step_size * (v_norm / v_norm_new.clamp_min(1e-7))
     g = g * final_scale.to(g.dtype)
     # Cautious weight decay + parameter update
     lr = lr_t.to(g.dtype)
@@ -388,17 +399,19 @@ class MuonAdamW(torch.optim.Optimizer):
 
     def __init__(self, param_groups):
         super().__init__(param_groups, defaults={})
-        # 0-D CPU tensors to avoid torch.compile recompilation when values change
-        self._adamw_step_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_beta1_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_eps_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_momentum_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        # On CUDA with torch.compile, CPU scalars avoid recompilation.
+        # On MPS (no compile), scalars must live on the same device as params.
+        scalar_device = "cpu" if PLATFORM.supports_compile else PLATFORM.device
+        self._adamw_step_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_lr_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_beta1_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_beta2_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_eps_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_wd_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._muon_momentum_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
 
     def _step_adamw(self, group):
         for p in group['params']:

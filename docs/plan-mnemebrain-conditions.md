@@ -6,21 +6,6 @@ Scientific comparison: does structured belief memory improve autonomous ML exper
 
 **Key design principle:** All conditions run identical training code. MnemeBrain only influences what happens BETWEEN runs — never during training. This isolates the memory effect from optimizer effects.
 
-## Research Docs Review
-
-| Doc | Status | Key Finding |
-|-----|--------|-------------|
-| research_v1 | Solid | Correctly identifies forgetting problem. Gap analysis accurate. |
-| research_v2 | Solid | Three core novelties (differentiable Belnap, AGM as loss, neural TMS) genuine. |
-| research_v3 | Solid | Critical: LTN single-scalar, Evidential DL can't represent BOTH, Gumbel-Softmax incompatible with bilattice. |
-| architecture_v4.1 | Good, gaps | Needs: training-loop telemetry spec, belief schema for experiment observations, prediction capability spec. |
-
-**Doc improvements needed:**
-- v4.1: Add "Experiment Telemetry" section — what signals to capture post-run
-- v4.1: Add "Belief Schema" section — 3-level schema (observation, tendency, contextual)
-- v4.1: Add "Prediction" section — sandbox-based outcome prediction before runs
-- Sidecar weight formula (`0.5 + delta*10`) too narrow at ±0.05 BPB — use log-scale or adaptive capping
-
 ## Conditions (Revised — 4 Conditions)
 
 ### Condition A — No Memory, No Guidance
