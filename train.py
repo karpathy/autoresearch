@@ -694,13 +694,6 @@ while True:
                 noise = torch.randn_like(param.grad) * noise_scale
                 param.grad.add_(noise)
     
-    # Adaptive gradient scaling by layer depth
-    for i, block in enumerate(model.transformer.h):
-        depth_scale = (0.8 ** (i / len(model.transformer.h)))
-        for param in block.parameters():
-            if param.grad is not None:
-                param.grad.mul_(depth_scale)
-    
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
     optimizer.step()
     model.zero_grad(set_to_none=True)
