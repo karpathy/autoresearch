@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "autoanything"
 version = "0.1.0"
-description = "Autonomous optimization via AI agent swarms"
+description = "Automaxxing for AI agent swarms"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
