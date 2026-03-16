@@ -97,7 +97,9 @@ class CausalSelfAttention(nn.Module):
 
         cos, sin = cos_sin
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
-        q, k = norm(q), norm(k)
+        # QK-norm: normalize queries and keys separately for better training dynamics
+        q = q / (q.norm(dim=-1, keepdim=True) + 1e-6)
+        k = k / (k.norm(dim=-1, keepdim=True) + 1e-6)
 
         if _WIN32 or _USE_SDPA:
             q = q.transpose(1, 2)
