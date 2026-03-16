@@ -303,8 +303,11 @@ class GPT(nn.Module):
         logits = softcap * torch.tanh(logits / softcap)
 
         if targets is not None:
+            # Dynamic label smoothing: start at 0.1, decay to 0.0
+            progress = min(total_training_time / TIME_BUDGET if 'total_training_time' in globals() else 0.0, 1.0)
+            label_smoothing = 0.1 * (1.0 - progress)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
-                                   ignore_index=-1, reduction=reduction, label_smoothing=0.1)
+                                   ignore_index=-1, reduction=reduction, label_smoothing=label_smoothing)
             return loss
         return logits
 
