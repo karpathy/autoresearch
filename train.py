@@ -444,18 +444,6 @@ class MuonAdamW(torch.optim.Optimizer):
 
     @torch.no_grad()
     def step(self):
-        # Apply EMA to gradients before optimization
-        ema_decay = 0.95
-        for group in self.param_groups:
-            for p in group['params']:
-                if p.grad is not None:
-                    state = self.state[p]
-                    if 'grad_ema' not in state:
-                        state['grad_ema'] = p.grad.clone()
-                    else:
-                        state['grad_ema'].mul_(ema_decay).add_(p.grad, alpha=1-ema_decay)
-                    p.grad.copy_(state['grad_ema'])
-        
         for group in self.param_groups:
             if group['kind'] == 'adamw':
                 self._step_adamw(group)
