@@ -2,9 +2,7 @@
 
 This project started from Andrej Karpathy's [autoresearch](https://github.com/karpathy/autoresearch) — a single AI agent in a loop, optimizing a GPT training script against validation bits-per-byte on one GPU. The agent would modify `train.py`, run training for five minutes, check the score, and keep the change if it improved. Simple evolutionary search powered by an LLM instead of random mutations.
 
-The insight wasn't the ML part. It was the loop: propose a change, score it against an objective function, keep it if it's better, throw it away if it's not. That loop works for anything with a number you can measure. The code changes are the mutations, the scoring function is the fitness landscape, and the LLM is a mutation operator that actually understands what it's changing.
-
-**AutoAnything** generalizes that loop. The mutable state can be any file. The scoring function can be any program that outputs a number. And agents can be anything that can `git push` — Claude Code, Codex, Cursor, a human with vim, a shell script. You define the scoring function and a direction. AutoAnything is just the plumbing.
+**AutoAnything** generalizes that loop. The mutable state can be any set of files. The scoring function can be any program that outputs a number. And agents can be anything that can update files — Claude Code, Codex, Cursor, a human with vim, a shell script. You define the scoring function and a direction. AutoAnything automaxxes your black-box score while you sleep.
 
 | GPT Training (val BPB) | Rastrigin Function (10-D) |
 |:---:|:---:|
@@ -63,37 +61,27 @@ maxx score
 maxx run -a "claude -p 'read agent_instructions.md and improve the solution'"
 ```
 
-The `run` command handles everything: it runs your agent, scores the result, keeps improvements, updates the leaderboard, and loops. The scoring directory is hidden from the agent during execution. This is the simplest way to use AutoAnything.
-
-To scale up to multiple agents submitting concurrently, use the evaluator:
-
-```bash
-maxx evaluate --baseline-only   # establish baseline
-maxx evaluate                   # start evaluation loop (watches for proposal branches)
-```
+The `run` command handles everything: it runs your agent, scores the result, keeps improvements, updates the leaderboard, and loops. The scoring directory is hidden from the agent during execution.
 
 ## How it works
 
 ```mermaid
 flowchart TD
-    read["Read problem, leaderboard, context"] --> edit["Modify state/ files"]
-    edit --> push["Push proposal branch"]
-    push --> eval["Evaluator picks up branch"]
-    eval --> score["Run score.py"]
+    agent["Agent modifies state/ files"] --> score["Run score.py"]
     score --> check{"Improved?"}
-    check -- Yes --> merge["Merge to main + update leaderboard"]
-    check -- No --> discard["Discard branch"]
-    merge --> read
-    discard --> read
+    check -- Yes --> keep["Keep changes + update leaderboard"]
+    check -- No --> revert["Revert changes"]
+    keep --> agent
+    revert --> agent
 ```
 
-**Agents** clone the repo, read the problem definition and leaderboard, modify the mutable files, and push a branch (`proposals/<name>/<description>`) or open a PR. They never see the scoring code.
+`maxx run` handles the entire loop: it invokes your agent, scores the result, keeps improvements, reverts failures, updates the leaderboard, and repeats. The scoring directory is hidden from the agent during execution — agents never see the scoring code. The agent can be any command — a shell script, a Python program, a call to Claude.
 
-**The evaluator** watches for new branches or PRs, scores them one at a time (serial queue), and either merges (if improved) or discards/closes. The scoring code, test data, and history DB are all private (gitignored).
+To scale to multiple agents working in parallel, you can use the [git-based evaluator](#scaling-with-git) instead — agents push proposal branches and the evaluator scores and merges them.
 
 ## Problem structure
 
-A problem is a self-contained directory (typically its own git repo):
+A problem is a self-contained directory:
 
 ```
 my-problem/
@@ -121,11 +109,11 @@ flowchart LR
         E["scoring/score.py"]
         F[".autoanything/history.db"]
     end
-    B -->|"proposals"| E
+    B -->|"modified"| E
     E -->|"results"| D
 ```
 
-The `scoring/` directory is never committed — it exists only on the evaluation machine. Agents see the metric name and direction (from `problem.yaml`) and other agents' scores (from `leaderboard.md`), but never the scoring implementation.
+The `scoring/` directory is gitignored and hidden from agents during execution. Agents see the metric name and direction (from `problem.yaml`) and previous scores (from `leaderboard.md`), but never the scoring implementation.
 
 ## CLI reference
 
@@ -146,35 +134,14 @@ The `scoring/` directory is never committed — it exists only on the evaluation
 
 All commands operate on the current directory by default (overridable with `--dir`).
 
-### Evaluator modes
+### Local loop
 
-**Local loop** — single machine, one agent, fully automated:
+The default way to run. Single machine, one agent, fully automated:
 
 ```bash
 maxx run -a "./my_agent.sh"                           # run until stopped
 maxx run -a "python optimize.py" -n 50                # limit to 50 iterations
 maxx run -a "claude -p 'improve the solution'" -n 10  # use any command as the agent
-```
-
-**Polling** — watches for proposal branches matching `proposals/*`:
-
-```bash
-maxx evaluate --baseline-only   # establish baseline
-maxx evaluate                   # start evaluation loop
-maxx evaluate --push            # push leaderboard updates to origin
-```
-
-**Webhook** — receives GitHub PR events via HTTP:
-
-```bash
-maxx evaluate --baseline-only   # establish baseline first
-maxx serve --push               # start webhook server
-
-# Configure the GitHub webhook:
-#   URL: https://<your-domain>/webhook
-#   Content type: application/json
-#   Secret: (set matching WEBHOOK_SECRET env var on the server)
-#   Events: Pull requests only
 ```
 
 ### Progress charts
@@ -187,17 +154,17 @@ maxx plot -o chart.png            # save to a specific path
 
 ## Running agents
 
-Point any AI agent at the problem repo. They should read `agent_instructions.md` for the protocol:
+An agent is any command that reads the problem and modifies files in `state/`. Point it at the problem directory and let `maxx run` handle the rest:
 
+```bash
+maxx run -a "claude -p 'read agent_instructions.md and improve the solution'" -n 10
+maxx run -a "./my_agent.sh"
+maxx run -a "python optimize.py" -n 50
 ```
-Read agent_instructions.md and start optimizing. Check the leaderboard first.
-```
-
-Agents create branches like `proposals/agent-1/higher-lr` and push them, or open PRs targeting main. The evaluator picks them up automatically.
 
 ### Agent environment variables
 
-When using `maxx run`, the framework sets these environment variables before each agent invocation:
+The framework sets these environment variables before each agent invocation:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
@@ -209,13 +176,13 @@ When using `maxx run`, the framework sets these environment variables before eac
 
 ### Writing a custom agent
 
-An agent can be any command — a shell script, a Python script, a call to an AI tool. The agent runs in the problem directory, modifies files in `state/`, and exits. The framework handles branching, scoring, and merging.
+An agent can be any command — a shell script, a Python script, a call to an AI tool. The agent runs in the problem directory, modifies files in `state/`, and exits. The framework handles scoring, keeping improvements, and looping.
 
 A minimal shell script agent:
 
 ```bash
 #!/bin/bash
-# agent.sh — read the current score, tweak state/solution.py, commit
+# agent.sh — read the current score, tweak state/solution.py
 echo "Iteration $AUTOANYTHING_ITERATION, current best: $AUTOANYTHING_SCORE"
 
 python3 -c "
@@ -226,9 +193,6 @@ x = [v + random.gauss(0, 0.5) for v in x]
 with open('state/solution.py', 'w') as f:
     f.write(f'x = {x}\n')
 "
-
-git add state/solution.py
-git commit -m "Perturbation attempt $AUTOANYTHING_ITERATION"
 ```
 
 ```bash
@@ -256,6 +220,33 @@ The [`examples/`](examples/) directory contains five reference problems showing 
 The first four score instantly or near-instantly and need no GPU.
 
 For runnable problems with evaluator support and simulated test runs, see [derby-examples](https://github.com/kousun12/derby-examples). See [`examples/README.md`](examples/README.md) for details on each problem's structure.
+
+## Scaling with git
+
+For running many agents in parallel — a swarm — you can use the git-based evaluator. Agents clone the repo, push proposal branches (`proposals/<name>/<description>`) or open PRs, and the evaluator scores and merges them serially.
+
+**Polling** — watches for proposal branches:
+
+```bash
+maxx evaluate --baseline-only   # establish baseline
+maxx evaluate                   # start evaluation loop
+maxx evaluate --push            # push leaderboard updates to origin
+```
+
+**Webhook** — receives GitHub PR events via HTTP:
+
+```bash
+maxx evaluate --baseline-only   # establish baseline first
+maxx serve --push               # start webhook server
+
+# Configure the GitHub webhook:
+#   URL: https://<your-domain>/webhook
+#   Content type: application/json
+#   Secret: (set matching WEBHOOK_SECRET env var on the server)
+#   Events: Pull requests only
+```
+
+Evaluation is serial — one proposal at a time, so the comparison is always clean. Proposal *generation* is massively parallel: hundreds of agents can push branches simultaneously, and the evaluator processes them one by one. Anything that can `git push` can be an agent — no SDK, no registration, no custom API.
 
 ## Creating your own problem
 
@@ -289,7 +280,7 @@ For a full walkthrough with a complete runnable example, see [docs/create-proble
 
 ### Minimum time to optimization
 
-The hardest part of any optimization problem isn't the search — it's defining what "better" means. AutoAnything is designed so the time between "I have a problem" and "agents are working on it" is as short as possible. `init` scaffolds the structure. You fill in three things: what the problem is, what the starting state looks like, and how to score it. Then `run` handles everything else — branching, scoring, merging improvements, updating the leaderboard, looping. No infrastructure to set up, no agents to configure, no evaluation pipeline to build.
+The hardest part of any optimization problem isn't the search — it's defining what "better" means. AutoAnything is designed so the time between "I have a problem" and "agents are working on it" is as short as possible. `init` scaffolds the structure. You fill in three things: what the problem is, what the starting state looks like, and how to score it. Then `run` handles everything else — scoring, keeping improvements, updating the leaderboard, looping. No infrastructure to set up, no agents to configure, no evaluation pipeline to build.
 
 The goal is that your time goes to the only part that requires human judgment: thinking carefully about the scoring function and what values it encodes. Once that's right, the system runs without oversight. Agents propose, the evaluator decides, and the score ratchets forward.
 
@@ -299,23 +290,11 @@ Agents never see the scoring code. This is the single most important design deci
 
 If an optimizer can see the evaluation function, it will overfit to it — exploiting quirks in the metric, hardcoding known-good outputs, gaming the test set. This is the same reason you don't let students write the exam.
 
-The separation is structural, not conventional. The scoring code is never committed to the problem repo. It exists only on the evaluation machine. Agents know *what* metric they're optimizing and *what scores others have achieved*, but they have zero information about *how* the score is computed. They push a branch, and a number comes back.
-
-### Serial evaluation, parallel proposals
-
-Evaluation is serial — one proposal scored at a time. This is counterintuitive but correct.
-
-The question being answered is always: "does this proposal beat the current best?" Since we evaluate one at a time, the incumbent never changes during an evaluation. The comparison is always clean. No race conditions, no stale baselines, no wasted work.
-
-Proposal *generation* is massively parallel. Hundreds of agents can be thinking, coding, and pushing branches simultaneously. The funnel narrows to a single thread at evaluation time.
-
-### Git as the protocol
-
-Submissions are git branches or pull requests. Anything that can `git push` can be an agent — no SDK, no registration, no custom API. Every proposal is a commit with a diff and a message. The existing ecosystem (GitHub PRs, Actions, webhooks) just works.
+The separation is structural, not conventional. The scoring code is never committed to the problem repo. It exists only on the evaluation machine. Agents know *what* metric they're optimizing and *what scores others have achieved*, but they have zero information about *how* the score is computed. They modify state, and a number comes back.
 
 ### Only forward, only better
 
-When a proposal doesn't improve the score, it's discarded forever. No second chances, no combining near-misses. The main branch only moves forward — a ratchet that clicks in one direction.
+When a proposal doesn't improve the score, it's discarded forever. No second chances, no combining near-misses. The best score only moves forward — a ratchet that clicks in one direction.
 
 This works because the search space is infinite. Revisiting failed proposals is worse than trying new ideas. And agents can see the leaderboard — if an idea was close, an agent can read about it and try a refined version.
 
@@ -330,7 +309,7 @@ Anything with a scoring function:
 - A game AI (scored by win rate against a baseline)
 - An ML training script (scored by validation loss)
 
-But the more interesting frontier is **things that don't have a natural number yet**. Now that LLMs can act as judges, you can define a rubric across multiple dimensions — clarity, originality, tone, argument strength — have an LLM score each one, apply hidden weights, and collapse it into a single number. The agents never see the rubric or the weights. They just push a branch and get back a score.
+But the more interesting frontier is **things that don't have a natural number yet**. Now that LLMs can act as judges, you can define a rubric across multiple dimensions — clarity, originality, tone, argument strength — have an LLM score each one, apply hidden weights, and collapse it into a single number. The agents never see the rubric or the weights. They just modify state and get back a score.
 
 This means you can optimize subjective artifacts the same way:
 
