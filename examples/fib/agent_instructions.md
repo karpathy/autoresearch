@@ -14,13 +14,13 @@ Minimize the execution time of `fib(n)` in `state/fib.py`.
 
 ## Current state
 
-`state/fib.py` contains a naive recursive implementation. It's correct but exponentially slow — fib(35) takes several seconds.
+`state/fib.py` contains a naive recursive implementation. It's correct but exponentially slow.
 
 ## What's measured
 
 The scoring function:
-1. Validates correctness against known Fibonacci values (fib(0) through fib(35))
-2. Benchmarks `fib(35)` five times and takes the median wall-clock time
+1. Validates correctness against known Fibonacci values (fib(0) through fib(20))
+2. Benchmarks `fib(20)` five times and takes the median wall-clock time
 3. Returns the median time as the score (lower is better)
 4. If any correctness check fails, returns a penalty score of 999.0
 
