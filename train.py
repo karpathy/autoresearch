@@ -171,6 +171,8 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
+        # Cosine position embeddings
+        self.pos_emb = nn.Parameter(torch.zeros(1, config.sequence_len, config.n_embd))
 
     @torch.no_grad()
     def init_weights(self):
@@ -200,6 +202,10 @@ class GPT(nn.Module):
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
+        # Initialize cosine position embeddings
+        pos_ids = torch.arange(self.config.sequence_len, dtype=torch.float32)
+        pos_freqs = pos_ids.unsqueeze(1) * torch.linspace(0.01, 1.0, self.config.n_embd).unsqueeze(0)
+        self.pos_emb.data = torch.cos(pos_freqs).unsqueeze(0) * 0.02
         # Cast embeddings to bf16
         self.transformer.wte.to(dtype=torch.bfloat16)
         for ve in self.value_embeds.values():
@@ -296,6 +302,8 @@ class GPT(nn.Module):
         cos_sin = self.cos[:, :T], self.sin[:, :T]
 
         x = self.transformer.wte(idx)
+        # Add cosine position embeddings
+        x = x + self.pos_emb[:, :T, :]
         x = norm(x)
         x0 = x
         for i, block in enumerate(self.transformer.h):
