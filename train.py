@@ -686,8 +686,8 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
-    # Add gradient noise with cosine annealing schedule
-    noise_scale = 0.01 * (0.5 * (1 + torch.cos(torch.tensor(progress * 3.14159))))
+    # Add adaptive gradient noise that scales with loss magnitude
+    noise_scale = 0.005 * torch.clamp(train_loss_f / 3.0, 0.1, 2.0)
     if noise_scale > 1e-6:
         for param in model.parameters():
             if param.grad is not None:
