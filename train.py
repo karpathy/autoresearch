@@ -11,7 +11,9 @@ os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 import gc
 import math
 import time
+import tomllib
 from dataclasses import asdict
+from pathlib import Path
 
 import torch
 
@@ -23,29 +25,47 @@ from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evalua
 MODEL_NAME = os.environ.get("AUTORESEARCH_MODEL", "nanochat")
 
 # ---------------------------------------------------------------------------
-# Hyperparameters (edit these directly, no CLI flags needed)
+# Platform config loading
+# ---------------------------------------------------------------------------
+
+def load_platform_config():
+    """Load platform-specific training config from TOML file."""
+    config_path = Path(__file__).parent / "configs" / f"{PLATFORM.kind}.toml"
+    try:
+        with open(config_path, "rb") as f:
+            return tomllib.load(f)
+    except FileNotFoundError:
+        raise SystemExit(
+            f"[autoresearch] Config file not found: {config_path}\n"
+            f"Run 'git checkout configs/' to restore it."
+        )
+
+_cfg = load_platform_config()
+
+# ---------------------------------------------------------------------------
+# Hyperparameters (loaded from configs/{platform}.toml, agent can override)
 # ---------------------------------------------------------------------------
 
 # Model architecture
-ASPECT_RATIO = 64       # model_dim = depth * ASPECT_RATIO
-HEAD_DIM = 128          # target head dimension for attention
-WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
+ASPECT_RATIO = _cfg["model"]["aspect_ratio"]
+HEAD_DIM = _cfg["model"]["head_dim"]
+WINDOW_PATTERN = _cfg["model"]["window_pattern"]
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**19 # ~524K tokens per optimizer step
-EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
-UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
-MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
-SCALAR_LR = 0.5         # learning rate for per-layer scalars (Adam)
-WEIGHT_DECAY = 0.2      # cautious weight decay for Muon
-ADAM_BETAS = (0.8, 0.95) # Adam beta1, beta2
-WARMUP_RATIO = 0.0      # fraction of time budget for LR warmup
-WARMDOWN_RATIO = 0.5    # fraction of time budget for LR warmdown
-FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
+TOTAL_BATCH_SIZE = _cfg["optimization"]["total_batch_size"]
+EMBEDDING_LR = _cfg["optimization"]["embedding_lr"]
+UNEMBEDDING_LR = _cfg["optimization"]["unembedding_lr"]
+MATRIX_LR = _cfg["optimization"]["matrix_lr"]
+SCALAR_LR = _cfg["optimization"]["scalar_lr"]
+WEIGHT_DECAY = _cfg["optimization"]["weight_decay"]
+ADAM_BETAS = _cfg["optimization"]["adam_betas"]
+WARMUP_RATIO = _cfg["optimization"]["warmup_ratio"]
+WARMDOWN_RATIO = _cfg["optimization"]["warmdown_ratio"]
+FINAL_LR_FRAC = _cfg["optimization"]["final_lr_frac"]
 
-# Model size
+# Model size (hardware-dependent, not in TOML)
 DEPTH = int(os.environ.get("AUTORESEARCH_DEPTH", PLATFORM.recommended_depth))
-DEVICE_BATCH_SIZE = int(os.environ.get("AUTORESEARCH_DEVICE_BATCH", 128 if PLATFORM.kind == "cuda" else 16))
+DEVICE_BATCH_SIZE = int(os.environ.get("AUTORESEARCH_DEVICE_BATCH", _cfg["hardware"]["device_batch_size"]))
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader

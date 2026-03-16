@@ -1,0 +1,22 @@
+# CUDA training recipe (H100/A100-class defaults)
+# These values match the original hardcoded train.py constants.
+
+[model]
+aspect_ratio = 64        # model_dim = depth * aspect_ratio
+head_dim = 128           # target head dimension for attention
+window_pattern = "SSSL"  # L=full context, S=half context (requires FA3)
+
+[optimization]
+total_batch_size = 524288  # 2^19, ~524K tokens per optimizer step
+embedding_lr = 0.6
+unembedding_lr = 0.004
+matrix_lr = 0.04
+scalar_lr = 0.5
+weight_decay = 0.2
+adam_betas = [0.8, 0.95]
+warmup_ratio = 0.0
+warmdown_ratio = 0.5
+final_lr_frac = 0.0
+
+[hardware]
+device_batch_size = 128

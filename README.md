@@ -66,6 +66,7 @@ prepare.py          — constants, data prep + runtime utilities (do not modify)
 train.py            — training loop + hyperparameters (agent modifies this)
 program.md          — agent instructions
 platform_config.py  — auto-detects CUDA/MPS/CPU, sets recommended defaults
+configs/            — platform-specific training recipes (cuda.toml, mps.toml, cpu.toml)
 models/             — model architectures (nanochat, gpt2)
   __init__.py       — registry + create_model() factory
   base.py           — TrainableModel protocol
@@ -73,6 +74,10 @@ models/             — model architectures (nanochat, gpt2)
   gpt2.py           — standard GPT-2 variant (LayerNorm, GELU, AdamW)
 tests/              — unit tests (run with: uv sync --extra dev && uv run pytest tests/ -m unit)
 docs/               — platform support, model selection, adding new models
+persona.md          — persona activation primer for autonomous research
+Dockerfile          — containerized training (CUDA)
+docker-compose.yml  — multi-service Docker setup
+launch.sh           — convenience launcher script
 pyproject.toml      — dependencies (platform-conditional)
 ```
 

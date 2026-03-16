@@ -1,0 +1,22 @@
+# CPU fallback training recipe
+# Minimal settings for testing and CI only. Not for real training.
+
+[model]
+aspect_ratio = 64
+head_dim = 64             # smaller head dim for CPU
+window_pattern = "L"      # full context only
+
+[optimization]
+total_batch_size = 4096   # 2^12, minimal
+embedding_lr = 0.6
+unembedding_lr = 0.004
+matrix_lr = 0.04
+scalar_lr = 0.5
+weight_decay = 0.2
+adam_betas = [0.8, 0.95]
+warmup_ratio = 0.0
+warmdown_ratio = 0.5
+final_lr_frac = 0.0
+
+[hardware]
+device_batch_size = 4
