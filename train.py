@@ -121,7 +121,7 @@ class MLP(nn.Module):
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
-        self.dropout = nn.Dropout(0.1)
+        self.dropout = nn.Dropout(0.05)
 
     def forward(self, x):
         x = self.c_fc(x)
