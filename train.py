@@ -684,6 +684,13 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
+    # Gradient noise injection during warmup for better generalization
+    if progress < WARMUP_RATIO and WARMUP_RATIO > 0:
+        noise_scale = 0.001 * (1.0 - progress / WARMUP_RATIO)
+        for param in model.parameters():
+            if param.grad is not None:
+                param.grad.add_(torch.randn_like(param.grad) * noise_scale)
+    
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
     optimizer.step()
     model.zero_grad(set_to_none=True)
