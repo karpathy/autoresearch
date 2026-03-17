@@ -704,14 +704,6 @@ while True:
                 noise = torch.randn_like(param.grad) * noise_scale
                 param.grad.add_(noise)
     
-    # Add gradient noise with cosine annealing schedule
-    noise_scale = 0.01 * (0.5 * (1 + torch.cos(torch.tensor(progress * 3.14159))))
-    if noise_scale > 1e-6:
-        for param in model.parameters():
-            if param.grad is not None:
-                noise = torch.randn_like(param.grad) * noise_scale
-                param.grad.add_(noise)
-    
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
     optimizer.step()
     model.zero_grad(set_to_none=True)
