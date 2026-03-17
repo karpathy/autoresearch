@@ -534,13 +534,20 @@ Look at the category summary — avoid exhausted categories. Focus on:
 
     # Known-good directions from community research
     known_good = """
-## Proven techniques from other autoresearch sessions:
-- Weight decay on embeddings/value embeddings (0.001-0.003) — often a big win
-- Halving TOTAL_BATCH_SIZE for 2x more training steps — more steps in 5 min usually helps
-- WARMDOWN_RATIO=0.75 (more aggressive LR cooldown)
-- Cosine LR schedule instead of linear warmdown
-- z-loss: add small penalty on log-partition function (1e-4 * logits.logsumexp(-1).square().mean())
-These are NOT guaranteed to work here but are worth trying if not yet attempted.
+## Proven techniques from Karpathy H100 sessions (ranked by impact):
+1. WARMUP_RATIO=0.05 (add 5% warmup, currently 0.0) - big win, -0.0022
+2. Short window: change short_window from long_window//2 to long_window//4 - -0.0022
+3. WINDOW_PATTERN="SSSSL" (more sliding window layers) - -0.0012
+4. WARMDOWN_RATIO=0.7 (currently 0.5) - -0.0011
+5. Unembedding LR 0.008 (currently 0.004) - -0.0006
+6. Embedding LR 0.8 (currently 0.6) - -0.0007
+7. RoPE base frequency 50000 (currently 10000) - -0.0007
+8. x0_lambdas init 0.05 instead of 0.1 - -0.0006
+9. Weight decay on embeddings/value embeddings (0.001-0.003)
+10. Adaptive gradient clipping that decreases over training
+
+These are PROVEN wins. Try them in order if not yet attempted.
+Each is a small single-line change. Do NOT combine multiple changes.
 """
 
     return f"""You are an autonomous ML researcher. Your goal: minimize val_bpb on this training script.
