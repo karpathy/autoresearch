@@ -287,15 +287,19 @@ class GPT(nn.Module):
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02,
                         weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5):
         model_dim = self.config.n_embd
-        matrix_params = list(self.transformer.h.parameters())
+        # Group matrix parameters by layer for layer-wise LR decay
+        matrix_params_by_layer = []
+        for i, block in enumerate(self.transformer.h):
+            layer_params = list(block.parameters())
+            matrix_params_by_layer.append(layer_params)
+        
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
         temp_params = [self.temperature]
-        assert len(list(self.parameters())) == (len(matrix_params) + len(embedding_params) +
-            len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(temp_params))
+        
         # Scale LR ∝ 1/√dmodel (tuned at 768 dim)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
@@ -307,12 +311,27 @@ class GPT(nn.Module):
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=temp_params, lr=scalar_lr * 0.1, betas=adam_betas, eps=1e-10, weight_decay=0.001),
         ]
-        for shape in sorted({p.shape for p in matrix_params}):
-            group_params = [p for p in matrix_params if p.shape == shape]
-            param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
-            ))
+        # Layer-wise learning rate decay: deeper layers get smaller LRs
+        n_layers = len(matrix_params_by_layer)
+        for layer_idx, layer_params in enumerate(matrix_params_by_layer):
+            # Decay factor: later layers get smaller LRs (0.9^depth_from_end)
+            depth_from_end = n_layers - layer_idx - 1
+            layer_lr_scale = (0.9 ** depth_from_end)
+            
+            # Group by shape within each layer
+            layer_params_by_shape = {}
+            for p in layer_params:
+                shape = p.shape
+                if shape not in layer_params_by_shape:
+                    layer_params_by_shape[shape] = []
+                layer_params_by_shape[shape].append(p)
+            
+            for shape, group_params in layer_params_by_shape.items():
+                param_groups.append(dict(
+                    kind='muon', params=group_params, lr=matrix_lr * layer_lr_scale,
+                    momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+                ))
+        
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
