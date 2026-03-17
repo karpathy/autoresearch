@@ -1378,13 +1378,12 @@ def main():
             except Exception:
                 pass
             refresh()
-            continue
 
-            # Brief pause — main cooling happens during next THINKING phase
-            if i < args.max_runs - 1:
-                for _ in range(10):
-                    refresh()
-                    time.sleep(1)
+          # Brief pause -- main cooling happens during next THINKING phase
+          if i < args.max_runs - 1:
+              for _ in range(10):
+                  refresh()
+                  time.sleep(1)
 
         # Final
         set_phase("DONE")
