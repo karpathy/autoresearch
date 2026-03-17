@@ -457,7 +457,7 @@ HEAD_DIM = 128          # target head dimension for attention
 WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**17 # ~131K tokens per optimizer step (halved for 2x more steps)
+TOTAL_BATCH_SIZE = int(2**17 * 0.75) # ~98K tokens per optimizer step (reduced for more steps)
 EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
@@ -672,15 +672,6 @@ while True:
         loss = loss / grad_accum_steps
         loss.backward()
         x, y, epoch = next(train_loader)
-        
-        # Different gradient accumulation for different parameter types
-        if micro_step % 2 == 1:  # Update embeddings every 2 steps
-            for group in optimizer.param_groups:
-                if group['kind'] == 'adamw' and any('wte' in str(p) or 'value_embeds' in str(p) for p in group['params']):
-                    optimizer._step_adamw(group)
-                    for p in group['params']:
-                        if p.grad is not None:
-                            p.grad.zero_()
 
     # Progress and schedules
     progress = min(total_training_time / TIME_BUDGET, 1.0)
