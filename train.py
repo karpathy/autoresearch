@@ -208,7 +208,7 @@ def main():
         min_samples_leaf=200,
         max_features=0.8,
         loss="squared_error",
-        random_state=17,
+        random_state=42,
     )
     # Time-decay weighting: recent data is more relevant than old data.
     # Exponential decay so 2022 data is ~5x more weighted than 2018 data.
