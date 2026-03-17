@@ -125,7 +125,7 @@ class MLP(nn.Module):
     def forward(self, x):
         residual = x
         x = self.c_fc(x)
-        x = F.leaky_relu(x, negative_slope=0.01)
+        x = F.relu(x).square()
         x = self.c_proj(x)
         return x + residual
 
