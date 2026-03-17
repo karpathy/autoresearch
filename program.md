@@ -93,21 +93,20 @@ The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autorese
 
 LOOP FOREVER:
 
-1. Look at the git state: the current branch/commit we're on
-2. Tune `train.py` with an experimental idea by directly hacking the code.
-3. git commit
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
-8. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
-9. If val_bpb is equal or worse, you git reset back to where you started
+1. Tune `train.py` with an experimental idea by directly hacking the code.
+2. Run the Critic Sandbox: `python sandbox.py "Short description of what you changed"`
+3. The sandbox will:
+   - Lint the code for syntax checks.
+   - Run the 5 minute experiment.
+   - Extract `val_bpb` and `peak_vram_mb`.
+   - Log the outcome directly to `results.tsv`.
+   - Automatically `git commit` (if improved) or `git reset` (if degraded/crashed).
+4. Read the `results.tsv` tail to understand what the Sandbox just did.
+5. If the outcome was a crash you think you can easily fix (e.g., typo or minor syntax error seen in `run.log`), re-tune `train.py` and run the sandbox again.
 
-The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
+The idea is that you are a completely autonomous researcher trying things out. The Sandbox handles the Git and execution discipline. If things work, the Sandbox keeps them. If they don't, the Sandbox discards them. If you feel like you're getting stuck in some way, review the code and brainstorm radically new directions.
 
-**Timeout**: Each experiment should take ~5 minutes total (+ a few seconds for startup and eval overhead). If a run exceeds 10 minutes, kill it and treat it as a failure (discard and revert).
-
-**Crashes**: If a run crashes (OOM, or a bug, or etc.), use your judgment: If it's something dumb and easy to fix (e.g. a typo, a missing import), fix it and re-run. If the idea itself is fundamentally broken, just skip it, log "crash" as the status in the tsv, and move on.
+**Timeout**: The Sandbox handles the timeout. If a run crashes (OOM or bug) and the Sandbox rolled back, read `run.log` to diagnose, adapt your idea, and quickly try again. If it is fundamentally broken, just skip it—the Sandbox already logged "crash"—and move on to a new idea.
 
 **NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
 
