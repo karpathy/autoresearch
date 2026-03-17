@@ -172,7 +172,7 @@ class GPT(nn.Module):
     @torch.no_grad()
     def init_weights(self):
         # Embedding and unembedding (weight tied)
-        torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=0.7)
+        torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
         # Transformer blocks
         n_embd = self.config.n_embd
         s = 3**0.5 * n_embd**-0.5
@@ -309,6 +309,9 @@ class GPT(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
                                    ignore_index=-1, reduction=reduction)
+            # Z-loss: add small penalty on log-partition function
+            z_loss = 1e-4 * logits.logsumexp(-1).square().mean()
+            loss = loss + z_loss
             return loss
         return logits
 
