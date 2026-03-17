@@ -82,24 +82,29 @@ grep "^score:" run.log
 
 When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated).
 
-The TSV has a header row and 5 columns:
+The TSV has a header row and 9 columns:
 
 ```
-commit	score	status	description
+commit	score	sharpe_min	max_dd	total_trades	consistency	n_params	status	description
 ```
 
 1. git commit hash (short, 7 chars)
 2. score (e.g. 0.4200) — use 0.0000 for crashes
-3. status: `keep`, `discard`, or `crash`
-4. short text description of what this experiment tried
+3. sharpe_min (e.g. 0.5800) — use 0.0000 for crashes
+4. max drawdown as percentage (e.g. -15.2) — use 0.0 for crashes
+5. total trades (e.g. 145) — use 0 for crashes
+6. consistency (e.g. 5/7) — use 0/0 for crashes
+7. number of model parameters (e.g. 3206) — use 0 for crashes
+8. status: `keep`, `discard`, or `crash`
+9. short text description of what this experiment tried
 
 Example:
 
 ```
-commit	score	status	description
-a1b2c3d	0.0719	keep	baseline GBR
-b2c3d4e	0.0911	keep	huber loss + 500 estimators
-c3d4e5f	0.0000	crash	LSTM (shape mismatch)
+commit	score	sharpe_min	max_dd	total_trades	consistency	n_params	status	description
+a1b2c3d	0.0719	0.8833	-49.6	101	7/7	3800	keep	baseline GBR
+b2c3d4e	0.0911	0.6413	-45.6	189	5/7	6334	keep	huber loss + 500 estimators
+c3d4e5f	0.0000	0.0000	0.0	0	0/0	0	crash	LSTM (shape mismatch)
 ```
 
 ## The experiment loop
