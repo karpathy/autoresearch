@@ -82,7 +82,6 @@ class CausalSelfAttention(nn.Module):
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 32
         self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
-        self.attn_temperature = nn.Parameter(torch.ones(self.n_head))
 
     def forward(self, x, ve, cos_sin, window_size):
         B, T, C = x.size()
@@ -108,11 +107,7 @@ class CausalSelfAttention(nn.Module):
                 reps = self.n_head // self.n_kv_head
                 k = k.repeat_interleave(reps, dim=1)
                 v = v.repeat_interleave(reps, dim=1)
-            # Apply learned temperature scaling
-            scale = (1.0 / (self.head_dim ** 0.5)) * torch.sigmoid(self.attn_temperature).view(1, -1, 1, 1)
-            attn_weights = torch.matmul(q, k.transpose(-2, -1)) * scale
-            attn_weights = F.softmax(attn_weights, dim=-1)
-            y = torch.matmul(attn_weights, v)
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
             y = y.transpose(1, 2).contiguous().view(B, T, -1)
         else:
             y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
@@ -198,9 +193,6 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             if block.attn.ve_gate is not None:
                 torch.nn.init.zeros_(block.attn.ve_gate.weight)
-        # Initialize attention temperatures to 1.0 (sigmoid(0) = 0.5, scaled by 2 -> 1.0)
-        for block in self.transformer.h:
-            torch.nn.init.zeros_(block.attn.attn_temperature)
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
@@ -303,14 +295,10 @@ class GPT(nn.Module):
         x = self.transformer.wte(idx)
         x = norm(x)
         x0 = x
-        if targets is not None:
-            self._layer_outputs = [x]
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i])
-            if targets is not None:
-                self._layer_outputs.append(x)
         x = norm(x)
 
         softcap = 15
@@ -321,15 +309,6 @@ class GPT(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
                                    ignore_index=-1, reduction=reduction)
-            # Add cosine similarity regularization between consecutive layers
-            if hasattr(self, '_layer_outputs') and len(self._layer_outputs) > 1:
-                cosine_reg = 0.0
-                for i in range(len(self._layer_outputs) - 1):
-                    h1 = F.normalize(self._layer_outputs[i].float(), dim=-1)
-                    h2 = F.normalize(self._layer_outputs[i+1].float(), dim=-1)
-                    cosine_sim = (h1 * h2).sum(dim=-1).mean()
-                    cosine_reg += (1.0 - cosine_sim)
-                loss = loss + 0.001 * cosine_reg / (len(self._layer_outputs) - 1)
             return loss
         return logits
 
@@ -478,7 +457,7 @@ HEAD_DIM = 128          # target head dimension for attention
 WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**18 # ~262K tokens per optimizer step (halved for 2x more steps)
+TOTAL_BATCH_SIZE = 2**17 # ~131K tokens per optimizer step (halved for 2x more steps)
 EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
@@ -486,7 +465,7 @@ SCALAR_LR = 0.5         # learning rate for per-layer scalars (Adam)
 WEIGHT_DECAY = 0.2      # cautious weight decay for Muon
 ADAM_BETAS = (0.8, 0.95) # Adam beta1, beta2
 WARMUP_RATIO = 0.0      # fraction of time budget for LR warmup
-WARMDOWN_RATIO = 0.5    # fraction of time budget for LR warmdown
+WARMDOWN_RATIO = 0.75   # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # ---------------------------------------------------------------------------
@@ -654,8 +633,7 @@ print(f"Gradient accumulation steps: {grad_accum_steps}")
 
 def get_lr_multiplier(progress):
     if progress < WARMUP_RATIO:
-        warmup_frac = progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
-        return warmup_frac ** 2  # polynomial warmup with power=2
+        return progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
     elif progress < 1.0 - WARMDOWN_RATIO:
         return 1.0
     else:
@@ -705,9 +683,9 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
-    # Adaptive gradient clipping: start high for stability, decrease for precision
-    clip_norm = 1.5 * (1 - progress) + 0.3 * progress
-    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
+    # Adaptive gradient clipping: start high (1.0) and decrease to 0.3
+    adaptive_clip = 1.0 - 0.7 * progress
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=adaptive_clip)
     optimizer.step()
     model.zero_grad(set_to_none=True)
 
