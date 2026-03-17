@@ -307,10 +307,7 @@ class GPT(nn.Module):
         logits = softcap * torch.tanh(logits / softcap)
 
         if targets is not None:
-            # Temperature scaling during training for better calibration
-            temperature = 0.8
-            scaled_logits = logits / temperature
-            loss = F.cross_entropy(scaled_logits.view(-1, scaled_logits.size(-1)), targets.view(-1),
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
                                    ignore_index=-1, reduction=reduction)
             return loss
         return logits
