@@ -22,23 +22,27 @@ from prepare import (
 # Feature Engineering
 # ---------------------------------------------------------------------------
 
+RETURN_LOOKBACKS = [1, 4, 12, 24, 72, 168]
+VOLATILITY_WINDOWS = [24, 168]
 MAX_LOOKBACK = 168  # maximum lookback window (1 week)
 
 
 def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """Compute minimal feature set from OHLCV data.
+    """Compute features from OHLCV data.
 
-    Only 4 features: 24h and 168h vol-normalized returns, vol ratio,
-    and high-low range. Fewer features = less overfitting.
+    All return-based features are vol-normalized (divided by 168h rolling vol)
+    so the model sees "how many sigma" rather than raw percentages.
+    This makes features more comparable across different volatility regimes.
 
     Returns:
         features: (N, n_features) array where N = len(df) - MAX_LOOKBACK.
         timestamps: (N,) array of pd.Timestamp aligned with features.
     """
     close = df["close"].values.astype(np.float64)
+    volume = df["volume"].values.astype(np.float64)
     ts = df["timestamp"].values
 
-    # Hourly returns (for volatility calculations)
+    # Hourly returns (for lookback and volatility calculations)
     hourly_returns = np.zeros(len(close))
     hourly_returns[1:] = close[1:] / close[:-1] - 1.0
 
@@ -49,27 +53,46 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
     feature_cols = []
 
-    # 1. Vol-normalized 24h return (short-term momentum)
-    ret_24 = np.full(len(close), np.nan)
-    ret_24[24:] = close[24:] / close[:-24] - 1.0
-    feature_cols.append(ret_24 / vol_safe)
+    # 1. Vol-normalized returns over lookback windows
+    for lb in RETURN_LOOKBACKS:
+        ret = np.full(len(close), np.nan)
+        ret[lb:] = close[lb:] / close[:-lb] - 1.0
+        feature_cols.append(ret / vol_safe)
 
-    # 2. Vol-normalized 168h return (long-term trend)
-    ret_168 = np.full(len(close), np.nan)
-    ret_168[168:] = close[168:] / close[:-168] - 1.0
-    feature_cols.append(ret_168 / vol_safe)
+    # 2. Volatility (rolling std of hourly returns) — raw, not normalized
+    for w in VOLATILITY_WINDOWS:
+        vol = hr_series.rolling(w, min_periods=w).std().values
+        feature_cols.append(vol)
 
     # 3. Vol ratio: 24h vol / 168h vol (vol regime indicator)
     vol_24h = hr_series.rolling(24, min_periods=24).std().values
     vol_ratio = np.where(vol_safe > 0, vol_24h / vol_safe, 1.0)
     feature_cols.append(vol_ratio)
 
-    # 4. High-low range volatility (24h average, normalized by price)
+    # 4. Volume ratio: 24h avg / 168h avg
+    vol_series = pd.Series(volume)
+    vol_24 = vol_series.rolling(24, min_periods=24).mean().values
+    vol_168 = vol_series.rolling(168, min_periods=168).mean().values
+    volume_ratio = np.where(vol_168 > 0, vol_24 / vol_168, 1.0)
+    feature_cols.append(volume_ratio)
+
+    # 5. High-low range volatility (24h average, normalized by price)
     high = df["high"].values.astype(np.float64)
     low = df["low"].values.astype(np.float64)
     hl_range = np.where(close > 0, (high - low) / close, 0.0)
     hl_range_24 = pd.Series(hl_range).rolling(24, min_periods=24).mean().values
     feature_cols.append(hl_range_24)
+
+    # 6. Hour of day (cyclical)
+    dt = pd.to_datetime(ts)
+    hours = dt.hour
+    feature_cols.append(np.sin(2 * np.pi * hours / 24))
+    feature_cols.append(np.cos(2 * np.pi * hours / 24))
+
+    # 7. Day of week (cyclical)
+    dow = dt.dayofweek
+    feature_cols.append(np.sin(2 * np.pi * dow / 7))
+    feature_cols.append(np.cos(2 * np.pi * dow / 7))
 
     features = np.column_stack(feature_cols)
 
@@ -185,7 +208,7 @@ def main():
         min_samples_leaf=200,
         max_features=0.8,
         loss="squared_error",
-        random_state=42,
+        random_state=7,
     )
     # Time-decay weighting: recent data is more relevant than old data.
     # Exponential decay so 2022 data is ~5x more weighted than 2018 data.
