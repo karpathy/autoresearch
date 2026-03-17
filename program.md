@@ -19,7 +19,7 @@ To set up a new experiment, work with the user to:
    - `prepare.py` — fixed constants, data prep, backtesting engine, metric computation. Do not modify.
    - `train.py` — the file you modify. Model architecture, feature engineering, training loop.
 4. **Verify data exists**: Check that `~/.cache/autotrader/` contains the cached parquet file. If not, tell the human to run `uv run prepare.py`.
-5. **Initialize results.tsv**: Create `results.tsv` with just the header row. The baseline will be recorded after the first run.
+5. **Initialize results.tsv**: Create `results.tsv` with just the header row. This file is gitignored — it lives only on disk and is never committed. Git operations (commit, reset) will not affect it.
 6. **Confirm and go**: Confirm setup looks good.
 
 Once you get confirmation, kick off the experimentation.
@@ -208,13 +208,13 @@ LOOP FOREVER:
 1. Look at the git state: the current branch/commit we're on
 2. Decide on an experimental idea. Consult the research directions and stuck protocol.
 3. Modify `train.py` with the experiment. The model must be trained during the 2-minute budget.
-4. git commit
+4. `git add train.py && git commit -m "exp: <short description>"`
 5. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
 6. Read out the results: `grep "^score:" run.log`
 7. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the stack trace. If fixable, fix and re-run. Otherwise give up on this idea.
-8. Record the results in the tsv
+8. Append the results to `results.tsv` (gitignored — no need to commit it)
 9. If score improved (higher than previous best), keep the commit
-10. If score is equal or worse, git reset back to where you started
+10. If score is equal or worse, `git reset --hard HEAD~1` to discard the experiment
 11. Check the stuck protocol: if this is the 5th consecutive non-improvement, change your fundamental approach.
 
 **Timeout**: Each experiment should take ~3 minutes total (2 minutes training + evaluation overhead). If a run exceeds 6 minutes, kill it and treat it as a failure.
