@@ -653,13 +653,14 @@ print(f"Gradient accumulation steps: {grad_accum_steps}")
 # Schedules (all based on progress = training_time / TIME_BUDGET)
 
 def get_lr_multiplier(progress):
+    import math
     if progress < WARMUP_RATIO:
         return progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
-    elif progress < 1.0 - WARMDOWN_RATIO:
-        return 1.0
     else:
-        cooldown = (1.0 - progress) / WARMDOWN_RATIO
-        return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
+        # Sinusoidal oscillation between 0.3 and 1.0 of initial LR
+        phase = (progress - WARMUP_RATIO) / (1.0 - WARMUP_RATIO) * 4 * math.pi
+        sine_val = 0.5 * (1 + math.sin(phase))
+        return 0.3 + 0.7 * sine_val
 
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
