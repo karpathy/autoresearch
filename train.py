@@ -168,6 +168,11 @@ class GPT(nn.Module):
             str(i): nn.Embedding(config.vocab_size, kv_dim)
             for i in range(config.n_layer) if has_ve(i, config.n_layer)
         })
+        # EMA buffers for value embeddings
+        self.value_embeds_ema = nn.ModuleDict({
+            str(i): nn.Embedding(config.vocab_size, kv_dim)
+            for i in range(config.n_layer) if has_ve(i, config.n_layer)
+        })
         # Rotary embeddings
         self.rotary_seq_len = config.sequence_len * 10
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
@@ -194,6 +199,9 @@ class GPT(nn.Module):
         # Value embeddings
         for ve in self.value_embeds.values():
             torch.nn.init.uniform_(ve.weight, -s, s)
+        # Initialize EMA value embeddings
+        for i, ve_ema in self.value_embeds_ema.items():
+            ve_ema.weight.data.copy_(self.value_embeds[i].weight.data)
         # Gate weights init to zero (sigmoid(0)=0.5, scaled by 2 -> 1.0 = neutral)
         for block in self.transformer.h:
             if block.attn.ve_gate is not None:
@@ -209,6 +217,8 @@ class GPT(nn.Module):
         self.transformer.wte.to(dtype=torch.bfloat16)
         for ve in self.value_embeds.values():
             ve.to(dtype=torch.bfloat16)
+        for ve_ema in self.value_embeds_ema.values():
+            ve_ema.to(dtype=torch.bfloat16)
 
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
         if device is None:
@@ -307,7 +317,17 @@ class GPT(nn.Module):
             self._layer_outputs = [x]
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
+            # Use EMA value embeddings during training for better generalization
+            if str(i) in self.value_embeds:
+                if self.training:
+                    ve = self.value_embeds[str(i)](idx)
+                    # Update EMA during training
+                    with torch.no_grad():
+                        self.value_embeds_ema[str(i)].weight.data.lerp_(self.value_embeds[str(i)].weight.data, 0.001)
+                else:
+                    ve = self.value_embeds_ema[str(i)](idx)
+            else:
+                ve = None
             x = block(x, ve, cos_sin, self.window_sizes[i])
             if targets is not None:
                 self._layer_outputs.append(x)
