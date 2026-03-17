@@ -151,9 +151,6 @@ class GPT(nn.Module):
             "wte": nn.Embedding(config.vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
         })
-        # EMA buffers for embedding layers only
-        self.register_buffer('wte_ema', torch.zeros_like(self.transformer.wte.weight), persistent=False)
-        self.ema_decay = 0.9999
         # Weight tying: share embedding and output weights
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.lm_head.weight = self.transformer.wte.weight
@@ -295,11 +292,7 @@ class GPT(nn.Module):
         assert T <= self.cos.size(1)
         cos_sin = self.cos[:, :T], self.sin[:, :T]
 
-        # Use EMA weights for embeddings during inference
-        if self.training:
-            x = self.transformer.wte(idx)
-        else:
-            x = F.embedding(idx, self.wte_ema, padding_idx=None, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False)
+        x = self.transformer.wte(idx)
         x = norm(x)
         x0 = x
         for i, block in enumerate(self.transformer.h):
@@ -471,7 +464,7 @@ MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
 SCALAR_LR = 0.5         # learning rate for per-layer scalars (Adam)
 WEIGHT_DECAY = 0.2      # cautious weight decay for Muon
 ADAM_BETAS = (0.8, 0.95) # Adam beta1, beta2
-WARMUP_RATIO = 0.0      # fraction of time budget for LR warmup
+WARMUP_RATIO = 0.05     # fraction of time budget for LR warmup
 WARMDOWN_RATIO = 0.75   # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
@@ -695,10 +688,6 @@ while True:
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=adaptive_clip)
     optimizer.step()
     model.zero_grad(set_to_none=True)
-    
-    # Update EMA for embedding weights only
-    with torch.no_grad():
-        model.wte_ema.mul_(model.ema_decay).add_(model.transformer.wte.weight, alpha=1 - model.ema_decay)
 
     train_loss_f = train_loss.item()
 
