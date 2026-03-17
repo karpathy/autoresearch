@@ -83,7 +83,28 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     hl_range_24 = pd.Series(hl_range).rolling(24, min_periods=24).mean().values
     feature_cols.append(hl_range_24)
 
-    # 6. Hour of day (cyclical)
+    # 6. RSI-like indicator (proportion of up-hours in window)
+    up = (hourly_returns > 0).astype(np.float64)
+    for w in [24, 72, 168]:
+        rsi = pd.Series(up).rolling(w, min_periods=w).mean().values
+        feature_cols.append(rsi - 0.5)  # center around zero
+
+    # 7. Bollinger band position: (close - SMA) / (2 * std)
+    close_series = pd.Series(close)
+    for w in [24, 72]:
+        sma = close_series.rolling(w, min_periods=w).mean().values
+        std = close_series.rolling(w, min_periods=w).std().values
+        std_safe = np.where(std > 0, std, 1.0)
+        bb_pos = (close - sma) / (2 * std_safe)
+        feature_cols.append(bb_pos)
+
+    # 8. VWAP deviation (volume-weighted average price vs close)
+    vwap_24 = (pd.Series(close * volume).rolling(24, min_periods=24).sum().values /
+               pd.Series(volume).rolling(24, min_periods=24).sum().values)
+    vwap_dev = np.where(vwap_24 > 0, (close - vwap_24) / vwap_24, 0.0)
+    feature_cols.append(vwap_dev)
+
+    # 9. Hour of day (cyclical)
     dt = pd.to_datetime(ts)
     hours = dt.hour
     feature_cols.append(np.sin(2 * np.pi * hours / 24))
