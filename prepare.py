@@ -7,15 +7,13 @@ This module provides:
   - Data download and caching (BTC/USD hourly OHLCV from Binance)
   - Strict temporal train/val/holdout splits
   - A backtesting engine that converts predictions into trading signals
-  - Composite metric computation (higher is better)
-  - Validation pass/fail without leaking the actual metric
+  - Black-box composite metric (higher is better)
 
 Public API for train.py:
   load_train_data() -> pd.DataFrame
-  load_val_data()   -> pd.DataFrame
-  evaluate_model(predictions, timestamps, n_params, split) -> dict
-  PRED_SCALE        -> float (fixed prediction multiplier)
+  evaluate_model(predict_fn, n_params) -> dict
   TIME_BUDGET       -> int (seconds)
+  FORWARD_HOURS     -> int
 """
 
 import argparse
@@ -44,7 +42,6 @@ FORWARD_HOURS = 24      # predict 24-hour forward returns
 THRESHOLD = 0.005       # 0.5% threshold for long/short signals
 FEE_RATE = 0.001        # 0.1% per trade (one side)
 SLIPPAGE_RATE = 0.0005  # 0.05% per trade (one side)
-PRED_SCALE = 1.0        # fixed; do not redefine in train.py
 
 # Temporal split boundaries (inclusive)
 TRAIN_START = pd.Timestamp("2018-01-01")
@@ -54,18 +51,30 @@ VAL_END     = pd.Timestamp("2024-06-30 23:00:00")
 HOLDOUT_START = pd.Timestamp("2024-07-01")
 HOLDOUT_END   = pd.Timestamp("2025-12-31 23:00:00")
 
-# Subperiods for consistency check (train window)
+# Subperiods for consistency check — 7 total across all splits
 TRAIN_SUBPERIODS = [
     (pd.Timestamp("2018-01-01"), pd.Timestamp("2019-12-31 23:00:00")),
     (pd.Timestamp("2020-01-01"), pd.Timestamp("2021-12-31 23:00:00")),
     (pd.Timestamp("2022-01-01"), pd.Timestamp("2022-12-31 23:00:00")),
 ]
 
-# Subperiods for consistency check (val window)
 VAL_SUBPERIODS = [
     (pd.Timestamp("2023-01-01"), pd.Timestamp("2023-12-31 23:00:00")),
     (pd.Timestamp("2024-01-01"), pd.Timestamp("2024-06-30 23:00:00")),
 ]
+
+HOLDOUT_SUBPERIODS = [
+    (pd.Timestamp("2024-07-01"), pd.Timestamp("2024-12-31 23:00:00")),
+    (pd.Timestamp("2025-01-01"), pd.Timestamp("2025-12-31 23:00:00")),
+]
+
+# All splits for evaluation
+_SPLITS = [
+    (TRAIN_START, TRAIN_END, TRAIN_SUBPERIODS),
+    (VAL_START, VAL_END, VAL_SUBPERIODS),
+    (HOLDOUT_START, HOLDOUT_END, HOLDOUT_SUBPERIODS),
+]
+
 
 # ---------------------------------------------------------------------------
 # Data Download
@@ -181,48 +190,23 @@ def _load_all_data() -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Public Data Loaders
+# Public Data Loader
 # ---------------------------------------------------------------------------
 
 def load_train_data() -> pd.DataFrame:
-    """Return OHLCV DataFrame for the training period only (2018-2022)."""
-    df = _load_all_data()
-    mask = (df["timestamp"] >= TRAIN_START) & (df["timestamp"] <= TRAIN_END)
-    return df[mask].reset_index(drop=True)
+    """Return OHLCV DataFrame for the training period only (2018-2022).
 
-
-def load_val_data() -> pd.DataFrame:
-    """Return OHLCV DataFrame for the validation period only (2023-01 to 2024-06).
-
-    No targets — prevents lookahead bias. The agent uses this to generate
-    predictions, which are then evaluated by evaluate_model().
+    This is the ONLY data the agent should use for training. The evaluation
+    function handles all other splits internally.
     """
     df = _load_all_data()
-    mask = (df["timestamp"] >= VAL_START) & (df["timestamp"] <= VAL_END)
-    return df[mask].reset_index(drop=True)
-
-
-def _load_holdout_data() -> pd.DataFrame:
-    """Return OHLCV DataFrame for the holdout period. Internal use only."""
-    df = _load_all_data()
-    mask = (df["timestamp"] >= HOLDOUT_START) & (df["timestamp"] <= HOLDOUT_END)
+    mask = (df["timestamp"] >= TRAIN_START) & (df["timestamp"] <= TRAIN_END)
     return df[mask].reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
 # Backtesting Engine (internal)
 # ---------------------------------------------------------------------------
-
-def _compute_forward_returns(close: np.ndarray) -> np.ndarray:
-    """Compute FORWARD_HOURS-ahead percentage returns.
-
-    Returns array of same length as input; last FORWARD_HOURS entries are NaN.
-    """
-    n = len(close)
-    fwd = np.full(n, np.nan)
-    fwd[:n - FORWARD_HOURS] = close[FORWARD_HOURS:] / close[:n - FORWARD_HOURS] - 1.0
-    return fwd
-
 
 def _backtest(predictions: np.ndarray, close_prices: np.ndarray,
               timestamps: np.ndarray, subperiods: list) -> dict:
@@ -309,231 +293,137 @@ def _backtest(predictions: np.ndarray, close_prices: np.ndarray,
     }
 
 
-def _compute_score(sharpe: float, max_drawdown: float, n_trades: int,
-                   subperiod_returns: list, n_params: int) -> float:
-    """Compute composite score with soft continuous penalties.
+# ---------------------------------------------------------------------------
+# Public Evaluation API
+# ---------------------------------------------------------------------------
 
-    score = sharpe * dd_mult * trade_mult * consistency * param_mult
+def evaluate_model(predict_fn: callable, n_params: int) -> dict:
+    """Black-box model evaluation across all temporal splits.
 
-    All penalties are continuous — no hard cliffs. Every experiment
-    produces a meaningful signal for the agent to learn from.
+    Runs the model on training, validation, and holdout data internally.
+    Returns a single composite score. The agent never sees per-split
+    metrics and cannot determine which split is the bottleneck.
 
-    Components:
-      - sharpe: base metric (annualized Sharpe ratio)
-      - dd_mult: soft drawdown penalty, full credit up to 10%,
-        quadratic degradation beyond (20% dd -> 0.69x, 30% -> 0.36x)
-      - trade_mult: linear ramp to 1.0 at 50 trades
-      - consistency: fraction of subperiods that are profitable
-      - param_mult: gentle complexity penalty
+    The score is based on the MINIMUM Sharpe ratio across all splits,
+    ensuring the model must generalize to achieve a positive score.
+
+    Args:
+        predict_fn: Callable that takes a pd.DataFrame (with columns
+            timestamp, open, high, low, close, volume) and returns
+            (predictions: np.ndarray, timestamps: np.ndarray).
+            Must work on arbitrary date ranges.
+        n_params: Number of trainable parameters in the model.
+
+    Returns:
+        dict with keys: score, sharpe_min, max_drawdown, total_trades,
+                        consistency, n_params.
+        sharpe_min is the minimum Sharpe across all evaluation periods.
+        max_drawdown is the worst drawdown across all periods.
+        total_trades is the sum across all periods.
+        consistency is "N/M" where N profitable subperiods out of M total.
     """
-    # If Sharpe is zero or negative, score is zero —
-    # no amount of penalty shaping helps a losing strategy.
-    if sharpe <= 0:
-        return 0.0
+    # Generate predictions on the FULL dataset so features have full
+    # lookback context even at the start of val/holdout periods.
+    all_data = _load_all_data()
+    predictions, timestamps = predict_fn(all_data)
+    predictions = np.asarray(predictions, dtype=np.float64).ravel()
+    timestamps = np.asarray(timestamps).ravel()
 
-    # --- Drawdown: soft quadratic penalty ---
-    # Full credit up to 10% drawdown, then smooth degradation.
-    # 15% dd -> 0.92x, 20% -> 0.69x, 25% -> 0.50x,
-    # 30% -> 0.36x, 40% -> 0.20x, 50% -> 0.12x
-    dd = abs(max_drawdown)
+    assert len(predictions) == len(timestamps), (
+        f"predict_fn returned {len(predictions)} predictions but "
+        f"{len(timestamps)} timestamps"
+    )
+
+    # Build prediction lookup
+    pred_df = pd.DataFrame({"timestamp": timestamps, "prediction": predictions})
+
+    # Backtest each split independently
+    split_results = []
+    for split_start, split_end, subperiods in _SPLITS:
+        mask = (all_data["timestamp"] >= split_start) & (all_data["timestamp"] <= split_end)
+        split_data = all_data[mask].reset_index(drop=True)
+
+        merged = split_data.merge(pred_df, on="timestamp", how="inner")
+
+        if len(merged) == 0:
+            # No predictions for this split — worst possible result
+            split_results.append({
+                "sharpe": -10.0,
+                "max_drawdown": -1.0,
+                "n_trades": 0,
+                "total_return": -1.0,
+                "subperiod_returns": [-1.0] * len(subperiods),
+            })
+            continue
+
+        bt = _backtest(
+            predictions=merged["prediction"].values,
+            close_prices=merged["close"].values,
+            timestamps=merged["timestamp"].values,
+            subperiods=subperiods,
+        )
+        split_results.append(bt)
+
+    # --- Composite score ---
+
+    # Base: minimum Sharpe across all splits.
+    # The model MUST generalize — train-only performance can't compensate
+    # for poor out-of-sample performance.
+    sharpes = [r["sharpe"] for r in split_results]
+    base = min(sharpes)
+
+    # Drawdown: worst across all splits
+    worst_dd_raw = min(r["max_drawdown"] for r in split_results)  # most negative
+    dd = abs(worst_dd_raw)
     if dd <= 0.10:
         dd_mult = 1.0
     else:
         dd_mult = 1.0 / (1.0 + ((dd - 0.10) / 0.15) ** 2)
 
-    # --- Trade count: linear ramp, no hard cutoff ---
-    # 10 trades -> 0.2x, 25 -> 0.5x, 50+ -> 1.0x
-    # Still discourages degenerate low-trade strategies,
-    # but doesn't zero them out.
-    trade_mult = min(1.0, n_trades / 50.0)
+    # Trade count: total across all splits, ramp to 150
+    # (~50 per split on average for full credit)
+    total_trades = sum(r["n_trades"] for r in split_results)
+    trade_mult = min(1.0, total_trades / 150.0)
 
-    # --- Consistency: proportion of profitable subperiods ---
-    # 3/3 -> 1.0, 2/3 -> 0.67, 1/3 -> 0.33, 0/3 -> 0.0
-    n_profitable = sum(1 for r in subperiod_returns if r > 0)
-    n_periods = len(subperiod_returns)
-    if n_periods > 0:
-        consistency = n_profitable / n_periods
-    else:
-        consistency = 0.0
+    # Consistency: fraction of ALL subperiods that are profitable.
+    # 7 total subperiods across train (3) + val (2) + holdout (2).
+    # A model overfit to train gets at most 3/7 ≈ 0.43x.
+    all_sp_returns = []
+    for r in split_results:
+        all_sp_returns.extend(r["subperiod_returns"])
+    n_profitable = sum(1 for ret in all_sp_returns if ret > 0)
+    n_total = len(all_sp_returns)
+    consistency = n_profitable / n_total if n_total > 0 else 0.0
 
-    # --- Parameter count: gentle complexity penalty ---
-    # 1K params -> 0.99x, 10K -> 0.91x, 50K -> 0.67x, 100K -> 0.50x
-    # Halved vs original (0.01 instead of 0.02) so that ML models
-    # can compete on roughly equal footing with simpler approaches.
+    # Parameter count: gentle complexity penalty
     n_params_k = n_params / 1000.0
     param_mult = 1.0 / (1.0 + 0.01 * n_params_k)
 
-    score = sharpe * dd_mult * trade_mult * consistency * param_mult
+    score = base * dd_mult * trade_mult * consistency * param_mult
 
-    return score
-
-
-# ---------------------------------------------------------------------------
-# Public Evaluation API
-# ---------------------------------------------------------------------------
-
-def evaluate_model(predictions: np.ndarray, timestamps: np.ndarray,
-                   n_params: int, split: str = "train") -> dict:
-    """Evaluate model predictions via backtesting.
-
-    Args:
-        predictions: 1-D array of forward-return predictions.
-        timestamps: 1-D array of pd.Timestamp (same length as predictions).
-            Each timestamp is the time at which the prediction was made.
-        n_params: Number of trainable parameters in the model.
-        split: "train" or "val".
-
-    Returns:
-        dict with keys: score, sharpe, max_drawdown, n_trades, total_return, val_pass.
-        When split="val", only val_pass is meaningful; other fields are None.
-    """
-    predictions = np.asarray(predictions, dtype=np.float64).ravel()
-    timestamps = np.asarray(timestamps).ravel()
-    assert len(predictions) == len(timestamps), (
-        f"predictions ({len(predictions)}) and timestamps ({len(timestamps)}) "
-        f"must have the same length"
-    )
-
-    all_data = _load_all_data()
-
-    if split == "train":
-        mask = (all_data["timestamp"] >= TRAIN_START) & (all_data["timestamp"] <= TRAIN_END)
-        subperiods = TRAIN_SUBPERIODS
-    elif split == "val":
-        mask = (all_data["timestamp"] >= VAL_START) & (all_data["timestamp"] <= VAL_END)
-        subperiods = VAL_SUBPERIODS
-    elif split == "holdout":
-        mask = (all_data["timestamp"] >= HOLDOUT_START) & (all_data["timestamp"] <= HOLDOUT_END)
-        subperiods = [
-            (pd.Timestamp("2024-07-01"), pd.Timestamp("2024-12-31 23:00:00")),
-            (pd.Timestamp("2025-01-01"), pd.Timestamp("2025-12-31 23:00:00")),
-        ]
-    else:
-        raise ValueError(f"split must be 'train', 'val', or 'holdout', got '{split}'")
-
-    split_data = all_data[mask].reset_index(drop=True)
-
-    # Align predictions with price data by timestamp
-    pred_df = pd.DataFrame({"timestamp": timestamps, "prediction": predictions})
-    merged = split_data.merge(pred_df, on="timestamp", how="inner")
-
-    if len(merged) == 0:
-        raise ValueError(
-            f"No matching timestamps between predictions and {split} data. "
-            f"Predictions span {timestamps[0]} to {timestamps[-1]}, "
-            f"split data spans {split_data['timestamp'].iloc[0]} to "
-            f"{split_data['timestamp'].iloc[-1]}"
-        )
-
-    bt = _backtest(
-        predictions=merged["prediction"].values,
-        close_prices=merged["close"].values,
-        timestamps=merged["timestamp"].values,
-        subperiods=subperiods,
-    )
-
-    score = _compute_score(
-        sharpe=bt["sharpe"],
-        max_drawdown=bt["max_drawdown"],
-        n_trades=bt["n_trades"],
-        subperiod_returns=bt["subperiod_returns"],
-        n_params=n_params,
-    )
-
-    if split == "train":
-        return {
-            "score": score,
-            "sharpe": bt["sharpe"],
-            "max_drawdown": bt["max_drawdown"],
-            "n_trades": bt["n_trades"],
-            "total_return": bt["total_return"],
-            "val_pass": None,
-        }
-    elif split == "val":
-        return {
-            "score": None,
-            "sharpe": None,
-            "max_drawdown": None,
-            "n_trades": None,
-            "total_return": None,
-            "val_pass": score > 0,
-        }
-    else:
-        return {
-            "score": score,
-            "sharpe": bt["sharpe"],
-            "max_drawdown": bt["max_drawdown"],
-            "n_trades": bt["n_trades"],
-            "total_return": bt["total_return"],
-            "val_pass": None,
-        }
+    return {
+        "score": score,
+        "sharpe_min": base,
+        "max_drawdown": worst_dd_raw,
+        "total_trades": total_trades,
+        "consistency": f"{n_profitable}/{n_total}",
+        "n_params": n_params,
+    }
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
-def _run_holdout_evaluation():
-    """Run holdout evaluation. For human use only — never called by agent."""
-    print("=" * 60)
-    print("HOLDOUT EVALUATION")
-    print("=" * 60)
-    print()
-    print("This evaluates the current model on held-out data")
-    print("(2024-07-01 to 2025-12-31) that the agent never sees.")
-    print()
-
-    try:
-        import train as train_module
-    except ImportError:
-        print("ERROR: Could not import train.py. Make sure it exists.")
-        sys.exit(1)
-
-    holdout_data = _load_holdout_data()
-    print(f"Holdout data: {len(holdout_data)} rows "
-          f"({holdout_data['timestamp'].iloc[0]} to "
-          f"{holdout_data['timestamp'].iloc[-1]})")
-
-    if not hasattr(train_module, "predict_on_data"):
-        print("ERROR: train.py must define predict_on_data(df) -> (predictions, timestamps)")
-        sys.exit(1)
-
-    # Train the model first (predict_on_data requires a trained model)
-    print("Training model...")
-    train_module.main()
-    print()
-
-    predictions, timestamps = train_module.predict_on_data(holdout_data)
-    n_params = train_module.count_model_params()
-
-    result = evaluate_model(predictions, timestamps, n_params, split="holdout")
-
-    print()
-    print("--- HOLDOUT RESULTS ---")
-    print(f"score:        {result['score']:.4f}")
-    print(f"sharpe:       {result['sharpe']:.4f}")
-    print(f"max_drawdown: {result['max_drawdown']:.1%}")
-    print(f"n_trades:     {result['n_trades']}")
-    print(f"total_return: {result['total_return']:.1%}")
-    print(f"n_params:     {n_params}")
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Autotrader data preparation")
-    parser.add_argument("--evaluate-holdout", action="store_true",
-                        help="Run holdout evaluation (human use only)")
-    args = parser.parse_args()
-
-    if args.evaluate_holdout:
-        _run_holdout_evaluation()
-    else:
-        df = download_data()
-        print(f"\nData summary:")
-        print(f"  Rows: {len(df)}")
-        print(f"  Range: {df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]}")
-        train = load_train_data()
-        val = load_val_data()
-        holdout = _load_holdout_data()
-        print(f"  Train:   {len(train)} rows ({train['timestamp'].iloc[0]} to {train['timestamp'].iloc[-1]})")
-        print(f"  Val:     {len(val)} rows ({val['timestamp'].iloc[0]} to {val['timestamp'].iloc[-1]})")
-        print(f"  Holdout: {len(holdout)} rows ({holdout['timestamp'].iloc[0]} to {holdout['timestamp'].iloc[-1]})")
+    df = download_data()
+    print(f"\nData summary:")
+    print(f"  Rows: {len(df)}")
+    print(f"  Range: {df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]}")
+    train = load_train_data()
+    print(f"  Train: {len(train)} rows "
+          f"({train['timestamp'].iloc[0]} to {train['timestamp'].iloc[-1]})")
+    n_val = ((df["timestamp"] >= VAL_START) & (df["timestamp"] <= VAL_END)).sum()
+    n_holdout = ((df["timestamp"] >= HOLDOUT_START) & (df["timestamp"] <= HOLDOUT_END)).sum()
+    print(f"  Val:     {n_val} rows")
+    print(f"  Holdout: {n_holdout} rows")

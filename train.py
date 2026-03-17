@@ -13,11 +13,9 @@ from sklearn.ensemble import GradientBoostingRegressor
 
 from prepare import (
     FORWARD_HOURS,
-    PRED_SCALE,
     TIME_BUDGET,
     evaluate_model,
     load_train_data,
-    load_val_data,
 )
 
 # ---------------------------------------------------------------------------
@@ -139,25 +137,7 @@ def count_model_params(model=None) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Normalization
-# ---------------------------------------------------------------------------
-
-_feat_mean: np.ndarray | None = None
-_feat_std: np.ndarray | None = None
-
-
-def _normalize(features: np.ndarray, fit: bool = False) -> np.ndarray:
-    """Z-score normalize features. If fit=True, compute and store stats."""
-    global _feat_mean, _feat_std
-    if fit:
-        _feat_mean = np.nanmean(features, axis=0)
-        _feat_std = np.nanstd(features, axis=0)
-        _feat_std[_feat_std < 1e-8] = 1.0
-    return (features - _feat_mean) / _feat_std
-
-
-# ---------------------------------------------------------------------------
-# Prediction helper (used by prepare.py --evaluate-holdout)
+# Prediction helper (used by prepare.py evaluate_model)
 # ---------------------------------------------------------------------------
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
@@ -166,7 +146,11 @@ def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """Generate predictions on arbitrary OHLCV data."""
+    """Generate predictions on arbitrary OHLCV data.
+
+    This function is passed to evaluate_model() which calls it on
+    the full dataset internally. Must work on any date range.
+    """
     features, timestamps = compute_features(df)
     features = np.nan_to_num(features, nan=0.0)
 
@@ -174,7 +158,7 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     if model is None:
         raise RuntimeError("Model not trained. Run train.py first.")
 
-    preds = _smooth_predictions(model.predict(features)) * PRED_SCALE
+    preds = _smooth_predictions(model.predict(features))
     return preds, timestamps
 
 
@@ -213,7 +197,7 @@ def main():
     print(f"  Training samples: {len(features)}, Features: {features.shape[1]}")
 
     # --- Train GBR ---
-    print(f"Training GBR...")
+    print("Training GBR...")
     train_start = time.time()
 
     model = GradientBoostingRegressor(
@@ -221,15 +205,19 @@ def main():
         max_depth=3,
         learning_rate=0.01,
         subsample=0.8,
-        min_samples_leaf=100,
+        min_samples_leaf=200,
         max_features=0.8,
         loss="squared_error",
         random_state=42,
     )
-    # Asymmetric weighting: 2x penalty on positive-return samples
-    # Model learns directional bias from data (biases toward predicting up
-    # when uncertain, since errors on up-moves cost more)
-    sample_weights = np.where(targets > 0, 1.2, 1.0)
+    # Time-decay weighting: recent data is more relevant than old data.
+    # Exponential decay so 2022 data is ~5x more weighted than 2018 data.
+    # Combined with 1.2x asymmetric weighting on positive returns.
+    ts_float = train_timestamps.astype("datetime64[h]").astype(np.float64)
+    ts_norm = (ts_float - ts_float.min()) / (ts_float.max() - ts_float.min())
+    time_weights = np.exp(1.6 * ts_norm)
+    asym_weights = np.where(targets > 0, 1.2, 1.0)
+    sample_weights = time_weights * asym_weights
     model.fit(features, targets, sample_weight=sample_weights)
 
     training_seconds = time.time() - train_start
@@ -239,34 +227,21 @@ def main():
     n_params = count_model_params(model)
     print(f"  Model parameters (node count): {n_params}")
 
-    # --- Evaluate on train split ---
-    print("Evaluating on training data...")
-    all_preds = _smooth_predictions(model.predict(features)) * PRED_SCALE
-
-    train_result = evaluate_model(all_preds, train_timestamps, n_params, split="train")
-
-    # --- Evaluate on validation split ---
-    print("Evaluating on validation data...")
-    val_df = load_val_data()
-    val_features, val_timestamps = compute_features(val_df)
-    val_features = np.nan_to_num(val_features, nan=0.0)
-
-    val_preds = _smooth_predictions(model.predict(val_features)) * PRED_SCALE
-
-    val_result = evaluate_model(val_preds, val_timestamps, n_params, split="val")
+    # --- Evaluate (black box) ---
+    print("Evaluating...")
+    result = evaluate_model(predict_on_data, n_params)
 
     total_seconds = time.time() - total_start
 
     # --- Print summary ---
     print()
     print("---")
-    print(f"score:            {train_result['score']:.4f}")
-    print(f"sharpe:           {train_result['sharpe']:.4f}")
-    print(f"max_drawdown:     {train_result['max_drawdown']:.1%}")
-    print(f"n_trades:         {train_result['n_trades']}")
-    print(f"total_return:     {train_result['total_return']:.1%}")
-    print(f"n_params:         {n_params}")
-    print(f"val_pass:         {str(val_result['val_pass']).lower()}")
+    print(f"score:            {result['score']:.4f}")
+    print(f"sharpe_min:       {result['sharpe_min']:.4f}")
+    print(f"max_drawdown:     {result['max_drawdown']:.1%}")
+    print(f"total_trades:     {result['total_trades']}")
+    print(f"consistency:      {result['consistency']}")
+    print(f"n_params:         {result['n_params']}")
     print(f"training_seconds: {training_seconds:.1f}")
     print(f"total_seconds:    {total_seconds:.1f}")
 
