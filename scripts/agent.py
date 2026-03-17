@@ -546,7 +546,9 @@ These are NOT guaranteed to work here but are worth trying if not yet attempted.
 - Training runs for a fixed 5-minute time budget. Lower val_bpb is better.
 - GPU: {GPU_NAME} with {VRAM_TOTAL_MB}MB VRAM. Don't exceed ~{VRAM_LIMIT_MB}MB peak.
 - One idea per experiment. Available packages: torch, numpy only.
-- flash-attn3 is fragile: Do NOT change normalization (RMSNorm, LayerNorm, QKNorm, etc.) — WILL crash.
+- flash-attn3 is fragile: Do NOT change normalization (RMSNorm, LayerNorm, QKNorm, etc.) - WILL crash.
+- Do NOT modify TOTAL_BATCH_SIZE, DEVICE_BATCH_SIZE, or DEPTH - these are hardware-dependent and changing them crashes the training loop.
+- Do NOT modify the optimizer class (MuonAdamW) or its parameter groups - torch.compile will segfault.
 - Avoid large structural changes that trigger torch.compile recompilation (causes timeouts).
 - TOTAL_BATCH_SIZE must be divisible by (DEVICE_BATCH_SIZE * MAX_SEQ_LEN). MAX_SEQ_LEN=2048 from prepare.py.
 
