@@ -126,6 +126,7 @@ class MLP(nn.Module):
         residual = x
         x = self.c_fc(x)
         x = F.relu(x).square()
+        x = F.dropout(x, p=0.1, training=self.training)
         x = self.c_proj(x)
         return x + residual
 
