@@ -494,11 +494,11 @@ except Exception:
 def _auto_gpu_config(vram_mb):
     """Scale model depth, batch size, and VRAM limit to detected GPU."""
     if vram_mb >= 20000:    # 24GB+ (RTX 4090, A5000, etc.)
-        depth, batch = 16, 24
+        depth, batch = 16, 32
     elif vram_mb >= 14000:  # 16GB (RTX 5070 Ti, 4080, A4000)
         depth, batch = 12, 16
     elif vram_mb >= 10000:  # 12GB (RTX 3060 12GB, 4070)
-        depth, batch = 10, 12
+        depth, batch = 10, 8
     else:                   # 8GB (RTX 3070, 3060 8GB)
         depth, batch = 8, 8
     vram_limit = vram_mb
