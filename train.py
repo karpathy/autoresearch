@@ -119,13 +119,15 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
+        self.c_gate = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
+        self.c_up = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
 
     def forward(self, x):
         residual = x
-        x = self.c_fc(x)
-        x = F.relu(x).square()
+        gate = F.silu(self.c_gate(x))
+        up = self.c_up(x)
+        x = gate * up
         x = self.c_proj(x)
         return x + residual
 
@@ -181,7 +183,8 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight)
-            torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
+            torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
+            torch.nn.init.uniform_(block.mlp.c_up.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)
@@ -686,10 +689,6 @@ while True:
     # Adaptive gradient clipping: start high (1.0) and decrease to 0.3
     adaptive_clip = 1.0 - 0.7 * progress
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=adaptive_clip)
-    # Additional regularization: apply weight decay directly to tied weights
-    if step % 10 == 0:  # Every 10 steps to avoid overhead
-        with torch.no_grad():
-            model.transformer.wte.weight.mul_(1 - 0.0001 * lrm)
     optimizer.step()
     model.zero_grad(set_to_none=True)
 
