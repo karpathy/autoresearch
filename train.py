@@ -158,7 +158,9 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     if model is None:
         raise RuntimeError("Model not trained. Run train.py first.")
 
-    preds = _smooth_predictions(model.predict(features))
+    raw_preds = model.predict(features)
+    compressed = 0.02 * np.tanh(raw_preds / 0.02)
+    preds = _smooth_predictions(compressed)
     return preds, timestamps
 
 
@@ -203,7 +205,7 @@ def main():
     model = GradientBoostingRegressor(
         n_estimators=300,
         max_depth=3,
-        learning_rate=0.01,
+        learning_rate=0.025,
         subsample=0.8,
         min_samples_leaf=200,
         max_features=0.8,
