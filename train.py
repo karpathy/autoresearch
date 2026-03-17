@@ -632,13 +632,14 @@ print(f"Gradient accumulation steps: {grad_accum_steps}")
 # Schedules (all based on progress = training_time / TIME_BUDGET)
 
 def get_lr_multiplier(progress):
+    import math
     if progress < WARMUP_RATIO:
         return progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
     elif progress < 1.0 - WARMDOWN_RATIO:
         return 1.0
     else:
-        cooldown = (1.0 - progress) / WARMDOWN_RATIO
-        return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
+        cooldown_progress = (progress - (1.0 - WARMDOWN_RATIO)) / WARMDOWN_RATIO
+        return 0.1 + 0.9 * (1 + math.cos(math.pi * cooldown_progress)) / 2
 
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
@@ -683,14 +684,6 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
-    # Add multiplicative gradient noise that anneals during training
-    noise_scale = 0.02 * (1.0 - progress) ** 2  # Start at 0.02, decay to 0
-    if noise_scale > 1e-6:
-        for param in model.parameters():
-            if param.grad is not None:
-                noise = 1.0 + noise_scale * torch.randn_like(param.grad)
-                param.grad.mul_(noise)
-    
     # Adaptive gradient clipping: start high (1.0) and decrease to 0.3
     adaptive_clip = 1.0 - 0.7 * progress
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=adaptive_clip)
