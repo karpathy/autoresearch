@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.ensemble import GradientBoostingRegressor
 
 from prepare import (
     FORWARD_HOURS,
@@ -124,15 +124,15 @@ _trained_model = None
 
 
 def count_model_params(model=None) -> int:
-    """Return approximate parameter count for the HGBR model."""
+    """Return approximate parameter count for the GBR model."""
     if model is None:
         model = _trained_model
     if model is None:
         return 0
     n_params = 0
-    for predictor in model._predictors:
-        for tree in predictor:
-            n_params += tree.get_n_leaf_nodes() + tree.get_n_leaf_nodes() - 1
+    for estimators in model.estimators_:
+        for tree in estimators:
+            n_params += tree.tree_.node_count
     return n_params
 
 
@@ -200,16 +200,15 @@ def main():
     print("Training GBR...")
     train_start = time.time()
 
-    model = HistGradientBoostingRegressor(
-        max_iter=1000,
-        max_depth=4,
+    model = GradientBoostingRegressor(
+        n_estimators=300,
+        max_depth=3,
         learning_rate=0.025,
+        subsample=0.7,
         min_samples_leaf=200,
-        max_leaf_nodes=15,
-        l2_regularization=1.0,
+        max_features=0.6,
         loss="squared_error",
         random_state=42,
-        early_stopping=False,
     )
     # Time-decay weighting: recent data is more relevant than old data.
     # Exponential decay so 2022 data is ~5x more weighted than 2018 data.
