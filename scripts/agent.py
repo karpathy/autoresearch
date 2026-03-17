@@ -559,7 +559,9 @@ Each is a small single-line change. Do NOT combine multiple changes.
 - One idea per experiment. Available packages: torch, numpy only.
 - flash-attn3 is fragile: Do NOT change normalization (RMSNorm, LayerNorm, QKNorm, etc.) - WILL crash.
 - Do NOT modify TOTAL_BATCH_SIZE, DEVICE_BATCH_SIZE, or DEPTH - these are hardware-dependent and changing them crashes the training loop.
-- Do NOT modify the optimizer class (MuonAdamW) or its parameter groups - torch.compile will segfault.
+- Do NOT modify the optimizer class (MuonAdamW), setup_optimizer(), or parameter groups in ANY way. Do not add new param groups, change per-group LRs, or restructure weight decay groups. torch.compile WILL crash.
+- Do NOT modify the model architecture (add/remove layers, change layer sizes, add new nn.Parameters). torch.compile WILL crash.
+- SAFE changes: hyperparameter constants (LR values, ratios, decay rates), init_weights values, RoPE base, activation functions, window patterns.
 - Avoid large structural changes that trigger torch.compile recompilation (causes timeouts).
 - TOTAL_BATCH_SIZE must be divisible by (DEVICE_BATCH_SIZE * MAX_SEQ_LEN). MAX_SEQ_LEN=2048 from prepare.py.
 
