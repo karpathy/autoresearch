@@ -678,13 +678,11 @@ while True:
 
     torch.cuda.synchronize()
     t0 = time.time()
-    # Adaptive gradient accumulation: start with more frequent updates
-    current_accum_steps = max(1, int(grad_accum_steps * (0.5 + 0.5 * min(progress / 0.3, 1.0))))
-    for micro_step in range(current_accum_steps):
+    for micro_step in range(grad_accum_steps):
         with autocast_ctx:
             loss = model(x, y)
         train_loss = loss.detach()
-        loss = loss / current_accum_steps
+        loss = loss / grad_accum_steps
         loss.backward()
         x, y, epoch = next(train_loader)
 
