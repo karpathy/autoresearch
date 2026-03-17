@@ -215,9 +215,8 @@ def main():
     # Combined with 1.2x asymmetric weighting on positive returns.
     ts_float = train_timestamps.astype("datetime64[h]").astype(np.float64)
     ts_norm = (ts_float - ts_float.min()) / (ts_float.max() - ts_float.min())
-    time_weights = np.exp(2.0 * ts_norm)
-    asym_weights = np.where(targets > 0, 1.2, 1.0)
-    sample_weights = time_weights * asym_weights
+    time_weights = np.exp(1.6 * ts_norm)
+    sample_weights = time_weights
     model.fit(features, targets, sample_weight=sample_weights)
 
     training_seconds = time.time() - train_start
