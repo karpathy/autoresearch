@@ -644,6 +644,13 @@ def get_muon_momentum(step):
     frac = min(step / 300, 1)
     return (1 - frac) * 0.85 + frac * 0.95
 
+def get_adamw_momentum(param_type, step):
+    frac = min(step / 300, 1)
+    if param_type == 'embedding':
+        return (1 - frac) * 0.6 + frac * 0.7
+    else:
+        return (1 - frac) * 0.8 + frac * 0.9
+
 def get_weight_decay(progress):
     return WEIGHT_DECAY * (1 - progress)
 
@@ -683,6 +690,11 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
+        elif group['kind'] == 'adamw':
+            if 'embedding' in str(group['params'][0]):
+                group["betas"] = (get_adamw_momentum('embedding', step), group["betas"][1])
+            else:
+                group["betas"] = (get_adamw_momentum('other', step), group["betas"][1])
     # Adaptive gradient clipping: start high (1.0) and decrease to 0.3
     adaptive_clip = 1.0 - 0.7 * progress
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=adaptive_clip)
