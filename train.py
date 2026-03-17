@@ -207,7 +207,7 @@ def main():
         subsample=0.8,
         min_samples_leaf=200,
         max_features=0.8,
-        loss="squared_error",
+        loss="huber",
         random_state=42,
     )
     # Time-decay weighting: recent data is more relevant than old data.
