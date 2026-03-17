@@ -113,6 +113,7 @@ class CausalSelfAttention(nn.Module):
             y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
             y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
+        y = F.dropout(y, p=0.1, training=self.training)
         return y
 
 
@@ -127,6 +128,7 @@ class MLP(nn.Module):
         x = self.c_fc(x)
         x = F.relu(x).square()
         x = self.c_proj(x)
+        x = F.dropout(x, p=0.1, training=self.training)
         return x + residual
 
 
