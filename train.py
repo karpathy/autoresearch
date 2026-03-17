@@ -83,13 +83,27 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     hl_range_24 = pd.Series(hl_range).rolling(24, min_periods=24).mean().values
     feature_cols.append(hl_range_24)
 
-    # 6. Hour of day (cyclical)
+    # 6. Distance from 168h rolling high (drawdown indicator)
+    # 0 = at peak, negative = how far below peak
+    rolling_high = pd.Series(close).rolling(168, min_periods=168).max().values
+    dist_from_high = np.where(rolling_high > 0, close / rolling_high - 1.0, 0.0)
+    feature_cols.append(dist_from_high)
+
+    # 7. Trailing 168h max drawdown (crash severity indicator)
+    close_series = pd.Series(close)
+    rolling_peak = close_series.rolling(168, min_periods=168).max().values
+    trailing_dd = np.where(rolling_peak > 0, close / rolling_peak - 1.0, 0.0)
+    # Smooth the drawdown indicator over 24h
+    trailing_dd_smooth = pd.Series(trailing_dd).rolling(24, min_periods=1).mean().values
+    feature_cols.append(trailing_dd_smooth)
+
+    # 8. Hour of day (cyclical)
     dt = pd.to_datetime(ts)
     hours = dt.hour
     feature_cols.append(np.sin(2 * np.pi * hours / 24))
     feature_cols.append(np.cos(2 * np.pi * hours / 24))
 
-    # 7. Day of week (cyclical)
+    # 9. Day of week (cyclical)
     dow = dt.dayofweek
     feature_cols.append(np.sin(2 * np.pi * dow / 7))
     feature_cols.append(np.cos(2 * np.pi * dow / 7))
@@ -201,7 +215,7 @@ def main():
     train_start = time.time()
 
     model = GradientBoostingRegressor(
-        n_estimators=1000,
+        n_estimators=300,
         max_depth=3,
         learning_rate=0.025,
         subsample=0.8,
@@ -209,9 +223,6 @@ def main():
         max_features=0.8,
         loss="squared_error",
         random_state=42,
-        validation_fraction=0.2,
-        n_iter_no_change=20,
-        tol=1e-6,
     )
     # Time-decay weighting: recent data is more relevant than old data.
     # Exponential decay so 2022 data is ~5x more weighted than 2018 data.
