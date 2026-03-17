@@ -55,9 +55,22 @@ _genai_client = genai.Client(
 OPENCASTOR_REPO = Path(os.environ["OPENCASTOR_REPO_PATH"])
 TODAY_TRACK = os.environ.get("TODAY_TRACK", "A")
 REVIEWER_MODEL = "gemini-2.0-flash"
-# Use qwen2.5-coder:3b if available, fall back to gemma3:1b
+# Model priority: qwen2.5-coder:7b > qwen2.5-coder:3b > gemma3:4b > gemma3:1b
 _available = {m.model.split(":")[0] for m in ollama.list().models}
-DRAFT_MODEL = "qwen2.5-coder:3b" if "qwen2.5-coder" in _available else "gemma3:1b"
+_avail_full = {m.model for m in ollama.list().models}
+
+def _pick_model() -> str:
+    for candidate in [
+        "qwen2.5-coder:7b",
+        "qwen2.5-coder:3b",
+        "gemma3:4b",
+        "gemma3:1b",
+    ]:
+        if candidate in _avail_full or candidate.split(":")[0] in _available:
+            return candidate
+    return "gemma3:1b"
+
+DRAFT_MODEL = _pick_model()
 RESULTS_TSV = Path(__file__).parent / "results.tsv"
 
 FORBIDDEN_FILES = {
@@ -301,42 +314,51 @@ def metric_improved(before: int, after: int) -> bool:
 def draft_improvement(target: str, name: str, content: str, program: str) -> str:
     """Use on-device Ollama to draft a targeted improvement."""
     prompts = {
-        "A": f"""Write a single pytest test function for this function from OpenCastor:
+        "A": f"""Write ONE pytest test function for the Python function shown below.
 
 File: {target}
-Function: {name}
+Function to test: {name}
 
 ```python
-{content}
+{content[:600]}
 ```
 
-Rules:
-- Function name must start with test_
-- Import using: from castor.{Path(target).stem} import {name}
-- Use unittest.mock if needed for external dependencies
-- Test real behavior, not trivial stubs
-- Return ONLY the Python test function, nothing else. No explanation.""",
+STRICT OUTPUT RULES:
+1. Return ONLY the test function — no imports, no class, no explanation
+2. First line must be: def test_{name}_<behavior>(...)
+3. Import inside the function body: from castor.{Path(target).stem} import {name}
+4. Use unittest.mock.patch or MagicMock for any I/O or external deps
+5. Test ONE specific behavior (happy path or a known edge case)
+6. No code fences, no markdown
 
-        "B": f"""Add a Google-style docstring to this Python function. The function currently has NO docstring. You must add one.
+Return ONLY the function:""",
+
+        "B": f"""Add a Google-style docstring to exactly this one Python function. It currently has NO docstring.
 
 Function (from {target}):
 ```python
-{content}
+{content[:500]}
 ```
 
-A Google-style docstring looks like this:
-    def example(x: int) -> str:
-        \"\"\"Convert integer to string.
+Google-style example:
+    def fn(x: int) -> str:
+        \"\"\"One-line summary.
 
         Args:
-            x: The integer to convert.
+            x: Description.
 
         Returns:
-            String representation.
+            Description.
         \"\"\"
-        return str(x)
 
-Now add a docstring to the function above. Return ONLY the complete function definition with docstring inserted after the def line. Python code only. No explanation. No ``` fences.""",
+STRICT OUTPUT RULES:
+1. Return ONLY the complete function definition with the docstring added
+2. Insert docstring as the FIRST line inside the function body (after def line)
+3. Do NOT change any logic, only add the docstring
+4. No code fences, no markdown, no explanation
+5. If the function has Args/Returns, document them
+
+Return ONLY the function:""",
 
         "C": f"""Generate a RCAN config YAML preset for a robot with this hardware: {target}
 
@@ -356,20 +378,25 @@ Rules:
 - Return the complete SKILL.md including frontmatter
 - No explanation""",
 
-        "E": f"""Write a single pytest test for this harness/P66 function from OpenCastor:
+        "E": f"""Write ONE pytest test for this harness/P66 function from OpenCastor.
 
 File: {target}
 Function: {name}
 
 ```python
-{content}
+{content[:600]}
 ```
 
-Rules:
-- MUST include a P66 safety assertion if the function touches physical tools or ESTOP
-- Use pytest.mark.asyncio for async tests
-- Mock providers using unittest.mock.MagicMock
-- Return ONLY the test function, no explanation.""",
+STRICT OUTPUT RULES:
+1. Return ONLY the test function — no imports, no class, no explanation
+2. First line must be: def test_{name}_<behavior>(...) or async def test_{name}_<behavior>(...)
+3. Import inside the function body: from castor.{Path(target).stem} import {name}
+4. If function touches ESTOP/physical tools/P66, add: assert result is not None (safety invariant check)
+5. Use @pytest.mark.asyncio decorator for async functions (add it on the line before def)
+6. Mock providers: from unittest.mock import MagicMock, patch
+7. No code fences, no markdown
+
+Return ONLY the function:""",
 
         "F": "readonly",
     }
@@ -381,7 +408,7 @@ Rules:
     response = ollama.chat(
         model=DRAFT_MODEL,
         messages=[{"role": "user", "content": prompt}],
-        options={"temperature": 0.3, "num_predict": 800},
+        options={"temperature": 0.2, "num_predict": 600},
     )
     return response["message"]["content"]
 
