@@ -295,7 +295,7 @@ class GPT(nn.Module):
             group["initial_lr"] = group["lr"]
         return optimizer
 
-    def forward(self, idx, targets=None, reduction='mean', training_progress=1.0):
+    def forward(self, idx, targets=None, reduction='mean'):
         B, T = idx.size()
         assert T <= self.cos.size(1)
         cos_sin = self.cos[:, :T], self.sin[:, :T]
@@ -303,9 +303,7 @@ class GPT(nn.Module):
         x = self.transformer.wte(idx)
         x = norm(x)
         x0 = x
-        # Adaptive depth: gradually activate more layers during training
-        active_layers = max(6, int(len(self.transformer.h) * (0.5 + 0.5 * training_progress)))
-        for i, block in enumerate(self.transformer.h[:active_layers]):
+        for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i])
@@ -678,7 +676,7 @@ while True:
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
-            loss = model(x, y, training_progress=progress)
+            loss = model(x, y)
         train_loss = loss.detach()
         loss = loss / grad_accum_steps
         loss.backward()
