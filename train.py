@@ -141,8 +141,8 @@ def count_model_params(model=None) -> int:
 # ---------------------------------------------------------------------------
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
-    """Apply 48h rolling mean to smooth noisy tree-based predictions."""
-    return pd.Series(raw_preds).rolling(48, min_periods=1).mean().values
+    """Apply 36h rolling mean to smooth noisy tree-based predictions."""
+    return pd.Series(raw_preds).rolling(36, min_periods=1).mean().values
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
@@ -207,7 +207,7 @@ def main():
         subsample=0.8,
         min_samples_leaf=200,
         max_features=0.8,
-        loss="huber",
+        loss="squared_error",
         random_state=42,
     )
     # Time-decay weighting: recent data is more relevant than old data.
