@@ -116,15 +116,6 @@ def compute_targets(df: pd.DataFrame) -> np.ndarray:
     return targets
 
 
-def compute_vol_168h(df: pd.DataFrame) -> np.ndarray:
-    """Compute 168h rolling volatility of hourly returns."""
-    close = df["close"].values.astype(np.float64)
-    hourly_returns = np.zeros(len(close))
-    hourly_returns[1:] = close[1:] / close[:-1] - 1.0
-    vol = pd.Series(hourly_returns).rolling(168, min_periods=168).std().values
-    return np.where((vol > 0) & ~np.isnan(vol), vol, 1.0)
-
-
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
@@ -188,27 +179,18 @@ def main():
     # --- Compute features and targets ---
     features, timestamps = compute_features(train_df)
     targets = compute_targets(train_df)
-    vol_168h = compute_vol_168h(train_df)
 
     # Align: targets need same trimming as features (MAX_LOOKBACK from start)
     targets = targets[MAX_LOOKBACK:]
-    vol_aligned = vol_168h[MAX_LOOKBACK:]
 
     # Drop rows where targets are NaN (last FORWARD_HOURS rows)
     valid = ~np.isnan(targets)
     features = features[valid]
     targets = targets[valid]
-    vol_aligned = vol_aligned[valid]
     train_timestamps = timestamps[valid]
 
-    # Vol-normalize targets: train on return/vol (sigma units).
-    # Model outputs in sigma-space. We do NOT denormalize at prediction time.
-    # This means the 0.5% threshold acts as ~0.5 sigma, making the model
-    # naturally conservative in high-vol regimes (where drawdowns happen).
-    targets = targets / vol_aligned
-
-    # Winsorize in sigma-space at ±3 sigma
-    targets = np.clip(targets, -3.0, 3.0)
+    # Winsorize targets at ±5% to reduce influence of extreme returns
+    targets = np.clip(targets, -0.05, 0.05)
 
     features = np.nan_to_num(features, nan=0.0)
 
@@ -219,7 +201,7 @@ def main():
     train_start = time.time()
 
     model = GradientBoostingRegressor(
-        n_estimators=300,
+        n_estimators=1000,
         max_depth=3,
         learning_rate=0.025,
         subsample=0.8,
@@ -227,6 +209,9 @@ def main():
         max_features=0.8,
         loss="squared_error",
         random_state=42,
+        validation_fraction=0.2,
+        n_iter_no_change=20,
+        tol=1e-6,
     )
     # Time-decay weighting: recent data is more relevant than old data.
     # Exponential decay so 2022 data is ~5x more weighted than 2018 data.
