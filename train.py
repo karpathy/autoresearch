@@ -151,6 +151,9 @@ class GPT(nn.Module):
             "wte": nn.Embedding(config.vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
         })
+        # EMA buffers for embedding layers only
+        self.register_buffer('wte_ema', torch.zeros_like(self.transformer.wte.weight), persistent=False)
+        self.ema_decay = 0.9999
         # Weight tying: share embedding and output weights
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.lm_head.weight = self.transformer.wte.weight
@@ -292,7 +295,11 @@ class GPT(nn.Module):
         assert T <= self.cos.size(1)
         cos_sin = self.cos[:, :T], self.sin[:, :T]
 
-        x = self.transformer.wte(idx)
+        # Use EMA weights for embeddings during inference
+        if self.training:
+            x = self.transformer.wte(idx)
+        else:
+            x = F.embedding(idx, self.wte_ema, padding_idx=None, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False)
         x = norm(x)
         x0 = x
         for i, block in enumerate(self.transformer.h):
@@ -623,12 +630,6 @@ optimizer = model.setup_optimizer(
 
 model = torch.compile(model, dynamic=False)
 
-# EMA model for better generalization
-ema_model = GPT(config)
-ema_model.to(device)
-ema_model.load_state_dict(model.state_dict())
-ema_decay = 0.9995
-
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
 x, y, epoch = next(train_loader)  # prefetch first batch
 
@@ -695,10 +696,9 @@ while True:
     optimizer.step()
     model.zero_grad(set_to_none=True)
     
-    # Update EMA model
+    # Update EMA for embedding weights only
     with torch.no_grad():
-        for ema_param, param in zip(ema_model.parameters(), model.parameters()):
-            ema_param.data.mul_(ema_decay).add_(param.data, alpha=1 - ema_decay)
+        model.wte_ema.mul_(model.ema_decay).add_(model.transformer.wte.weight, alpha=1 - model.ema_decay)
 
     train_loss_f = train_loss.item()
 
@@ -752,10 +752,10 @@ if aborted:
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
-# Final eval using EMA model
-ema_model.eval()
+# Final eval
+model.eval()
 with autocast_ctx:
-    val_bpb = evaluate_bpb(ema_model, tokenizer, DEVICE_BATCH_SIZE)
+    val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
 
 # Final summary
 t_end = time.time()
@@ -783,7 +783,7 @@ try:
         for _ in range(100):
             # Crop to max sequence length
             idx_cond = idx[:, -MAX_SEQ_LEN:]
-            logits = ema_model(idx_cond)
+            logits = model(idx_cond)
             next_id = logits[:, -1, :].argmax(dim=-1, keepdim=True)
             idx = torch.cat([idx, next_id], dim=1)
         sample_text = tokenizer.decode(idx[0].tolist())
