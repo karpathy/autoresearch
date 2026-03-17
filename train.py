@@ -672,6 +672,15 @@ while True:
         loss = loss / grad_accum_steps
         loss.backward()
         x, y, epoch = next(train_loader)
+        
+        # Different gradient accumulation for different parameter types
+        if micro_step % 2 == 1:  # Update embeddings every 2 steps
+            for group in optimizer.param_groups:
+                if group['kind'] == 'adamw' and any('wte' in str(p) or 'value_embeds' in str(p) for p in group['params']):
+                    optimizer._step_adamw(group)
+                    for p in group['params']:
+                        if p.grad is not None:
+                            p.grad.zero_()
 
     # Progress and schedules
     progress = min(total_training_time / TIME_BUDGET, 1.0)
@@ -683,19 +692,9 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
-    # Different gradient clipping for different parameter types
+    # Adaptive gradient clipping: start high (1.0) and decrease to 0.3
     adaptive_clip = 1.0 - 0.7 * progress
-    # Higher clipping for embeddings, lower for matrices
-    embedding_params = list(model.transformer.wte.parameters()) + list(model.value_embeds.parameters())
-    matrix_params = list(model.transformer.h.parameters())
-    other_params = [p for p in model.parameters() if p not in embedding_params and p not in matrix_params]
-    
-    if embedding_params:
-        torch.nn.utils.clip_grad_norm_(embedding_params, max_norm=adaptive_clip * 1.5)
-    if matrix_params:
-        torch.nn.utils.clip_grad_norm_(matrix_params, max_norm=adaptive_clip * 0.7)
-    if other_params:
-        torch.nn.utils.clip_grad_norm_(other_params, max_norm=adaptive_clip)
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=adaptive_clip)
     optimizer.step()
     model.zero_grad(set_to_none=True)
 
