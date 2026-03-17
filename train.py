@@ -272,7 +272,7 @@ class GPT(nn.Module):
         param_groups = [
             dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.003),
+            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
@@ -453,7 +453,7 @@ class MuonAdamW(torch.optim.Optimizer):
 
 # Model architecture
 ASPECT_RATIO = 64       # model_dim = depth * ASPECT_RATIO
-HEAD_DIM = 128          # target head dimension for attention
+HEAD_DIM = 64           # target head dimension for attention
 WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
 
 # Optimization
@@ -462,7 +462,7 @@ EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
 SCALAR_LR = 0.5         # learning rate for per-layer scalars (Adam)
-WEIGHT_DECAY = 0.1      # cautious weight decay for Muon
+WEIGHT_DECAY = 0.2      # cautious weight decay for Muon
 ADAM_BETAS = (0.8, 0.95) # Adam beta1, beta2
 WARMUP_RATIO = 0.0      # fraction of time budget for LR warmup
 WARMDOWN_RATIO = 0.75   # fraction of time budget for LR warmdown
@@ -631,20 +631,14 @@ print(f"Gradient accumulation steps: {grad_accum_steps}")
 
 # Schedules (all based on progress = training_time / TIME_BUDGET)
 
-def get_lr_multiplier(progress, param_type='default'):
+def get_lr_multiplier(progress):
     if progress < WARMUP_RATIO:
         return progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
     elif progress < 1.0 - WARMDOWN_RATIO:
         return 1.0
     else:
-        if param_type == 'matrix':
-            # Cosine annealing for matrix parameters
-            cooldown_progress = (progress - (1.0 - WARMDOWN_RATIO)) / WARMDOWN_RATIO
-            return 0.5 * (1 + torch.cos(torch.pi * cooldown_progress)) * (1.0 - FINAL_LR_FRAC) + FINAL_LR_FRAC
-        else:
-            # Linear warmdown for embeddings and scalars
-            cooldown = (1.0 - progress) / WARMDOWN_RATIO
-            return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
+        cooldown = (1.0 - progress) / WARMDOWN_RATIO
+        return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
 
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
@@ -685,13 +679,10 @@ while True:
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
     for group in optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * lrm
         if group['kind'] == 'muon':
-            lrm_type = get_lr_multiplier(progress, 'matrix')
-            group["lr"] = group["initial_lr"] * lrm_type
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
-        else:
-            group["lr"] = group["initial_lr"] * lrm
     # Adaptive gradient clipping: start high (1.0) and decrease to 0.3
     adaptive_clip = 1.0 - 0.7 * progress
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=adaptive_clip)
