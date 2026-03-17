@@ -202,7 +202,7 @@ class GPT(nn.Module):
         for ve in self.value_embeds.values():
             ve.to(dtype=torch.bfloat16)
 
-    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=50000, device=None):
+    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
         if device is None:
             device = self.transformer.wte.weight.device
         channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
@@ -278,9 +278,11 @@ class GPT(nn.Module):
         ]
         for shape in sorted({p.shape for p in matrix_params}):
             group_params = [p for p in matrix_params if p.shape == shape]
+            # Higher weight decay for larger matrices (more parameters to regularize)
+            shape_weight_decay = 0.3 if shape[0] * shape[1] > 2048 else 0.1
             param_groups.append(dict(
                 kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=shape_weight_decay,
             ))
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
@@ -631,19 +633,14 @@ print(f"Gradient accumulation steps: {grad_accum_steps}")
 
 # Schedules (all based on progress = training_time / TIME_BUDGET)
 
-def get_lr_multiplier(progress, param_type='default'):
+def get_lr_multiplier(progress):
     if progress < WARMUP_RATIO:
         return progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
     elif progress < 1.0 - WARMDOWN_RATIO:
         return 1.0
     else:
-        if param_type == 'matrix':
-            # Exponential decay for matrices
-            return max(FINAL_LR_FRAC, 0.995 ** (progress * 1000))
-        else:
-            # Linear warmdown for embeddings
-            cooldown = (1.0 - progress) / WARMDOWN_RATIO
-            return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
+        cooldown = (1.0 - progress) / WARMDOWN_RATIO
+        return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
 
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
@@ -680,16 +677,14 @@ while True:
 
     # Progress and schedules
     progress = min(total_training_time / TIME_BUDGET, 1.0)
+    lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
     for group in optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * lrm
         if group['kind'] == 'muon':
-            lrm = get_lr_multiplier(progress, 'matrix')
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
-        else:
-            lrm = get_lr_multiplier(progress, 'embedding')
-        group["lr"] = group["initial_lr"] * lrm
     # Adaptive gradient clipping: start high (1.0) and decrease to 0.3
     adaptive_clip = 1.0 - 0.7 * progress
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=adaptive_clip)
