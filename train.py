@@ -279,13 +279,12 @@ class GPT(nn.Module):
             x = block(x, ve, cos_sin, self.window_sizes[i])
         x = norm(x)
 
-        softcap = 15
+        softcap = 15.0 # Must be a float for bfloat16 division
         logits = self.lm_head(x)
-        logits = logits.float()
         logits = softcap * torch.tanh(logits / softcap)
 
         if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)).float(), targets.view(-1),
                                    ignore_index=-1, reduction=reduction)
             return loss
         return logits
