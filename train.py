@@ -489,19 +489,19 @@ try:
     print(f"GPU: {_gpu_name} ({_gpu_vram_mb}MB VRAM)")
 except Exception:
     _gpu_vram_mb = 8192  # assume 8GB if can't detect
-    print("WARNING: pynvml not available  -  assuming 8GB VRAM. Install with: pip install pynvml")
+    print("WARNING: pynvml not available — assuming 8GB VRAM. Install with: pip install pynvml")
 
 def _auto_gpu_config(vram_mb):
     """Scale model depth, batch size, and VRAM limit to detected GPU."""
     if vram_mb >= 20000:    # 24GB+ (RTX 4090, A5000, etc.)
-        depth, batch = 16, 32
+        depth, batch = 16, 24
     elif vram_mb >= 14000:  # 16GB (RTX 5070 Ti, 4080, A4000)
         depth, batch = 12, 16
     elif vram_mb >= 10000:  # 12GB (RTX 3060 12GB, 4070)
-        depth, batch = 10, 8
+        depth, batch = 10, 12
     else:                   # 8GB (RTX 3070, 3060 8GB)
         depth, batch = 8, 8
-    vram_limit = vram_mb - 500
+    vram_limit = vram_mb
     return depth, batch, vram_limit
 
 _auto_depth, _auto_batch, _auto_vram_limit = _auto_gpu_config(_gpu_vram_mb)
@@ -544,18 +544,18 @@ def thermal_guard(step_num):
     if temp is None:
         return True
     if temp >= GPU_TEMP_ABORT:
-        print(f"\n🚨 GPU temperature CRITICAL: {temp}°C >= {GPU_TEMP_ABORT}°C  -  ABORTING to protect hardware!")
+        print(f"\n🚨 GPU temperature CRITICAL: {temp}°C >= {GPU_TEMP_ABORT}°C — ABORTING to protect hardware!")
         return False
     if temp >= GPU_TEMP_PAUSE:
-        print(f"\n⚠️  GPU temperature HIGH: {temp}°C >= {GPU_TEMP_PAUSE}°C  -  pausing to cool down...")
+        print(f"\n⚠️  GPU temperature HIGH: {temp}°C >= {GPU_TEMP_PAUSE}°C — pausing to cool down...")
         while True:
             time.sleep(COOLDOWN_SLEEP)
             temp = get_gpu_temp()
             if temp is None or temp <= GPU_TEMP_RESUME:
-                print(f"   GPU cooled to {temp}°C  -  resuming training.")
+                print(f"   GPU cooled to {temp}°C — resuming training.")
                 break
             if temp >= GPU_TEMP_ABORT:
-                print(f"\n🚨 GPU temperature CRITICAL: {temp}°C  -  ABORTING!")
+                print(f"\n🚨 GPU temperature CRITICAL: {temp}°C — ABORTING!")
                 return False
             print(f"   Still cooling: {temp}°C (target: {GPU_TEMP_RESUME}°C)...")
     return True
@@ -564,7 +564,7 @@ def vram_guard():
     """Check VRAM usage. Returns True if OK."""
     peak_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
     if peak_mb > VRAM_LIMIT_MB:
-        print(f"\n🚨 VRAM usage {peak_mb:.0f}MB exceeds limit {VRAM_LIMIT_MB}MB  -  ABORTING!")
+        print(f"\n🚨 VRAM usage {peak_mb:.0f}MB exceeds limit {VRAM_LIMIT_MB}MB — ABORTING!")
         return False
     return True
 
@@ -578,7 +578,7 @@ torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 device = torch.device("cuda")
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-H100_BF16_PEAK_FLOPS = 989.5e12  # MFU% is relative to H100 for cross-GPU comparison
+H100_BF16_PEAK_FLOPS = 989.5e12
 
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
@@ -734,7 +734,7 @@ while True:
 
     step += 1
 
-    # Time's up  -  but only stop after warmup steps so we don't count compilation
+    # Time's up — but only stop after warmup steps so we don't count compilation
     if step > 10 and total_training_time >= TIME_BUDGET:
         break
 
@@ -783,5 +783,5 @@ try:
         sample_text = tokenizer.decode(idx[0].tolist())
         # Print in parseable format
         print(f"sample_text:      {sample_text[:500]}")
-except Exception as e:
-    print(f"sample_text_error: {e}")
+except Exception:
+    pass
