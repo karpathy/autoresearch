@@ -301,6 +301,9 @@ class GPT(nn.Module):
         cos_sin = self.cos[:, :T], self.sin[:, :T]
 
         x = self.transformer.wte(idx)
+        # Add small noise to embeddings during training for regularization
+        if self.training:
+            x = x + 0.01 * torch.randn_like(x)
         x = norm(x)
         x0 = x
         if targets is not None:
@@ -478,7 +481,7 @@ HEAD_DIM = 128          # target head dimension for attention
 WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**18 # ~262K tokens per optimizer step (halved for 2x more steps)
+TOTAL_BATCH_SIZE = 2**18 // 3 # ~87K tokens per optimizer step (1/3 for 3x more steps)
 EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
