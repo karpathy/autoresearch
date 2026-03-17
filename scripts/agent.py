@@ -1140,7 +1140,7 @@ def main():
     # on click events (entering "mark mode" which pauses output)
     print("\033[?1000l\033[?1003l\033[?1006l", end="", flush=True)
 
-    with Live(build_dashboard(state), console=console, refresh_per_second=4, screen=True) as live:
+    with Live(build_dashboard(state), console=console, refresh_per_second=4) as live:
 
         def refresh():
             try:
