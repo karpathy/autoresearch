@@ -685,22 +685,15 @@ while True:
             group["weight_decay"] = muon_weight_decay
     # Different gradient clipping for different parameter types
     adaptive_clip = 1.0 - 0.7 * progress
-    # Lower clipping for Q/K projections (more stable)
-    qk_params = []
-    v_output_params = []
-    other_params = []
-    for name, param in model.named_parameters():
-        if param.grad is not None:
-            if 'c_q.weight' in name or 'c_k.weight' in name:
-                qk_params.append(param)
-            elif 'c_v.weight' in name or 'c_proj.weight' in name:
-                v_output_params.append(param)
-            else:
-                other_params.append(param)
-    if qk_params:
-        torch.nn.utils.clip_grad_norm_(qk_params, max_norm=adaptive_clip * 0.5)
-    if v_output_params:
-        torch.nn.utils.clip_grad_norm_(v_output_params, max_norm=adaptive_clip * 1.5)
+    # Higher clipping for embeddings, lower for matrices
+    embedding_params = list(model.transformer.wte.parameters()) + list(model.value_embeds.parameters())
+    matrix_params = list(model.transformer.h.parameters())
+    other_params = [p for p in model.parameters() if p not in embedding_params and p not in matrix_params]
+    
+    if embedding_params:
+        torch.nn.utils.clip_grad_norm_(embedding_params, max_norm=adaptive_clip * 1.5)
+    if matrix_params:
+        torch.nn.utils.clip_grad_norm_(matrix_params, max_norm=adaptive_clip * 0.7)
     if other_params:
         torch.nn.utils.clip_grad_norm_(other_params, max_norm=adaptive_clip)
     optimizer.step()
