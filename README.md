@@ -173,6 +173,19 @@ GPU_TEMP_MAX_START = 70   # wait for GPU to cool below this before starting
 GPU_TEMP_ABORT = 85       # stop agent if GPU can't cool down
 ```
 
+## Cost tracking (optional)
+
+The agent supports [AgentGuard47](https://agentguard47.com) for API cost tracking and budget enforcement. This is optional - the agent works fine without it.
+
+To enable:
+
+\`\`\`bash
+pip install agentguard47
+export AGENTGUARD_API_KEY="your_key_here"  # get one at agentguard47.com
+\`\`\`
+
+When enabled, every Claude API call is automatically traced with cost, tokens, and latency. Set a budget limit to prevent runaway costs during overnight runs. View traces at your AgentGuard dashboard.
+
 ## Platform notes
 
 Requires WSL2 on Windows for flash-attn3 / Triton / torch.compile support.
