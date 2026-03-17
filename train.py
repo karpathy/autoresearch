@@ -631,14 +631,20 @@ print(f"Gradient accumulation steps: {grad_accum_steps}")
 
 # Schedules (all based on progress = training_time / TIME_BUDGET)
 
-def get_lr_multiplier(progress):
+def get_lr_multiplier(progress, param_type='default'):
     if progress < WARMUP_RATIO:
         return progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
     elif progress < 1.0 - WARMDOWN_RATIO:
         return 1.0
     else:
-        cooldown = (1.0 - progress) / WARMDOWN_RATIO
-        return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
+        if param_type == 'matrix':
+            # Exponential decay for matrices
+            decay_progress = (progress - (1.0 - WARMDOWN_RATIO)) / WARMDOWN_RATIO
+            return (1.0 - FINAL_LR_FRAC) * (0.95 ** (decay_progress * 20)) + FINAL_LR_FRAC
+        else:
+            # Linear warmdown for embeddings and others
+            cooldown = (1.0 - progress) / WARMDOWN_RATIO
+            return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
 
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
@@ -682,15 +688,17 @@ while True:
 
     # Progress and schedules
     progress = min(total_training_time / TIME_BUDGET, 1.0)
-    lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
     for group in optimizer.param_groups:
-        group["lr"] = group["initial_lr"] * lrm
         if group['kind'] == 'muon':
+            lrm = get_lr_multiplier(progress, 'matrix')
+            group["lr"] = group["initial_lr"] * lrm
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
         elif group['kind'] == 'adamw':
+            lrm = get_lr_multiplier(progress, 'embedding')
+            group["lr"] = group["initial_lr"] * lrm
             if 'embedding' in str(group['params'][0]):
                 group["betas"] = (get_adamw_momentum('embedding', step), group["betas"][1])
             else:
