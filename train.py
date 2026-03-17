@@ -703,9 +703,19 @@ while True:
                 group["betas"] = (get_adamw_momentum('embedding', step), group["betas"][1])
             else:
                 group["betas"] = (get_adamw_momentum('other', step), group["betas"][1])
-    # Adaptive gradient clipping: start high (1.0) and decrease to 0.3
+    # Different gradient clipping for different parameter types
     adaptive_clip = 1.0 - 0.7 * progress
-    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=adaptive_clip)
+    # Clip embeddings and value embeddings with lower threshold
+    embedding_params = list(model.transformer.wte.parameters()) + list(model.value_embeds.parameters())
+    if embedding_params:
+        torch.nn.utils.clip_grad_norm_(embedding_params, max_norm=adaptive_clip * 0.5)
+    # Clip matrix parameters with higher threshold
+    matrix_params = list(model.transformer.h.parameters())
+    if matrix_params:
+        torch.nn.utils.clip_grad_norm_(matrix_params, max_norm=adaptive_clip * 1.2)
+    # Clip other parameters with default threshold
+    other_params = [model.resid_lambdas, model.x0_lambdas]
+    torch.nn.utils.clip_grad_norm_(other_params, max_norm=adaptive_clip)
     optimizer.step()
     model.zero_grad(set_to_none=True)
 
