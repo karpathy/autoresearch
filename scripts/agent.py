@@ -202,7 +202,10 @@ def git_commit(msg):
 
 
 def git_revert():
-    git("checkout", "HEAD~1", "--", "train.py")
+    # Revert to clean baseline, not HEAD~1 (which may also be corrupted)
+    import shutil
+    if os.path.exists(os.path.join(PROJECT_ROOT, ".train_clean.py")):
+        shutil.copy2(os.path.join(PROJECT_ROOT, ".train_clean.py"), os.path.join(PROJECT_ROOT, "train.py"))
     git("commit", "-m", "revert: discard failed experiment")
     return git("rev-parse", "--short", "HEAD")[0]
 
