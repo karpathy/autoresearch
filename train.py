@@ -107,7 +107,22 @@ class CausalSelfAttention(nn.Module):
                 reps = self.n_head // self.n_kv_head
                 k = k.repeat_interleave(reps, dim=1)
                 v = v.repeat_interleave(reps, dim=1)
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+            # Multi-scale attention: alternate heads between local and global patterns
+            y_parts = []
+            for h in range(self.n_head):
+                q_h, k_h, v_h = q[:, h:h+1], k[:, h:h+1], v[:, h:h+1]
+                if h % 2 == 0:  # Even heads: local attention (sliding window)
+                    window_size = min(512, T)
+                    # Create sliding window mask
+                    mask = torch.triu(torch.ones(T, T, device=q.device), diagonal=1)
+                    for i in range(T):
+                        start_pos = max(0, i - window_size + 1)
+                        mask[i, :start_pos] = float('-inf')
+                    y_h = F.scaled_dot_product_attention(q_h, k_h, v_h, attn_mask=mask, is_causal=True)
+                else:  # Odd heads: global attention
+                    y_h = F.scaled_dot_product_attention(q_h, k_h, v_h, is_causal=True)
+                y_parts.append(y_h)
+            y = torch.cat(y_parts, dim=1)
             y = y.transpose(1, 2).contiguous().view(B, T, -1)
         else:
             y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
