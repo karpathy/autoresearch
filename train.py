@@ -687,7 +687,9 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
-    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+    # Dynamic gradient clipping: start high, decay over time
+    clip_norm = 1.0 * (1.0 - 0.5 * progress)  # 1.0 -> 0.5 over training
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
     optimizer.step()
     model.zero_grad(set_to_none=True)
 
