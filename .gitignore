@@ -18,6 +18,7 @@ AGENTS.md
 .claude/*
 !.claude/agents/
 !.claude/agents/*.md
+!.claude/settings.local.json
 
 # Experimental code/artifacts
 dev/
