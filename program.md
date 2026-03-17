@@ -87,6 +87,30 @@ c3d4e5f	1.005000	44.0	discard	switch to GeLU activation
 d4e5f6g	0.000000	0.0	crash	double model width (OOM)
 ```
 
+
+## Experiment Strategy Tips
+
+**Start with high-impact changes:**
+1. Learning rates (MATRIX_LR, EMBEDDING_LR) — often 2-4x improvements possible
+2. Model size (DEPTH) — trade compute for capacity
+3. Batch size (TOTAL_BATCH_SIZE) — affects optimization dynamics
+
+**Avoid common pitfalls:**
+- Don't change too many things at once — hard to attribute improvements
+- Don't abandon an idea after one failure — try 2-3 variations first
+- Don't over-optimize hyperparameters early — architecture changes may invalidate them
+
+**When stuck:**
+- Re-read the training loop for optimization bugs
+- Try reverting to baseline and taking a different path
+- Look at what changes got "keep" status — combine successful ideas
+- Consider removing complexity rather than adding it
+
+**Signs of a good experiment:**
+- Clear hypothesis ("X should help because Y")
+- Minimal code change
+- Easy to interpret results
+
 ## The experiment loop
 
 The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
