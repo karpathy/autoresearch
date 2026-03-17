@@ -158,7 +158,9 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     if model is None:
         raise RuntimeError("Model not trained. Run train.py first.")
 
-    preds = _smooth_predictions(model.predict(features))
+    raw_preds = model.predict(features)
+    compressed = 0.02 * np.tanh(raw_preds / 0.02)
+    preds = _smooth_predictions(compressed)
     return preds, timestamps
 
 
