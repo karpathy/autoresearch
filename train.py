@@ -311,8 +311,8 @@ class GPT(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
                                    ignore_index=-1, reduction=reduction)
-            # Add z-loss regularization with smaller coefficient
-            z_loss = 5e-5 * logits.logsumexp(-1).square().mean()
+            # Add z-loss regularization
+            z_loss = 1e-4 * logits.logsumexp(-1).square().mean()
             loss = loss + z_loss
             return loss
         return logits
@@ -462,7 +462,7 @@ HEAD_DIM = 128          # target head dimension for attention
 WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**14 # ~16K tokens per optimizer step (quartered for 4x more steps)
+TOTAL_BATCH_SIZE = 2**15 # ~32K tokens per optimizer step (halved for 2x more steps)
 EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
@@ -638,8 +638,8 @@ print(f"Gradient accumulation steps: {grad_accum_steps}")
 
 def get_lr_multiplier(progress):
     import math
-    # Exponential decay schedule
-    return math.exp(-2.0 * progress)
+    # Full cosine annealing schedule
+    return FINAL_LR_FRAC + 0.5 * (1.0 - FINAL_LR_FRAC) * (1 + math.cos(math.pi * progress))
 
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
