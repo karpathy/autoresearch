@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import HistGradientBoostingRegressor
 
 from prepare import (
     FORWARD_HOURS,
@@ -124,15 +124,15 @@ _trained_model = None
 
 
 def count_model_params(model=None) -> int:
-    """Return approximate parameter count for the GBR model."""
+    """Return approximate parameter count for the HGBR model."""
     if model is None:
         model = _trained_model
     if model is None:
         return 0
     n_params = 0
-    for estimators in model.estimators_:
-        for tree in estimators:
-            n_params += tree.tree_.node_count
+    for predictor in model._predictors:
+        for tree in predictor:
+            n_params += tree.get_n_leaf_nodes() + tree.get_n_leaf_nodes() - 1
     return n_params
 
 
@@ -141,8 +141,8 @@ def count_model_params(model=None) -> int:
 # ---------------------------------------------------------------------------
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
-    """Apply 36h rolling mean to smooth noisy tree-based predictions."""
-    return pd.Series(raw_preds).rolling(36, min_periods=1).mean().values
+    """Apply 48h rolling mean to smooth noisy tree-based predictions."""
+    return pd.Series(raw_preds).rolling(48, min_periods=1).mean().values
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
@@ -200,15 +200,16 @@ def main():
     print("Training GBR...")
     train_start = time.time()
 
-    model = GradientBoostingRegressor(
-        n_estimators=300,
-        max_depth=3,
+    model = HistGradientBoostingRegressor(
+        max_iter=1000,
+        max_depth=4,
         learning_rate=0.025,
-        subsample=0.8,
         min_samples_leaf=200,
-        max_features=0.8,
+        max_leaf_nodes=15,
+        l2_regularization=1.0,
         loss="squared_error",
         random_state=42,
+        early_stopping=False,
     )
     # Time-decay weighting: recent data is more relevant than old data.
     # Exponential decay so 2022 data is ~5x more weighted than 2018 data.
