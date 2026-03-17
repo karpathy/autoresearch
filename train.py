@@ -168,6 +168,8 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
+        # Sinusoidal position embeddings
+        self.pos_emb = nn.Embedding(config.sequence_len, config.n_embd)
 
     @torch.no_grad()
     def init_weights(self):
@@ -197,8 +199,17 @@ class GPT(nn.Module):
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
+        # Initialize sinusoidal position embeddings
+        pos_emb_weight = torch.zeros(self.config.sequence_len, self.config.n_embd)
+        position = torch.arange(0, self.config.sequence_len).unsqueeze(1).float()
+        div_term = torch.exp(torch.arange(0, self.config.n_embd, 2).float() * -(torch.log(torch.tensor(10000.0)) / self.config.n_embd))
+        pos_emb_weight[:, 0::2] = torch.sin(position * div_term)
+        pos_emb_weight[:, 1::2] = torch.cos(position * div_term)
+        self.pos_emb.weight.data = pos_emb_weight
+        self.pos_emb.weight.requires_grad = False
         # Cast embeddings to bf16
         self.transformer.wte.to(dtype=torch.bfloat16)
+        self.pos_emb.to(dtype=torch.bfloat16)
         for ve in self.value_embeds.values():
             ve.to(dtype=torch.bfloat16)
 
@@ -293,6 +304,8 @@ class GPT(nn.Module):
         cos_sin = self.cos[:, :T], self.sin[:, :T]
 
         x = self.transformer.wte(idx)
+        pos_ids = torch.arange(T, device=idx.device).unsqueeze(0).expand(B, T)
+        x = x + self.pos_emb(pos_ids)
         x = norm(x)
         x0 = x
         for i, block in enumerate(self.transformer.h):
@@ -457,7 +470,7 @@ HEAD_DIM = 128          # target head dimension for attention
 WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**16 # ~65K tokens per optimizer step (quartered for 4x more steps)
+TOTAL_BATCH_SIZE = 2**17 # ~131K tokens per optimizer step (halved for 2x more steps)
 EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
