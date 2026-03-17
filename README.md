@@ -8,11 +8,13 @@ The idea: give an AI agent a small but real LLM training setup and let it experi
 
 ## How it works
 
-The repo is deliberately kept small and only really has three files that matter:
+The repo is deliberately kept small and only really has a few files that matter:
 
 - **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
 - **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
 - **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+- **`overfit.md`** — anti-overfitting policy. Keeps the agent focused on real improvements instead of one-run flukes.
+- **`ideas.md`** — lightweight research notebook. Tracks promising directions, failures, near misses, and future ideas. Keep it untracked.
 
 By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
 
@@ -47,7 +49,7 @@ Simply spin up your Claude/Codex or whatever you want in this repo (and disable 
 Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
 ```
 
-The `program.md` file is essentially a super lightweight "skill".
+The `program.md` file is essentially a super lightweight "skill". `overfit.md` and `ideas.md` extend it with a validation policy and a small memory system.
 
 ## Project structure
 
@@ -55,6 +57,8 @@ The `program.md` file is essentially a super lightweight "skill".
 prepare.py      — constants, data prep + runtime utilities (do not modify)
 train.py        — model, optimizer, training loop (agent modifies this)
 program.md      — agent instructions
+overfit.md      — anti-overfitting policy
+ideas.md        — lightweight research notebook (leave untracked)
 pyproject.toml  — dependencies
 ```
 
@@ -63,6 +67,7 @@ pyproject.toml  — dependencies
 - **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
 - **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
 - **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+- **Small memory stack.** `program.md` defines the loop, `overfit.md` discourages fake progress, `ideas.md` preserves local research memory, and `results.tsv` keeps the numeric record.
 
 ## Platform support
 
