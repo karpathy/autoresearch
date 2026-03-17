@@ -637,6 +637,10 @@ optimizer = model.setup_optimizer(
     weight_decay=WEIGHT_DECAY,
 )
 
+# EMA of model weights for better generalization
+ema_model = None
+ema_decay = 0.999
+
 model = torch.compile(model, dynamic=False)
 
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
@@ -707,6 +711,14 @@ while True:
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
     optimizer.step()
     model.zero_grad(set_to_none=True)
+    
+    # Update EMA model
+    if ema_model is None:
+        ema_model = {name: param.clone().detach() for name, param in model.named_parameters()}
+    else:
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                ema_model[name].mul_(ema_decay).add_(param, alpha=1 - ema_decay)
 
     train_loss_f = train_loss.item()
 
@@ -760,10 +772,24 @@ if aborted:
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
-# Final eval
+# Final eval using EMA weights
 model.eval()
+if ema_model is not None:
+    # Temporarily swap to EMA weights
+    original_weights = {}
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            original_weights[name] = param.clone()
+            param.copy_(ema_model[name])
+
 with autocast_ctx:
     val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+
+if ema_model is not None:
+    # Restore original weights
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            param.copy_(original_weights[name])
 
 # Final summary
 t_end = time.time()
