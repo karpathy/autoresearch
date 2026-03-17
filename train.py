@@ -189,8 +189,8 @@ def main():
     targets = targets[valid]
     train_timestamps = timestamps[valid]
 
-    # Winsorize targets at ±5% to reduce influence of extreme returns
-    targets = np.clip(targets, -0.05, 0.05)
+    # Winsorize targets at ±4% to reduce influence of extreme returns
+    targets = np.clip(targets, -0.04, 0.04)
 
     features = np.nan_to_num(features, nan=0.0)
 
@@ -204,9 +204,9 @@ def main():
         n_estimators=300,
         max_depth=3,
         learning_rate=0.025,
-        subsample=0.7,
+        subsample=0.8,
         min_samples_leaf=200,
-        max_features=0.6,
+        max_features=0.8,
         loss="squared_error",
         random_state=42,
     )
