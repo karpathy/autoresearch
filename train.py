@@ -683,23 +683,12 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
-    # Different gradient clipping for different parameter types
-    embedding_clip = 1.5 - 0.5 * progress
-    matrix_clip = 0.5 - 0.2 * progress
-    
-    # Clip embeddings and value embeddings
-    embedding_params = list(model.transformer.wte.parameters()) + list(model.value_embeds.parameters())
-    if embedding_params:
-        torch.nn.utils.clip_grad_norm_(embedding_params, max_norm=embedding_clip)
-    
-    # Clip matrix parameters
-    matrix_params = list(model.transformer.h.parameters())
-    if matrix_params:
-        torch.nn.utils.clip_grad_norm_(matrix_params, max_norm=matrix_clip)
-    
-    # Clip other parameters with standard schedule
-    other_params = [model.resid_lambdas, model.x0_lambdas]
-    torch.nn.utils.clip_grad_norm_(other_params, max_norm=1.0)
+        elif 'value_embeds' in str(group.get('params', [])):
+            # Keep constant weight decay for value embeddings throughout training
+            pass  # weight_decay already set to 0.001 in setup_optimizer
+    # Adaptive gradient clipping: start high (1.0) and decrease to 0.3
+    adaptive_clip = 1.0 - 0.7 * progress
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=adaptive_clip)
     optimizer.step()
     model.zero_grad(set_to_none=True)
 
