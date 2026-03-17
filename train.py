@@ -634,16 +634,16 @@ print(f"Gradient accumulation steps: {grad_accum_steps}")
 # Schedules (all based on progress = training_time / TIME_BUDGET)
 
 def get_lr_multiplier(progress):
-    # Polynomial schedule with degree 2 for smooth optimization
-    if progress < WARMUP_RATIO:
-        return progress / WARMUP_RATIO
+    import math
+    peak_progress = 0.1  # Peak LR at 10% progress
+    if progress < peak_progress:
+        return progress / peak_progress
     elif progress < 1.0 - WARMDOWN_RATIO:
         return 1.0
     else:
-        # Polynomial decay in warmdown phase with degree 2
+        # Cosine annealing in warmdown phase
         warmdown_progress = (progress - (1.0 - WARMDOWN_RATIO)) / WARMDOWN_RATIO
-        poly_factor = (1 - warmdown_progress) ** 2
-        return FINAL_LR_FRAC + (1.0 - FINAL_LR_FRAC) * poly_factor
+        return FINAL_LR_FRAC + 0.5 * (1.0 - FINAL_LR_FRAC) * (1 + math.cos(math.pi * warmdown_progress))
 
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
