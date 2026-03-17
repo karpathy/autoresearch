@@ -679,13 +679,6 @@ while True:
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
-    
-    # Curriculum learning: gradually increase sequence length
-    if progress < 0.5:
-        curriculum_seq_len = int(1024 + (MAX_SEQ_LEN - 1024) * (progress / 0.5))
-        # Truncate inputs to curriculum length
-        x = x[:, :curriculum_seq_len]
-        y = y[:, :curriculum_seq_len]
     for group in optimizer.param_groups:
         group["lr"] = group["initial_lr"] * lrm
         if group['kind'] == 'muon':
