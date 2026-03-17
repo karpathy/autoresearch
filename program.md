@@ -19,7 +19,7 @@ To set up a new experiment, work with the user to:
    - `prepare.py` — fixed constants, data prep, backtesting engine, metric computation. Do not modify.
    - `train.py` — the file you modify. Model architecture, feature engineering, training loop.
 4. **Verify data exists**: Check that `~/.cache/autotrader/` contains the cached parquet file. If not, tell the human to run `uv run prepare.py`.
-5. **Initialize results.tsv**: Create `results.tsv` with just the header row. The baseline will be recorded after the first run.
+5. **Initialize results.tsv**: Create `results.tsv` with just the header row. This file is gitignored — it lives only on disk and is never committed. Git operations (commit, reset) will not affect it.
 6. **Confirm and go**: Confirm setup looks good.
 
 Once you get confirmation, kick off the experimentation.
@@ -71,7 +71,13 @@ These approaches are explicitly prohibited:
 
 4. **No signal function factories.** Do not loop over thousands of parameter combinations. The experiment loop across git commits provides exploration.
 
-The spirit of these rules: the 2-minute training budget should be spent **training a model** (fitting weights to data), not evaluating pre-built strategies.
+5. **No random seed optimization.** The random seed must remain fixed at `42`. Changing the seed and keeping the best-scoring result is cherry-picking a lucky random draw — it doesn't improve the model and won't generalize. If you want stochasticity for regularization, use `subsample`, `max_features`, or dropout.
+
+6. **No fine-grained parameter sweeps.** Do not run 3+ consecutive experiments that only vary a single numeric parameter by small increments. Bracketing a range with 1-2 values is fine; systematic grid search is not. Each experiment should test a meaningfully different idea.
+
+The spirit of these rules: the 2-minute training budget should be spent **training a model** (fitting weights to data), not evaluating pre-built strategies or exploiting evaluation variance.
+
+**Enforcement:** Score improvements are audited by the `experiment-auditor` subagent. If it detects gaming, the experiment is discarded regardless of score.
 
 ## Permitted output processing
 
@@ -140,7 +146,11 @@ A small improvement that adds complexity is not worth it. Removing something and
 
 ## Stuck protocol
 
-**If you've run 5 consecutive experiments without improving the best score, you MUST change your fundamental approach.** "Fundamental" means:
+**If you've run 5 consecutive experiments without improving the best score, you MUST invoke the `experiment-coach` subagent.** Tell it your current best score and recent experiment history. It will diagnose why you're stuck and prescribe a specific next direction. Follow its prescription for your next experiment.
+
+The coach will identify your binding constraint (drawdown, trade count, Sharpe, consistency) and give you a concrete change to implement — not vague advice. Trust its diagnosis; it has full context on the scoring system and experiment history.
+
+After following the coach's prescription, if you're still stuck after another 5 experiments, invoke it again. Each invocation should result in a fundamentally different approach:
 
 - Change the model architecture category (e.g. GBR → LSTM → feedforward → ensemble)
 - Change the feature representation (e.g. raw returns → vol-normalized → rolling z-scores)
@@ -208,14 +218,14 @@ LOOP FOREVER:
 1. Look at the git state: the current branch/commit we're on
 2. Decide on an experimental idea. Consult the research directions and stuck protocol.
 3. Modify `train.py` with the experiment. The model must be trained during the 2-minute budget.
-4. git commit
+4. `git add train.py && git commit -m "exp: <short description>"`
 5. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
 6. Read out the results: `grep "^score:" run.log`
 7. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the stack trace. If fixable, fix and re-run. Otherwise give up on this idea.
-8. Record the results in the tsv
-9. If score improved (higher than previous best), keep the commit
-10. If score is equal or worse, git reset back to where you started
-11. Check the stuck protocol: if this is the 5th consecutive non-improvement, change your fundamental approach.
+8. Append the results to `results.tsv` (gitignored — no need to commit it)
+9. **If score improved**, invoke the `experiment-auditor` subagent to check for gaming. Tell it the experiment description and results. If the auditor returns FAIL, treat the experiment as discarded and `git reset --hard HEAD~1`. If PASS, keep the commit.
+10. If score is equal or worse, `git reset --hard HEAD~1` to discard the experiment
+11. Check the stuck protocol: if this is the 5th consecutive non-improvement, invoke the `experiment-coach` subagent for diagnosis and direction.
 
 **Timeout**: Each experiment should take ~3 minutes total (2 minutes training + evaluation overhead). If a run exceeds 6 minutes, kill it and treat it as a failure.
 

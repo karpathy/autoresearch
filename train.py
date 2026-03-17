@@ -141,8 +141,8 @@ def count_model_params(model=None) -> int:
 # ---------------------------------------------------------------------------
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
-    """Apply 56h rolling mean to smooth noisy tree-based predictions."""
-    return pd.Series(raw_preds).rolling(56, min_periods=1).mean().values
+    """Apply 48h rolling mean to smooth noisy tree-based predictions."""
+    return pd.Series(raw_preds).rolling(48, min_periods=1).mean().values
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
