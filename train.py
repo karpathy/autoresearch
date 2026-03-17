@@ -644,6 +644,12 @@ optimizer = model.setup_optimizer(
 
 model = torch.compile(model, dynamic=False)
 
+# Create EMA model for validation
+ema_model = GPT(config)
+ema_model.to(device)
+ema_model.load_state_dict(model.state_dict())
+ema_decay = 0.999
+
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
 x, y, epoch = next(train_loader)  # prefetch first batch
 
@@ -709,6 +715,11 @@ while True:
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
     optimizer.step()
     model.zero_grad(set_to_none=True)
+    
+    # Update EMA model
+    with torch.no_grad():
+        for ema_param, param in zip(ema_model.parameters(), model.parameters()):
+            ema_param.lerp_(param, 1 - ema_decay)
 
     train_loss_f = train_loss.item()
 
@@ -762,10 +773,10 @@ if aborted:
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
-# Final eval
-model.eval()
+# Final eval using EMA model
+ema_model.eval()
 with autocast_ctx:
-    val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+    val_bpb = evaluate_bpb(ema_model, tokenizer, DEVICE_BATCH_SIZE)
 
 # Final summary
 t_end = time.time()
