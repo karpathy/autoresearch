@@ -141,8 +141,8 @@ def count_model_params(model=None) -> int:
 # ---------------------------------------------------------------------------
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
-    """Apply 48h rolling mean to smooth noisy tree-based predictions."""
-    return pd.Series(raw_preds).rolling(48, min_periods=1).mean().values
+    """Apply 56h rolling mean to smooth noisy tree-based predictions."""
+    return pd.Series(raw_preds).rolling(56, min_periods=1).mean().values
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
@@ -216,7 +216,7 @@ def main():
     ts_float = train_timestamps.astype("datetime64[h]").astype(np.float64)
     ts_norm = (ts_float - ts_float.min()) / (ts_float.max() - ts_float.min())
     time_weights = np.exp(1.6 * ts_norm)
-    asym_weights = np.where(targets > 0, 1.15, 1.0)
+    asym_weights = np.where(targets > 0, 1.2, 1.0)
     sample_weights = time_weights * asym_weights
     model.fit(features, targets, sample_weight=sample_weights)
 
