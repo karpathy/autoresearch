@@ -271,42 +271,13 @@ class GPT(nn.Module):
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
         param_groups = [
             dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=(adam_betas[0], 0.99), eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=(0.7, 0.9), eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=(adam_betas[0], 0.9), eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=(adam_betas[0], 0.9), eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
-        # Separate Q/K projections from V/output projections for different weight decay
-        qk_params = []
-        v_output_params = []
-        other_matrix_params = []
-        
-        for block in self.transformer.h:
-            qk_params.extend([block.attn.c_q.weight, block.attn.c_k.weight])
-            v_output_params.extend([block.attn.c_v.weight, block.attn.c_proj.weight])
-            other_matrix_params.extend([block.mlp.c_fc.weight, block.mlp.c_proj.weight])
-            if block.attn.ve_gate is not None:
-                other_matrix_params.append(block.attn.ve_gate.weight)
-        
-        # Group by shape for Q/K params (lower weight decay, higher beta2)
-        for shape in sorted({p.shape for p in qk_params}):
-            group_params = [p for p in qk_params if p.shape == shape]
-            param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.99, weight_decay=weight_decay * 0.5,
-            ))
-        
-        # Group by shape for V/output params (higher weight decay, lower beta2)
-        for shape in sorted({p.shape for p in v_output_params}):
-            group_params = [p for p in v_output_params if p.shape == shape]
-            param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.9, weight_decay=weight_decay * 1.5,
-            ))
-        
-        # Group by shape for other matrix params (standard settings)
-        for shape in sorted({p.shape for p in other_matrix_params}):
-            group_params = [p for p in other_matrix_params if p.shape == shape]
+        for shape in sorted({p.shape for p in matrix_params}):
+            group_params = [p for p in matrix_params if p.shape == shape]
             param_groups.append(dict(
                 kind='muon', params=group_params, lr=matrix_lr,
                 momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
@@ -337,7 +308,7 @@ class GPT(nn.Module):
 
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
-                                   ignore_index=-1, reduction=reduction)
+                                   ignore_index=-1, reduction=reduction, label_smoothing=0.1)
             return loss
         return logits
 
@@ -486,7 +457,7 @@ HEAD_DIM = 128          # target head dimension for attention
 WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**16 # ~65K tokens per optimizer step (halved for 2x more steps)
+TOTAL_BATCH_SIZE = 2**17 # ~131K tokens per optimizer step (halved for 2x more steps)
 EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
