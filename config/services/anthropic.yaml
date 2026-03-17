@@ -1,0 +1,51 @@
+# Anthropic Claude Services Configuration Template
+# Uncomment to enable and add your API key
+# Get your key at: https://console.anthropic.com/
+
+# Claude Opus 4.6 - Most capable model
+# anthropic_opus:
+#   enabled: false
+#   provider: anthropic
+#   base_url: "https://api.anthropic.com"
+#   model: "claude-opus-4.6"
+#   api_key: "your key here"
+#   max_tokens: 8000
+#   rate_limit_requests_per_minute: 50
+#   temperature: 1.0
+#   description: "Advanced reasoning model, excellent for complex analysis"
+#   use_case: "Complex research questions, synthesis, debate moderation"
+
+# Claude Sonnet 4 - Balanced speed and capability
+# anthropic_sonnet:
+#   enabled: false
+#   provider: anthropic
+#   base_url: "https://api.anthropic.com"
+#   model: "claude-sonnet-4"
+#   api_key: "your key here"
+#   max_tokens: 4000
+#   rate_limit_requests_per_minute: 100
+#   temperature: 1.0
+#   description: "Fast and capable, great for most tasks"
+#   use_case: "General research, summaries, quick analysis"
+
+# Claude Haiku - Fast and cheap
+# anthropic_haiku:
+#   enabled: false
+#   provider: anthropic
+#   base_url: "https://api.anthropic.com"
+#   model: "claude-3-5-haiku-20241022"
+#   api_key: "your key here"
+#   max_tokens: 2000
+#   rate_limit_requests_per_minute: 200
+#   temperature: 1.0
+#   description: "Lightweight model for simple tasks"
+#   use_case: "Quick summaries, fact checking, formatting"
+
+# Anthropic preferences:
+# - Temperature: Always 1.0 (Anthropic's recommendation)
+# - max_tokens: Leave room for long responses
+# - Excellent for research synthesis and debate
+# - Strong reasoning capabilities
+# - Good context utilization
+#
+# To test: ar test anthropic_opus

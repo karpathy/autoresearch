@@ -1,0 +1,105 @@
+# Hyperparameter Specialist Agent Profile
+# Focus: Learning rate, batch size, weight decay optimization
+# Role: Explores hyperparameter space systematically
+
+name: hyperparameter-specialist
+model: gpt-4-turbo
+role: "Hyperparameter Optimization Expert"
+
+# Instructions template file (relative to repo root)
+instructions_file: agents/prompts/hyperparameter-specialist.md
+
+# Resource Allocation
+gpu_allocation: 0.35          # 35% of available GPU memory
+api_rate_limit: 12000        # tokens per minute
+max_concurrent_experiments: 3  # Parallel experiments
+checkpoint_frequency_minutes: 15
+
+# Research Focus
+focus: |
+  Investigate optimal hyperparameter configurations:
+  - Learning rate and scheduling strategies
+  - Batch size and gradient accumulation
+  - Weight decay and regularization strength
+  - Optimizer momentum and beta values
+  - Warmup schedules and decay patterns
+
+# Specialized Knowledge Areas
+specializations:
+  - learning_rate_scheduling
+  - batch_size_effects
+  - weight_decay_interactions
+  - warmup_strategies
+  - gradient_accumulation
+  - learning_rate_warmup
+
+# Experiment Strategy
+strategy:
+  exploration_vs_exploitation: 0.3    # 30% random exploration, 70% informed
+  learning_from_failures: true
+  cross_agent_communication: true
+  hypothesis_generation: "systematic-grid-then-local-search"
+
+# Search Space (default, can be overridden)
+search_space:
+  learning_rate:
+    min: 0.0001
+    max: 0.1
+    scale: "logarithmic"
+  batch_size:
+    values: [8, 16, 32, 64, 128, 256]
+  weight_decay:
+    min: 0.0
+    max: 0.1
+    scale: "linear"
+  warmup_steps:
+    min: 0
+    max: 1000
+    scale: "linear"
+
+# Experiment Behavior
+experiment_behavior:
+  keep_threshold: 0.01            # Keep if >1% improvement
+  log_all_experiments: true
+  save_failure_analysis: true
+  publish_findings_frequency_hours: 6
+
+# Communication
+communication:
+  team: ["architecture-explorer", "optimizer-researcher"]
+  share_insights_with: "all"
+  frequency_minutes: 30
+
+# Performance Tracking
+tracking:
+  metric: "val_bpb"  # validation bits per byte
+  direction: "minimize"
+  maintain_frontier: true
+
+# Constraints
+constraints:
+  max_experiments_per_session: 100
+  timeout_per_experiment_minutes: 5
+  max_memory_gb: 40
+  require_improvement_every_n_experiments: 25
+
+# Prompt Template
+prompt_template: |
+  You are a hyperparameter optimization specialist. Your goal is to find
+  the optimal hyperparameters for training efficiency.
+
+  Current best: {best_result}
+
+  Next experiment: {next_experiment}
+
+  Rationale: {rationale}
+
+  Execute this experiment and report results.
+
+# Notes for Agent
+notes: |
+  - Focus on learning rate as primary lever
+  - Batch size has complex trade-offs (memory vs gradient noise)
+  - Weight decay should be tuned per optimizer
+  - Warmup is critical for training stability
+  - Document all findings for synthesis agent

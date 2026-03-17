@@ -1,0 +1,60 @@
+# OpenAI Services Configuration Template
+# Uncomment the services you want to use and add your API keys
+# Get your key at: https://platform.openai.com/api-keys
+
+# Primary GPT-4 model for advanced reasoning
+openai_gpt4:
+  enabled: false
+  provider: openai
+  base_url: "https://api.openai.com/v1"
+  model: "gpt-4-turbo"
+  api_key: "your key here"
+  max_tokens: 8000
+  rate_limit_tokens_per_minute: 10000
+  temperature: 0.7
+  top_p: 0.9
+  description: "Primary reasoning model for research direction and analysis"
+  use_case: "Complex research questions, hypothesis generation"
+
+# GPT-4 Mini for faster, cheaper inference
+openai_gpt4_mini:
+  enabled: false
+  provider: openai
+  base_url: "https://api.openai.com/v1"
+  model: "gpt-4-mini"
+  api_key: "your key here"
+  max_tokens: 4000
+  rate_limit_tokens_per_minute: 15000
+  temperature: 0.7
+  description: "Fast GPT-4 for synthesis and summaries"
+  use_case: "Quick analysis, aggregation, report generation"
+
+# GPT-3.5-turbo for cost optimization
+# openai_gpt35:
+#   enabled: false
+#   provider: openai
+#   base_url: "https://api.openai.com/v1"
+#   model: "gpt-3.5-turbo"
+#   api_key: "your key here"
+#   max_tokens: 4000
+#   rate_limit_tokens_per_minute: 3000
+#   temperature: 0.7
+#   description: "Fallback model for cost optimization"
+#   use_case: "Simple tasks, when cost matters more than quality"
+
+# Text embedding for semantic linking
+openai_embedding:
+  enabled: false
+  provider: openai
+  base_url: "https://api.openai.com/v1"
+  model: "text-embedding-3-large"
+  api_key: "your key here"
+  rate_limit_requests_per_minute: 100
+  description: "For semantic similarity and knowledge graph linking"
+  use_case: "Find related research findings, build knowledge connections"
+
+# Configuration notes:
+# - rate_limit: Set based on your account tier (free vs paid)
+# - temperature: 0.7 = balanced, 0.2 = deterministic, 1.0 = creative
+# - max_tokens: Limit context window (8k for gpt-4, 16k for gpt-4-turbo)
+# - To test: ar test openai_gpt4

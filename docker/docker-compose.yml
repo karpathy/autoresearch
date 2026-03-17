@@ -1,0 +1,221 @@
+version: '3.8'
+
+services:
+  # Main AutoResearch service
+  autoresearch:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: production
+    image: autoresearch:latest
+    container_name: autoresearch
+    env_file: .env
+    environment:
+      - CUDA_VISIBLE_DEVICES=0,1  # Modify based on available GPUs
+      - AUTORESEARCH_MODE=docker
+      - LOG_LEVEL=INFO
+    volumes:
+      # Configuration (read-write)
+      - ./config:/app/config
+      # Results (write data)
+      - ./results:/app/results
+      # Agent definitions (read)
+      - ./agents:/app/agents
+      # Shared cache (write)
+      - ~/.cache/autoresearch:/root/.cache/autoresearch
+      # Logs (write)
+      - ./logs:/app/logs
+    working_dir: /app
+    command: ar start --agents 4
+    restart: unless-stopped
+    networks:
+      - autoresearch-net
+    ports:
+      - "6006:6006"  # TensorBoard
+      - "8000:8000"  # Local API server
+      - "3004:3004"  # Murmur wiki (via murmur service)
+      - "5173:5173"  # Spreadsheet-moment (via spreadsheet service)
+    depends_on:
+      - postgres
+      - redis
+      - murmur
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+    # Resource limits (adjust based on your system)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all  # Use all available GPUs
+              capabilities: [gpu]
+    health_check:
+      test: ["CMD", "ar", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # PostgreSQL for knowledge graph and structured data
+  postgres:
+    image: postgres:15-alpine
+    container_name: autoresearch-postgres
+    environment:
+      - POSTGRES_DB=autoresearch_knowledge
+      - POSTGRES_USER=autoresearch
+      - POSTGRES_PASSWORD=secure_password_change_me  # CHANGE THIS!
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - autoresearch-net
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # Redis for caching and message passing
+  redis:
+    image: redis:7-alpine
+    container_name: autoresearch-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - autoresearch-net
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # Murmur - Semantic wiki and knowledge management
+  murmur:
+    image: superinstance/murmur:latest
+    container_name: autoresearch-murmur
+    ports:
+      - "3004:3004"
+    volumes:
+      - murmur-data:/data
+    environment:
+      - DB_PATH=/data/murmur.db
+      - LOG_LEVEL=INFO
+    networks:
+      - autoresearch-net
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # Spreadsheet-moment - Data interface and monitoring
+  spreadsheet-moment:
+    image: superinstance/spreadsheet-moment:latest
+    container_name: autoresearch-spreadsheet
+    ports:
+      - "5173:5173"
+    environment:
+      - API_URL=http://autoresearch:8000
+      - DATABASE_URL=postgresql://autoresearch:secure_password_change_me@postgres:5432/autoresearch_knowledge
+      - LOG_LEVEL=INFO
+    networks:
+      - autoresearch-net
+    depends_on:
+      - autoresearch
+      - postgres
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # Ollama - Local LLM support (optional)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: autoresearch-ollama
+    volumes:
+      - ollama-data:/root/.ollama
+      # GPU support
+      - /dev/dri:/dev/dri  # For AMD GPU
+    environment:
+      - OLLAMA_MODELS=/root/.ollama/models
+    ports:
+      - "11434:11434"
+    networks:
+      - autoresearch-net
+    restart: unless-stopped
+    profiles:
+      - with-ollama  # Run with: docker-compose --profile with-ollama up
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # Prometheus - Metrics collection (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: autoresearch-prometheus
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - autoresearch-net
+    restart: unless-stopped
+    profiles:
+      - monitoring  # Run with: docker-compose --profile monitoring up
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "30m"
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  murmur-data:
+    driver: local
+  ollama-data:
+    driver: local
+  prometheus-data:
+    driver: local
+
+networks:
+  autoresearch-net:
+    driver: bridge
+
+# Additional notes:
+# 1. Before running, copy .env.example to .env and edit with your API keys
+# 2. Change POSTGRES_PASSWORD to a secure password
+# 3. GPU support requires NVIDIA Container Toolkit:
+#    https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+# 4. Run with GPU: docker-compose up -d
+# 5. Run with Ollama: docker-compose --profile with-ollama up -d
+# 6. View logs: docker-compose logs -f autoresearch
+# 7. Stop all: docker-compose down
+# 8. Clean up: docker-compose down -v (removes volumes)
+#
+# Quick start:
+#   cp .env.example .env
+#   edit .env with your API keys
+#   docker-compose up -d
+#   docker-compose logs -f autoresearch

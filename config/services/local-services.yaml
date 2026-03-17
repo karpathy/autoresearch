@@ -1,0 +1,125 @@
+# Local LLM Services Configuration Template
+# Run LLMs locally without API costs (no API keys needed)
+# Requires local setup of Ollama or vLLM
+
+# Ollama - Easy local LLM management
+# Installation: https://ollama.ai
+# Setup:
+#   1. Install Ollama
+#   2. Run: ollama serve
+#   3. In another terminal: ollama pull mistral
+ollama_mistral:
+  enabled: false
+  provider: ollama
+  base_url: "http://localhost:11434/v1"
+  model: "mistral"
+  api_key: "none"
+  rate_limit_tokens_per_minute: "unlimited"
+  temperature: 0.7
+  description: "Local Mistral via Ollama"
+  use_case: "Offline operation, free inference"
+  requirements: "Ollama installed and running"
+
+ollama_llama2:
+  enabled: false
+  provider: ollama
+  base_url: "http://localhost:11434/v1"
+  model: "llama2"
+  api_key: "none"
+  rate_limit_tokens_per_minute: "unlimited"
+  temperature: 0.7
+  description: "Local Llama 2 via Ollama"
+  use_case: "Good general purpose model"
+  requirements: "ollama pull llama2"
+
+ollama_neural_chat:
+  enabled: false
+  provider: ollama
+  base_url: "http://localhost:11434/v1"
+  model: "neural-chat"
+  api_key: "none"
+  rate_limit_tokens_per_minute: "unlimited"
+  temperature: 0.7
+  description: "Intel's Neural Chat model"
+  use_case: "Instruction following, general tasks"
+  requirements: "ollama pull neural-chat"
+
+# vLLM - High-performance local inference
+# Installation: pip install vllm
+# Setup:
+#   1. Install vLLM: pip install vllm
+#   2. Run: vllm serve mistral-7b
+#   Note: Faster than Ollama for inference
+vllm_mistral:
+  enabled: false
+  provider: vllm
+  base_url: "http://localhost:8000/v1"
+  model: "mistral-7b"
+  api_key: "none"
+  gpu_device: 0
+  rate_limit_tokens_per_minute: "unlimited"
+  temperature: 0.7
+  description: "High-performance Mistral via vLLM"
+  use_case: "Fastest local inference, higher throughput"
+  requirements: "vllm >= 0.2.0, GPU recommended"
+
+vllm_neural_chat:
+  enabled: false
+  provider: vllm
+  base_url: "http://localhost:8000/v1"
+  model: "Intel/neural-chat-7b-v3"
+  api_key: "none"
+  gpu_device: 0
+  rate_limit_tokens_per_minute: "unlimited"
+  temperature: 0.7
+  description: "vLLM Intel Neural Chat"
+  use_case: "Fast instruction-following model"
+  requirements: "vllm serve Intel/neural-chat-7b-v3"
+
+vllm_phi:
+  enabled: false
+  provider: vllm
+  base_url: "http://localhost:8000/v1"
+  model: "microsoft/phi-2"
+  api_key: "none"
+  gpu_device: 0
+  rate_limit_tokens_per_minute: "unlimited"
+  temperature: 0.7
+  description: "Microsoft Phi-2 (small but capable)"
+  use_case: "Lightweight model for basic tasks"
+  requirements: "vllm serve microsoft/phi-2 (works on smaller GPUs)"
+
+# Quick Start Guide:
+#
+# Option 1: Ollama (Simplest)
+#   1. brew install ollama  (macOS) or download from ollama.ai
+#   2. ollama serve
+#   3. In another terminal: ollama pull mistral
+#   4. Enable ollama_mistral above
+#
+# Option 2: vLLM (Fastest)
+#   1. pip install vllm
+#   2. vllm serve mistral-7b
+#   3. Enable vllm_mistral above
+#   4. Note: Requires NVIDIA GPU (CUDA) for good performance
+#
+# Advantages:
+#   - No API costs
+#   - No rate limits
+#   - Works offline
+#   - Data stays local
+#   - Good for development/testing
+#
+# Disadvantages:
+#   - Slower than cloud APIs
+#   - Requires local GPU or CPU
+#   - Uses local storage space
+#   - Setup takes time
+#
+# Popular Models Available:
+#   Ollama: mistral, llama2, neural-chat, orca-mini, dolphin-mixtral
+#   vLLM: mistral-7b, neural-chat, phi-2, openchat-3.5, solar-10.7b
+#
+# Full Model List: ollama show -a (for Ollama)
+#
+# Test: ar test ollama_mistral

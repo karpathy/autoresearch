@@ -1,0 +1,85 @@
+# Chinese AI Services Configuration Template
+# These services can be accessed internationally (US-based access endpoints provided)
+# Uncomment and add your API keys to enable
+
+# Deepseek - Advanced Chinese reasoning model
+# Accessible from: US, EU, etc. (API endpoint is international)
+# deepseek_v3:
+#   enabled: false
+#   provider: deepseek
+#   base_url: "https://api.deepseek.com/v1"  # International endpoint
+#   model: "deepseek-v3"
+#   api_key: "your key here"
+#   rate_limit_tokens_per_minute: 5000
+#   temperature: 0.7
+#   description: "Advanced Chinese reasoning model"
+#   use_case: "Chinese language research, complex reasoning"
+#   region: "International"
+
+# Alibaba Qwen - Powerful Chinese AI
+# Accessible from: US, EU, etc. via DashScope
+# qwen_max:
+#   enabled: false
+#   provider: aliyun
+#   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"  # International endpoint
+#   model: "qwen-max"
+#   api_key: "your key here"
+#   rate_limit_tokens_per_minute: 5000
+#   temperature: 0.7
+#   description: "Alibaba's powerful reasoning model"
+#   use_case: "Chinese and English research, large context"
+#   region: "International"
+
+# Baichuan - Fast Chinese model
+# baichuan:
+#   enabled: false
+#   provider: baichuan
+#   base_url: "https://api.baichuan-ai.com/v1"  # International endpoint
+#   model: "Baichuan3-Turbo"
+#   api_key: "your key here"
+#   rate_limit_tokens_per_minute: 3000
+#   temperature: 0.7
+#   description: "Fast Baichuan model"
+#   use_case: "Quick Chinese language tasks"
+#   region: "International"
+
+# Zhipu - Chinese AI pioneer (ChatGLM)
+# chatglm:
+#   enabled: false
+#   provider: zhipu
+#   base_url: "https://open.bigmodel.cn/api/paas/v4"
+#   model: "glm-4"
+#   api_key: "your key here"  # Need project_id and API key
+#   rate_limit_tokens_per_minute: 4000
+#   temperature: 0.7
+#   description: "Zhipu's advanced Chinese model"
+#   use_case: "Deep Chinese research, technical understanding"
+#   region: "International"
+
+# ByteDance Doubao - Fast growing model
+# doubao:
+#   enabled: false
+#   provider: bytedance
+#   base_url: "https://ark.cn-beijing.volces.com/api/v3"
+#   model: "doubao-pro-32k"
+#   api_key: "your key here"
+#   rate_limit_tokens_per_minute: 4000
+#   temperature: 0.7
+#   description: "ByteDance's Doubao model"
+#   use_case: "Chinese language, modern applications"
+#   region: "International"
+
+# Multi-Language Configuration Tips:
+# - All services above are accessible internationally
+# - Chinese models excel at Chinese language understanding
+# - Can be mixed with English-focused models (OpenAI, Anthropic)
+# - Good for: technical Chinese documentation, cross-cultural research
+# - Typical workflow: Use Chinese models for Chinese content,
+#   English models for synthesis/English research
+#
+# Setup Instructions:
+# 1. Register with each service
+# 2. Get API key/credentials
+# 3. Replace "your key here" with actual credentials
+# 4. Set enabled: true
+# 5. Test with: ar test deepseek_v3

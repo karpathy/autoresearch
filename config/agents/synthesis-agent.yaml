@@ -1,0 +1,115 @@
+# Synthesis Agent Profile
+# Focus: Aggregating findings, identifying patterns, moderating debates
+# Role: The "wise elder" that brings order from chaos
+
+name: synthesis-agent
+model: claude-opus-4.6
+role: "Research Synthesis & Debate Moderator"
+
+instructions_file: agents/prompts/synthesis-agent.md
+
+# Resource Allocation
+gpu_allocation: 0.10          # 10% (mostly inference, not training)
+api_rate_limit: 15000        # tokens per minute (high due to processing)
+max_concurrent_tasks: 1       # Processes sequentially for coherence
+
+checkpoint_frequency_minutes: 30
+
+# Research Focus
+focus: |
+  Aggregate findings from specialist agents:
+  - Identify patterns across multiple experiments
+  - Spot contradictions and resolve conflicts
+  - Generate holistic insights from diverse research
+  - Create coherent research narratives
+  - Recommend directions for next investigation
+  - Moderate agent debates on disputed findings
+
+# Responsibilities
+responsibilities:
+  - aggregate_findings
+  - identify_patterns
+  - resolve_contradictions
+  - moderate_debates
+  - generate_summaries
+  - recommend_next_steps
+  - validate_consensus
+  - create_narratives
+
+# Specializations
+specializations:
+  - pattern_recognition
+  - synthesis
+  - debate_moderation
+  - narrative_generation
+  - knowledge_integration
+  - meta_analysis
+
+# Debate Protocol
+debate_protocol:
+  enabled: true
+  rounds: 3
+  voting_mechanism: "expertise_weighted"  # Agents with expertise in topic vote stronger
+  consensus_threshold: 0.75              # Need 75% agreement for acceptance
+  allow_dissent_documentation: true      # Record minority opinions
+  fallback_to_authority: true            # Use model capability as tiebreaker
+
+# Communication
+communication:
+  receives_from: ["all"]
+  publishes_to: ["murmur", "spreadsheet-moment", "podcast-generator"]
+  frequency_minutes: 120  # Synthesis every 2 hours
+
+# Synthesis Workflow
+workflow:
+  1_collect: "Gather all findings from agents"
+  2_organize: "Group by topic and evidence strength"
+  3_validate: "Cross-check for contradictions"
+  4_debate: "Run consensus protocol on disputed items"
+  5_synthesize: "Generate integrated narrative"
+  6_publish: "Export to knowledge graph and outputs"
+
+# Output Formats
+output_formats:
+  - markdown        # For wiki/knowledge graph
+  - json            # For structured data
+  - narrative       # For podcast scripts
+  - bulletin        # For community discussion
+
+# Quality Metrics
+quality_metrics:
+  consistency: "cross-agent agreement"
+  coherence: "narrative flows logically"
+  completeness: "all topics covered"
+  actionability: "recommendations are specific"
+
+# Confidence Scoring
+confidence_scoring:
+  factors:
+    - evidence_count: 0.3       # How many experiments support it?
+    - agent_agreement: 0.3      # Do specialists agree?
+    - logical_consistency: 0.2  # Does it follow constraints?
+    - novelty: 0.1              # Is it surprising or obvious?
+  output_format: "percentage with reasoning"
+
+# Constraints
+constraints:
+  max_synthesis_time_minutes: 60
+  require_minimum_evidence: 2  # At least 2 independent findings
+  publication_threshold: 0.8   # Only publish if >80% confident
+
+# Knowledge Graph Integration
+knowledge_graph:
+  auto_linking: true
+  backlink_generation: true
+  semantic_clustering: true
+  conflict_detection: true
+
+# Notes
+notes: |
+  - Synthesis agent is the "court" of the research team
+  - Must maintain intellectual integrity and honesty
+  - Should acknowledge uncertainty and caveats
+  - Document dissenting opinions for future reference
+  - Focus on actionable insights, not just summaries
+  - Identify gaps that future agents should investigate
