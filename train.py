@@ -70,6 +70,7 @@ def apply_rotary_emb(x, cos, sin):
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
+        self.layer_idx = layer_idx
         self.n_head = config.n_head
         self.n_kv_head = config.n_kv_head
         self.n_embd = config.n_embd
@@ -108,8 +109,9 @@ class CausalSelfAttention(nn.Module):
                 reps = self.n_head // self.n_kv_head
                 k = k.repeat_interleave(reps, dim=1)
                 v = v.repeat_interleave(reps, dim=1)
-            # Apply learned temperature scaling
-            scale = (1.0 / (self.head_dim ** 0.5)) * torch.sigmoid(self.attn_temperature).view(1, -1, 1, 1)
+            # Apply learned temperature scaling with depth-wise scaling
+            depth_scale = (1.0 + 0.1 * layer_idx / config.n_layer)
+            scale = (1.0 / (self.head_dim ** 0.5)) * torch.sigmoid(self.attn_temperature).view(1, -1, 1, 1) * depth_scale
             attn_weights = torch.matmul(q, k.transpose(-2, -1)) * scale
             attn_weights = F.softmax(attn_weights, dim=-1)
             y = torch.matmul(attn_weights, v)
@@ -139,6 +141,7 @@ class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
+        self.layer_idx = layer_idx
         self.mlp = MLP(config)
 
     def forward(self, x, ve, cos_sin, window_size):
