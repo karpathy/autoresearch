@@ -14,7 +14,8 @@ import sys
 import time
 import math
 import argparse
-import pickle
+import json
+import base64
 from multiprocessing import Pool
 
 import requests
@@ -43,6 +44,9 @@ MAX_SHARD = 6542 # the last datashard is shard_06542.parquet
 VAL_SHARD = MAX_SHARD  # pinned validation shard (shard_06542)
 VAL_FILENAME = f"shard_{VAL_SHARD:05d}.parquet"
 VOCAB_SIZE = 8192
+TOKENIZER_CONFIG_FILENAME = "tokenizer.json"
+TOKEN_BYTES_FILENAME = "token_bytes.pt"
+LEGACY_TOKENIZER_PICKLE = "tokenizer.pkl"
 
 # BPE split pattern (GPT-4 style, with \p{N}{1,2} instead of {1,3})
 SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
@@ -138,12 +142,52 @@ def text_iterator(max_chars=1_000_000_000, doc_cap=10_000):
                     return
 
 
-def train_tokenizer():
-    """Train BPE tokenizer using rustbpe, save as tiktoken pickle."""
-    tokenizer_pkl = os.path.join(TOKENIZER_DIR, "tokenizer.pkl")
-    token_bytes_path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
+def _serialize_mergeable_ranks(mergeable_ranks):
+    """Serialize bytes->int ranks to JSON-safe base64 pairs."""
+    return [
+        [base64.b64encode(token).decode("ascii"), int(rank)]
+        for token, rank in mergeable_ranks.items()
+    ]
 
-    if os.path.exists(tokenizer_pkl) and os.path.exists(token_bytes_path):
+
+def _deserialize_mergeable_ranks(encoded_items):
+    """Deserialize base64 pairs back to bytes->int ranks."""
+    return {
+        base64.b64decode(token_b64.encode("ascii")): int(rank)
+        for token_b64, rank in encoded_items
+    }
+
+
+def _save_tokenizer_config(path, pattern, mergeable_ranks, special_tokens):
+    payload = {
+        "name": "rustbpe",
+        "pat_str": pattern,
+        "mergeable_ranks": _serialize_mergeable_ranks(mergeable_ranks),
+        "special_tokens": {k: int(v) for k, v in special_tokens.items()},
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+
+
+def _load_tokenizer_config(path):
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    mergeable_ranks = _deserialize_mergeable_ranks(payload["mergeable_ranks"])
+    special_tokens = {k: int(v) for k, v in payload["special_tokens"].items()}
+    return tiktoken.Encoding(
+        name=payload.get("name", "rustbpe"),
+        pat_str=payload["pat_str"],
+        mergeable_ranks=mergeable_ranks,
+        special_tokens=special_tokens,
+    )
+
+
+def train_tokenizer():
+    """Train BPE tokenizer using rustbpe, save tokenizer config as JSON."""
+    tokenizer_config = os.path.join(TOKENIZER_DIR, TOKENIZER_CONFIG_FILENAME)
+    token_bytes_path = os.path.join(TOKENIZER_DIR, TOKEN_BYTES_FILENAME)
+
+    if os.path.exists(tokenizer_config) and os.path.exists(token_bytes_path):
         print(f"Tokenizer: already trained at {TOKENIZER_DIR}")
         return
 
@@ -174,12 +218,11 @@ def train_tokenizer():
         special_tokens=special_tokens,
     )
 
-    # Save tokenizer
-    with open(tokenizer_pkl, "wb") as f:
-        pickle.dump(enc, f)
+    # Save tokenizer config (JSON) to avoid unsafe pickle deserialization.
+    _save_tokenizer_config(tokenizer_config, pattern, mergeable_ranks, special_tokens)
 
     t1 = time.time()
-    print(f"Tokenizer: trained in {t1 - t0:.1f}s, saved to {tokenizer_pkl}")
+    print(f"Tokenizer: trained in {t1 - t0:.1f}s, saved to {tokenizer_config}")
 
     # --- Build token_bytes lookup for BPB evaluation ---
     print("Tokenizer: building token_bytes lookup...")
@@ -215,8 +258,17 @@ class Tokenizer:
 
     @classmethod
     def from_directory(cls, tokenizer_dir=TOKENIZER_DIR):
-        with open(os.path.join(tokenizer_dir, "tokenizer.pkl"), "rb") as f:
-            enc = pickle.load(f)
+        tokenizer_config = os.path.join(tokenizer_dir, TOKENIZER_CONFIG_FILENAME)
+        legacy_pickle = os.path.join(tokenizer_dir, LEGACY_TOKENIZER_PICKLE)
+        if not os.path.exists(tokenizer_config):
+            if os.path.exists(legacy_pickle):
+                raise RuntimeError(
+                    "Legacy tokenizer.pkl detected. For security reasons this file is no longer loaded. "
+                    "Run prepare.py again to regenerate tokenizer.json."
+                )
+            raise FileNotFoundError(f"Tokenizer config not found: {tokenizer_config}")
+
+        enc = _load_tokenizer_config(tokenizer_config)
         return cls(enc)
 
     def get_vocab_size(self):
@@ -246,9 +298,9 @@ class Tokenizer:
 
 
 def get_token_bytes(device="cpu"):
-    path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
+    path = os.path.join(TOKENIZER_DIR, TOKEN_BYTES_FILENAME)
     with open(path, "rb") as f:
-        return torch.load(f, map_location=device)
+        return torch.load(f, map_location=device, weights_only=True)
 
 
 def _document_batches(split, tokenizer_batch_size=128):
