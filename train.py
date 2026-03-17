@@ -741,25 +741,10 @@ if aborted:
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
-# Create EMA model for evaluation
-ema_model = GPT(config)
-ema_model.to(device)
-ema_decay = 0.999
-# Initialize EMA with current model parameters
-with torch.no_grad():
-    for ema_param, param in zip(ema_model.parameters(), model.parameters()):
-        ema_param.copy_(param)
-
-# Update EMA during training loop by adding this after optimizer.step()
-# (simulated by doing final EMA update here)
-with torch.no_grad():
-    for ema_param, param in zip(ema_model.parameters(), model.parameters()):
-        ema_param.mul_(ema_decay).add_(param, alpha=1 - ema_decay)
-
-# Final eval with EMA model
-ema_model.eval()
+# Final eval
+model.eval()
 with autocast_ctx:
-    val_bpb = evaluate_bpb(ema_model, tokenizer, DEVICE_BATCH_SIZE)
+    val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
 
 # Final summary
 t_end = time.time()
