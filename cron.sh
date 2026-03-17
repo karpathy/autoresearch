@@ -29,6 +29,18 @@ echo "[cron] $(date) — Starting track=$TODAY_TRACK branch=$BRANCH"
 cd "$OC_REPO"
 git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH"
 
+# ── Reviewer routing ─────────────────────────────────────────────────────────
+# If Alex (RRN-000000000005) is reachable, use RCAN review. Otherwise Gemini ADC.
+if curl -sf --connect-timeout 3 "http://alex.local:8000/health" >/dev/null 2>&1; then
+    export REVIEWER="rcan"
+    export REVIEWER_RRN="RRN-000000000005"
+    export REVIEWER_URL="http://alex.local:8000"
+    echo "[cron] $(date) — Alex online, using RCAN review"
+else
+    export REVIEWER="gemini"
+    echo "[cron] $(date) — Alex offline, using Gemini ADC review"
+fi
+
 # ── Main run (midnight–6am = 6h) ──────────────────────────────────────────────
 cd "$REPO"
 timeout 21600 "$REPO/.venv/bin/python3" run_agent.py > "$LOG" 2>&1 || true

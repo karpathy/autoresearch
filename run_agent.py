@@ -55,6 +55,12 @@ _genai_client = genai.Client(
 OPENCASTOR_REPO = Path(os.environ["OPENCASTOR_REPO_PATH"])
 TODAY_TRACK = os.environ.get("TODAY_TRACK", "A")
 REVIEWER_MODEL = "gemini-2.0-flash"
+# REVIEWER=rcan → route review to Alex via RCAN send_rcan_message
+# REVIEWER=gemini (default) → local Gemini ADC
+# REVIEWER_RRN → Alex's RRN (default RRN-000000000005)
+REVIEWER = os.environ.get("REVIEWER", "gemini")
+REVIEWER_RRN = os.environ.get("REVIEWER_RRN", "RRN-000000000005")
+REVIEWER_URL = os.environ.get("REVIEWER_URL", "http://alex.local:8000")
 # Model priority: qwen2.5-coder:7b > qwen2.5-coder:3b > gemma3:4b > gemma3:1b
 _available = {m.model.split(":")[0] for m in ollama.list().models}
 _avail_full = {m.model for m in ollama.list().models}
@@ -414,8 +420,8 @@ Return ONLY the function:""",
 
 # ── Review ────────────────────────────────────────────────────────────────────
 
-def review_draft(draft: str, target: str, name: str) -> tuple[bool, str]:
-    """Ask Gemini to review the draft. Returns (approved, reason)."""
+def _review_prompt(draft: str, target: str, name: str) -> str:
+    """Build the review prompt string."""
     track_rules = {
         "A": "pytest test: must import real castor modules, test real behavior, use correct pytest syntax",
         "B": "docstring: must be Google-style (one-line summary + Args/Returns), accurate, no hallucinations",
@@ -424,8 +430,7 @@ def review_draft(draft: str, target: str, name: str) -> tuple[bool, str]:
         "E": "harness test: must include P66 assertion if function touches physical tools or ESTOP",
     }
     rules = track_rules.get(TODAY_TRACK, "code quality")
-
-    prompt = f"""Review this proposed change for the OpenCastor robot runtime.
+    return f"""Review this proposed change for the OpenCastor robot runtime.
 
 Target: {target} / {name}
 Track rule: {rules}
@@ -437,10 +442,64 @@ Reply with EXACTLY one line:
 PASS - <one sentence why it's good>
 FAIL - <one sentence what's wrong>"""
 
+
+def _review_via_rcan(prompt: str) -> tuple[bool, str]:
+    """Send review request to Alex via RCAN HTTP API. Returns (approved, reason)."""
+    import urllib.error
+    import urllib.request
+
+    payload = json.dumps({
+        "cmd": "review",
+        "message": prompt,
+        "scope": "chat",
+        "loa": 1,
+        "max_iterations": 1,
+    }).encode()
+
+    req = urllib.request.Request(
+        f"{REVIEWER_URL}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json", "X-RCAN-Scope": "chat"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+            text = (data.get("response") or data.get("message") or "").strip()
+            if not text:
+                raise ValueError("empty response from Alex")
+            passed = text.upper().startswith("PASS")
+            print(f"  [review:alex] {text[:80]}")
+            return passed, text
+    except (urllib.error.URLError, OSError) as e:
+        print(f"  [review:alex] unreachable ({e}) — falling back to Gemini ADC")
+        raise
+
+
+def _review_via_gemini(prompt: str) -> tuple[bool, str]:
+    """Review via local Gemini ADC."""
     response = _genai_client.models.generate_content(model=REVIEWER_MODEL, contents=prompt)
     text = response.text.strip()
     passed = text.upper().startswith("PASS")
     return passed, text
+
+
+def review_draft(draft: str, target: str, name: str) -> tuple[bool, str]:
+    """Review the draft via Alex (RCAN) or local Gemini ADC.
+
+    Routes based on REVIEWER env var:
+      REVIEWER=rcan   → Alex via RCAN HTTP API, fallback to Gemini on error
+      REVIEWER=gemini → local Gemini ADC (default)
+    """
+    prompt = _review_prompt(draft, target, name)
+
+    if REVIEWER == "rcan":
+        try:
+            return _review_via_rcan(prompt)
+        except Exception:
+            print("  [review] RCAN review failed — using Gemini ADC fallback")
+
+    return _review_via_gemini(prompt)
 
 # ── Apply / revert ────────────────────────────────────────────────────────────
 
