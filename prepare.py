@@ -31,6 +31,14 @@ MAX_SEQ_LEN = 2048       # context length
 TIME_BUDGET = 300        # training time budget in seconds (5 minutes)
 EVAL_TOKENS = 40 * 524288  # number of tokens for val eval
 
+# Auto-detect GPU and adjust for memory-constrained platforms (e.g. Colab T4)
+if torch.cuda.is_available():
+    _mem_gb = torch.cuda.get_device_properties(0).total_mem / 1024**3
+    if _mem_gb < 20:  # T4 (16GB), P100 (16GB), etc.
+        MAX_SEQ_LEN = 512
+        EVAL_TOKENS = 10 * 524288  # ~5M tokens (faster eval on smaller GPUs)
+        print(f"[autoresearch] Detected {_mem_gb:.1f}GB GPU — using MAX_SEQ_LEN={MAX_SEQ_LEN}, reduced EVAL_TOKENS")
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
