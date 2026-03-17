@@ -80,6 +80,91 @@ Seeing as there seems to be a lot of interest in tinkering with autoresearch on 
 
 I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
 
+---
+
+## Extended Vision: Autonomous Fact-Checking Wiki System
+
+This repo is a foundation for a much larger system that combines autoresearch with the **SuperInstance ecosystem** to create a continually-bettering research platform. See **[ARCHITECTURE.md](ARCHITECTURE.md)** for full details.
+
+### The System at a Glance
+
+Instead of just optimizing a language model, use autoresearch as the engine for:
+- **Autonomous research swarms**: Multiple specialist agents investigate topics in parallel via `spreader-tool`
+- **Semantic wiki**: Findings auto-populate a knowledge graph in `murmur` with AI-powered semantic linking
+- **Real-time monitoring**: Track experiment metrics on `spreadsheet-moment` dashboards
+- **Deterministic validation**: Fact-check claims using `constraint-theory` geometric solvers (not probabilistic)
+- **Podcast generation**: Transform research into audio narratives with evidence citations
+- **Sandbox exploration**: Enter "flowstate" mode for radical ideas, record all analysis in cold storage
+- **Configurable retention**: Global + per-file data policies for research archival
+
+### Key Integration Points
+
+| Component | Purpose | Link |
+|-----------|---------|------|
+| **autoresearch** | Autonomous 5-minute experiments | (this repo) |
+| **spreader-tool** | Multi-agent orchestration | https://github.com/SuperInstance/spreader-tool |
+| **murmur** | Semantic knowledge management | https://github.com/SuperInstance/murmur |
+| **spreadsheet-moment** | Data interface & monitoring | https://github.com/SuperInstance/spreadsheet-moment |
+| **constraint-theory** | Deterministic fact-checking | https://github.com/SuperInstance/constraint-theory |
+| **superinstance-papers** | 65+ theoretical foundations | https://github.com/SuperInstance/superinstance-papers |
+
+### Example: Weekly Research Cycle
+
+```
+Monday - Friday: Autonomous Research
+├─ spreader-tool orchestrates specialist agents
+├─ Each agent runs 100+ autoresearch experiments/day
+├─ murmur auto-populates semantic knowledge graph
+├─ spreadsheet-moment dashboard tracks metrics
+└─ constraint-theory validates all findings
+
+Friday Evening: Output Generation
+├─ Top 10 insights extracted + synthesized
+├─ Podcast episode script generated
+├─ Wiki articles updated in murmur
+└─ Research data archived to cold storage
+
+Weekend: Community Review
+├─ murmur bulletin board: researchers vote/challenge findings
+├─ Dispute resolution
+└─ Planning next week's research directions
+```
+
+### Use Cases
+
+- **Continuously Growing Wiki**: Auto-populate semantic knowledge base from research
+- **Podcast Content**: Generate weekly episodes from curated research findings
+- **Creative Pontification**: Explore radical ideas in flowstate sandbox mode
+- **Research Database**: Archive all analysis with configurable retention policies
+- **Academic Publishing**: Automated paper generation from validated findings
+- **Constraint-Driven Domains**: Physics, optimization, formal verification, etc.
+
+### Getting Started with Extended System
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for:
+- Complete system architecture diagrams
+- Fact-checking pipeline details
+- Cold storage & retention management
+- Sandbox/flowstate mode explanation
+- Data flow examples
+- Integration guide with SuperInstance components
+- Open questions & future work
+
+Quick setup for autoresearch alone:
+```bash
+uv sync
+uv run prepare.py
+uv run train.py
+```
+
+To integrate with extended system:
+1. Deploy murmur, spreader-tool, spreadsheet-moment locally
+2. Configure retention policies
+3. Extend `program.md` with research directions
+4. Let agents explore autonomously
+
+---
+
 ## Notable forks
 
 - [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
