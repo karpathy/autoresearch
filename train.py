@@ -83,7 +83,6 @@ class CausalSelfAttention(nn.Module):
         self.ve_gate_channels = 32
         self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
         self.attn_temperature = nn.Parameter(torch.ones(self.n_head))
-        self.register_buffer('attn_temp_ema', torch.ones(self.n_head), persistent=False)
 
     def forward(self, x, ve, cos_sin, window_size):
         B, T, C = x.size()
@@ -109,11 +108,8 @@ class CausalSelfAttention(nn.Module):
                 reps = self.n_head // self.n_kv_head
                 k = k.repeat_interleave(reps, dim=1)
                 v = v.repeat_interleave(reps, dim=1)
-            # Apply learned temperature scaling with EMA regularization
-            if self.training:
-                self.attn_temp_ema.mul_(0.999).add_(torch.sigmoid(self.attn_temperature), alpha=0.001)
-            temp_param = self.attn_temp_ema if self.training else torch.sigmoid(self.attn_temperature)
-            scale = (1.0 / (self.head_dim ** 0.5)) * temp_param.view(1, -1, 1, 1)
+            # Apply learned temperature scaling
+            scale = (1.0 / (self.head_dim ** 0.5)) * torch.sigmoid(self.attn_temperature).view(1, -1, 1, 1)
             attn_weights = torch.matmul(q, k.transpose(-2, -1)) * scale
             attn_weights = F.softmax(attn_weights, dim=-1)
             y = torch.matmul(attn_weights, v)
@@ -205,7 +201,6 @@ class GPT(nn.Module):
         # Initialize attention temperatures to 1.0 (sigmoid(0) = 0.5, scaled by 2 -> 1.0)
         for block in self.transformer.h:
             torch.nn.init.zeros_(block.attn.attn_temperature)
-            block.attn.attn_temp_ema.fill_(1.0)
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
