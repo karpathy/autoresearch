@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import ExtraTreesRegressor
+from sklearn.ensemble import ExtraTreesRegressor, HistGradientBoostingRegressor
 
 from prepare import (
     FORWARD_HOURS,
@@ -289,26 +289,24 @@ def build_model(train_df: pd.DataFrame) -> callable:
     selected = importances >= threshold
     features_pruned = features[:, selected]
 
-    # --- Train pass 2: diverse ensemble on pruned features ---
-    ensemble_configs = [
-        {"n_estimators": 3000, "max_depth": 7, "min_samples_leaf": 600},   # original (strong regularization)
-        {"n_estimators": 2000, "max_depth": 5, "min_samples_leaf": 800},   # very shallow + heavy regularization
-        {"n_estimators": 2000, "max_depth": 7, "min_samples_leaf": 500},   # moderate regularization variant
-        {"n_estimators": 2000, "max_depth": 6, "min_samples_leaf": 700},   # intermediate
-        {"n_estimators": 2000, "max_depth": 7, "min_samples_leaf": 600, "max_features": 0.8},  # feature subsampling
-    ]
+    # --- Train pass 2: HistGradientBoosting with intermediate regularization ---
+    model = HistGradientBoostingRegressor(
+        max_iter=300,
+        max_depth=4,
+        min_samples_leaf=600,
+        learning_rate=0.03,
+        max_leaf_nodes=20,
+        l2_regularization=3.0,
+        random_state=42,
+    )
+    model.fit(features_pruned, targets)
+    models = [model]
 
-    models = []
-    for cfg in ensemble_configs:
-        m = ExtraTreesRegressor(
-            random_state=42,
-            n_jobs=-1,
-            **cfg,
-        )
-        m.fit(features_pruned, targets)
-        models.append(m)
-
-    n_params = count_model_params(models)
+    # Approximate param count from number of leaf nodes
+    n_params = sum(
+        model._predictors[i][0].get_n_leaf_nodes()
+        for i in range(len(model._predictors))
+    )
 
     # --- Return prediction closure ---
     def predict_fn(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -317,15 +315,8 @@ def build_model(train_df: pd.DataFrame) -> callable:
         feats = np.nan_to_num(feats, nan=0.0)
         feats = feats[:, selected]
 
-        # Confidence-weighted ensemble: trust each model proportional to its confidence
-        weighted_sum = np.zeros(len(feats))
-        weight_sum = np.zeros(len(feats))
-        for model in models:
-            scaled_pred, confidence = _confidence_scaled_predict(model, feats)
-            weighted_sum += scaled_pred * confidence
-            weight_sum += confidence
-        weight_sum = np.where(weight_sum > 0, weight_sum, 1.0)
-        sigma_preds = weighted_sum / weight_sum
+        # Simple prediction
+        sigma_preds = np.mean([m.predict(feats) for m in models], axis=0)
 
         sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
         # no scaling — let raw sigma predictions drive position sizing
