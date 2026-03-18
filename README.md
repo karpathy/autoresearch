@@ -1,105 +1,127 @@
 # autoresearch
 
-![teaser](progress.png)
+> Fork of [karpathy/autoresearch](https://github.com/karpathy/autoresearch) by [DeepBlueDynamics](https://github.com/DeepBlueDynamics)
 
-*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
+Give an AI agent a real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up to a log of experiments and a better model.
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069).
+## What's different in this fork
 
-## How it works
-
-The repo is deliberately kept small and only really has three files that matter:
-
-- **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
-- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
-
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
-
-If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/status/2030720614752039185) looks pretty good for a lot more context.
+- **Agent harness** (`agent.py`) — structured tool-calling agent that works with Claude, GPT, or Gemini. The agent gets tools to tweak hyperparameters, edit architecture, run experiments, and keep/discard results. No more copy-pasting into a chat window.
+- **SDR entropy seeding** — replaces the fixed `torch.manual_seed(42)` with true hardware randomness from an RTL-SDR radio receiver via [sdr-random](https://github.com/DeepBlueDynamics/sdr-random).
+- **Optimized defaults** — hyperparameters tuned from 215 experiments across Karpathy's sessions ([Discussion #32](https://github.com/karpathy/autoresearch/discussions/32), [#43](https://github.com/karpathy/autoresearch/discussions/43)): depth 9, halved batch size, SSSSL window pattern, RoPE base 200K, weight decay on embeddings/VE/lm_head, 0.68x init scale, longer warmdown. Baseline 0.9979 -> 0.9697 val_bpb on H100.
 
 ## Quick start
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+**Requirements:** Single NVIDIA GPU, Python 3.10+, [uv](https://docs.astral.sh/uv/).
 
 ```bash
-
-# 1. Install uv project manager (if you don't already have it)
+# Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 2. Install dependencies
+# Install dependencies
 uv sync
 
-# 3. Download data and train tokenizer (one-time, ~2 min)
+# Download data + train tokenizer (one-time, ~2 min)
 uv run prepare.py
 
-# 4. Manually run a single training experiment (~5 min)
+# Run a single training experiment (~5 min)
 uv run train.py
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
-
 ## Running the agent
 
-Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
+The agent harness gives any LLM provider structured tools to run experiments autonomously.
+
+```bash
+# Install agent dependencies (pick your provider)
+pip install anthropic openai google-genai
+
+# Run with Claude
+python agent.py --provider anthropic --model claude-sonnet-4-20250514
+
+# Run with GPT
+python agent.py --provider openai --model gpt-4o
+
+# Run with Gemini
+python agent.py --provider gemini --model gemini-2.0-flash
+
+# Run on a named branch, limit experiments
+python agent.py --provider anthropic --model claude-sonnet-4-20250514 --tag mar18 --max-experiments 20
+```
+
+Set your API key as an environment variable: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GOOGLE_API_KEY`.
+
+### Agent tools
+
+The agent gets 8 tools it can call during the experiment loop:
+
+| Tool | What it does |
+|------|-------------|
+| `get_config` | Read current hyperparameters from train.py |
+| `set_hyperparams` | Modify hyperparameters (batch size, LR, depth, etc.) |
+| `edit_code` | Replace entire sections of train.py (model, optimizer, training loop) |
+| `run_experiment` | Execute 5-min training run, return val_bpb + metrics |
+| `get_history` | Read results.tsv — full experiment log |
+| `keep` | Git commit + log improvement to results.tsv |
+| `discard` | Revert changes + log failure to results.tsv |
+| `read_code` | Inspect specific lines of train.py |
+
+The agent loops autonomously: check config, propose a change, run it, evaluate, keep or discard, repeat. Context auto-compresses so it can run indefinitely.
+
+### Manual mode
+
+You can also run experiments the original way — point Claude Code, Codex, or any coding agent at `program.md`:
 
 ```
-Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
+Hi have a look at program.md and let's kick off a new experiment!
 ```
-
-The `program.md` file is essentially a super lightweight "skill".
 
 ## SDR entropy seeding
 
-This fork replaces the fixed `torch.manual_seed(42)` with true hardware randomness from an RTL-SDR radio receiver. Each training run is seeded with entropy extracted from ADC quantization noise — physically random, not pseudorandom.
+This fork seeds PyTorch's RNG with true hardware randomness from an RTL-SDR radio receiver. The entropy comes from ADC quantization noise — physically random, not pseudorandom.
 
-The entropy comes from [sdr-random](https://github.com/DeepBlueDynamics/sdr-random), a lightweight Rust service that captures IQ samples from an RTL-SDR dongle and serves random bytes over HTTP. `train.py` fetches 8 bytes at startup to seed PyTorch's RNG, with an `os.urandom` fallback if the SDR is unavailable.
+Requires [sdr-random](https://github.com/DeepBlueDynamics/sdr-random) running on a machine with an RTL-SDR dongle:
 
 ```bash
-# Start the entropy server (on a machine with an RTL-SDR attached)
+# On the SDR host
 sdr-rand local --port 9090
 
-# train.py automatically fetches a seed from http://<host>:9090/api/entropy
+# train.py auto-fetches entropy at startup, falls back to os.urandom if unavailable
 uv run train.py
 ```
 
 ## Project structure
 
 ```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
 train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
+prepare.py      — constants, data prep, evaluation (do not modify)
+agent.py        — autonomous experiment agent (Claude / GPT / Gemini)
+program.md      — manual-mode agent instructions
 pyproject.toml  — dependencies
+results.tsv     — experiment log (auto-generated)
 ```
 
-## Design choices
+## Optimized defaults
 
-- **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
-- **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+This fork ships with hyperparameters validated across 215 experiments on H100:
 
-## Platform support
-
-This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
-
-Seeing as there seems to be a lot of interest in tinkering with autoresearch on much smaller compute platforms than an H100, a few extra words. If you're going to try running autoresearch on smaller computers (Macbooks etc.), I'd recommend one of the forks below. On top of this, here are some recommendations for how to tune the defaults for much smaller models for aspiring forks:
-
-1. To get half-decent results I'd use a dataset with a lot less entropy, e.g. this [TinyStories dataset](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean). These are GPT-4 generated short stories. Because the data is a lot narrower in scope, you will see reasonable results with a lot smaller models (if you try to sample from them after training).
-2. You might experiment with decreasing `vocab_size`, e.g. from 8192 down to 4096, 2048, 1024, or even - simply byte-level tokenizer with 256 possibly bytes after utf-8 encoding.
-3. In `prepare.py`, you'll want to lower `MAX_SEQ_LEN` a lot, depending on the computer even down to 256 etc. As you lower `MAX_SEQ_LEN`, you may want to experiment with increasing `DEVICE_BATCH_SIZE` in `train.py` slightly to compensate. The number of tokens per fwd/bwd pass is the product of these two.
-4. Also in `prepare.py`, you'll want to decrease `EVAL_TOKENS` so that your validation loss is evaluated on a lot less data.
-5. In `train.py`, the primary single knob that controls model complexity is the `DEPTH` (default 8, here). A lot of variables are just functions of this, so e.g. lower it down to e.g. 4.
-6. You'll want to most likely use `WINDOW_PATTERN` of just "L", because "SSSL" uses alternating banded attention pattern that may be very inefficient for you. Try it.
-7. You'll want to lower `TOTAL_BATCH_SIZE` a lot, but keep it powers of 2, e.g. down to `2**14` (~16K) or so even, hard to tell.
-
-I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
-
-## Notable forks
-
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
-- [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
-- [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
+| Setting | Upstream | This fork | Impact |
+|---------|----------|-----------|--------|
+| Depth | 8 | 9 | -0.004 val_bpb |
+| Aspect ratio | 64 | 57 | depth-over-width |
+| Batch size | 524K | 262K | -0.012 (more steps in 5 min) |
+| Window pattern | SSSL | SSSSL | -0.004 cumulative |
+| Short window | seq_len/2 | seq_len/8 | narrower local attention |
+| RoPE base | 10K | 200K | -0.001 |
+| Embedding LR | 0.6 | 0.9 | -0.005 |
+| Warmdown ratio | 0.5 | 0.75 | -0.001 to -0.027 |
+| Final LR frac | 0.0 | 0.05 | -0.006 |
+| Init scale | 1.0x | 0.68x | -0.016 cumulative |
+| x0_lambda init | 0.1 | 0.05 | -0.001 |
+| Embedding WD | 0.0 | 0.001 | regularization |
+| VE WD | 0.0 | 0.003 | -0.003 cumulative |
+| LM head WD | 0.0 | 0.01 | -0.009 |
+| Softcap | float32 before tanh | bf16 tanh, then float32 | saves ~4GB VRAM |
 
 ## License
 
