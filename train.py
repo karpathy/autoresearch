@@ -291,10 +291,10 @@ def build_model(train_df: pd.DataFrame) -> callable:
 
     # --- Train pass 2: HistGradientBoosting with intermediate regularization ---
     model = HistGradientBoostingRegressor(
-        max_iter=2000,
+        max_iter=5000,
         max_depth=4,
         min_samples_leaf=600,
-        learning_rate=0.03,
+        learning_rate=0.01,
         max_leaf_nodes=20,
         l2_regularization=3.0,
         random_state=42,
