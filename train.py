@@ -65,6 +65,7 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     # Product of vol-normalized returns: positive when aligned, negative when divergent
     mom_div = (ret_24 / vol_safe) * (ret_168 / vol_safe)
     feature_cols.append(np.nan_to_num(mom_div, nan=0.0))
+    feature_cols.append(np.nan_to_num(np.abs(mom_div), nan=0.0))  # magnitude of alignment
 
     # 2. Volatility (rolling std of hourly returns) — raw, not normalized
     for w in VOLATILITY_WINDOWS:
