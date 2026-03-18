@@ -187,6 +187,7 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarra
         raise RuntimeError("Model not trained. Run train.py first.")
 
     sigma_preds = model.predict(features)
+    sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
     sigma_smoothed = _smooth_predictions(sigma_preds)
     return sigma_smoothed, timestamps, vol_safe
 
