@@ -1,3 +1,7 @@
+# PRIME DIRECTIVE
+
+**You NEVER stop the experiment loop.** You run experiments continuously until the human manually interrupts you. There is no plateau report. There is no summary. There is no "I've exhausted all options." If you find yourself writing a conclusion, that is the signal to re-read train.py and experiment-log.md and find what hasn't been tried. The loop runs until interrupted, period.
+
 # autotrader
 
 This is an experiment to have the LLM do its own trading research by training ML models that predict forward returns.
@@ -11,7 +15,7 @@ To set up a new experiment, work with the user to:
 3. **Read the in-scope files**: The repo is small. Read these files for full context:
    - `README.md` — repository context.
    - `prepare.py` — fixed constants, data prep, backtesting engine, metric computation. Do not modify.
-   - `train.py` — the file you modify. Model architecture, feature engineering, training loop.
+   - `train.py` — the file you modify. Contains `build_model()` which defines the recipe.
 4. **Verify data exists**: Check that `~/.cache/autotrader/` contains the cached parquet file. If not, tell the human to run `uv run prepare.py`.
 5. **Initialize results.tsv**: Create `results.tsv` with just the header row. This file is gitignored — it lives only on disk and is never committed. Git operations (commit, reset) will not affect it.
 6. **Initialize experiment-log.md**: Create an empty `experiment-log.md`. Also gitignored. This is the lab notebook for reasoning and observations.
@@ -24,25 +28,29 @@ Once you get confirmation, kick off the experimentation.
 Each experiment runs on a single machine. The training script runs for a **fixed time budget of 4 minutes** (wall clock training time, excluding startup and evaluation overhead). You launch it simply as: `uv run train.py`.
 
 **What you CAN do:**
-- Modify `train.py` — this is the only file you edit. Everything is fair game: model architecture, feature engineering, loss function, optimizer, hyperparameters, training loop, regularization, data preprocessing, normalization, etc.
+- Modify `train.py` — this is the only file you edit. Everything inside `build_model()` is fair game: model architecture, feature engineering, hyperparameters, ensemble composition, prediction pipeline, regularization, data preprocessing, normalization, etc.
 
 **What you CANNOT do:**
 - Modify `prepare.py`. It is read-only.
 - Install new packages or add dependencies. You can only use what's already in `pyproject.toml`.
 - Access validation or holdout data. Only `load_train_data()` is available. The evaluation function handles all other splits internally.
 
-**The goal is simple: get the highest score.** The evaluation is a black box. You call `evaluate_model(predict_on_data, n_params)` and it tests your predictions across multiple time periods — including periods your model has never seen. It returns a composite score. Higher is better.
+**Walk-forward evaluation:** Your code is tested across multiple independent walk-forward windows. Each window trains your recipe on a different historical period and evaluates on the following year. Your score is the worst-case performance across all windows. A recipe that works brilliantly on one period but fails on another scores poorly. Optimize for robustness, not peak performance on any single period.
+
+**The goal is simple: get the highest score.** The evaluation is a black box. You call `evaluate_model(build_model)` and it retrains your recipe on multiple walk-forward windows, testing predictions across periods your model has never seen. It returns a composite score. Higher is better.
 
 **What you see after each run:**
 - `score` — the single number to optimize
-- `sharpe_min` — the minimum Sharpe ratio across evaluation periods
-- `max_drawdown` — the worst drawdown across any period
-- `total_trades` — trades across all periods combined
-- `consistency` — how many subperiods are profitable (e.g. "5/7")
+- `sharpe_min` — the minimum Sharpe ratio across evaluation windows
+- `max_drawdown` — the worst drawdown across any window
+- `total_trades` — trades across all windows combined
+- `consistency` — how many subperiods are profitable (e.g. "6/8")
 
 **Simplicity criterion**: All else being equal, simpler is better. The parameter count penalty is built into the score. A small improvement that adds ugly complexity is not worth it. Removing something and getting equal or better results is a great outcome.
 
 **The first run**: Always establish the baseline first by running the training script as is.
+
+**Time budget**: The total evaluation retrains your recipe on each walk-forward window independently. Monitor `training_seconds` to ensure your recipe trains fast enough — the time budget is shared across all windows.
 
 ## Hard rules
 
@@ -70,7 +78,7 @@ score:            0.4200
 sharpe_min:       0.5800
 max_drawdown:     -15.2%
 total_trades:     145
-consistency:      5/7
+consistency:      5/8
 n_params:         3206
 training_seconds: 32.1
 total_seconds:    45.3
@@ -97,7 +105,7 @@ commit	score	sharpe_min	max_dd	total_trades	consistency	n_params	status	descript
 3. sharpe_min (e.g. 0.5800) — use 0.0000 for crashes
 4. max drawdown as percentage (e.g. -15.2) — use 0.0 for crashes
 5. total trades (e.g. 145) — use 0 for crashes
-6. consistency (e.g. 5/7) — use 0/0 for crashes
+6. consistency (e.g. 5/8) — use 0/0 for crashes
 7. number of model parameters (e.g. 3206) — use 0 for crashes
 8. status: `keep`, `discard`, or `crash`
 9. short text description of what this experiment tried
@@ -106,8 +114,8 @@ Example:
 
 ```
 commit	score	sharpe_min	max_dd	total_trades	consistency	n_params	status	description
-a1b2c3d	0.0719	0.8833	-49.6	101	7/7	3800	keep	baseline GBR
-b2c3d4e	0.0911	0.6413	-45.6	189	5/7	6334	keep	huber loss + 500 estimators
+a1b2c3d	0.0719	0.8833	-49.6	101	7/8	3800	keep	baseline GBR
+b2c3d4e	0.0911	0.6413	-45.6	189	5/8	6334	keep	huber loss + 500 estimators
 c3d4e5f	0.0000	0.0000	0.0	0	0/0	0	crash	LSTM (shape mismatch)
 ```
 
@@ -119,7 +127,7 @@ LOOP FOREVER:
 
 1. Look at the git state: the current branch/commit we're on
 2. Decide on an experimental idea.
-3. Modify `train.py` with the experiment.
+3. Modify `train.py` with the experiment (focus on `build_model()`).
 4. `git add train.py && git commit -m "exp: <short description>"`
 5. Invoke the `experiment-reviewer` subagent to pre-flight check the diff. If it returns FAIL, amend the commit with the fix and resubmit, or `git reset --hard HEAD~1` and rethink.
 6. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
@@ -142,5 +150,3 @@ LOOP FOREVER:
 **Timeout**: Each experiment should take ~5 minutes total (4 minutes training + evaluation overhead). If a run exceeds 10 minutes, kill it and treat it as a failure.
 
 **Crashes**: If a run crashes, use judgment: fix simple bugs and re-run, or skip and log "crash."
-
-NEVER STOP: Once the experiment loop has begun, do NOT pause to ask the human if you should continue. The human expects you to work indefinitely until manually stopped. If you run out of ideas, think harder — re-read the in-scope files for new angles, revisit near-miss experiments and try them in isolation, try more radical architectural changes. The loop runs until the human interrupts you, period.

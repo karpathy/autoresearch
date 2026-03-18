@@ -206,17 +206,11 @@ def compute_targets(df: pd.DataFrame) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Model
+# Model Helpers
 # ---------------------------------------------------------------------------
 
-_trained_models = []  # list of trained ExtraTrees models for ensemble
-_selected_features = None  # boolean mask from feature importance pruning
-
-
-def count_model_params(models=None) -> int:
-    """Return approximate parameter count for the ensemble."""
-    if models is None:
-        models = _trained_models
+def count_model_params(models) -> int:
+    """Return approximate parameter count for an ensemble."""
     if not models:
         return 0
     n_params = 0
@@ -225,10 +219,6 @@ def count_model_params(models=None) -> int:
             n_params += tree.tree_.node_count
     return n_params
 
-
-# ---------------------------------------------------------------------------
-# Prediction helper (used by prepare.py evaluate_model)
-# ---------------------------------------------------------------------------
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
@@ -244,52 +234,26 @@ def _confidence_scaled_predict(model, features: np.ndarray) -> tuple[np.ndarray,
     return preds * confidence, confidence
 
 
-def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Generate sigma-space predictions on arbitrary OHLCV data.
+# ---------------------------------------------------------------------------
+# Build Model (recipe)
+# ---------------------------------------------------------------------------
 
-    Ensembles multiple models: each model's predictions are confidence-scaled
-    independently, then averaged. This produces diverse, well-calibrated signals.
+def build_model(train_df: pd.DataFrame) -> callable:
+    """Train a model on the provided data and return a prediction function.
+
+    This is the recipe: features, architecture, hyperparameters, and prediction
+    pipeline. The evaluation system calls this independently for each walk-forward
+    window. Each call must be self-contained — no global state.
+
+    Args:
+        train_df: OHLCV DataFrame for training. The date range varies —
+                  the recipe must work regardless of which years are included.
+
+    Returns:
+        predict_fn: Callable that takes an OHLCV DataFrame and returns
+                    (sigma_predictions, timestamps, vol) — predictions in
+                    sigma-space.
     """
-    features, timestamps, vol_safe = compute_features(df)
-    features = np.nan_to_num(features, nan=0.0)
-
-    # Apply feature importance pruning mask if available
-    if _selected_features is not None:
-        features = features[:, _selected_features]
-
-    if not _trained_models:
-        raise RuntimeError("Model not trained. Run train.py first.")
-
-    # Confidence-weighted ensemble: trust each model proportional to its confidence
-    weighted_sum = np.zeros(len(features))
-    weight_sum = np.zeros(len(features))
-    for model in _trained_models:
-        scaled_pred, confidence = _confidence_scaled_predict(model, features)
-        weighted_sum += scaled_pred * confidence  # double-weight by confidence
-        weight_sum += confidence
-    weight_sum = np.where(weight_sum > 0, weight_sum, 1.0)
-    sigma_preds = weighted_sum / weight_sum
-
-    sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
-    sigma_preds = sigma_preds * 1.5  # base scale
-    sigma_smoothed = _smooth_predictions(sigma_preds)
-    return sigma_smoothed, timestamps, vol_safe
-
-
-# ---------------------------------------------------------------------------
-# Main Training Loop
-# ---------------------------------------------------------------------------
-
-def main():
-    global _trained_models
-
-    total_start = time.time()
-
-    # --- Load data ---
-    print("Loading training data...")
-    train_df = load_train_data()
-    print(f"  {len(train_df)} rows")
-
     # --- Compute features and targets ---
     features, timestamps, vol_safe = compute_features(train_df)
     targets = compute_targets(train_df)
@@ -302,7 +266,6 @@ def main():
     features = features[valid]
     targets = targets[valid]
     vol_train = vol_safe[valid]
-    train_timestamps = timestamps[valid]
 
     # Vol-normalize targets first, then winsorize in sigma-space
     targets = targets / vol_train
@@ -310,12 +273,7 @@ def main():
 
     features = np.nan_to_num(features, nan=0.0)
 
-    print(f"  Training samples: {len(features)}, Features: {features.shape[1]}")
-
     # --- Train pass 1: feature selection ---
-    print("Training pass 1 (feature selection)...")
-    train_start = time.time()
-
     selector = ExtraTreesRegressor(
         n_estimators=3000,
         max_depth=7,
@@ -329,24 +287,19 @@ def main():
     importances = selector.feature_importances_
     threshold = np.mean(importances)
     selected = importances >= threshold
-    print(f"  Feature pruning: {selected.sum()}/{len(importances)} features selected "
-          f"(importance >= {threshold:.4f})")
     features_pruned = features[:, selected]
 
     # --- Train pass 2: diverse ensemble on pruned features ---
-    # Each model has different hyperparameters for prediction diversity
-    # All use the same pruned features and random_state=42
     ensemble_configs = [
         {"n_estimators": 3000, "max_depth": 7, "min_samples_leaf": 600},   # original (strong regularization)
         {"n_estimators": 2000, "max_depth": 5, "min_samples_leaf": 800},   # very shallow + heavy regularization
         {"n_estimators": 2000, "max_depth": 7, "min_samples_leaf": 500},   # moderate regularization variant
         {"n_estimators": 2000, "max_depth": 6, "min_samples_leaf": 700},   # intermediate
-        {"n_estimators": 2000, "max_depth": 7, "min_samples_leaf": 600, "max_features": 0.8},  # feature subsampling + matching regularization
+        {"n_estimators": 2000, "max_depth": 7, "min_samples_leaf": 600, "max_features": 0.8},  # feature subsampling
     ]
 
     models = []
-    for i, cfg in enumerate(ensemble_configs):
-        print(f"  Training model {i+1}/{len(ensemble_configs)}: {cfg}")
+    for cfg in ensemble_configs:
         m = ExtraTreesRegressor(
             random_state=42,
             n_jobs=-1,
@@ -355,18 +308,61 @@ def main():
         m.fit(features_pruned, targets)
         models.append(m)
 
-    training_seconds = time.time() - train_start
-    print(f"Training complete in {training_seconds:.1f}s ({len(models)} models)")
-
-    global _selected_features
-    _selected_features = selected
-    _trained_models = models
     n_params = count_model_params(models)
-    print(f"  Total model parameters (node count): {n_params}")
 
-    # --- Evaluate (black box) ---
-    print("Evaluating...")
-    result = evaluate_model(predict_on_data)
+    # --- Return prediction closure ---
+    def predict_fn(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Generate sigma-space predictions on arbitrary OHLCV data."""
+        feats, ts, vol = compute_features(df)
+        feats = np.nan_to_num(feats, nan=0.0)
+        feats = feats[:, selected]
+
+        # Confidence-weighted ensemble: trust each model proportional to its confidence
+        weighted_sum = np.zeros(len(feats))
+        weight_sum = np.zeros(len(feats))
+        for model in models:
+            scaled_pred, confidence = _confidence_scaled_predict(model, feats)
+            weighted_sum += scaled_pred * confidence
+            weight_sum += confidence
+        weight_sum = np.where(weight_sum > 0, weight_sum, 1.0)
+        sigma_preds = weighted_sum / weight_sum
+
+        sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
+        sigma_preds = sigma_preds * 1.5  # base scale
+        sigma_smoothed = _smooth_predictions(sigma_preds)
+        return sigma_smoothed, ts, vol
+
+    predict_fn.n_params = n_params
+    predict_fn.n_selected = int(selected.sum())
+    predict_fn.n_total_features = len(selected)
+    return predict_fn
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    total_start = time.time()
+
+    # --- Load data ---
+    print("Loading training data...")
+    train_df = load_train_data()
+    print(f"  {len(train_df)} rows")
+
+    # --- Build model (local development) ---
+    print("Training model...")
+    train_start = time.time()
+    predict_fn = build_model(train_df)
+    training_seconds = time.time() - train_start
+
+    n_params = predict_fn.n_params
+    print(f"  Training complete in {training_seconds:.1f}s")
+    print(f"  Features: {predict_fn.n_selected}/{predict_fn.n_total_features} selected")
+    print(f"  Parameters (node count): {n_params}")
+
+    # --- Evaluate (black box — retrains on all walk-forward windows) ---
+    result = evaluate_model(build_model)
 
     total_seconds = time.time() - total_start
 

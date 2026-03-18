@@ -5,13 +5,13 @@ DO NOT MODIFY — the autonomous agent modifies only train.py.
 
 This module provides:
   - Data download and caching (BTC/USD hourly OHLCV from Binance)
-  - Strict temporal train/val/holdout splits
+  - Walk-forward evaluation across multiple independent windows
   - A backtesting engine that converts predictions into trading signals
   - Black-box composite metric (higher is better)
 
 Public API for train.py:
   load_train_data() -> pd.DataFrame
-  evaluate_model(predict_fn, n_params) -> dict
+  evaluate_model(build_model_fn) -> dict
   TIME_BUDGET       -> int (seconds)
   FORWARD_HOURS     -> int
 """
@@ -49,69 +49,66 @@ TRAIN_START = pd.Timestamp("2018-01-01")
 
 
 # ---------------------------------------------------------------------------
-# Walk-Forward Splits (computed from data, not hardcoded)
+# Walk-Forward Windows
 # ---------------------------------------------------------------------------
 
-def _compute_splits(data_end):
-    """Regime-based evaluation splits with hardcoded boundaries.
+def _get_walk_forward_windows():
+    """4 walk-forward windows: 3yr train, 1yr eval, non-overlapping eval periods.
 
-    Six subperiods across three splits, each corresponding to a distinct
-    BTC market regime. The model trains on 2021-2023 data, but evaluation
-    covers 2022-2025 where regime labels are meaningful.
+    Each window trains on a different 3-year period and evaluates on the
+    following calendar year. The recipe (build_model) is retrained independently
+    for each window.
 
-    Split 1 — Eval Train (2022-01-01 to 2023-12-31), 2 subperiods
-    Split 2 — Val (2024-01-01 to 2024-12-31), 2 subperiods
-    Split 3 — Holdout (2025-01-01 to 2025-12-31), 2 subperiods
+    | Window | Training        | Eval   |
+    |--------|-----------------|--------|
+    | 1      | 2019-01 – 2021-12 | 2022 |
+    | 2      | 2020-01 – 2022-12 | 2023 |
+    | 3      | 2021-01 – 2023-12 | 2024 |
+    | 4      | 2022-01 – 2024-12 | 2025 |
     """
     T = pd.Timestamp
-
-    # Split 1: Eval Train (scored, but model also trains on 2021 data)
-    train_start = T("2022-01-01")
-    train_end = T("2023-12-31 23:00:00")
-    train_subs = [
-        (T("2022-01-01"), T("2022-12-31 23:00:00"), "2022 bear"),
-        (T("2023-01-01"), T("2023-12-31 23:00:00"), "2023 recovery"),
-    ]
-
-    # Split 2: Val
-    val_start = T("2024-01-01")
-    val_end = T("2024-12-31 23:00:00")
-    val_subs = [
-        (T("2024-01-01"), T("2024-06-30 23:00:00"), "2024 ETF rally"),
-        (T("2024-07-01"), T("2024-12-31 23:00:00"), "2024 H2 consolidation"),
-    ]
-
-    # Split 3: Holdout
-    holdout_start = T("2025-01-01")
-    holdout_end = T("2025-12-31 23:00:00")
-    holdout_subs = [
-        (T("2025-01-01"), T("2025-06-30 23:00:00"), "2025 H1"),
-        (T("2025-07-01"), T("2025-12-31 23:00:00"), "2025 H2"),
-    ]
-
     return [
-        (train_start, train_end, train_subs),
-        (val_start, val_end, val_subs),
-        (holdout_start, holdout_end, holdout_subs),
+        {
+            "train_start": T("2019-01-01"),
+            "train_end": T("2021-12-31 23:00:00"),
+            "eval_start": T("2022-01-01"),
+            "eval_end": T("2022-12-31 23:00:00"),
+            "subperiods": [
+                (T("2022-01-01"), T("2022-06-30 23:00:00"), "2022 H1"),
+                (T("2022-07-01"), T("2022-12-31 23:00:00"), "2022 H2"),
+            ],
+        },
+        {
+            "train_start": T("2020-01-01"),
+            "train_end": T("2022-12-31 23:00:00"),
+            "eval_start": T("2023-01-01"),
+            "eval_end": T("2023-12-31 23:00:00"),
+            "subperiods": [
+                (T("2023-01-01"), T("2023-06-30 23:00:00"), "2023 H1"),
+                (T("2023-07-01"), T("2023-12-31 23:00:00"), "2023 H2"),
+            ],
+        },
+        {
+            "train_start": T("2021-01-01"),
+            "train_end": T("2023-12-31 23:00:00"),
+            "eval_start": T("2024-01-01"),
+            "eval_end": T("2024-12-31 23:00:00"),
+            "subperiods": [
+                (T("2024-01-01"), T("2024-06-30 23:00:00"), "2024 H1"),
+                (T("2024-07-01"), T("2024-12-31 23:00:00"), "2024 H2"),
+            ],
+        },
+        {
+            "train_start": T("2022-01-01"),
+            "train_end": T("2024-12-31 23:00:00"),
+            "eval_start": T("2025-01-01"),
+            "eval_end": T("2025-12-31 23:00:00"),
+            "subperiods": [
+                (T("2025-01-01"), T("2025-06-30 23:00:00"), "2025 H1"),
+                (T("2025-07-01"), T("2025-12-31 23:00:00"), "2025 H2"),
+            ],
+        },
     ]
-
-
-_cached_splits = None
-
-
-def _get_splits():
-    """Return walk-forward splits, computing them on first call."""
-    global _cached_splits
-    if _cached_splits is None:
-        all_data = _load_all_data()
-        data_end = all_data["timestamp"].max()
-        _cached_splits = _compute_splits(data_end)
-        # Print training data window (distinct from eval splits)
-        val_start = _cached_splits[1][0]
-        print(f"  Training data: 2021-01-01 to {(val_start - pd.Timedelta(hours=1)).date()}")
-        for name, (s, e, subs) in zip(["Train", "Val", "Holdout"], _cached_splits):
-            print(f"  {name}: {s.date()} to {e.date()} ({len(subs)} subperiods)")
-    return _cached_splits
 
 
 # ---------------------------------------------------------------------------
@@ -239,18 +236,20 @@ def _load_all_data() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def load_train_data() -> pd.DataFrame:
-    """Return OHLCV DataFrame for the training period.
+    """Return OHLCV DataFrame for the most recent walk-forward window's training data.
 
-    Training data starts at 2021-01-01 (includes 2021 bull run as additional
-    regime context) and ends before the validation split. The eval train split
-    (2022-2023) is a subset — the model trains on more data than it's scored on.
+    Returns Window 4 training data: 2022-01-01 to 2024-12-31. This is what
+    the agent uses for local development. The scored evaluation retrains on
+    all windows internally via build_model.
     """
     df = _load_all_data()
-    splits = _get_splits()
-    val_start = splits[1][0]  # first day of val
-    train_start = pd.Timestamp("2021-01-01")
-    mask = (df["timestamp"] >= train_start) & (df["timestamp"] < val_start)
-    return df[mask].reset_index(drop=True)
+    windows = _get_walk_forward_windows()
+    w = windows[-1]  # Window 4 (most recent)
+    mask = (df["timestamp"] >= w["train_start"]) & (df["timestamp"] <= w["train_end"])
+    result = df[mask].reset_index(drop=True)
+    print(f"  Training data: {w['train_start'].date()} to {w['train_end'].date()} "
+          f"({len(result)} rows)")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -350,37 +349,25 @@ def _backtest(sigma_predictions: np.ndarray, close_prices: np.ndarray,
 
 
 # ---------------------------------------------------------------------------
-# Public Evaluation API
+# Internal: run build_model on a window and backtest
 # ---------------------------------------------------------------------------
 
-def evaluate_model(predict_fn: callable) -> dict:
-    """Black-box model evaluation across all temporal splits.
+def _eval_window(build_model_fn, all_data, window, window_idx):
+    """Train a model on one window's training data and backtest on its eval period.
 
-    Runs the model on training, validation, and holdout data internally.
-    Returns a single composite score. The agent never sees per-split
-    metrics and cannot determine which split is the bottleneck.
-
-    The score is based on the MINIMUM Sharpe ratio across all splits,
-    ensuring the model must generalize to achieve a positive score.
-
-    Args:
-        predict_fn: Callable that takes a pd.DataFrame (with columns
-            timestamp, open, high, low, close, volume) and returns
-            (sigma_predictions: np.ndarray, timestamps: np.ndarray,
-             vol: np.ndarray). Predictions are in sigma-space.
-            Must work on arbitrary date ranges.
-
-    Returns:
-        dict with keys: score, sharpe_min, max_drawdown, total_trades,
-                        consistency.
-        sharpe_min is the minimum Sharpe across all evaluation periods.
-        max_drawdown is the worst drawdown across all periods.
-        total_trades is the sum across all periods.
-        consistency is "N/M" where N profitable subperiods out of M total.
+    Returns (backtest_result, train_seconds).
     """
-    # Generate predictions on the FULL dataset so features have full
-    # lookback context even at the start of val/holdout periods.
-    all_data = _load_all_data()
+    train_mask = ((all_data["timestamp"] >= window["train_start"]) &
+                  (all_data["timestamp"] <= window["train_end"]))
+    train_data = all_data[train_mask].reset_index(drop=True)
+
+    t0 = time.time()
+    predict_fn = build_model_fn(train_data)
+    train_seconds = time.time() - t0
+
+    print(f"  Window {window_idx}: trained in {train_seconds:.1f}s, ", end="", flush=True)
+
+    # Generate predictions on full dataset (for feature lookback context)
     sigma_preds, timestamps, vol = predict_fn(all_data)
     sigma_preds = np.asarray(sigma_preds, dtype=np.float64).ravel()
     timestamps = np.asarray(timestamps).ravel()
@@ -390,68 +377,91 @@ def evaluate_model(predict_fn: callable) -> dict:
         f"{len(timestamps)} timestamps"
     )
 
-    # Build prediction lookup
     pred_df = pd.DataFrame({"timestamp": timestamps, "sigma_pred": sigma_preds})
 
-    # Backtest each split independently
-    split_results = []
-    for split_start, split_end, subperiods in _get_splits():
-        mask = (all_data["timestamp"] >= split_start) & (all_data["timestamp"] <= split_end)
-        split_data = all_data[mask].reset_index(drop=True)
+    # Extract eval period and backtest
+    eval_mask = ((all_data["timestamp"] >= window["eval_start"]) &
+                 (all_data["timestamp"] <= window["eval_end"]))
+    eval_data = all_data[eval_mask].reset_index(drop=True)
+    merged = eval_data.merge(pred_df, on="timestamp", how="inner")
 
-        merged = split_data.merge(pred_df, on="timestamp", how="inner")
+    if len(merged) == 0:
+        print("no predictions!")
+        return {
+            "sharpe": -10.0, "max_drawdown": -1.0,
+            "n_trades": 0, "total_return": -1.0,
+            "subperiod_returns": [-1.0] * len(window["subperiods"]),
+        }, train_seconds
 
-        if len(merged) == 0:
-            # No predictions for this split — worst possible result
-            split_results.append({
-                "sharpe": -10.0,
-                "max_drawdown": -1.0,
-                "n_trades": 0,
-                "total_return": -1.0,
-                "subperiod_returns": [-1.0] * len(subperiods),
-            })
-            continue
+    bt = _backtest(
+        sigma_predictions=merged["sigma_pred"].values,
+        close_prices=merged["close"].values,
+        timestamps=merged["timestamp"].values,
+        subperiods=window["subperiods"],
+    )
+    print("evaluated")
+    return bt, train_seconds
 
-        bt = _backtest(
-            sigma_predictions=merged["sigma_pred"].values,
-            close_prices=merged["close"].values,
-            timestamps=merged["timestamp"].values,
-            subperiods=subperiods,
-        )
-        split_results.append(bt)
+
+# ---------------------------------------------------------------------------
+# Public Evaluation API
+# ---------------------------------------------------------------------------
+
+def evaluate_model(build_model_fn: callable) -> dict:
+    """Black-box walk-forward evaluation of a model recipe.
+
+    The recipe (build_model_fn) is retrained independently on each of 4
+    walk-forward windows. Each window has 3 years of training data and
+    1 year of non-overlapping evaluation. The composite score is the
+    worst-case performance across all windows.
+
+    The agent sees only the composite score. Per-window results are hidden.
+
+    Args:
+        build_model_fn: Callable that takes a pd.DataFrame (training data)
+            and returns a predict_fn. The predict_fn takes a pd.DataFrame
+            and returns (sigma_predictions, timestamps, vol).
+
+    Returns:
+        dict with keys: score, sharpe_min, max_drawdown, total_trades,
+                        consistency.
+    """
+    all_data = _load_all_data()
+    windows = _get_walk_forward_windows()
+
+    print(f"Evaluating ({len(windows)} walk-forward windows)...")
+    window_results = []
+    for i, w in enumerate(windows):
+        bt, _ = _eval_window(build_model_fn, all_data, w, i + 1)
+        window_results.append(bt)
 
     # --- Composite score ---
 
-    # Base: minimum Sharpe across all splits.
-    # The model MUST generalize — train-only performance can't compensate
-    # for poor out-of-sample performance.
-    sharpes = [r["sharpe"] for r in split_results]
+    # Base: minimum Sharpe across all windows.
+    sharpes = [r["sharpe"] for r in window_results]
     base = min(sharpes)
 
-    # Drawdown: worst across all splits
-    worst_dd_raw = min(r["max_drawdown"] for r in split_results)  # most negative
+    # Drawdown: worst across all windows
+    worst_dd_raw = min(r["max_drawdown"] for r in window_results)  # most negative
     dd = abs(worst_dd_raw)
     if dd <= 0.10:
         dd_mult = 1.0
     else:
         dd_mult = 1.0 / (1.0 + ((dd - 0.10) / 0.15) ** 2)
 
-    # Trade count: per-split exponential (one trade per 7 prediction cycles
-    # for full credit). Min across splits penalizes going silent on any split.
-    splits = _get_splits()
-    split_trade_mults = []
-    for (split_start, split_end, _), result in zip(splits, split_results):
-        split_hours = (split_end - split_start).total_seconds() / 3600
-        scale = split_hours / (FORWARD_HOURS * 7)
-        split_trade_mults.append(1 - math.exp(-result["n_trades"] / scale))
-    trade_mult = min(split_trade_mults)
-    total_trades = sum(r["n_trades"] for r in split_results)
+    # Trade count: per-window exponential. Min across windows penalizes
+    # going silent on any window.
+    window_trade_mults = []
+    for w, result in zip(windows, window_results):
+        eval_hours = (w["eval_end"] - w["eval_start"]).total_seconds() / 3600
+        scale = eval_hours / (FORWARD_HOURS * 7)
+        window_trade_mults.append(1 - math.exp(-result["n_trades"] / scale))
+    trade_mult = min(window_trade_mults)
+    total_trades = sum(r["n_trades"] for r in window_results)
 
-    # Consistency: fraction of ALL subperiods that are profitable.
-    # 6 total subperiods: 2 train + 2 val + 2 holdout.
-    # A model overfit to train gets at most 2/6 ≈ 0.33x.
+    # Consistency: fraction of ALL subperiods (4 windows × 2 = 8) that are profitable.
     all_sp_returns = []
-    for r in split_results:
+    for r in window_results:
         all_sp_returns.extend(r["subperiod_returns"])
     n_profitable = sum(1 for ret in all_sp_returns if ret > 0)
     n_total = len(all_sp_returns)
@@ -472,76 +482,49 @@ def evaluate_model(predict_fn: callable) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Per-Split Diagnostic (human-only)
+# Per-Window Diagnostic (human-only)
 # ---------------------------------------------------------------------------
 
 def _run_diagnostic():
-    """Per-split and per-subperiod diagnostic breakdown.
+    """Per-window and per-subperiod diagnostic breakdown.
 
-    Human-only tool for diagnosing which subperiods are losing money.
-    Trains the model, runs the same evaluation as evaluate_model(),
-    but prints intermediate per-split results instead of aggregating.
+    Human-only tool. Retrains the recipe on each walk-forward window and
+    prints per-window backtest results. Also trains on 2023-2025 and
+    evaluates on 2026+ as the true holdout.
     """
     import train as train_module
 
-    # 1. Train the model
-    print("=" * 60)
-    print("Training model...")
-    print("=" * 60 + "\n")
-    train_module.main()
-
-    # 2. Generate sigma predictions on full dataset (same as evaluate_model)
     all_data = _load_all_data()
-    sigma_preds, timestamps, vol = train_module.predict_on_data(all_data)
-    sigma_preds = np.asarray(sigma_preds, dtype=np.float64).ravel()
-    timestamps = np.asarray(timestamps).ravel()
-    pred_df = pd.DataFrame({"timestamp": timestamps, "sigma_pred": sigma_preds})
+    windows = _get_walk_forward_windows()
 
-    # 3. Backtest each split and collect results
-    splits = _get_splits()
-    split_names = ["Train", "Val", "Holdout"]
-    split_results = []
-    split_subperiods = []
+    print("=" * 60)
+    print("Training and evaluating across walk-forward windows...")
+    print("=" * 60 + "\n")
 
-    for split_start, split_end, subperiods in splits:
-        mask = (all_data["timestamp"] >= split_start) & (all_data["timestamp"] <= split_end)
-        split_data = all_data[mask].reset_index(drop=True)
-        merged = split_data.merge(pred_df, on="timestamp", how="inner")
+    window_results = []
+    window_train_times = []
+    for i, w in enumerate(windows):
+        bt, train_time = _eval_window(train_module.build_model, all_data, w, i + 1)
+        window_results.append(bt)
+        window_train_times.append(train_time)
 
-        if len(merged) == 0:
-            split_results.append({
-                "sharpe": -10.0, "max_drawdown": -1.0,
-                "n_trades": 0, "total_return": -1.0,
-                "subperiod_returns": [-1.0] * len(subperiods),
-            })
-        else:
-            bt = _backtest(
-                sigma_predictions=merged["sigma_pred"].values,
-                close_prices=merged["close"].values,
-                timestamps=merged["timestamp"].values,
-                subperiods=subperiods,
-            )
-            split_results.append(bt)
-        split_subperiods.append(subperiods)
-
-    # 4. Compute composite score (same formula as evaluate_model)
-    sharpes = [r["sharpe"] for r in split_results]
+    # Compute composite score (same formula as evaluate_model)
+    sharpes = [r["sharpe"] for r in window_results]
     base = min(sharpes)
-    worst_dd_raw = min(r["max_drawdown"] for r in split_results)
+    worst_dd_raw = min(r["max_drawdown"] for r in window_results)
     dd = abs(worst_dd_raw)
     dd_mult = 1.0 if dd <= 0.10 else 1.0 / (1.0 + ((dd - 0.10) / 0.15) ** 2)
 
-    # Per-split trade multiplier (same as evaluate_model)
-    split_trade_mults = []
-    for (split_start, split_end, _), result in zip(splits, split_results):
-        split_hours = (split_end - split_start).total_seconds() / 3600
-        scale = split_hours / (FORWARD_HOURS * 7)
-        split_trade_mults.append(1 - math.exp(-result["n_trades"] / scale))
-    trade_mult = min(split_trade_mults)
-    total_trades = sum(r["n_trades"] for r in split_results)
+    window_trade_mults = []
+    for w, result in zip(windows, window_results):
+        eval_hours = (w["eval_end"] - w["eval_start"]).total_seconds() / 3600
+        scale = eval_hours / (FORWARD_HOURS * 7)
+        window_trade_mults.append(1 - math.exp(-result["n_trades"] / scale))
+    trade_mult = min(window_trade_mults)
+    total_trades = sum(r["n_trades"] for r in window_results)
 
     all_sp_returns = []
-    for r in split_results:
+    for r in window_results:
         all_sp_returns.extend(r["subperiod_returns"])
     n_profitable = sum(1 for ret in all_sp_returns if ret > 0)
     n_total = len(all_sp_returns)
@@ -552,7 +535,7 @@ def _run_diagnostic():
     else:
         score = base / max(dd_mult, 0.01) / max(trade_mult, 0.01) / max(consistency, 0.01)
 
-    # 5. Print diagnostic breakdown
+    # Print diagnostic breakdown
     print("\n" + "=" * 60)
     print("=== DIAGNOSTIC BREAKDOWN ===")
     print("(Human-only — this information is hidden from the agent)")
@@ -563,18 +546,19 @@ def _run_diagnostic():
 
     losing_subperiods = []
 
-    for i, (name, (s, e, subperiods), result) in enumerate(
-            zip(split_names, splits, split_results)):
-        print(f"\n--- Split {i+1}: {name} ({s.date()} to {e.date()}) ---")
+    for i, (w, result) in enumerate(zip(windows, window_results)):
+        train_range = f"{w['train_start'].date()}-{w['train_end'].date()}"
+        eval_range = f"{w['eval_start'].date()}-{w['eval_end'].date()}"
+        print(f"\n--- Window {i+1}: Train {train_range}, Eval {eval_range} ---")
         print(f"  Sharpe: {result['sharpe']:.4f}"
               f"{'  <-- MIN' if result['sharpe'] == base else ''}")
         print(f"  Max drawdown: {result['max_drawdown']:.1%}")
-        print(f"  Trades: {result['n_trades']}  (trade_mult={split_trade_mults[i]:.4f})"
-              f"{'  <-- MIN' if split_trade_mults[i] == trade_mult else ''}")
+        print(f"  Trades: {result['n_trades']}  (trade_mult={window_trade_mults[i]:.4f})"
+              f"{'  <-- MIN' if window_trade_mults[i] == trade_mult else ''}")
         print(f"  Total return: {result['total_return']:+.1%}")
 
         for (sp_start, sp_end, label), sp_ret in zip(
-                subperiods, result["subperiod_returns"]):
+                w["subperiods"], result["subperiod_returns"]):
             symbol = "OK" if sp_ret > 0 else "LOSS"
             print(f"  {label} ({sp_start.date()} to {sp_end.date()}): "
                   f"return {sp_ret:+.2%}  {symbol}")
@@ -583,29 +567,32 @@ def _run_diagnostic():
 
     print(f"\nLosing subperiods: {', '.join(losing_subperiods) if losing_subperiods else 'None'}")
 
-    # True holdout: 2026+ (not part of scoring)
-    holdout_end = splits[2][1]  # end of scored holdout
-    true_holdout_mask = all_data["timestamp"] > holdout_end
-    if true_holdout_mask.sum() > 0:
-        true_holdout_data = all_data[true_holdout_mask].reset_index(drop=True)
-        merged_th = true_holdout_data.merge(pred_df, on="timestamp", how="inner")
-        if len(merged_th) > 0:
-            th_start = merged_th["timestamp"].min()
-            th_end = merged_th["timestamp"].max()
-            th_subperiods = [(th_start, th_end, "2026 YTD")]
-            bt_th = _backtest(
-                sigma_predictions=merged_th["sigma_pred"].values,
-                close_prices=merged_th["close"].values,
-                timestamps=merged_th["timestamp"].values,
-                subperiods=th_subperiods,
-            )
-            print(f"\n--- True Holdout (UNSCORED) ---")
-            print(f"  Sharpe: {bt_th['sharpe']:.4f}")
-            print(f"  Max drawdown: {bt_th['max_drawdown']:.1%}")
-            print(f"  Trades: {bt_th['n_trades']}")
-            print(f"  Total return: {bt_th['total_return']:+.1%}")
-            print(f"  2026 YTD ({th_start.date()} to {th_end.date()}): "
-                  f"return {bt_th['subperiod_returns'][0]:+.2%}")
+    # True holdout: train on 2023-2025, evaluate on 2026+
+    T = pd.Timestamp
+    th_train_start = T("2023-01-01")
+    th_train_end = T("2025-12-31 23:00:00")
+    th_eval_start = T("2026-01-01")
+
+    th_eval_data = all_data[all_data["timestamp"] >= th_eval_start]
+    if len(th_eval_data) > 0:
+        th_eval_end = th_eval_data["timestamp"].max()
+        th_window = {
+            "train_start": th_train_start,
+            "train_end": th_train_end,
+            "eval_start": th_eval_start,
+            "eval_end": th_eval_end,
+            "subperiods": [(th_eval_start, th_eval_end, "2026 YTD")],
+        }
+        bt_th, th_train_time = _eval_window(
+            train_module.build_model, all_data, th_window, "holdout")
+        print(f"\n--- True Holdout (UNSCORED) ---")
+        print(f"  (Trained on {th_train_start.date()}-{th_train_end.date()}, "
+              f"evaluated on {th_eval_start.date()}-{th_eval_end.date()})")
+        print(f"  Sharpe: {bt_th['sharpe']:.4f}")
+        print(f"  Max drawdown: {bt_th['max_drawdown']:.1%}")
+        print(f"  Trades: {bt_th['n_trades']}")
+        print(f"  Total return: {bt_th['total_return']:+.1%}")
+        print(f"  2026 YTD: return {bt_th['subperiod_returns'][0]:+.2%}")
 
     print()
 
@@ -615,49 +602,57 @@ def _run_diagnostic():
 # ---------------------------------------------------------------------------
 
 def _run_calibrate():
-    """Per-split prediction distribution statistics.
+    """Per-window prediction distribution statistics.
 
-    Trains the model, runs predict_on_data on full dataset, then prints
-    per-split stats on absolute sigma predictions to help calibrate
-    SIGMA_THRESHOLD and SIGMA_FULL_POSITION.
+    Retrains the recipe on each walk-forward window and prints prediction
+    distribution stats for each eval period. Helps calibrate SIGMA_THRESHOLD
+    and SIGMA_FULL_POSITION.
     """
     import train as train_module
 
-    print("=" * 60)
-    print("Training model...")
-    print("=" * 60 + "\n")
-    train_module.main()
-
     all_data = _load_all_data()
-    sigma_preds, timestamps, vol = train_module.predict_on_data(all_data)
-    sigma_preds = np.asarray(sigma_preds, dtype=np.float64).ravel()
-    timestamps = np.asarray(timestamps).ravel()
-    pred_df = pd.DataFrame({"timestamp": timestamps, "sigma_pred": sigma_preds})
-
-    splits = _get_splits()
-    split_names = ["Train", "Val", "Holdout"]
+    windows = _get_walk_forward_windows()
     thresholds = [0.1, 0.2, 0.3, 0.5, 0.75, 1.0]
 
-    print("\n" + "=" * 60)
-    print("=== PREDICTION CALIBRATION (human-only) ===")
+    print("=" * 60)
+    print("Training and calibrating across walk-forward windows...")
     print("=" * 60)
     print(f"\nCurrent constants: SIGMA_THRESHOLD={SIGMA_THRESHOLD}, "
           f"SIGMA_FULL_POSITION={SIGMA_FULL_POSITION}")
 
-    for name, (split_start, split_end, subperiods) in zip(split_names, splits):
-        mask = (all_data["timestamp"] >= split_start) & (all_data["timestamp"] <= split_end)
-        split_data = all_data[mask].reset_index(drop=True)
-        merged = split_data.merge(pred_df, on="timestamp", how="inner")
+    for i, w in enumerate(windows):
+        # Train on this window's data
+        train_mask = ((all_data["timestamp"] >= w["train_start"]) &
+                      (all_data["timestamp"] <= w["train_end"]))
+        train_data = all_data[train_mask].reset_index(drop=True)
+
+        print(f"\n  Training Window {i+1} "
+              f"({w['train_start'].date()}-{w['train_end'].date()})...", flush=True)
+        predict_fn = train_module.build_model(train_data)
+
+        # Predict on full dataset
+        sigma_preds, timestamps, vol = predict_fn(all_data)
+        sigma_preds = np.asarray(sigma_preds, dtype=np.float64).ravel()
+        timestamps = np.asarray(timestamps).ravel()
+        pred_df = pd.DataFrame({"timestamp": timestamps, "sigma_pred": sigma_preds})
+
+        # Extract eval period predictions
+        eval_mask = ((all_data["timestamp"] >= w["eval_start"]) &
+                     (all_data["timestamp"] <= w["eval_end"]))
+        eval_data = all_data[eval_mask].reset_index(drop=True)
+        merged = eval_data.merge(pred_df, on="timestamp", how="inner")
 
         if len(merged) == 0:
-            print(f"\n--- {name}: no predictions ---")
+            print(f"\n--- Window {i+1}: no predictions ---")
             continue
 
         preds = merged["sigma_pred"].values
         abs_preds = np.abs(preds)
 
-        print(f"\n--- {name} ({split_start.date()} to {split_end.date()}, "
-              f"n={len(preds)}) ---")
+        eval_range = f"{w['eval_start'].date()} to {w['eval_end'].date()}"
+        train_range = f"{w['train_start'].date()}-{w['train_end'].date()}"
+        print(f"\n--- Window {i+1}: Train {train_range}, Eval {eval_range} "
+              f"(n={len(preds)}) ---")
         print(f"  Raw sigma predictions:")
         print(f"    mean:  {preds.mean():+.4f}    std: {preds.std():.4f}")
         print(f"    min:   {preds.min():+.4f}    max: {preds.max():+.4f}")
@@ -676,7 +671,7 @@ def _run_calibrate():
 
         # Per-subperiod breakdown
         ts_series = pd.to_datetime(merged["timestamp"])
-        for j, (sp_start, sp_end, label) in enumerate(subperiods):
+        for sp_start, sp_end, label in w["subperiods"]:
             sp_mask = (ts_series >= sp_start) & (ts_series <= sp_end)
             sp_preds = preds[sp_mask.values]
             sp_abs = np.abs(sp_preds)
@@ -684,14 +679,30 @@ def _run_calibrate():
                 above_thresh = (sp_abs > SIGMA_THRESHOLD).sum()
                 print(f"    {label} ({sp_start.date()}-{sp_end.date()}): "
                       f"mean={sp_preds.mean():+.4f}, std={sp_preds.std():.4f}, "
-                      f"|pred|>threshold: {above_thresh} ({above_thresh/len(sp_preds)*100:.1f}%)")
+                      f"|pred|>threshold: {above_thresh} "
+                      f"({above_thresh/len(sp_preds)*100:.1f}%)")
 
-    # True holdout: 2026+ (unscored)
-    holdout_end = splits[2][1]
-    true_holdout_mask = (all_data["timestamp"] > holdout_end)
-    if true_holdout_mask.sum() > 0:
-        th_data = all_data[true_holdout_mask].reset_index(drop=True)
-        merged_th = th_data.merge(pred_df, on="timestamp", how="inner")
+    # True holdout: train on 2023-2025, predict on 2026+
+    T = pd.Timestamp
+    th_train_start = T("2023-01-01")
+    th_train_end = T("2025-12-31 23:00:00")
+    th_eval_start = T("2026-01-01")
+
+    th_eval_data = all_data[all_data["timestamp"] >= th_eval_start]
+    if len(th_eval_data) > 0:
+        print(f"\n  Training true holdout window "
+              f"({th_train_start.date()}-{th_train_end.date()})...", flush=True)
+        th_train_mask = ((all_data["timestamp"] >= th_train_start) &
+                         (all_data["timestamp"] <= th_train_end))
+        th_train_data = all_data[th_train_mask].reset_index(drop=True)
+        predict_fn = train_module.build_model(th_train_data)
+
+        sigma_preds, timestamps, vol = predict_fn(all_data)
+        sigma_preds = np.asarray(sigma_preds, dtype=np.float64).ravel()
+        timestamps = np.asarray(timestamps).ravel()
+        pred_df = pd.DataFrame({"timestamp": timestamps, "sigma_pred": sigma_preds})
+
+        merged_th = th_eval_data.merge(pred_df, on="timestamp", how="inner")
         if len(merged_th) > 0:
             th_preds = merged_th["sigma_pred"].values
             th_abs = np.abs(th_preds)
@@ -699,6 +710,7 @@ def _run_calibrate():
             th_end = merged_th["timestamp"].max()
             print(f"\n--- True Holdout (UNSCORED) ({th_start.date()} to {th_end.date()}, "
                   f"n={len(th_preds)}) ---")
+            print(f"  (Trained on {th_train_start.date()}-{th_train_end.date()})")
             print(f"  Raw sigma predictions:")
             print(f"    mean:  {th_preds.mean():+.4f}    std: {th_preds.std():.4f}")
             print(f"    min:   {th_preds.min():+.4f}    max: {th_preds.max():+.4f}")
@@ -722,9 +734,9 @@ def _run_calibrate():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Autotrader data preparation and diagnostics")
     parser.add_argument("--diagnose", action="store_true",
-                        help="Per-split diagnostic breakdown + true holdout (human-only)")
+                        help="Per-window diagnostic breakdown + true holdout (human-only)")
     parser.add_argument("--calibrate", action="store_true",
-                        help="Per-split prediction distribution stats (human-only)")
+                        help="Per-window prediction distribution stats (human-only)")
     args = parser.parse_args()
 
     if args.diagnose:
@@ -736,7 +748,13 @@ if __name__ == "__main__":
         print(f"\nData summary:")
         print(f"  Rows: {len(df)}")
         print(f"  Range: {df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]}")
-        splits = _get_splits()
-        for name, (s, e, subs) in zip(["Train", "Val", "Holdout"], splits):
-            n = ((df["timestamp"] >= s) & (df["timestamp"] <= e)).sum()
-            print(f"  {name:8s} {s.date()} to {e.date()}  ({n} rows, {len(subs)} subperiods)")
+        windows = _get_walk_forward_windows()
+        for i, w in enumerate(windows):
+            n_train = ((df["timestamp"] >= w["train_start"]) &
+                       (df["timestamp"] <= w["train_end"])).sum()
+            n_eval = ((df["timestamp"] >= w["eval_start"]) &
+                      (df["timestamp"] <= w["eval_end"])).sum()
+            print(f"  Window {i+1}: "
+                  f"Train {w['train_start'].date()}-{w['train_end'].date()} ({n_train} rows), "
+                  f"Eval {w['eval_start'].date()}-{w['eval_end'].date()} ({n_eval} rows, "
+                  f"{len(w['subperiods'])} subperiods)")

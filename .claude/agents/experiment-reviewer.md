@@ -38,6 +38,13 @@ There should be exactly one call to `evaluate_model` in train.py.
 ### 4. No obvious bugs
 Glance for clear issues that would cause a crash — mismatched variable names, missing imports, broken array shapes. Don't do deep analysis, just catch obvious problems.
 
+### 5. Implementation quality (for complex changes)
+Flag if you see:
+- Ensemble averaging without scale normalization
+- Stacking without out-of-fold predictions
+- Time-series CV with future leakage
+- Missing output alignment between combined models
+
 ## Your output
 
 ```
