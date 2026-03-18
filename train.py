@@ -276,18 +276,28 @@ class GPT(nn.Module):
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
-        # Group matrix params by layer and shape for layer-specific weight decay
-        for layer_idx in range(self.config.n_layer):
-            layer_params = list(self.transformer.h[layer_idx].parameters())
-            # Exponentially increasing weight decay from 0.005 to 0.15 across layers
-            layer_wd = 0.005 * (0.15 / 0.005) ** (layer_idx / max(1, self.config.n_layer - 1))
-            for shape in sorted({p.shape for p in layer_params}):
-                group_params = [p for p in layer_params if p.shape == shape]
-                if group_params:
-                    param_groups.append(dict(
-                        kind='muon', params=group_params, lr=matrix_lr,
-                        momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=layer_wd,
-                    ))
+        # Separate MLP and attention parameters for different weight decay
+        mlp_params = []
+        attn_params = []
+        for block in self.transformer.h:
+            mlp_params.extend([block.mlp.c_fc.weight, block.mlp.c_proj.weight])
+            attn_params.extend([block.attn.c_q.weight, block.attn.c_k.weight, block.attn.c_v.weight, block.attn.c_proj.weight])
+        
+        # Group MLP params by shape with higher weight decay
+        for shape in sorted({p.shape for p in mlp_params}):
+            group_params = [p for p in mlp_params if p.shape == shape]
+            param_groups.append(dict(
+                kind='muon', params=group_params, lr=matrix_lr,
+                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=0.3,
+            ))
+        
+        # Group attention params by shape with lower weight decay
+        for shape in sorted({p.shape for p in attn_params}):
+            group_params = [p for p in attn_params if p.shape == shape]
+            param_groups.append(dict(
+                kind='muon', params=group_params, lr=matrix_lr,
+                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=0.15,
+            ))
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
