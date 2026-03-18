@@ -1,0 +1,7 @@
+commands:
+  lint: pnpm lint
+  typecheck: pnpm typecheck
+  test: pnpm test
+  dev: pnpm dev
+  smoke: pnpm playwright test
+
