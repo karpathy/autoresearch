@@ -247,8 +247,7 @@ def main():
     ts_float = train_timestamps.astype("datetime64[h]").astype(np.float64)
     ts_norm = (ts_float - ts_float.min()) / (ts_float.max() - ts_float.min())
     time_weights = np.exp(0.8 * ts_norm)
-    asym_weights = np.where(targets > 0, 1.2, 1.0)
-    sample_weights = time_weights * asym_weights
+    sample_weights = time_weights
     model.fit(features, targets, sample_weight=sample_weights)
 
     training_seconds = time.time() - train_start
