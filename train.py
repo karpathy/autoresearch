@@ -278,17 +278,17 @@ class GPT(nn.Module):
         ]
         # Group matrix params by layer and shape for layer-specific weight decay
         layer_params = {}
-        for layer_idx, block in enumerate(self.transformer.h):
-            layer_params[layer_idx] = list(block.parameters())
+        for layer_idx, layer in enumerate(self.transformer.h):
+            layer_params[layer_idx] = list(layer.parameters())
         
         for shape in sorted({p.shape for p in matrix_params}):
-            for layer_idx in range(len(self.transformer.h)):
-                layer_block_params = [p for p in layer_params[layer_idx] if p.shape == shape]
-                if layer_block_params:
-                    # Exponentially increasing weight decay from 0.02 to 0.25 across layers
-                    layer_wd = 0.02 * (0.25 / 0.02) ** (layer_idx / (len(self.transformer.h) - 1))
+            for layer_idx in range(self.config.n_layer):
+                layer_shape_params = [p for p in layer_params[layer_idx] if p.shape == shape]
+                if layer_shape_params:
+                    # Exponentially increasing weight decay from 0.01 to 0.2 across layers
+                    layer_wd = 0.01 * (0.2 / 0.01) ** (layer_idx / (self.config.n_layer - 1))
                     param_groups.append(dict(
-                        kind='muon', params=layer_block_params, lr=matrix_lr,
+                        kind='muon', params=layer_shape_params, lr=matrix_lr,
                         momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=layer_wd,
                     ))
         optimizer = MuonAdamW(param_groups)
