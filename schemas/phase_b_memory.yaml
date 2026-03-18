@@ -1,0 +1,660 @@
+# ============================================================================
+# PHASE B: COGNITIVE MEMORY SYSTEM
+# ============================================================================
+# Adds 4-tier cognitive memory (Working/Episodic/Semantic/Procedural) to agents
+# so they learn from experience and develop strategies over time.
+#
+# WHAT CHANGES:
+#   - New tables: memory_working, memory_episodic, memory_semantic, memory_procedural
+#   - New class: CognitiveMemory (per-agent memory manager)
+#   - BaseAgent gets .memory property with .working, .episodic, .semantic, .procedural
+#   - New GC step: consolidate_memories (promote across tiers)
+#
+# WHAT DOESN'T CHANGE:
+#   - KnowledgeStore (that's shared knowledge; this is agent-private memory)
+#   - Message bus (memory is internal to each agent)
+#   - Existing agent logic (memory is opt-in via self.memory)
+#
+# DEPENDS ON:
+#   - Phase A (CRDT): Semantic memories can be shared via CRDT ops
+#
+# IMPLEMENTATION NOTES FOR HAIKU:
+#   - File: crew/memory/__init__.py
+#   - File: crew/memory/working.py (WorkingMemory: capacity-limited, fast)
+#   - File: crew/memory/episodic.py (EpisodicMemory: event log with emotion)
+#   - File: crew/memory/semantic.py (SemanticMemory: facts + relationships)
+#   - File: crew/memory/procedural.py (ProceduralMemory: learned strategies)
+#   - File: crew/memory/consolidation.py (automatic promotion between tiers)
+#   - File: crew/memory/manager.py (CognitiveMemory facade)
+#   - Tables go in data/agents/{agent_id}/memory.db (per-agent)
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# WORKING MEMORY (Tier 1: Fast, Capacity-Limited)
+# ---------------------------------------------------------------------------
+# Miller's Law: ~7 items. Current task context only.
+# Decays in minutes. No persistence needed (RAM only).
+
+working_memory:
+  description: |
+    Immediate task context. Like a human's "what am I doing right now?"
+    NOT persisted to disk. Lives only in RAM. Lost on agent restart.
+    That's fine — working memory is ephemeral by design.
+
+  item:
+    id:
+      type: string
+      description: "Unique item key within working memory"
+      example: "current_source_url"
+
+    content:
+      type: any
+      description: "The item being held in working memory"
+      example: "https://arxiv.org/abs/2603.12345"
+
+    importance:
+      type: float
+      range: [0.0, 1.0]
+      default: 0.5
+      description: "How important this item is. Higher = harder to evict."
+
+    added_at:
+      type: datetime
+      generated: true
+
+    last_accessed:
+      type: datetime
+      description: "Updated on every read. Used for LRU eviction."
+
+    decay_seconds:
+      type: integer
+      default: 300
+      description: "Item evicts after this many seconds without access"
+
+  config:
+    max_items: 7
+    eviction: "LRU with importance weighting"
+    persistence: "none (RAM only)"
+
+  python_class: |
+    class WorkingMemory:
+        """Capacity-limited immediate memory. RAM only."""
+        MAX_ITEMS = 7
+
+        def __init__(self):
+            self._items: OrderedDict[str, WorkingItem] = OrderedDict()
+
+        def hold(self, key: str, content: Any, importance: float = 0.5):
+            """Add item to working memory. Evicts lowest-importance if full."""
+
+        def recall(self, key: str) -> Optional[Any]:
+            """Retrieve item. Updates last_accessed (strengthens retention)."""
+
+        def release(self, key: str):
+            """Explicitly remove item from working memory."""
+
+        def focus(self, key: str):
+            """Boost item importance (prevents eviction)."""
+
+        def contents(self) -> List[WorkingItem]:
+            """List all items currently held."""
+
+        def _evict_if_full(self):
+            """Remove lowest-importance item if at capacity."""
+
+# ---------------------------------------------------------------------------
+# EPISODIC MEMORY (Tier 2: Event Log with Context)
+# ---------------------------------------------------------------------------
+# "What happened?" with temporal and emotional/importance context.
+# Follows Ebbinghaus forgetting curve. Persisted to agent's memory.db.
+
+episodic_memory:
+  description: |
+    Records events the agent experienced. Each event has:
+    - What happened (content)
+    - When it happened (timestamp)
+    - How important it felt (importance — analogous to emotional arousal)
+    - What the outcome was (success/failure)
+    - What the context was (task_id, message_id, related entries)
+
+    Decays over time via forgetting curve: retention = e^(-t/S)
+    where S = strength = importance × access_count
+
+  episode:
+    id:
+      type: integer
+      generated: true
+
+    agent_id:
+      type: string
+      description: "Which agent this memory belongs to"
+
+    event_type:
+      type: enum
+      values:
+        - task_completed      # "I finished task X with result Y"
+        - source_evaluated    # "I checked source X, it was reliable/unreliable"
+        - fact_validated      # "I validated fact X, it was correct/incorrect"
+        - challenge_made      # "I challenged fact X because of Y"
+        - synthesis_created   # "I synthesized facts X,Y,Z into insight W"
+        - error_encountered   # "I tried X and it failed because Y"
+        - strategy_used       # "I used strategy X on task Y, result was Z"
+        - feedback_received   # "User/critic said my output was good/bad"
+      description: "Category of event (for retrieval filtering)"
+
+    content:
+      type: string
+      max_length: 500
+      description: "What happened, in natural language"
+      example: "Researched 'transformer warmup' — found 5 sources, 3 agreed on sqrt(batch_size) rule"
+
+    importance:
+      type: float
+      range: [0.0, 1.0]
+      default: 0.5
+      description: |
+        How significant this event was. Analogous to emotional arousal.
+        Higher importance = slower forgetting.
+        0.0 = routine, forgettable
+        0.5 = normal, moderate retention
+        1.0 = critical, never forget
+
+    outcome:
+      type: enum
+      values: [success, failure, partial, neutral]
+      default: neutral
+      description: "How the event turned out"
+
+    context:
+      type: object
+      description: "Links to other system entities"
+      fields:
+        task_id:
+          type: integer
+          nullable: true
+        message_id:
+          type: integer
+          nullable: true
+        knowledge_entry_ids:
+          type: list
+          default: "[]"
+        source_url:
+          type: string
+          nullable: true
+
+    # Retention tracking
+    access_count:
+      type: integer
+      default: 0
+      description: "How many times this memory has been recalled"
+
+    strength:
+      type: float
+      default: 1.0
+      description: |
+        Memory strength. Increases with access, decreases with time.
+        strength = importance × (1 + log(1 + access_count))
+
+    retention:
+      type: float
+      computed: true
+      description: |
+        Current retention probability: e^(-age_hours / (strength × 720))
+        At strength=1.0: 50% retention after 30 days (720 hours)
+        At strength=2.0: 50% retention after 60 days
+
+    created_at:
+      type: datetime
+      generated: true
+
+    last_accessed:
+      type: datetime
+      nullable: true
+
+    # Consolidation
+    consolidated_to_semantic:
+      type: boolean
+      default: false
+      description: "Has this episode been promoted to semantic memory?"
+
+    consolidated_at:
+      type: datetime
+      nullable: true
+
+  sqlite_schema: |
+    CREATE TABLE IF NOT EXISTS memory_episodic (
+        id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id                 TEXT    NOT NULL,
+        event_type               TEXT    NOT NULL,
+        content                  TEXT    NOT NULL,
+        importance               REAL    DEFAULT 0.5,
+        outcome                  TEXT    DEFAULT 'neutral',
+        context                  TEXT    DEFAULT '{}',
+        access_count             INTEGER DEFAULT 0,
+        strength                 REAL    DEFAULT 1.0,
+        created_at               TEXT    NOT NULL,
+        last_accessed            TEXT,
+        consolidated_to_semantic INTEGER DEFAULT 0,
+        consolidated_at          TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_episodic_agent ON memory_episodic(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_episodic_type ON memory_episodic(event_type);
+    CREATE INDEX IF NOT EXISTS idx_episodic_importance ON memory_episodic(importance DESC);
+
+# ---------------------------------------------------------------------------
+# SEMANTIC MEMORY (Tier 3: Stable Facts + Relationships)
+# ---------------------------------------------------------------------------
+# "What do I know?" — durable factual knowledge with concept graph.
+# Very slow decay. Promoted from repeated episodic patterns.
+
+semantic_memory:
+  description: |
+    Stable knowledge the agent has internalized. Unlike episodic memory
+    (which records events), semantic memory stores facts and relationships.
+
+    Example: Episodic says "I checked Source A 5 times and it was always reliable"
+    Semantic says "Source A is reliable" (consolidated from episodes)
+
+    Semantic memories can be shared between agents via CRDT operations
+    (Phase A integration point).
+
+  concept:
+    id:
+      type: integer
+      generated: true
+
+    agent_id:
+      type: string
+
+    concept_type:
+      type: enum
+      values:
+        - fact                 # "Source A has credibility 0.95"
+        - relationship         # "Topic X IS_RELATED_TO Topic Y"
+        - preference           # "Users prefer detailed explanations"
+        - capability           # "I am good at finding arxiv papers"
+        - limitation           # "I struggle with legal interpretation"
+      description: "What kind of semantic knowledge"
+
+    content:
+      type: string
+      max_length: 300
+      description: "The knowledge statement"
+      example: "Source arxiv.org has high credibility for ML topics"
+
+    confidence:
+      type: float
+      range: [0.0, 1.0]
+      default: 0.5
+      description: "How certain the agent is about this knowledge"
+
+    # Relationship (if concept_type == 'relationship')
+    relationship:
+      type: object
+      nullable: true
+      fields:
+        from_concept_id:
+          type: integer
+        to_concept_id:
+          type: integer
+        relation_type:
+          type: enum
+          values: [IS_A, HAS_A, RELATED_TO, CONTRADICTS, SUPPORTS, CAUSES, REQUIRES]
+
+    # Provenance
+    source_episode_ids:
+      type: list
+      description: "Which episodic memories contributed to this semantic knowledge"
+      default: "[]"
+
+    consolidation_count:
+      type: integer
+      default: 1
+      description: "How many episodes consolidated into this concept"
+
+    created_at:
+      type: datetime
+      generated: true
+
+    last_reinforced:
+      type: datetime
+      nullable: true
+      description: "Last time an episode reinforced this concept"
+
+  sqlite_schema: |
+    CREATE TABLE IF NOT EXISTS memory_semantic (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id             TEXT    NOT NULL,
+        concept_type         TEXT    NOT NULL,
+        content              TEXT    NOT NULL,
+        confidence           REAL    DEFAULT 0.5,
+        relationship_data    TEXT,
+        source_episode_ids   TEXT    DEFAULT '[]',
+        consolidation_count  INTEGER DEFAULT 1,
+        created_at           TEXT    NOT NULL,
+        last_reinforced      TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_semantic_agent ON memory_semantic(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_semantic_type ON memory_semantic(concept_type);
+    CREATE INDEX IF NOT EXISTS idx_semantic_confidence ON memory_semantic(confidence DESC);
+
+# ---------------------------------------------------------------------------
+# PROCEDURAL MEMORY (Tier 4: Learned Strategies)
+# ---------------------------------------------------------------------------
+# "How do I do things?" — action patterns learned from repeated success.
+# Emerges from semantic + episodic patterns. Slowest to form, most durable.
+
+procedural_memory:
+  description: |
+    Learned strategies and action patterns. Like muscle memory for AI.
+
+    Example progression:
+    Day 1 (Episodic): "I checked 3 sources and the reliable one was .edu"
+    Day 5 (Episodic): "Again, .edu source was most reliable"
+    Day 10 (Semantic): "Educational sources (.edu) are reliable"
+    Day 20 (Procedural): "When researching, prioritize .edu sources first"
+
+    Procedural memories have trigger conditions and action steps.
+    They can auto-execute when conditions are met.
+
+  procedure:
+    id:
+      type: integer
+      generated: true
+
+    agent_id:
+      type: string
+
+    name:
+      type: string
+      max_length: 100
+      description: "Short name for this procedure"
+      example: "prioritize_edu_sources"
+
+    description:
+      type: string
+      max_length: 300
+      description: "What this procedure does and when to use it"
+      example: "When researching academic topics, check .edu sources first"
+
+    # Trigger conditions
+    trigger:
+      type: object
+      description: "When to activate this procedure"
+      fields:
+        event_types:
+          type: list
+          description: "Which event types trigger this procedure"
+          example: ["task_request"]
+        conditions:
+          type: object
+          description: "Key-value conditions that must match"
+          example:
+            task_type: "research"
+            topic_contains: "academic"
+
+    # Action steps
+    steps:
+      type: list
+      items:
+        type: object
+        fields:
+          order:
+            type: integer
+          action:
+            type: string
+            description: "What to do"
+            example: "Search .edu domains first"
+          parameters:
+            type: object
+            nullable: true
+
+    # Performance tracking
+    executions:
+      type: integer
+      default: 0
+      description: "How many times this procedure has been executed"
+
+    successes:
+      type: integer
+      default: 0
+
+    success_rate:
+      type: float
+      computed: true
+      description: "successes / executions"
+
+    # Expertise progression
+    expertise_level:
+      type: enum
+      values:
+        - novice          # < 5 executions
+        - competent       # 5-20 executions, >60% success
+        - proficient      # 20-50 executions, >75% success
+        - expert          # 50+ executions, >85% success
+      computed: true
+
+    # Source
+    source_semantic_ids:
+      type: list
+      description: "Which semantic memories this procedure was derived from"
+      default: "[]"
+
+    created_at:
+      type: datetime
+      generated: true
+
+    last_executed:
+      type: datetime
+      nullable: true
+
+    cooldown_seconds:
+      type: integer
+      default: 60
+      description: "Minimum time between executions (prevent loops)"
+
+  sqlite_schema: |
+    CREATE TABLE IF NOT EXISTS memory_procedural (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id             TEXT    NOT NULL,
+        name                 TEXT    NOT NULL,
+        description          TEXT    NOT NULL,
+        trigger_data         TEXT    DEFAULT '{}',
+        steps                TEXT    DEFAULT '[]',
+        executions           INTEGER DEFAULT 0,
+        successes            INTEGER DEFAULT 0,
+        source_semantic_ids  TEXT    DEFAULT '[]',
+        created_at           TEXT    NOT NULL,
+        last_executed        TEXT,
+        cooldown_seconds     INTEGER DEFAULT 60
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_procedural_agent ON memory_procedural(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_procedural_name ON memory_procedural(agent_id, name);
+
+# ---------------------------------------------------------------------------
+# CONSOLIDATION ENGINE
+# ---------------------------------------------------------------------------
+# Automatic promotion between memory tiers.
+
+consolidation:
+  description: |
+    Rules for promoting memories between tiers.
+    Runs periodically (every 30 minutes by default) and during GC.
+
+  rules:
+
+    episodic_to_semantic:
+      description: |
+        When similar episodic events repeat N times, consolidate to semantic.
+        "I checked Source A 5 times, always reliable" → "Source A is reliable"
+      trigger:
+        min_similar_episodes: 3
+        similarity_threshold: 0.8
+        min_importance_avg: 0.4
+      action: |
+        1. Find clusters of similar episodic memories (same event_type, similar content)
+        2. If cluster has >= min_similar_episodes, create semantic concept
+        3. Set semantic confidence = avg(episode.importance) × cluster_size / 10
+        4. Mark episodes as consolidated_to_semantic = true
+        5. Don't delete episodes (they're the evidence)
+
+    semantic_to_procedural:
+      description: |
+        When semantic knowledge consistently correlates with successful outcomes,
+        create a procedural rule.
+        "Source A is reliable" + "Tasks using Source A succeed" → "Prefer Source A"
+      trigger:
+        min_correlated_successes: 5
+        min_confidence: 0.7
+      action: |
+        1. Find semantic concepts with high confidence
+        2. Check if episodes referencing these concepts had success outcomes
+        3. If success correlation > 60%, create procedure
+        4. Set trigger conditions from common episode context
+        5. Set action steps from observed agent behavior pattern
+
+    procedural_refinement:
+      description: |
+        Procedures update their success_rate after each execution.
+        Low success_rate procedures decay. High success_rate procedures strengthen.
+      trigger:
+        after_each_execution: true
+      action: |
+        1. Update executions count
+        2. Update successes count if outcome was success
+        3. Recalculate success_rate
+        4. If success_rate < 0.3 after 10+ executions, mark as deprecated
+        5. If success_rate > 0.9 after 20+ executions, share via CRDT
+
+  schedule:
+    interval_minutes: 30
+    gc_integration: true
+    config_key: "memory.consolidation_interval_minutes"
+
+# ---------------------------------------------------------------------------
+# INTEGRATION WITH BASE AGENT
+# ---------------------------------------------------------------------------
+
+integration:
+  base_agent:
+    new_property: |
+      @property
+      def memory(self) -> CognitiveMemory:
+          """Access agent's cognitive memory system."""
+          if not hasattr(self, '_memory'):
+              self._memory = CognitiveMemory(
+                  agent_id=self.agent_id,
+                  db_path=self.state_dir / "memory.db"
+              )
+          return self._memory
+
+    usage_in_process_message: |
+      # In BaseAgent._handle_message(), after processing:
+
+      # 1. Hold current task in working memory
+      self.memory.working.hold("current_task", message.payload, importance=0.8)
+
+      # 2. Record episode
+      self.memory.episodic.record(
+          event_type="task_completed" if reply else "error_encountered",
+          content=f"Processed {message.type} from {message.from_agent}",
+          importance=0.5,
+          outcome="success" if reply else "failure",
+          context={"message_id": message.id, "task_type": message.type}
+      )
+
+      # 3. Check procedural memory for applicable strategies
+      procedures = self.memory.procedural.match(
+          event_type=message.type,
+          context=message.payload
+      )
+      for proc in procedures:
+          proc.execute()  # Apply learned strategy
+
+# ---------------------------------------------------------------------------
+# EXAMPLES
+# ---------------------------------------------------------------------------
+
+examples:
+  researcher_memory_after_30_days:
+    working:
+      items:
+        - key: "current_source"
+          content: "https://arxiv.org/abs/2603.99999"
+          importance: 0.9
+
+    episodic:
+      recent_episodes:
+        - event_type: "source_evaluated"
+          content: "arxiv.org/abs/2603.12345 — high quality, 3 citations"
+          importance: 0.7
+          outcome: "success"
+        - event_type: "error_encountered"
+          content: "blogpost.com/ml — broken links, outdated info"
+          importance: 0.6
+          outcome: "failure"
+
+    semantic:
+      concepts:
+        - concept_type: "fact"
+          content: "arxiv.org sources are generally reliable for ML topics"
+          confidence: 0.85
+          consolidation_count: 12
+        - concept_type: "limitation"
+          content: "Blog posts often have outdated information"
+          confidence: 0.7
+          consolidation_count: 5
+
+    procedural:
+      procedures:
+        - name: "prefer_arxiv_for_ml"
+          description: "When researching ML topics, check arxiv first"
+          trigger: {event_types: ["task_request"], conditions: {topic_contains: "ML"}}
+          steps:
+            - {order: 1, action: "Search arxiv.org first"}
+            - {order: 2, action: "Cross-reference with cited papers"}
+            - {order: 3, action: "Check publication date (prefer < 1 year old)"}
+          executions: 28
+          successes: 24
+          expertise_level: "proficient"
+
+# ---------------------------------------------------------------------------
+# TESTING CHECKLIST FOR HAIKU
+# ---------------------------------------------------------------------------
+
+tests:
+  - name: "Working memory respects capacity limit"
+    test: "Add 10 items. Assert only 7 remain. Lowest importance evicted."
+
+  - name: "Episodic memory follows forgetting curve"
+    test: |
+      Create episode with importance=0.5.
+      After 30 simulated days, retention should be ~50%.
+      After 60 days, retention should be ~25%.
+
+  - name: "Consolidation promotes episodic to semantic"
+    test: |
+      Create 5 similar episodic memories (same event_type, similar content).
+      Run consolidation.
+      Assert new semantic concept created with confidence proportional to cluster size.
+
+  - name: "Procedural memory tracks success rate"
+    test: |
+      Create procedure. Execute 10 times (7 success, 3 failure).
+      Assert success_rate == 0.7.
+      Assert expertise_level == "competent".
+
+  - name: "Memory persists across agent restart"
+    test: |
+      Create episodic + semantic memories.
+      Stop agent. Start new agent with same ID.
+      Assert memories are loaded from memory.db.
+
+  - name: "Working memory is NOT persisted"
+    test: |
+      Add items to working memory.
+      Stop agent. Start new agent.
+      Assert working memory is empty.

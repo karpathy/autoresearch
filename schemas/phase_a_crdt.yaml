@@ -1,0 +1,446 @@
+# ============================================================================
+# PHASE A: CRDT KNOWLEDGE FABRIC
+# ============================================================================
+# Adds conflict-free replicated data types to the knowledge store so agents
+# can update knowledge in parallel without locks or central coordination.
+#
+# WHAT CHANGES:
+#   - New table: crdt_operations (append-only log of commutative ops)
+#   - New table: crdt_state (materialized view of merged state per entry)
+#   - New class: CRDTKnowledgeLayer wrapping KnowledgeStore
+#   - BaseAgent gets .crdt_update() method alongside existing .submit_knowledge()
+#
+# WHAT DOESN'T CHANGE:
+#   - KnowledgeStore API (add, get, query, update, challenge) stays identical
+#   - SQLite warm.db keeps its schema; crdt tables go in same DB
+#   - Message bus unchanged; CRDT layer sits between agents and store
+#
+# WHY FIRST:
+#   This is the foundation. Every other layer needs agents to share knowledge
+#   without bottlenecks. CRDT makes that possible.
+#
+# IMPLEMENTATION NOTES FOR HAIKU:
+#   - File: crew/crdt/__init__.py (empty)
+#   - File: crew/crdt/operations.py (CRDTOperation dataclass + merge functions)
+#   - File: crew/crdt/layer.py (CRDTKnowledgeLayer wrapping KnowledgeStore)
+#   - File: crew/crdt/sync.py (periodic convergence to SQLite)
+#   - Add crdt tables to crew/knowledge/store.py _init_db()
+#   - Add .crdt property to BaseAgent
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# CRDT OPERATION LOG
+# ---------------------------------------------------------------------------
+# Every knowledge update is recorded as an immutable, commutative operation.
+# Operations can be replayed in any order and produce the same final state.
+
+crdt_operation:
+  id:
+    type: integer
+    generated: true
+    description: "Monotonic operation ID"
+
+  entry_id:
+    type: integer
+    description: "Which knowledge entry this operates on"
+    foreign_key: knowledge.id
+
+  agent_id:
+    type: string
+    description: "Which agent produced this operation"
+    example: "researcher_1"
+
+  op_type:
+    type: enum
+    values:
+      - confidence_vote     # Agent votes on confidence level
+      - score_adjust        # Agent adjusts entry score (+/- delta)
+      - tag_add             # Agent adds a tag
+      - tag_remove          # Agent removes a tag
+      - evidence_add        # Agent adds supporting evidence
+      - challenge_add       # Agent adds a challenge
+      - validation          # Agent confirms entry is still accurate
+      - source_link         # Agent links a new source to entry
+    description: |
+      Operation type. ALL operations must be commutative:
+      - Applying op A then op B = applying op B then op A
+      - This is what makes CRDT work without coordination
+
+  payload:
+    type: object
+    description: |
+      Operation-specific data. Structure depends on op_type:
+
+      confidence_vote:  {"vote": "high", "reason": "3 sources agree"}
+      score_adjust:     {"delta": 0.05, "reason": "accessed frequently"}
+      tag_add:          {"tag": "transformer"}
+      tag_remove:       {"tag": "outdated"}
+      evidence_add:     {"experiment_id": 42, "supports": true}
+      challenge_add:    {"text": "contradicts source X", "severity": "moderate"}
+      validation:       {"confirmed": true, "validated_at": "2026-03-18T..."}
+      source_link:      {"url": "https://...", "credibility": 0.85}
+
+  created_at:
+    type: datetime
+    generated: true
+
+  # Convergence tracking
+  merged:
+    type: boolean
+    default: false
+    description: "Has this operation been materialized into crdt_state?"
+
+# ---------------------------------------------------------------------------
+# CRDT MATERIALIZED STATE
+# ---------------------------------------------------------------------------
+# Periodically computed from crdt_operations. This is the "current truth"
+# after all operations have been merged.
+
+crdt_state:
+  entry_id:
+    type: integer
+    primary_key: true
+    foreign_key: knowledge.id
+
+  # Merged confidence (from all confidence_vote operations)
+  confidence_votes:
+    type: object
+    description: |
+      Map of agent_id → vote. Merged confidence = majority vote.
+      Example: {"researcher_1": "high", "critic_1": "medium", "teacher_1": "high"}
+      Result: "high" (2/3 majority)
+    default: "{}"
+
+  merged_confidence:
+    type: string
+    description: "Result of merging all confidence votes"
+    computed: true
+
+  # Merged score (from all score_adjust operations)
+  score_deltas:
+    type: float
+    description: "Sum of all score_adjust deltas"
+    default: 0.0
+
+  merged_score:
+    type: float
+    description: "base_score + score_deltas (clamped 0.0-1.0)"
+    computed: true
+
+  # Merged tags (union of adds minus removes)
+  tags_added:
+    type: list
+    description: "Set union of all tag_add operations"
+    default: "[]"
+
+  tags_removed:
+    type: list
+    description: "Set union of all tag_remove operations"
+    default: "[]"
+
+  merged_tags:
+    type: list
+    description: "tags_added - tags_removed"
+    computed: true
+
+  # Evidence tracking
+  evidence_count:
+    type: integer
+    description: "Count of evidence_add operations where supports=true"
+    default: 0
+
+  challenge_count:
+    type: integer
+    description: "Count of challenge_add operations"
+    default: 0
+
+  # Last convergence
+  last_merged_op_id:
+    type: integer
+    description: "Highest crdt_operation.id that has been merged"
+    default: 0
+
+  merged_at:
+    type: datetime
+    description: "When state was last computed"
+
+# ---------------------------------------------------------------------------
+# SQLITE SCHEMA (add to warm.db alongside existing tables)
+# ---------------------------------------------------------------------------
+
+sqlite_schema: |
+  -- Append-only operation log (the CRDT truth)
+  CREATE TABLE IF NOT EXISTS crdt_operations (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      entry_id    INTEGER NOT NULL,
+      agent_id    TEXT    NOT NULL,
+      op_type     TEXT    NOT NULL,
+      payload     TEXT    NOT NULL DEFAULT '{}',
+      created_at  TEXT    NOT NULL,
+      merged      INTEGER DEFAULT 0,
+      FOREIGN KEY (entry_id) REFERENCES knowledge(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_crdt_entry ON crdt_operations(entry_id);
+  CREATE INDEX IF NOT EXISTS idx_crdt_merged ON crdt_operations(merged);
+  CREATE INDEX IF NOT EXISTS idx_crdt_agent ON crdt_operations(agent_id);
+
+  -- Materialized merge state (computed periodically)
+  CREATE TABLE IF NOT EXISTS crdt_state (
+      entry_id          INTEGER PRIMARY KEY,
+      confidence_votes  TEXT    DEFAULT '{}',
+      merged_confidence TEXT    DEFAULT 'medium',
+      score_deltas      REAL    DEFAULT 0.0,
+      merged_score      REAL    DEFAULT 0.5,
+      tags_added        TEXT    DEFAULT '[]',
+      tags_removed      TEXT    DEFAULT '[]',
+      merged_tags       TEXT    DEFAULT '[]',
+      evidence_count    INTEGER DEFAULT 0,
+      challenge_count   INTEGER DEFAULT 0,
+      last_merged_op_id INTEGER DEFAULT 0,
+      merged_at         TEXT,
+      FOREIGN KEY (entry_id) REFERENCES knowledge(id)
+  );
+
+# ---------------------------------------------------------------------------
+# PYTHON DATACLASS
+# ---------------------------------------------------------------------------
+
+python_dataclass: |
+  @dataclass
+  class CRDTOperation:
+      """A single commutative operation on a knowledge entry."""
+      entry_id: int
+      agent_id: str
+      op_type: str          # confidence_vote | score_adjust | tag_add | ...
+      payload: Dict[str, Any]
+      id: Optional[int] = None
+      created_at: Optional[str] = None
+      merged: bool = False
+
+      def __post_init__(self):
+          if self.created_at is None:
+              self.created_at = datetime.now(timezone.utc).isoformat()
+
+  @dataclass
+  class CRDTState:
+      """Materialized merge state for one knowledge entry."""
+      entry_id: int
+      confidence_votes: Dict[str, str] = field(default_factory=dict)
+      merged_confidence: str = "medium"
+      score_deltas: float = 0.0
+      merged_score: float = 0.5
+      tags_added: List[str] = field(default_factory=list)
+      tags_removed: List[str] = field(default_factory=list)
+      merged_tags: List[str] = field(default_factory=list)
+      evidence_count: int = 0
+      challenge_count: int = 0
+      last_merged_op_id: int = 0
+      merged_at: Optional[str] = None
+
+# ---------------------------------------------------------------------------
+# MERGE FUNCTIONS (the core CRDT logic)
+# ---------------------------------------------------------------------------
+# These MUST be commutative: f(a, b) == f(b, a)
+# These MUST be idempotent: f(a, a) == a
+# These MUST be associative: f(f(a, b), c) == f(a, f(b, c))
+
+merge_functions:
+
+  confidence_vote:
+    description: |
+      Each agent votes once. Merged confidence = majority vote.
+      Tie-breaking: prefer higher confidence level.
+    algorithm: |
+      votes = {agent_id: vote for all confidence_vote ops on this entry}
+      counts = Counter(votes.values())
+      merged = counts.most_common(1)[0][0]  # majority wins
+      # Tie-break: prefer higher confidence
+      if len(counts.most_common(2)) > 1 and counts.most_common(2)[0][1] == counts.most_common(2)[1][1]:
+          order = ["low", "medium", "high", "very_high"]
+          merged = max(tied_values, key=lambda v: order.index(v))
+
+  score_adjust:
+    description: |
+      Score deltas are additive (naturally commutative).
+      Final score = base_score + sum(all deltas), clamped to [0.0, 1.0]
+    algorithm: |
+      total_delta = sum(op.payload["delta"] for op in score_adjust_ops)
+      merged_score = clamp(base_score + total_delta, 0.0, 1.0)
+
+  tag_add:
+    description: "Set union of all added tags (naturally commutative)."
+    algorithm: "tags_added = union(op.payload['tag'] for op in tag_add_ops)"
+
+  tag_remove:
+    description: "Set union of all removed tags (naturally commutative)."
+    algorithm: "tags_removed = union(op.payload['tag'] for op in tag_remove_ops)"
+
+  evidence_add:
+    description: "Count of supporting evidence (naturally commutative)."
+    algorithm: "evidence_count = count(op for op in evidence_add_ops where op.payload['supports'])"
+
+  challenge_add:
+    description: "Count of challenges (naturally commutative)."
+    algorithm: "challenge_count = count(challenge_add_ops)"
+
+# ---------------------------------------------------------------------------
+# INTEGRATION WITH EXISTING CODE
+# ---------------------------------------------------------------------------
+
+integration:
+
+  base_agent:
+    description: |
+      Add CRDT methods to BaseAgent (crew/agents/base.py).
+      These wrap the CRDTKnowledgeLayer.
+    new_methods:
+      - name: crdt_vote_confidence
+        signature: "(self, entry_id: int, vote: str, reason: str = '') -> int"
+        description: "Vote on confidence of a knowledge entry. Returns op ID."
+        example: |
+          # In researcher.process_message():
+          self.crdt_vote_confidence(entry_id=42, vote="high", reason="3 sources agree")
+
+      - name: crdt_adjust_score
+        signature: "(self, entry_id: int, delta: float, reason: str = '') -> int"
+        description: "Adjust entry score by delta. Returns op ID."
+        example: |
+          # In critic.process_message():
+          self.crdt_adjust_score(entry_id=42, delta=-0.1, reason="source unreliable")
+
+      - name: crdt_add_evidence
+        signature: "(self, entry_id: int, experiment_id: int, supports: bool) -> int"
+        description: "Record evidence for/against an entry. Returns op ID."
+
+      - name: crdt_add_tag
+        signature: "(self, entry_id: int, tag: str) -> int"
+        description: "Add tag to entry via CRDT. Returns op ID."
+
+  knowledge_store:
+    description: |
+      KnowledgeStore.query() optionally reads from crdt_state for merged values.
+      Old behavior preserved: if CRDT layer not initialized, pure SQLite.
+    changes:
+      - "Add _init_crdt_tables() call in _init_db()"
+      - "Add get_merged_confidence(entry_id) method"
+      - "Add get_merged_score(entry_id) method"
+      - "query() uses merged values when crdt_state row exists"
+
+  lifecycle_manager:
+    description: |
+      GC cycle gains new step: merge_crdt_operations.
+      Runs after score_warm_entries, before demote_cold_candidates.
+    new_gc_step:
+      name: merge_crdt_operations
+      description: "Materialize unmerged CRDT ops into crdt_state"
+      estimated_duration_seconds: 15
+      runs_after: score_warm_entries
+
+# ---------------------------------------------------------------------------
+# CONVERGENCE SCHEDULE
+# ---------------------------------------------------------------------------
+
+convergence:
+  description: |
+    How often CRDT operations are materialized into crdt_state.
+    More frequent = fresher state but more compute.
+    Less frequent = staler state but less overhead.
+
+  strategies:
+    eager:
+      description: "Merge on every read. Most current, most expensive."
+      merge_trigger: "on_query"
+      use_when: "< 100 entries, < 4 agents"
+
+    periodic:
+      description: "Merge every N minutes. Good balance."
+      merge_interval_minutes: 5
+      use_when: "100-10000 entries, 4-16 agents"
+
+    gc_only:
+      description: "Merge only during daily GC. Cheapest."
+      merge_trigger: "gc_cycle"
+      use_when: "> 10000 entries or > 16 agents"
+
+  default: periodic
+  configurable: true
+  config_key: "crdt.convergence_strategy"
+
+# ---------------------------------------------------------------------------
+# EXAMPLES
+# ---------------------------------------------------------------------------
+
+examples:
+
+  researcher_votes_high:
+    operation:
+      entry_id: 42
+      agent_id: "researcher_1"
+      op_type: "confidence_vote"
+      payload:
+        vote: "high"
+        reason: "Found 3 independent sources confirming this"
+      created_at: "2026-03-18T14:30:00Z"
+
+  critic_challenges:
+    operation:
+      entry_id: 42
+      agent_id: "critic_1"
+      op_type: "challenge_add"
+      payload:
+        text: "Source A retracted their paper on 2026-03-15"
+        severity: "major"
+      created_at: "2026-03-18T14:35:00Z"
+
+  merged_state_example:
+    state:
+      entry_id: 42
+      confidence_votes:
+        researcher_1: "high"
+        teacher_1: "high"
+        critic_1: "medium"
+      merged_confidence: "high"  # 2/3 majority
+      score_deltas: -0.05       # Critic lowered score slightly
+      merged_score: 0.75        # base 0.80 + delta -0.05
+      tags_added: ["transformer", "attention", "scaling"]
+      tags_removed: ["unverified"]
+      merged_tags: ["transformer", "attention", "scaling"]
+      evidence_count: 3
+      challenge_count: 1
+      last_merged_op_id: 156
+      merged_at: "2026-03-18T14:40:00Z"
+
+# ---------------------------------------------------------------------------
+# TESTING CHECKLIST FOR HAIKU
+# ---------------------------------------------------------------------------
+
+tests:
+  - name: "Operations are commutative"
+    test: |
+      Apply ops [A, B, C] and [C, A, B] to same initial state.
+      Assert final crdt_state is identical.
+
+  - name: "Merge produces correct confidence"
+    test: |
+      3 agents vote: high, high, medium.
+      Assert merged_confidence == "high".
+
+  - name: "Score deltas are additive"
+    test: |
+      Agent A: delta +0.1, Agent B: delta -0.05.
+      Assert score_deltas == 0.05.
+
+  - name: "Tags are set operations"
+    test: |
+      Agent A adds "foo", Agent B adds "bar", Agent C removes "foo".
+      Assert merged_tags == ["bar"].
+
+  - name: "Convergence updates knowledge store"
+    test: |
+      Create CRDT ops, run convergence.
+      Assert KnowledgeStore.query() returns merged values.
+
+  - name: "Fallback works without CRDT"
+    test: |
+      Disable CRDT layer. Assert KnowledgeStore works identically to before.

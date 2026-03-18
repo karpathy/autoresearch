@@ -1,0 +1,245 @@
+# ============================================================================
+# PHASE F: REACTIVE SPREADSHEET UI
+# ============================================================================
+# Knowledge visualized as a live, reactive spreadsheet. Agent cells monitor
+# fact cells. Changes cascade automatically. Canvas-based real-time rendering.
+#
+# This is the visual layer on top of everything else. It makes AutoCrew's
+# intelligence visible and interactive.
+#
+# WHAT CHANGES:
+#   - New table: reactive_cells (cell definitions + agent bindings)
+#   - New table: cell_change_log (audit trail of all cell changes)
+#   - New class: ReactiveGrid (manages cells, agents, cascading updates)
+#   - Optional web server for canvas-based visualization
+#
+# WHAT DOESN'T CHANGE:
+#   - All underlying systems. This is purely a visualization/interaction layer.
+#
+# DEPENDS ON:
+#   - All previous phases (this visualizes everything)
+#
+# IMPLEMENTATION NOTES FOR HAIKU:
+#   - File: crew/ui/__init__.py
+#   - File: crew/ui/grid.py (ReactiveGrid)
+#   - File: crew/ui/cells.py (Cell types + agent cells)
+#   - File: crew/ui/renderer.py (terminal-based ASCII renderer for v1)
+#   - File: crew/ui/web.py (optional: HTML/Canvas renderer for v2)
+#   - Start with terminal ASCII grid. Add web canvas later.
+#   - Tables go in data/ui.db
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# REACTIVE CELL
+# ---------------------------------------------------------------------------
+
+reactive_cell:
+  id:
+    type: string
+    description: "Cell address: {sheet}:{row}:{col}"
+    example: "knowledge:42:confidence"
+
+  sheet:
+    type: enum
+    values:
+      - knowledge     # Knowledge entries as rows
+      - agents        # Agent status as rows
+      - tasks         # Task board as rows
+      - routing       # Router decisions as rows
+      - memory        # Memory stats as rows
+      - metrics       # System metrics
+    description: "Which sheet this cell belongs to"
+
+  row:
+    type: string
+    description: "Row identifier (entry ID, agent ID, etc.)"
+
+  col:
+    type: string
+    description: "Column name (confidence, score, status, etc.)"
+
+  value:
+    type: any
+    description: "Current cell value"
+
+  value_type:
+    type: enum
+    values: [string, number, boolean, json]
+
+  # Agent binding (if this cell is monitored)
+  monitor_agent:
+    type: string
+    nullable: true
+    description: "Agent type that monitors this cell for changes"
+
+  # Cascade rules
+  cascades_to:
+    type: list
+    description: "Other cell IDs that update when this cell changes"
+    default: "[]"
+
+  last_changed:
+    type: datetime
+
+  sqlite_schema: |
+    CREATE TABLE IF NOT EXISTS reactive_cells (
+        id              TEXT    PRIMARY KEY,
+        sheet           TEXT    NOT NULL,
+        row_id          TEXT    NOT NULL,
+        col_name        TEXT    NOT NULL,
+        value           TEXT,
+        value_type      TEXT    DEFAULT 'string',
+        monitor_agent   TEXT,
+        cascades_to     TEXT    DEFAULT '[]',
+        last_changed    TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cell_sheet ON reactive_cells(sheet);
+    CREATE INDEX IF NOT EXISTS idx_cell_monitor ON reactive_cells(monitor_agent);
+
+# ---------------------------------------------------------------------------
+# CELL CHANGE LOG
+# ---------------------------------------------------------------------------
+
+cell_change:
+  id:
+    type: integer
+    generated: true
+
+  cell_id:
+    type: string
+    foreign_key: reactive_cells.id
+
+  old_value:
+    type: string
+  new_value:
+    type: string
+
+  changed_by:
+    type: string
+    description: "Agent ID, 'system', or 'user'"
+
+  reason:
+    type: string
+    nullable: true
+
+  created_at:
+    type: datetime
+
+  sqlite_schema: |
+    CREATE TABLE IF NOT EXISTS cell_change_log (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        cell_id     TEXT    NOT NULL,
+        old_value   TEXT,
+        new_value   TEXT,
+        changed_by  TEXT    NOT NULL,
+        reason      TEXT,
+        created_at  TEXT    NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_change_cell ON cell_change_log(cell_id);
+    CREATE INDEX IF NOT EXISTS idx_change_time ON cell_change_log(created_at);
+
+# ---------------------------------------------------------------------------
+# SHEET DEFINITIONS
+# ---------------------------------------------------------------------------
+
+sheets:
+
+  knowledge:
+    description: "Knowledge entries as a live spreadsheet"
+    columns:
+      - {name: "id", source: "knowledge.id", type: "number"}
+      - {name: "insight", source: "knowledge.insight", type: "string", truncate: 60}
+      - {name: "confidence", source: "crdt_state.merged_confidence", type: "string",
+         monitor: "consistency_agent", cascade: ["score"]}
+      - {name: "score", source: "knowledge.score", type: "number",
+         monitor: "confidence_agent"}
+      - {name: "tier", source: "knowledge.tier", type: "string"}
+      - {name: "status", source: "knowledge.status", type: "string",
+         monitor: "alert_agent"}
+      - {name: "queries", source: "knowledge.queries_last_7d", type: "number"}
+      - {name: "age_days", computed: "days_since(knowledge.created_at)", type: "number"}
+
+  agents:
+    description: "Agent status dashboard"
+    columns:
+      - {name: "id", source: "agent.id", type: "string"}
+      - {name: "role", source: "agent.role", type: "string"}
+      - {name: "status", source: "agent.status", type: "string"}
+      - {name: "position", source: "agent_positions.position", type: "string"}
+      - {name: "msgs_done", source: "agent.messages_processed", type: "number"}
+      - {name: "errors", source: "agent.errors_count", type: "number"}
+      - {name: "tier_usage", computed: "routing_decisions.count_by_tier", type: "json"}
+
+  metrics:
+    description: "System health metrics"
+    columns:
+      - {name: "metric", type: "string"}
+      - {name: "value", type: "number"}
+      - {name: "trend", computed: "compare_to_yesterday", type: "string"}
+
+# ---------------------------------------------------------------------------
+# ASCII RENDERER (Terminal Version — Build This First)
+# ---------------------------------------------------------------------------
+
+ascii_renderer:
+  description: |
+    First implementation: ASCII table in terminal. Simple, fast, no web server.
+    Shows knowledge sheet as a formatted table with color-coded confidence.
+
+  example_output: |
+    ╔══════════════════════════════════════════════════════════════════════════════╗
+    ║  AUTOCLAW KNOWLEDGE GRID                                    16:30:00 UTC   ║
+    ╠════╦════════════════════════════════════╦══════╦═══════╦══════╦═════╦═══════╣
+    ║ ID ║ Insight                            ║ Conf ║ Score ║ Tier ║ Qry ║ Age   ║
+    ╠════╬════════════════════════════════════╬══════╬═══════╬══════╬═════╬═══════╣
+    ║  1 ║ Optimal LR for DEPTH=8 is 0.0048  ║ V.HI ║  0.92 ║ hot  ║  18 ║   1d  ║
+    ║ 15 ║ LR decreases with depth ~1/√D     ║  MED ║  0.65 ║ warm ║   4 ║   0d  ║
+    ║ 20 ║ Warmup scales as √batch_size       ║  LOW ║  0.38 ║ warm ║   1 ║   0d  ║
+    ║  5 ║ Batch 32 optimal for DEPTH=8 (?)   ║  MED ║  0.25 ║ warm ║   1 ║  30d  ║
+    ╠════╬════════════════════════════════════╬══════╬═══════╬══════╬═════╬═══════╣
+    ║    ║ Agents: 4 active | Router: 70/25/5 ║      ║       ║      ║     ║       ║
+    ║    ║ Cost today: $0.42 / $10.00 budget  ║      ║       ║      ║     ║       ║
+    ╚════╩════════════════════════════════════╩══════╩═══════╩══════╩═════╩═══════╝
+
+    [↑↓] Navigate  [Enter] Details  [c] Confidence vote  [r] Refresh  [q] Quit
+
+# ---------------------------------------------------------------------------
+# INTEGRATION
+# ---------------------------------------------------------------------------
+
+integration:
+  daemon:
+    description: "Add optional 'ui' command to daemon CLI"
+    changes:
+      - "daemon.py: add --ui flag to start reactive grid viewer"
+      - "Grid reads from existing SQLite databases (knowledge, messages, agents)"
+      - "Grid auto-refreshes every 5 seconds"
+
+  knowledge_store:
+    description: "Hook cell change tracking into KnowledgeStore updates"
+    changes:
+      - "KnowledgeStore.update(): log cell change to cell_change_log"
+      - "KnowledgeStore.add(): create reactive_cells rows for new entry"
+
+# ---------------------------------------------------------------------------
+# TESTING CHECKLIST FOR HAIKU
+# ---------------------------------------------------------------------------
+
+tests:
+  - name: "ASCII renderer displays knowledge grid"
+    test: "Load 10 knowledge entries. Assert ASCII table renders correctly."
+
+  - name: "Cell change logged on knowledge update"
+    test: |
+      Update knowledge entry confidence.
+      Assert cell_change_log has new row with old/new values.
+
+  - name: "Cascade triggers update"
+    test: |
+      Change confidence cell (cascades_to: [score]).
+      Assert score cell recalculated.
+
+  - name: "Grid auto-refreshes"
+    test: "Start grid viewer. Update knowledge in background. Assert grid reflects change within 5 seconds."

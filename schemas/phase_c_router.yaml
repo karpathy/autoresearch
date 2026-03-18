@@ -1,0 +1,482 @@
+# ============================================================================
+# PHASE C: ESCALATION ROUTER
+# ============================================================================
+# Intelligent task routing: Bot tier ($0.002) → Brain tier ($0.03) →
+# Human tier (escalation). Learns optimal routing over time using
+# cognitive memory (Phase B) feedback.
+#
+# WHAT CHANGES:
+#   - New table: routing_decisions (log of all routing decisions + outcomes)
+#   - New table: tier_config (LLM provider config per tier)
+#   - New class: EscalationRouter sits between MessageBus and agents
+#   - CrewBrain.llm gets replaced by router-managed LLM selection
+#   - New message type: tier_escalation
+#
+# WHAT DOESN'T CHANGE:
+#   - Agent process_message() signature (agents don't know about tiers)
+#   - MessageBus publish/receive API
+#   - Knowledge store
+#
+# DEPENDS ON:
+#   - Phase B (Memory): Router stores routing patterns in procedural memory
+#
+# IMPLEMENTATION NOTES FOR HAIKU:
+#   - File: crew/router/__init__.py
+#   - File: crew/router/classifier.py (task complexity analysis)
+#   - File: crew/router/router.py (EscalationRouter main class)
+#   - File: crew/router/tiers.py (tier definitions + LLM configs)
+#   - File: crew/router/feedback.py (outcome tracking + learning)
+#   - Modify: crew/brain.py LLMClient to use router for model selection
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# TIER DEFINITIONS
+# ---------------------------------------------------------------------------
+
+tiers:
+  bot:
+    description: |
+      Cheapest tier. Handles simple, factual, pattern-matching tasks.
+      Uses smallest/fastest models (Haiku, GPT-4o-mini, local 3B).
+    cost_per_request: 0.002
+    models:
+      - provider: anthropic
+        model: "claude-haiku-4-5-20251001"
+        priority: 1
+      - provider: openai
+        model: "gpt-4o-mini"
+        priority: 2
+      - provider: local
+        model: "llama-3B-Q4"
+        priority: 3
+    max_tokens: 1024
+    timeout_seconds: 30
+    suitable_for:
+      - "Simple fact lookup"
+      - "Formatting and summarization"
+      - "Pattern matching"
+      - "Training data with templates"
+      - "Tag classification"
+
+  brain:
+    description: |
+      Mid-tier. Handles complex reasoning, synthesis, analysis.
+      Uses capable models (Sonnet, GPT-4o, local 13B+).
+    cost_per_request: 0.03
+    models:
+      - provider: anthropic
+        model: "claude-sonnet-4-6"
+        priority: 1
+      - provider: openai
+        model: "gpt-4o"
+        priority: 2
+      - provider: local
+        model: "llama-13B-Q5"
+        priority: 3
+    max_tokens: 4096
+    timeout_seconds: 120
+    suitable_for:
+      - "Multi-source synthesis"
+      - "Code generation and review"
+      - "Complex reasoning chains"
+      - "Novel problem solving"
+      - "Research analysis"
+
+  human:
+    description: |
+      Highest tier. Escalates to human review via notification.
+      Used for high-stakes, ambiguous, or novel situations.
+    cost_per_request: null  # Depends on human
+    escalation_channel: "daemon"  # Publishes to daemon for human attention
+    suitable_for:
+      - "Legal or compliance questions"
+      - "Ambiguous ethical decisions"
+      - "When confidence is very low"
+      - "Novel situations with no prior data"
+      - "High-stakes decisions"
+
+# ---------------------------------------------------------------------------
+# COMPLEXITY CLASSIFIER
+# ---------------------------------------------------------------------------
+
+classifier:
+  description: |
+    Analyzes a task/message to determine which tier should handle it.
+    Uses a combination of heuristics and learned patterns.
+
+  features:
+    complexity:
+      type: float
+      range: [0.0, 1.0]
+      description: "How complex is this task?"
+      heuristics:
+        - "Token count of payload (longer = more complex)"
+        - "Number of subtasks implied"
+        - "Presence of 'analyze', 'synthesize', 'compare' (complex verbs)"
+        - "Number of sources to process"
+      weight: 0.30
+
+    stakes:
+      type: float
+      range: [0.0, 1.0]
+      description: "How much does getting this wrong matter?"
+      heuristics:
+        - "Message priority (lower priority number = higher stakes)"
+        - "Is this a captain_order? (high stakes)"
+        - "Does it affect knowledge with confidence >= high?"
+        - "Has this topic had previous errors?"
+      weight: 0.25
+
+    novelty:
+      type: float
+      range: [0.0, 1.0]
+      description: "How unprecedented is this request?"
+      heuristics:
+        - "Has similar task been completed before? (check episodic memory)"
+        - "Are there relevant semantic memories?"
+        - "Are there applicable procedures?"
+        - "Novel topic tags not seen before?"
+      weight: 0.25
+
+    urgency:
+      type: float
+      range: [0.0, 1.0]
+      description: "How quickly does this need to be done?"
+      heuristics:
+        - "Message expires_at proximity"
+        - "Task priority level"
+        - "Is a human waiting? (from Claw session)"
+      weight: 0.20
+
+  routing_formula: |
+    tier_score = (complexity × 0.30) + (stakes × 0.25) + (novelty × 0.25) + (urgency × 0.20)
+
+    if tier_score < 0.35:  → Bot tier
+    if tier_score < 0.70:  → Brain tier
+    if tier_score >= 0.70: → Human tier (escalation)
+
+    Override rules:
+    - captain_order type → minimum Brain tier
+    - priority == 1 → minimum Brain tier
+    - Explicit "escalate" in payload → Human tier
+    - Known procedure with >85% success → Bot tier (even if score says Brain)
+
+# ---------------------------------------------------------------------------
+# ROUTING DECISION LOG
+# ---------------------------------------------------------------------------
+
+routing_decision:
+  id:
+    type: integer
+    generated: true
+
+  message_id:
+    type: integer
+    description: "Which message was being routed"
+
+  agent_id:
+    type: string
+    description: "Which agent requested the LLM call"
+
+  # Classification
+  complexity_score:
+    type: float
+  stakes_score:
+    type: float
+  novelty_score:
+    type: float
+  urgency_score:
+    type: float
+  tier_score:
+    type: float
+    description: "Combined score used for tier selection"
+
+  # Decision
+  selected_tier:
+    type: enum
+    values: [bot, brain, human]
+  selected_model:
+    type: string
+    description: "Specific model used"
+    example: "claude-haiku-4-5-20251001"
+  override_reason:
+    type: string
+    nullable: true
+    description: "If a rule overrode the score-based decision, why"
+
+  # Outcome (filled after completion)
+  outcome:
+    type: enum
+    values: [success, failure, escalated, timeout]
+    nullable: true
+  outcome_quality:
+    type: float
+    range: [0.0, 1.0]
+    nullable: true
+    description: "Quality of result (from critic or user feedback)"
+  cost:
+    type: float
+    nullable: true
+    description: "Actual cost of this LLM call"
+
+  # Timestamps
+  created_at:
+    type: datetime
+    generated: true
+  completed_at:
+    type: datetime
+    nullable: true
+
+  sqlite_schema: |
+    CREATE TABLE IF NOT EXISTS routing_decisions (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id        INTEGER,
+        agent_id          TEXT    NOT NULL,
+        complexity_score  REAL,
+        stakes_score      REAL,
+        novelty_score     REAL,
+        urgency_score     REAL,
+        tier_score        REAL,
+        selected_tier     TEXT    NOT NULL,
+        selected_model    TEXT,
+        override_reason   TEXT,
+        outcome           TEXT,
+        outcome_quality   REAL,
+        cost              REAL,
+        created_at        TEXT    NOT NULL,
+        completed_at      TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_routing_tier ON routing_decisions(selected_tier);
+    CREATE INDEX IF NOT EXISTS idx_routing_agent ON routing_decisions(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_routing_outcome ON routing_decisions(outcome);
+
+# ---------------------------------------------------------------------------
+# TIER CONFIGURATION TABLE
+# ---------------------------------------------------------------------------
+
+tier_config:
+  sqlite_schema: |
+    CREATE TABLE IF NOT EXISTS tier_config (
+        tier          TEXT    PRIMARY KEY,
+        models        TEXT    NOT NULL,  -- JSON array of model configs
+        max_tokens    INTEGER DEFAULT 2048,
+        timeout_sec   INTEGER DEFAULT 60,
+        cost_per_req  REAL,
+        enabled       INTEGER DEFAULT 1,
+        updated_at    TEXT
+    );
+
+    -- Seed default tiers
+    INSERT OR IGNORE INTO tier_config (tier, models, max_tokens, timeout_sec, cost_per_req)
+    VALUES
+      ('bot', '[{"provider":"anthropic","model":"claude-haiku-4-5-20251001"}]', 1024, 30, 0.002),
+      ('brain', '[{"provider":"anthropic","model":"claude-sonnet-4-6"}]', 4096, 120, 0.03),
+      ('human', '[]', 0, 0, null);
+
+# ---------------------------------------------------------------------------
+# FEEDBACK LEARNING
+# ---------------------------------------------------------------------------
+
+feedback:
+  description: |
+    The router learns from outcomes. If a Bot-tier answer was low quality,
+    similar future tasks get routed to Brain. If Brain-tier answers are
+    consistently good for a task type, those tasks get demoted to Bot.
+
+    Uses Phase B procedural memory to store learned routing patterns.
+
+  learning_rules:
+
+    promote_on_failure:
+      description: |
+        If Bot tier fails or produces low-quality output (quality < 0.5),
+        remember to use Brain tier for similar tasks next time.
+      trigger: "outcome == 'failure' OR outcome_quality < 0.5"
+      action: |
+        1. Record in episodic memory: "Bot tier failed for task type X"
+        2. If 3+ similar failures, create procedural memory:
+           "Route task type X to Brain tier"
+        3. Update classifier: increase complexity weight for this task pattern
+
+    demote_on_consistent_success:
+      description: |
+        If Brain tier consistently succeeds for a task type (>90% quality
+        over 10+ tasks), try Bot tier for similar tasks.
+      trigger: "10+ Brain-tier tasks of same type with avg quality > 0.9"
+      action: |
+        1. Record in episodic memory: "Brain tier overqualified for task type X"
+        2. Create procedural memory: "Route task type X to Bot tier"
+        3. Monitor: if Bot quality drops, revert to Brain
+
+    escalation_learning:
+      description: |
+        Track which Human escalations were resolved successfully.
+        Learn what makes a task require human intervention.
+      trigger: "Human tier resolved with outcome"
+      action: |
+        1. Record resolution pattern
+        2. If similar tasks can be handled by Brain next time, update routing
+        3. Build procedural memory for human-required patterns
+
+  cost_tracking:
+    daily_budget:
+      type: float
+      default: 10.0
+      description: "Daily LLM spending budget in dollars"
+      config_key: "router.daily_budget"
+
+    budget_enforcement: |
+      If daily spend > 80% of budget: force Bot tier for non-urgent tasks
+      If daily spend > 95% of budget: queue non-critical tasks for tomorrow
+      If daily spend > 100%: only Human escalations proceed
+
+# ---------------------------------------------------------------------------
+# INTEGRATION WITH EXISTING CODE
+# ---------------------------------------------------------------------------
+
+integration:
+
+  crew_brain:
+    description: |
+      Replace direct LLMClient usage with router-managed model selection.
+      CrewBrain.llm.chat() → router.route_and_call()
+    changes:
+      - "LLMClient.__init__() receives router instance"
+      - "LLMClient.chat() calls router.classify() then router.call()"
+      - "router.call() selects model based on tier, calls LLM, records decision"
+      - "On LLM response, router.record_outcome() updates routing_decisions"
+
+  base_agent:
+    description: |
+      BaseAgent gets router property. Agents call self.router.call()
+      instead of direct LLM calls.
+    new_property: |
+      @property
+      def router(self) -> EscalationRouter:
+          if not hasattr(self, '_router'):
+              self._router = get_router()  # Global singleton like get_bus()
+          return self._router
+
+    new_method: |
+      def llm_call(self, prompt: str, context: Optional[Dict] = None) -> str:
+          """Make an LLM call through the escalation router.
+
+          The router automatically selects the appropriate tier and model.
+          Cost is tracked. Outcome is recorded when agent reports success/failure.
+
+          Args:
+              prompt: The prompt to send
+              context: Optional context for classification (task type, stakes, etc.)
+
+          Returns: LLM response text
+          """
+          return self.router.route_and_call(
+              prompt=prompt,
+              agent_id=self.agent_id,
+              message_id=self.current_message.id if self.current_message else None,
+              context=context or {}
+          )
+
+  message_bus:
+    description: "New message type: tier_escalation for Human tier routing."
+    new_message_type:
+      type: "tier_escalation"
+      payload:
+        original_message_id:
+          type: integer
+        reason:
+          type: string
+          description: "Why this was escalated"
+        tier_score:
+          type: float
+        agent_id:
+          type: string
+
+# ---------------------------------------------------------------------------
+# EXAMPLES
+# ---------------------------------------------------------------------------
+
+examples:
+
+  simple_fact_lookup:
+    input:
+      message_type: "task_request"
+      payload: {"description": "What is the capital of France?", "topic": "geography"}
+    classification:
+      complexity: 0.1
+      stakes: 0.1
+      novelty: 0.0
+      urgency: 0.3
+      tier_score: 0.10
+    decision:
+      tier: "bot"
+      model: "claude-haiku-4-5-20251001"
+      cost: 0.002
+
+  research_synthesis:
+    input:
+      message_type: "task_request"
+      payload: {"description": "Synthesize 5 papers on transformer warmup into unified theory"}
+    classification:
+      complexity: 0.8
+      stakes: 0.5
+      novelty: 0.6
+      urgency: 0.3
+      tier_score: 0.57
+    decision:
+      tier: "brain"
+      model: "claude-sonnet-4-6"
+      cost: 0.03
+
+  legal_interpretation:
+    input:
+      message_type: "task_request"
+      payload: {"description": "Interpret this legal clause in our licensing agreement"}
+    classification:
+      complexity: 0.9
+      stakes: 0.95
+      novelty: 0.8
+      urgency: 0.5
+      tier_score: 0.80
+    decision:
+      tier: "human"
+      escalation_reason: "High stakes legal interpretation requires human judgment"
+
+# ---------------------------------------------------------------------------
+# TESTING CHECKLIST FOR HAIKU
+# ---------------------------------------------------------------------------
+
+tests:
+  - name: "Bot tier routes simple tasks"
+    test: |
+      Create task with low complexity. Assert router selects Bot tier.
+
+  - name: "Brain tier routes complex tasks"
+    test: |
+      Create task with high complexity + moderate stakes.
+      Assert router selects Brain tier.
+
+  - name: "Human escalation fires for high stakes"
+    test: |
+      Create task with very high stakes. Assert Human tier selected.
+      Assert tier_escalation message published to daemon.
+
+  - name: "Budget enforcement throttles spending"
+    test: |
+      Set daily_budget to $1. Make 500 Bot-tier calls ($1.00).
+      Assert next non-urgent call is queued, not executed.
+
+  - name: "Router learns from failures"
+    test: |
+      Route 3 similar tasks to Bot tier, all with outcome_quality < 0.5.
+      Assert 4th similar task routes to Brain tier.
+
+  - name: "Router demotes on consistent success"
+    test: |
+      Route 15 similar tasks to Brain tier, all with outcome_quality > 0.9.
+      Assert 16th similar task routes to Bot tier.
+
+  - name: "Fallback works without router"
+    test: |
+      Disable router. Assert CrewBrain uses direct LLM client (existing behavior).

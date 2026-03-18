@@ -1,0 +1,341 @@
+# ============================================================================
+# PHASE E: INTERFACE GATEWAY (Claw Integration)
+# ============================================================================
+# Multi-channel user interface with feedback loops. Users interact via
+# WhatsApp, Slack, Discord, CLI, or web. Every interaction improves the system.
+#
+# WHAT CHANGES:
+#   - New table: sessions (user sessions with preferences + context)
+#   - New table: feedback_signals (implicit/explicit user feedback)
+#   - New class: InterfaceGateway (WebSocket hub for channels)
+#   - New message types: user_query, user_feedback, channel_response
+#   - Critic agent gains feedback-driven source credibility updates
+#
+# WHAT DOESN'T CHANGE:
+#   - All internal agent communication stays on MessageBus
+#   - KnowledgeStore API unchanged
+#   - Existing CLI/daemon operation modes unchanged
+#
+# DEPENDS ON:
+#   - Phase C (Router): User queries route through escalation tiers
+#   - Phase B (Memory): Session preferences stored in semantic memory
+#   - Phase D (Geometry): User queries positioned in agent space
+#
+# IMPLEMENTATION NOTES FOR HAIKU:
+#   - File: crew/gateway/__init__.py
+#   - File: crew/gateway/server.py (WebSocket server)
+#   - File: crew/gateway/session.py (session management)
+#   - File: crew/gateway/channels.py (channel adapters: CLI, web, future)
+#   - File: crew/gateway/feedback.py (feedback signal processing)
+#   - Tables go in data/sessions.db
+#   - Start simple: CLI channel first, web second, messaging later
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# SESSION
+# ---------------------------------------------------------------------------
+
+session:
+  id:
+    type: string
+    generated: true
+    description: "UUID session identifier"
+
+  user_id:
+    type: string
+    description: "User identifier (can be 'anonymous' for CLI)"
+    default: "anonymous"
+
+  channel:
+    type: enum
+    values:
+      - cli             # Terminal / daemon interaction
+      - web             # Browser-based UI
+      - api             # Direct API calls
+      # Future channels (Claw integration):
+      # - whatsapp
+      # - telegram
+      # - slack
+      # - discord
+      # - signal
+    description: "Which channel this session is on"
+
+  # User preferences (learned over time)
+  preferences:
+    type: object
+    fields:
+      response_depth:
+        type: enum
+        values: [brief, moderate, detailed, comprehensive]
+        default: moderate
+        description: "How detailed responses should be"
+      preferred_format:
+        type: enum
+        values: [text, markdown, json, structured]
+        default: markdown
+      topics_of_interest:
+        type: list
+        default: "[]"
+        description: "Topics user frequently asks about"
+      trusted_sources:
+        type: list
+        default: "[]"
+        description: "Sources user has positively reacted to"
+      distrusted_sources:
+        type: list
+        default: "[]"
+        description: "Sources user has negatively reacted to"
+
+  # Context
+  context:
+    type: object
+    fields:
+      message_history:
+        type: list
+        description: "Last N messages in this session"
+        max_items: 50
+      active_topic:
+        type: string
+        nullable: true
+      last_knowledge_entries:
+        type: list
+        description: "Knowledge entry IDs returned in last response"
+        default: "[]"
+
+  created_at:
+    type: datetime
+    generated: true
+  last_active:
+    type: datetime
+  expires_at:
+    type: datetime
+    description: "Session expires after 24 hours of inactivity"
+
+  sqlite_schema: |
+    CREATE TABLE IF NOT EXISTS sessions (
+        id              TEXT    PRIMARY KEY,
+        user_id         TEXT    DEFAULT 'anonymous',
+        channel         TEXT    NOT NULL,
+        preferences     TEXT    DEFAULT '{}',
+        context         TEXT    DEFAULT '{}',
+        created_at      TEXT    NOT NULL,
+        last_active     TEXT    NOT NULL,
+        expires_at      TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_session_user ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_session_active ON sessions(last_active);
+
+# ---------------------------------------------------------------------------
+# FEEDBACK SIGNALS
+# ---------------------------------------------------------------------------
+
+feedback_signal:
+  id:
+    type: integer
+    generated: true
+
+  session_id:
+    type: string
+    foreign_key: sessions.id
+
+  signal_type:
+    type: enum
+    values:
+      - thumbs_up        # User liked the response
+      - thumbs_down      # User disliked the response
+      - follow_up        # User asked a follow-up (implicit: wants more depth)
+      - clarification    # User asked for clarification (implicit: unclear)
+      - correction        # User corrected the response
+      - bookmark          # User saved/bookmarked the response
+      - share             # User shared the response
+      - dismiss           # User dismissed without reading
+      - rephrase          # User rephrased their question (implicit: misunderstood)
+
+  # What the feedback is about
+  target:
+    type: object
+    fields:
+      knowledge_entry_id:
+        type: integer
+        nullable: true
+        description: "Which knowledge entry was in the response"
+      source_url:
+        type: string
+        nullable: true
+      response_text:
+        type: string
+        nullable: true
+        description: "The response text that was rated (truncated to 500 chars)"
+      message_id:
+        type: integer
+        nullable: true
+
+  # Processed signal
+  quality_delta:
+    type: float
+    description: |
+      Computed quality adjustment:
+      thumbs_up → +0.1
+      thumbs_down → -0.15
+      follow_up → +0.05 (interested = good)
+      clarification → -0.05 (unclear = bad)
+      correction → -0.2
+      bookmark → +0.15
+      share → +0.2
+      dismiss → -0.1
+      rephrase → -0.1
+    computed: true
+
+  created_at:
+    type: datetime
+    generated: true
+
+  sqlite_schema: |
+    CREATE TABLE IF NOT EXISTS feedback_signals (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id        TEXT    NOT NULL,
+        signal_type       TEXT    NOT NULL,
+        target            TEXT    DEFAULT '{}',
+        quality_delta     REAL    DEFAULT 0.0,
+        created_at        TEXT    NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES sessions(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_feedback_session ON feedback_signals(session_id);
+    CREATE INDEX IF NOT EXISTS idx_feedback_type ON feedback_signals(signal_type);
+
+# ---------------------------------------------------------------------------
+# NEW MESSAGE TYPES
+# ---------------------------------------------------------------------------
+
+new_message_types:
+
+  user_query:
+    description: "User asks a question via gateway"
+    payload:
+      session_id:
+        type: string
+      query:
+        type: string
+        description: "The user's question"
+      channel:
+        type: string
+      context:
+        type: object
+        description: "Session context at time of query"
+
+  user_feedback:
+    description: "User provides feedback on a response"
+    payload:
+      session_id:
+        type: string
+      signal_type:
+        type: string
+      target:
+        type: object
+      quality_delta:
+        type: float
+
+  channel_response:
+    description: "System response formatted for user's channel"
+    payload:
+      session_id:
+        type: string
+      content:
+        type: string
+        description: "Response text"
+      knowledge_entries:
+        type: list
+        description: "Entry IDs used in this response"
+      confidence:
+        type: float
+      sources:
+        type: list
+
+# ---------------------------------------------------------------------------
+# FEEDBACK → KNOWLEDGE PIPELINE
+# ---------------------------------------------------------------------------
+
+feedback_pipeline:
+  description: |
+    User feedback flows back into the knowledge system:
+    1. Feedback signal captured → feedback_signals table
+    2. If feedback targets a knowledge entry → CRDT confidence vote
+    3. If feedback targets a source → source credibility update
+    4. If pattern detected → procedural memory update
+    5. If session preferences change → semantic memory update
+
+  actions:
+
+    on_thumbs_up:
+      - "CRDT: confidence_vote +1 for referenced knowledge entries"
+      - "Episodic: record 'user validated response about topic X'"
+      - "Session: add source to trusted_sources if new"
+
+    on_thumbs_down:
+      - "CRDT: confidence_vote -1 for referenced knowledge entries"
+      - "Episodic: record 'user rejected response about topic X'"
+      - "Publish: challenge message to critic agent for review"
+
+    on_follow_up:
+      - "Session: set response_depth to next deeper level"
+      - "Episodic: record 'user wanted more detail on topic X'"
+
+    on_correction:
+      - "CRDT: challenge_add for corrected knowledge entry"
+      - "Publish: challenge message with user's correction"
+      - "Session: add correction to context for future responses"
+
+# ---------------------------------------------------------------------------
+# INTEGRATION
+# ---------------------------------------------------------------------------
+
+integration:
+  daemon:
+    description: |
+      Daemon gains optional gateway startup.
+      If gateway.enabled in config: start WebSocket server alongside agents.
+    changes:
+      - "Add gateway.enabled config option (default: false)"
+      - "If enabled, start InterfaceGateway in daemon.start()"
+      - "Gateway publishes user_query messages to MessageBus"
+      - "Gateway subscribes to channel_response messages"
+
+  critic_agent:
+    description: |
+      Critic gains feedback-driven review capability.
+      When user_feedback with thumbs_down arrives, critic auto-reviews
+      the referenced knowledge entries.
+    changes:
+      - "Subscribe to user_feedback message type"
+      - "On thumbs_down: auto-trigger challenge workflow for entry"
+      - "Weight user feedback in confidence scoring"
+
+# ---------------------------------------------------------------------------
+# TESTING CHECKLIST FOR HAIKU
+# ---------------------------------------------------------------------------
+
+tests:
+  - name: "Session creates and persists"
+    test: "Create session via CLI. Assert saved in sessions.db. Reconnect, assert loaded."
+
+  - name: "User query routes through system"
+    test: |
+      Send user_query message. Assert routed to appropriate agent.
+      Assert channel_response published back.
+
+  - name: "Feedback signal adjusts knowledge confidence"
+    test: |
+      Send thumbs_down for knowledge entry #42.
+      Assert CRDT confidence_vote created.
+      Run convergence.
+      Assert merged_confidence decreased.
+
+  - name: "Session preferences learned"
+    test: |
+      Send 5 follow_up signals (user wants depth).
+      Assert session.preferences.response_depth increased.
+
+  - name: "Gateway fallback (CLI mode)"
+    test: "Disable gateway. Assert CLI/daemon mode works identically to before."

@@ -1,0 +1,396 @@
+# ============================================================================
+# PHASE D: GEOMETRIC COORDINATOR
+# ============================================================================
+# Positions agents in a multidimensional space. Tasks route to nearby agents
+# via spatial queries instead of explicit routing rules. Agents self-organize
+# by moving toward tasks they succeed at.
+#
+# WHAT CHANGES:
+#   - New table: agent_positions (dodecet-encoded position per agent)
+#   - New table: task_positions (computed position per task/message)
+#   - New class: GeometricCoordinator with KD-tree spatial queries
+#   - MessageBus.receive() gains optional spatial filtering
+#   - Agents gain .position property (auto-updated based on performance)
+#
+# WHAT DOESN'T CHANGE:
+#   - Explicit routing still works (fallback for simple cases)
+#   - Agent roles unchanged
+#   - KnowledgeStore and memory unchanged
+#
+# DEPENDS ON:
+#   - Phase C (Router): Geometry finds agents; router picks model tier
+#   - Phase B (Memory): Position learning uses episodic + procedural memory
+#
+# IMPLEMENTATION NOTES FOR HAIKU:
+#   - File: crew/geometry/__init__.py
+#   - File: crew/geometry/position.py (DodecetPosition dataclass)
+#   - File: crew/geometry/coordinator.py (GeometricCoordinator)
+#   - File: crew/geometry/kdtree.py (spatial index)
+#   - File: crew/geometry/flow.py (Ricci flow self-organization)
+#   - Tables go in data/messages.db alongside message tables
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# DODECET POSITION ENCODING
+# ---------------------------------------------------------------------------
+# 12-bit position in 3 dimensions. 4 bits per dimension = 16 values each.
+# Total: 16 × 16 × 16 = 4,096 unique positions.
+# Stored as a single hex string for compactness.
+
+dodecet_position:
+  description: |
+    A position in 3-dimensional agent space using dodecet (12-bit) encoding.
+    Each dimension has 16 discrete values (0-15), encoded as hex nibbles.
+
+    Dimensions:
+      X (Domain Expertise): 0=general → F=ultra-specialized
+      Y (Task Phase):       0=input/research → F=output/delivery
+      Z (Skill Level):      0=novice → F=expert
+
+    Example positions:
+      Researcher (generalist):    "2 2 7" = 0x227 (general, early-phase, intermediate)
+      Researcher (ML specialist): "C 2 A" = 0xC2A (specialized ML, early, proficient)
+      Critic (quality expert):    "8 C D" = 0x8CD (mid-specialized, late-phase, expert)
+      Distiller (synthesis):      "4 E 9" = 0x4E9 (moderate, output-focused, skilled)
+
+  encoding:
+    bits: 12
+    dimensions: 3
+    bits_per_dimension: 4
+    values_per_dimension: 16
+    total_positions: 4096
+    format: "hex string (3 chars)"
+    example: "C2A"
+
+  axes:
+    x_domain:
+      name: "Domain Expertise"
+      min: 0
+      max: 15
+      description: |
+        0 = General purpose (knows a bit about everything)
+        8 = Moderate specialization (ML, NLP, etc.)
+        F = Ultra-specialized (specific paper domain, niche technique)
+
+    y_phase:
+      name: "Task Lifecycle Phase"
+      min: 0
+      max: 15
+      description: |
+        0 = Input/Discovery (finding sources, gathering data)
+        8 = Processing (analysis, synthesis, transformation)
+        F = Output/Delivery (formatting, presenting, teaching)
+
+    z_skill:
+      name: "Skill Level"
+      min: 0
+      max: 15
+      description: |
+        0 = Novice (< 10 tasks completed)
+        5 = Competent (10-50 tasks, 60% success)
+        A = Proficient (50-200 tasks, 75% success)
+        F = Expert (200+ tasks, 90% success)
+
+# ---------------------------------------------------------------------------
+# AGENT POSITION TABLE
+# ---------------------------------------------------------------------------
+
+agent_position:
+  agent_id:
+    type: string
+    primary_key: true
+
+  position:
+    type: string
+    description: "3-char hex dodecet position"
+    example: "C2A"
+
+  x_domain:
+    type: integer
+    range: [0, 15]
+
+  y_phase:
+    type: integer
+    range: [0, 15]
+
+  z_skill:
+    type: integer
+    range: [0, 15]
+
+  # Learning: position drifts based on performance
+  initial_position:
+    type: string
+    description: "Where agent started (based on role defaults)"
+
+  drift_history:
+    type: list
+    description: "History of position changes [{from, to, reason, at}]"
+    default: "[]"
+
+  last_updated:
+    type: datetime
+
+  sqlite_schema: |
+    CREATE TABLE IF NOT EXISTS agent_positions (
+        agent_id         TEXT    PRIMARY KEY,
+        position         TEXT    NOT NULL,
+        x_domain         INTEGER NOT NULL,
+        y_phase          INTEGER NOT NULL,
+        z_skill          INTEGER NOT NULL,
+        initial_position TEXT    NOT NULL,
+        drift_history    TEXT    DEFAULT '[]',
+        last_updated     TEXT    NOT NULL
+    );
+
+# ---------------------------------------------------------------------------
+# TASK POSITION (computed for incoming messages)
+# ---------------------------------------------------------------------------
+
+task_position:
+  message_id:
+    type: integer
+    primary_key: true
+
+  position:
+    type: string
+    description: "Computed position based on task characteristics"
+
+  x_domain:
+    type: integer
+    description: "Computed from: tags, topic, category"
+
+  y_phase:
+    type: integer
+    description: "Computed from: message type (research=early, distill=late)"
+
+  z_skill:
+    type: integer
+    description: "Computed from: complexity score (from Phase C router)"
+
+  sqlite_schema: |
+    CREATE TABLE IF NOT EXISTS task_positions (
+        message_id  INTEGER PRIMARY KEY,
+        position    TEXT    NOT NULL,
+        x_domain    INTEGER NOT NULL,
+        y_phase     INTEGER NOT NULL,
+        z_skill     INTEGER NOT NULL,
+        created_at  TEXT    NOT NULL
+    );
+
+# ---------------------------------------------------------------------------
+# DEFAULT POSITIONS BY ROLE
+# ---------------------------------------------------------------------------
+
+role_defaults:
+  researcher:
+    position: "227"
+    description: "General domain, input phase, intermediate skill"
+
+  teacher:
+    position: "4A8"
+    description: "Moderate domain, output-leaning, skilled"
+
+  critic:
+    position: "8C7"
+    description: "Specialized, late-phase validation, intermediate"
+
+  distiller:
+    position: "5E9"
+    description: "Moderate domain, output phase, skilled"
+
+  specialist:
+    position: "F88"
+    description: "Ultra-specialized, mid-phase, skilled"
+
+  coordinator:
+    position: "088"
+    description: "General domain, mid-phase, skilled"
+
+# ---------------------------------------------------------------------------
+# SPATIAL QUERY ENGINE
+# ---------------------------------------------------------------------------
+
+spatial_query:
+  description: |
+    Find agents near a task position using Euclidean distance in 3D dodecet space.
+    Uses KD-tree for O(log n) queries instead of O(n) linear scan.
+
+  distance_function: |
+    def dodecet_distance(pos_a: str, pos_b: str) -> float:
+        """Euclidean distance between two dodecet positions."""
+        ax, ay, az = int(pos_a[0], 16), int(pos_a[1], 16), int(pos_a[2], 16)
+        bx, by, bz = int(pos_b[0], 16), int(pos_b[1], 16), int(pos_b[2], 16)
+        return math.sqrt((ax-bx)**2 + (ay-by)**2 + (az-bz)**2)
+
+  query_api: |
+    def find_nearest_agents(
+        task_position: str,
+        max_distance: float = 8.0,
+        max_results: int = 5,
+        exclude_busy: bool = True
+    ) -> List[Tuple[str, float]]:
+        """Find agents closest to task position.
+
+        Returns: [(agent_id, distance), ...] sorted by distance
+        """
+
+  routing_flow: |
+    1. Task message arrives
+    2. Compute task position from message characteristics
+    3. Query KD-tree: find_nearest_agents(task_position)
+    4. Filter: exclude busy agents, check capabilities
+    5. Select closest available agent
+    6. If no agents within max_distance: expand radius or use explicit routing
+
+# ---------------------------------------------------------------------------
+# POSITION DRIFT (Self-Organization)
+# ---------------------------------------------------------------------------
+
+drift:
+  description: |
+    Agents move in dodecet space based on task outcomes.
+    Success → drift toward task position (become more specialized)
+    Failure → drift away from task position (avoid unsuitable tasks)
+
+  algorithm: |
+    After task completion:
+
+    if outcome == success:
+        # Move 1 unit toward task position (each dimension independently)
+        for dim in [x, y, z]:
+            if agent[dim] < task[dim]: agent[dim] += 1
+            elif agent[dim] > task[dim]: agent[dim] -= 1
+        # Clamp to [0, 15]
+
+    if outcome == failure:
+        # Move 1 unit away from task position
+        for dim in [x, y, z]:
+            if agent[dim] < task[dim]: agent[dim] -= 1
+            elif agent[dim] > task[dim]: agent[dim] += 1
+        # Clamp to [0, 15]
+
+  drift_rate:
+    type: integer
+    default: 1
+    description: "Units to drift per outcome"
+    config_key: "geometry.drift_rate"
+
+  max_drift_per_day:
+    type: integer
+    default: 3
+    description: "Maximum total drift per day (prevents wild oscillation)"
+
+# ---------------------------------------------------------------------------
+# INTEGRATION WITH EXISTING CODE
+# ---------------------------------------------------------------------------
+
+integration:
+
+  message_bus:
+    description: |
+      MessageBus.receive() gains optional spatial filter parameter.
+      When spatial=True, uses GeometricCoordinator to filter by proximity.
+    changes:
+      - |
+        def receive(self, agent_id, roles=None, limit=10,
+                    min_priority=10, spatial=False) -> List[Message]:
+            if spatial:
+                # Get agent position
+                # Query nearby task positions
+                # Filter messages by proximity
+            else:
+                # Existing behavior
+
+  base_agent:
+    new_properties:
+      - |
+        @property
+        def position(self) -> str:
+            """Agent's current dodecet position in geometric space."""
+            return self._coordinator.get_position(self.agent_id)
+
+    new_methods:
+      - |
+        def _update_position_on_outcome(self, message, outcome):
+            """Called after task completion to drift position."""
+            self._coordinator.drift(
+                agent_id=self.agent_id,
+                task_message_id=message.id,
+                outcome=outcome
+            )
+
+  scheduler:
+    description: |
+      Scheduler.get_unowned_next() can use spatial proximity to assign tasks.
+      Closest agent gets priority for matching tasks.
+    changes:
+      - "Optional spatial_assign parameter in get_unowned_next()"
+      - "When enabled, computes task position and finds closest idle agent"
+
+# ---------------------------------------------------------------------------
+# EXAMPLES
+# ---------------------------------------------------------------------------
+
+examples:
+
+  agent_positions:
+    researcher_1: {position: "328", x: 3, y: 2, z: 8}
+    researcher_2: {position: "C2A", x: 12, y: 2, z: 10}
+    teacher_1:    {position: "5B9", x: 5, y: 11, z: 9}
+    critic_1:     {position: "9CD", x: 9, y: 12, z: 13}
+    distiller_1:  {position: "6E8", x: 6, y: 14, z: 8}
+
+  task_routing:
+    task: "Research transformer warmup techniques"
+    task_position: "A17"  # specialized ML (A), input phase (1), moderate skill needed (7)
+    nearest_agents:
+      - {agent: "researcher_2", position: "C2A", distance: 4.69}
+      - {agent: "researcher_1", position: "328", distance: 7.28}
+    selected: "researcher_2"
+    reason: "Closest agent with research capability"
+
+  drift_example:
+    before:
+      researcher_1: {position: "328"}
+    task_completed:
+      task_position: "527"
+      outcome: "success"
+    after:
+      researcher_1: {position: "427"}  # Moved toward task (x: 3→4, y: 2→2, z: 8→7)
+
+# ---------------------------------------------------------------------------
+# TESTING CHECKLIST FOR HAIKU
+# ---------------------------------------------------------------------------
+
+tests:
+  - name: "Distance calculation is correct"
+    test: |
+      distance("000", "FFF") should be sqrt(15²+15²+15²) ≈ 25.98
+      distance("888", "888") should be 0.0
+      distance("000", "100") should be 1.0
+
+  - name: "KD-tree finds nearest agents"
+    test: |
+      Insert 5 agents at known positions.
+      Query nearest to task position.
+      Assert correct ordering by distance.
+
+  - name: "Drift moves agent toward successful task"
+    test: |
+      Agent at (5, 5, 5), task at (8, 3, 7), outcome=success.
+      After drift: agent at (6, 4, 6).
+
+  - name: "Drift moves agent away from failed task"
+    test: |
+      Agent at (5, 5, 5), task at (8, 3, 7), outcome=failure.
+      After drift: agent at (4, 6, 4).
+
+  - name: "Max drift per day enforced"
+    test: |
+      Set max_drift_per_day=3. Complete 10 tasks.
+      Assert total drift ≤ 3 units.
+
+  - name: "Fallback to explicit routing when no nearby agents"
+    test: |
+      Task at position far from all agents (distance > max_distance).
+      Assert falls back to role-based routing.
