@@ -303,19 +303,33 @@ polar_express_coeffs = [
 ]
 
 @torch.compile(dynamic=False, fullgraph=True)
-def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t):
+def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, prev_exp_avg,
+                     step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t, weber_c_sq_t):
     p.mul_(1 - lr_t * wd_t)
+    # Save velocity before update for acceleration computation
+    prev_exp_avg.copy_(exp_avg)
     exp_avg.lerp_(grad, 1 - beta1_t)
     exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
     bias1 = 1 - beta1_t ** step_t
     bias2 = 1 - beta2_t ** step_t
     denom = (exp_avg_sq / bias2).sqrt() + eps_t
+    # Weber bracket: W = 1 - v²/(2c²) + v·a/c²
+    # v = debiased momentum (parameter velocity)
+    # a = change in momentum (parameter acceleration)
+    v = exp_avg / bias1
+    a = (exp_avg - prev_exp_avg) / bias1
+    v_sq = v.square()
+    v_dot_a = v * a
+    bracket = 1.0 - v_sq / (2.0 * weber_c_sq_t) + v_dot_a / weber_c_sq_t
     step_size = lr_t / bias1
-    p.add_(exp_avg / denom, alpha=-step_size)
+    p.add_(exp_avg / denom * bracket, alpha=-step_size)
 
 @torch.compile(dynamic=False, fullgraph=True)
 def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momentum_buffer,
-                    momentum_t, lr_t, wd_t, beta2_t, ns_steps, red_dim):
+                    prev_momentum_buffer,
+                    momentum_t, lr_t, wd_t, beta2_t, weber_c_sq_t, ns_steps, red_dim):
+    # Save momentum for Weber acceleration computation
+    prev_momentum_buffer.copy_(momentum_buffer)
     # Nesterov momentum
     momentum = momentum_t.to(stacked_grads.dtype)
     momentum_buffer.lerp_(stacked_grads, 1 - momentum)
@@ -346,6 +360,17 @@ def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momen
     v_norm_new = scaled_sq_sum.sum(dim=(-2, -1), keepdim=True).sqrt()
     final_scale = step_size * (v_norm / v_norm_new.clamp_min(1e-10))
     g = g * final_scale.to(g.dtype)
+    # Weber bracket on momentum: W = 1 - v²/(2c²) + v·a/c²
+    # v = momentum buffer (parameter velocity in weight space)
+    # a = momentum - prev_momentum (parameter acceleration)
+    v = momentum_buffer
+    a = momentum_buffer - prev_momentum_buffer
+    # Per-matrix scalar bracket (reduce over spatial dims, keep per-param)
+    v_sq = v.float().square().mean(dim=(-2, -1), keepdim=True)
+    v_dot_a = (v.float() * a.float()).mean(dim=(-2, -1), keepdim=True)
+    c_sq = weber_c_sq_t.to(v_sq.dtype)
+    bracket = (1.0 - v_sq / (2.0 * c_sq) + v_dot_a / c_sq).to(g.dtype)
+    g = g * bracket
     # Cautious weight decay + parameter update
     lr = lr_t.to(g.dtype)
     wd = wd_t.to(g.dtype)
@@ -354,7 +379,9 @@ def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momen
 
 
 class MuonAdamW(torch.optim.Optimizer):
-    """Combined optimizer: Muon for 2D matrix params, AdamW for others."""
+    """Combined optimizer: Muon for 2D matrix params, AdamW for others.
+    Weber bracket correction: W = 1 - v²/(2c²) + v·a/c²
+    modifies effective learning rate based on parameter velocity and acceleration."""
 
     def __init__(self, param_groups):
         super().__init__(param_groups, defaults={})
@@ -365,10 +392,12 @@ class MuonAdamW(torch.optim.Optimizer):
         self._adamw_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._adamw_eps_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._adamw_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        self._adamw_weber_c_sq_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_momentum_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        self._muon_weber_c_sq_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
 
     def _step_adamw(self, group):
         for p in group['params']:
@@ -380,6 +409,7 @@ class MuonAdamW(torch.optim.Optimizer):
                 state['step'] = 0
                 state['exp_avg'] = torch.zeros_like(p)
                 state['exp_avg_sq'] = torch.zeros_like(p)
+                state['prev_exp_avg'] = torch.zeros_like(p)
             state['step'] += 1
             self._adamw_step_t.fill_(state['step'])
             self._adamw_lr_t.fill_(group['lr'])
@@ -387,9 +417,12 @@ class MuonAdamW(torch.optim.Optimizer):
             self._adamw_beta2_t.fill_(group['betas'][1])
             self._adamw_eps_t.fill_(group['eps'])
             self._adamw_wd_t.fill_(group['weight_decay'])
+            self._adamw_weber_c_sq_t.fill_(WEBER_C_SQ)
             adamw_step_fused(p, grad, state['exp_avg'], state['exp_avg_sq'],
+                            state['prev_exp_avg'],
                             self._adamw_step_t, self._adamw_lr_t, self._adamw_beta1_t,
-                            self._adamw_beta2_t, self._adamw_eps_t, self._adamw_wd_t)
+                            self._adamw_beta2_t, self._adamw_eps_t, self._adamw_wd_t,
+                            self._adamw_weber_c_sq_t)
 
     def _step_muon(self, group):
         params = group['params']
@@ -401,6 +434,8 @@ class MuonAdamW(torch.optim.Optimizer):
         shape, device, dtype = p.shape, p.device, p.dtype
         if "momentum_buffer" not in state:
             state["momentum_buffer"] = torch.zeros(num_params, *shape, dtype=dtype, device=device)
+        if "prev_momentum_buffer" not in state:
+            state["prev_momentum_buffer"] = torch.zeros(num_params, *shape, dtype=dtype, device=device)
         if "second_momentum_buffer" not in state:
             state_shape = (num_params, shape[-2], 1) if shape[-2] >= shape[-1] else (num_params, 1, shape[-1])
             state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
@@ -411,10 +446,13 @@ class MuonAdamW(torch.optim.Optimizer):
         self._muon_beta2_t.fill_(group["beta2"] if group["beta2"] is not None else 0.0)
         self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1])**0.5)
         self._muon_wd_t.fill_(group["weight_decay"])
+        self._muon_weber_c_sq_t.fill_(WEBER_C_SQ)
         muon_step_fused(stacked_grads, stacked_params,
                         state["momentum_buffer"], state["second_momentum_buffer"],
+                        state["prev_momentum_buffer"],
                         self._muon_momentum_t, self._muon_lr_t, self._muon_wd_t,
-                        self._muon_beta2_t, group["ns_steps"], red_dim)
+                        self._muon_beta2_t, self._muon_weber_c_sq_t,
+                        group["ns_steps"], red_dim)
         torch._foreach_copy_(params, list(stacked_params.unbind(0)))
 
     @torch.no_grad()
@@ -450,6 +488,11 @@ EMBEDDING_WD = 0.001    # weight decay for token embeddings
 VE_WD = 0.003           # weight decay for value embeddings
 LM_HEAD_WD = 0.01       # weight decay for lm_head
 INIT_SCALE = 0.68       # init scale multiplier (was 1.0)
+
+# Weber electrodynamic bracket: W = 1 - v²/(2c²) + v·a/c²
+# Modifies effective learning rate based on parameter velocity and acceleration.
+# c² sets the scale — larger = subtler correction. Too small = unstable.
+WEBER_C_SQ = 1.0        # characteristic velocity² (Weber "speed of light" squared)
 
 # Model size
 DEPTH = 9               # number of transformer layers (was 8)
