@@ -276,12 +276,21 @@ class GPT(nn.Module):
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
-        for shape in sorted({p.shape for p in matrix_params}):
-            group_params = [p for p in matrix_params if p.shape == shape]
-            param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
-            ))
+        # Group by layer and shape for layer-specific weight decay
+        layer_params = {}
+        for i, block in enumerate(self.transformer.h):
+            layer_params[i] = list(block.parameters())
+        
+        for layer_idx in range(self.config.n_layer):
+            # Exponentially decreasing weight decay: 0.4 -> 0.1
+            layer_wd = 0.4 * (0.1 / 0.4) ** (layer_idx / max(1, self.config.n_layer - 1))
+            layer_matrix_params = layer_params[layer_idx]
+            for shape in sorted({p.shape for p in layer_matrix_params}):
+                group_params = [p for p in layer_matrix_params if p.shape == shape]
+                param_groups.append(dict(
+                    kind='muon', params=group_params, lr=matrix_lr,
+                    momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=layer_wd,
+                ))
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
@@ -295,33 +304,16 @@ class GPT(nn.Module):
         x = self.transformer.wte(idx)
         x = norm(x)
         x0 = x
-        layer_outputs = []
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i])
-            layer_outputs.append(x)
         x = norm(x)
 
-        # Layer-specific softcap: higher for early layers, lower for later layers
-        early_softcap = 20
-        late_softcap = 10
-        n_layers = len(layer_outputs)
-        
-        # Weighted combination of layer outputs with different softcaps
-        final_logits = None
-        for i, layer_out in enumerate(layer_outputs[-3:]):  # Use last 3 layers
-            layer_progress = (i + n_layers - 3) / (n_layers - 1)
-            layer_softcap = early_softcap * (1 - layer_progress) + late_softcap * layer_progress
-            layer_logits = self.lm_head(norm(layer_out)).float()
-            layer_logits = layer_softcap * torch.tanh(layer_logits / layer_softcap)
-            weight = 0.2 if i < 2 else 0.6  # Give more weight to final layer
-            if final_logits is None:
-                final_logits = weight * layer_logits
-            else:
-                final_logits = final_logits + weight * layer_logits
-        
-        logits = final_logits
+        softcap = 15
+        logits = self.lm_head(x)
+        logits = logits.float()
+        logits = softcap * torch.tanh(logits / softcap)
 
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
