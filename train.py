@@ -169,7 +169,7 @@ def count_model_params(model=None) -> int:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
-    return pd.Series(raw_preds).ewm(span=72, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=36, min_periods=1).mean().values
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -233,8 +233,8 @@ def main():
 
     model = ExtraTreesRegressor(
         n_estimators=200,
-        max_depth=4,
-        min_samples_leaf=500,
+        max_depth=6,
+        min_samples_leaf=200,
         random_state=42,
         n_jobs=-1,
     )
