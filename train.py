@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import ExtraTreesRegressor
+from sklearn.ensemble import GradientBoostingRegressor
 
 from prepare import (
     FORWARD_HOURS,
@@ -184,8 +184,14 @@ def count_model_params(model=None) -> int:
     if model is None:
         return 0
     n_params = 0
-    for tree in model.estimators_:
-        n_params += tree.tree_.node_count
+    for est in model.estimators_:
+        # GBR wraps trees in arrays; ExtraTrees/RF stores them directly
+        if hasattr(est, 'tree_'):
+            n_params += est.tree_.node_count
+        else:
+            # GradientBoostingRegressor: estimators_ is 2D array of trees
+            for t in np.atleast_1d(est):
+                n_params += t.tree_.node_count
     return n_params
 
 
@@ -257,12 +263,13 @@ def main():
     print("Training GBR...")
     train_start = time.time()
 
-    model = ExtraTreesRegressor(
+    model = GradientBoostingRegressor(
         n_estimators=200,
-        max_depth=8,
+        max_depth=4,
         min_samples_leaf=200,
+        learning_rate=0.05,
+        subsample=0.8,
         random_state=42,
-        n_jobs=-1,
     )
     model.fit(features, targets)
 
