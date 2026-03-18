@@ -36,7 +36,7 @@ import requests
 CACHE_DIR = Path.home() / ".cache" / "autotrader"
 PARQUET_PATH = CACHE_DIR / "btcusdt_1h.parquet"
 
-TIME_BUDGET = 120  # seconds for training
+TIME_BUDGET = 240  # seconds for training
 
 FORWARD_HOURS = 24      # predict 24-hour forward returns
 THRESHOLD = 0.005       # 0.5% threshold for long/short signals
@@ -44,37 +44,61 @@ POSITION_SCALE = 0.02   # prediction level for full position (±1.0)
 FEE_RATE = 0.001        # 0.1% per trade (one side)
 SLIPPAGE_RATE = 0.0005  # 0.05% per trade (one side)
 
-# Temporal split boundaries (inclusive)
+# Fixed start of all data
 TRAIN_START = pd.Timestamp("2018-01-01")
-TRAIN_END   = pd.Timestamp("2022-12-31 23:00:00")
-VAL_START   = pd.Timestamp("2023-01-01")
-VAL_END     = pd.Timestamp("2024-06-30 23:00:00")
-HOLDOUT_START = pd.Timestamp("2024-07-01")
-HOLDOUT_END   = pd.Timestamp("2025-12-31 23:00:00")
 
-# Subperiods for consistency check — 7 total across all splits
-TRAIN_SUBPERIODS = [
-    (pd.Timestamp("2018-01-01"), pd.Timestamp("2019-12-31 23:00:00")),
-    (pd.Timestamp("2020-01-01"), pd.Timestamp("2021-12-31 23:00:00")),
-    (pd.Timestamp("2022-01-01"), pd.Timestamp("2022-12-31 23:00:00")),
-]
 
-VAL_SUBPERIODS = [
-    (pd.Timestamp("2023-01-01"), pd.Timestamp("2023-12-31 23:00:00")),
-    (pd.Timestamp("2024-01-01"), pd.Timestamp("2024-06-30 23:00:00")),
-]
+# ---------------------------------------------------------------------------
+# Walk-Forward Splits (computed from data, not hardcoded)
+# ---------------------------------------------------------------------------
 
-HOLDOUT_SUBPERIODS = [
-    (pd.Timestamp("2024-07-01"), pd.Timestamp("2024-12-31 23:00:00")),
-    (pd.Timestamp("2025-01-01"), pd.Timestamp("2025-12-31 23:00:00")),
-]
+def _compute_splits(data_end):
+    """Compute walk-forward splits: train to T-12mo, val T-12 to T-6mo, holdout T-6mo to T.
 
-# All splits for evaluation
-_SPLITS = [
-    (TRAIN_START, TRAIN_END, TRAIN_SUBPERIODS),
-    (VAL_START, VAL_END, VAL_SUBPERIODS),
-    (HOLDOUT_START, HOLDOUT_END, HOLDOUT_SUBPERIODS),
-]
+    Splits snap to month boundaries. Train gets 3 subperiods (long window
+    deserves more granularity), val and holdout get 2 each. Total: 7 subperiods,
+    matching the original consistency denominator.
+    """
+    ref_month = data_end.to_period('M') + 1  # first of next month
+
+    train_start = TRAIN_START
+    holdout_end = data_end
+    holdout_start = (ref_month - 6).to_timestamp()
+    val_end = holdout_start - pd.Timedelta(hours=1)
+    val_start = (ref_month - 12).to_timestamp()
+    train_end = val_start - pd.Timedelta(hours=1)
+
+    def split_n(start, end, n):
+        """Split a time range into n roughly equal subperiods."""
+        total = end - start
+        chunk = total / n
+        subs = []
+        for i in range(n):
+            s = start + chunk * i
+            e = start + chunk * (i + 1) if i < n - 1 else end
+            subs.append((s.floor('h'), e.floor('h')))
+        return subs
+
+    return [
+        (train_start, train_end, split_n(train_start, train_end, 3)),
+        (val_start, val_end, split_n(val_start, val_end, 2)),
+        (holdout_start, holdout_end, split_n(holdout_start, holdout_end, 2)),
+    ]
+
+
+_cached_splits = None
+
+
+def _get_splits():
+    """Return walk-forward splits, computing them on first call."""
+    global _cached_splits
+    if _cached_splits is None:
+        all_data = _load_all_data()
+        data_end = all_data["timestamp"].max()
+        _cached_splits = _compute_splits(data_end)
+        for name, (s, e, subs) in zip(["Train", "Val", "Holdout"], _cached_splits):
+            print(f"  {name}: {s.date()} to {e.date()} ({len(subs)} subperiods)")
+    return _cached_splits
 
 
 # ---------------------------------------------------------------------------
@@ -121,19 +145,26 @@ def _download_month(year: int, month: int, max_retries: int = 5) -> pd.DataFrame
 
 
 def download_data() -> pd.DataFrame:
-    """Download BTC/USD hourly OHLCV data and cache as parquet."""
+    """Download BTC/USD hourly OHLCV data through the current month and cache."""
+    # Cache invalidation: if cached data is stale (>60 days old), re-download
     if PARQUET_PATH.exists():
-        print(f"Loading cached data from {PARQUET_PATH}")
-        return pd.read_parquet(PARQUET_PATH)
+        cached = pd.read_parquet(PARQUET_PATH)
+        max_ts = cached["timestamp"].max()
+        if (pd.Timestamp.now() - max_ts).days <= 60:
+            print(f"Loading cached data from {PARQUET_PATH}")
+            return cached
+        else:
+            print(f"Cached data ends at {max_ts.date()}, re-downloading...")
+            PARQUET_PATH.unlink()
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     print("Downloading BTC/USD hourly data from Binance...")
 
+    now = pd.Timestamp.now()
     frames = []
-    for year in range(2018, 2026):
+    for year in range(2018, now.year + 1):
         for month in range(1, 13):
-            ts = pd.Timestamp(f"{year}-{month:02d}-01")
-            if ts > HOLDOUT_END + pd.DateOffset(months=1):
+            if year == now.year and month > now.month:
                 break
             print(f"  Downloading {year}-{month:02d}...", end=" ", flush=True)
             df = _download_month(year, month)
@@ -173,8 +204,8 @@ def download_data() -> pd.DataFrame:
     df = df.set_index("timestamp").reindex(full_idx).ffill().reset_index()
     df = df.rename(columns={"index": "timestamp"})
 
-    # Filter to our data range
-    df = df[(df["timestamp"] >= TRAIN_START) & (df["timestamp"] <= HOLDOUT_END)].reset_index(drop=True)
+    # Filter from TRAIN_START — no upper bound, include all available data
+    df = df[df["timestamp"] >= TRAIN_START].reset_index(drop=True)
 
     print(f"Total: {len(df)} hourly candles "
           f"({df['timestamp'].min()} to {df['timestamp'].max()})")
@@ -195,13 +226,15 @@ def _load_all_data() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def load_train_data() -> pd.DataFrame:
-    """Return OHLCV DataFrame for the training period only (2018-2022).
+    """Return OHLCV DataFrame for the training period only.
 
-    This is the ONLY data the agent should use for training. The evaluation
-    function handles all other splits internally.
+    The training window is computed from walk-forward splits (everything
+    before the validation window). The agent should use ONLY this data.
     """
     df = _load_all_data()
-    mask = (df["timestamp"] >= TRAIN_START) & (df["timestamp"] <= TRAIN_END)
+    splits = _get_splits()
+    train_start, train_end, _ = splits[0]
+    mask = (df["timestamp"] >= train_start) & (df["timestamp"] <= train_end)
     return df[mask].reset_index(drop=True)
 
 
@@ -300,7 +333,7 @@ def _backtest(predictions: np.ndarray, close_prices: np.ndarray,
 # Public Evaluation API
 # ---------------------------------------------------------------------------
 
-def evaluate_model(predict_fn: callable, n_params: int) -> dict:
+def evaluate_model(predict_fn: callable) -> dict:
     """Black-box model evaluation across all temporal splits.
 
     Runs the model on training, validation, and holdout data internally.
@@ -315,11 +348,10 @@ def evaluate_model(predict_fn: callable, n_params: int) -> dict:
             timestamp, open, high, low, close, volume) and returns
             (predictions: np.ndarray, timestamps: np.ndarray).
             Must work on arbitrary date ranges.
-        n_params: Number of trainable parameters in the model.
 
     Returns:
         dict with keys: score, sharpe_min, max_drawdown, total_trades,
-                        consistency, n_params.
+                        consistency.
         sharpe_min is the minimum Sharpe across all evaluation periods.
         max_drawdown is the worst drawdown across all periods.
         total_trades is the sum across all periods.
@@ -342,7 +374,7 @@ def evaluate_model(predict_fn: callable, n_params: int) -> dict:
 
     # Backtest each split independently
     split_results = []
-    for split_start, split_end, subperiods in _SPLITS:
+    for split_start, split_end, subperiods in _get_splits():
         mask = (all_data["timestamp"] >= split_start) & (all_data["timestamp"] <= split_end)
         split_data = all_data[mask].reset_index(drop=True)
 
@@ -389,7 +421,7 @@ def evaluate_model(predict_fn: callable, n_params: int) -> dict:
     trade_mult = min(1.0, total_trades / 100.0)
 
     # Consistency: fraction of ALL subperiods that are profitable.
-    # 7 total subperiods across train (3) + val (2) + holdout (2).
+    # 7 total subperiods: 3 train + 2 val + 2 holdout.
     # A model overfit to train gets at most 3/7 ≈ 0.43x.
     all_sp_returns = []
     for r in split_results:
@@ -398,11 +430,7 @@ def evaluate_model(predict_fn: callable, n_params: int) -> dict:
     n_total = len(all_sp_returns)
     consistency = n_profitable / n_total if n_total > 0 else 0.0
 
-    # Parameter count: gentle complexity penalty
-    n_params_k = n_params / 1000.0
-    param_mult = 1.0 / (1.0 + 0.01 * n_params_k)
-
-    score = base * dd_mult * trade_mult * consistency * param_mult
+    score = base * dd_mult * trade_mult * consistency
 
     return {
         "score": score,
@@ -410,8 +438,104 @@ def evaluate_model(predict_fn: callable, n_params: int) -> dict:
         "max_drawdown": worst_dd_raw,
         "total_trades": total_trades,
         "consistency": f"{n_profitable}/{n_total}",
-        "n_params": n_params,
     }
+
+
+# ---------------------------------------------------------------------------
+# Fresh Holdout Validation (human-only diagnostic)
+# ---------------------------------------------------------------------------
+
+def _run_fresh_holdout():
+    """Validate the trained model — signal quality on the holdout window."""
+    import train as train_module
+    from scipy.stats import spearmanr
+
+    all_data = _load_all_data()
+    splits = _get_splits()
+    holdout_start, holdout_end, _ = splits[2]
+
+    # 1. Train the model (prints normal evaluation output)
+    print("\n" + "=" * 50)
+    print("Training model (standard pipeline)...")
+    print("=" * 50 + "\n")
+    train_module.main()
+
+    # Capture the evaluation results
+    eval_result = evaluate_model(train_module.predict_on_data)
+
+    # 2. Signal quality on holdout window
+    print("\n" + "=" * 50)
+    print("=== SIGNAL QUALITY (sigma-space, pre-pipeline) ===")
+    print("=" * 50)
+    print(f"\nHoldout window: {holdout_start.date()} to {holdout_end.date()}")
+
+    # Raw sigma predictions (no EMA, no vol denorm, no tanh)
+    features, feat_timestamps, vol_safe = train_module.compute_features(all_data)
+    features = np.nan_to_num(features, nan=0.0)
+    sigma_preds = train_module._trained_model.predict(features)
+
+    # Actual 24h forward returns, vol-normalized to sigma-space
+    raw_targets = train_module.compute_targets(all_data)
+    raw_targets = raw_targets[train_module.MAX_LOOKBACK:]
+    actual_sigma = raw_targets / vol_safe
+
+    # Holdout slice (excluding last 24h with no future data)
+    holdout_mask = (
+        (pd.to_datetime(feat_timestamps) >= holdout_start) &
+        (pd.to_datetime(feat_timestamps) <= holdout_end) &
+        ~np.isnan(raw_targets)
+    )
+    n_holdout_hours = holdout_mask.sum()
+
+    if n_holdout_hours == 0:
+        print("\nNo holdout hours with known future returns. Cannot assess signal.")
+    else:
+        sig_preds = sigma_preds[holdout_mask]
+        sig_actuals = actual_sigma[holdout_mask]
+
+        # Directional accuracy (excluding low-conviction predictions)
+        conviction_mask = np.abs(sig_preds) >= 0.1
+        n_low_conviction = (~conviction_mask).sum()
+        if conviction_mask.sum() > 0:
+            signs_match = np.sign(sig_preds[conviction_mask]) == np.sign(sig_actuals[conviction_mask])
+            directional_acc = signs_match.mean() * 100
+        else:
+            directional_acc = float("nan")
+
+        # Rank correlation (all hours)
+        rho, pvalue = spearmanr(sig_preds, sig_actuals)
+
+        print(f"Holdout hours:         {n_holdout_hours}  (excluding last 24h with no future data)")
+        print()
+        print(f"Directional accuracy:  {directional_acc:.1f}%  (sign match, excluding low-conviction)")
+        print(f"  Random baseline:     50.0%")
+        print(f"  Low-conviction excluded: {n_low_conviction} hours (|sigma_pred| < 0.1)")
+        print()
+        print(f"Rank correlation:      {rho:.4f}  (Spearman rho)")
+        print(f"  p-value:             {pvalue:.4f}")
+        print()
+        print(f"Sigma prediction stats:")
+        print(f"  mean:  {sig_preds.mean():.4f}    actual mean:  {sig_actuals.mean():.4f}")
+        print(f"  std:   {sig_preds.std():.4f}    actual std:   {sig_actuals.std():.4f}")
+        print()
+
+        print(f"For comparison, the model's evaluation results:")
+        print(f"  score:        {eval_result['score']:.4f}")
+        print(f"  sharpe_min:   {eval_result['sharpe_min']:.4f}")
+        print(f"  max_drawdown: {eval_result['max_drawdown']:.1%}")
+        print(f"  total_trades: {eval_result['total_trades']}")
+        print(f"  consistency:  {eval_result['consistency']}")
+        print()
+
+        if directional_acc > 53 and rho > 0.03:
+            sig_verdict = "SIGNAL PRESENT"
+        elif directional_acc > 51 or rho > 0.01:
+            sig_verdict = "INCONCLUSIVE"
+        else:
+            sig_verdict = "NO SIGNAL"
+
+        print(f"Signal verdict: {sig_verdict}")
+        print(f"  (SIGNAL PRESENT: accuracy > 53% AND rho > 0.03)")
 
 
 # ---------------------------------------------------------------------------
@@ -419,14 +543,19 @@ def evaluate_model(predict_fn: callable, n_params: int) -> dict:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    df = download_data()
-    print(f"\nData summary:")
-    print(f"  Rows: {len(df)}")
-    print(f"  Range: {df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]}")
-    train = load_train_data()
-    print(f"  Train: {len(train)} rows "
-          f"({train['timestamp'].iloc[0]} to {train['timestamp'].iloc[-1]})")
-    n_val = ((df["timestamp"] >= VAL_START) & (df["timestamp"] <= VAL_END)).sum()
-    n_holdout = ((df["timestamp"] >= HOLDOUT_START) & (df["timestamp"] <= HOLDOUT_END)).sum()
-    print(f"  Val:     {n_val} rows")
-    print(f"  Holdout: {n_holdout} rows")
+    parser = argparse.ArgumentParser(description="Autotrader data preparation and validation")
+    parser.add_argument("--validate", action="store_true",
+                        help="Run signal quality validation on holdout window")
+    args = parser.parse_args()
+
+    if args.validate:
+        _run_fresh_holdout()
+    else:
+        df = download_data()
+        print(f"\nData summary:")
+        print(f"  Rows: {len(df)}")
+        print(f"  Range: {df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]}")
+        splits = _get_splits()
+        for name, (s, e, subs) in zip(["Train", "Val", "Holdout"], splits):
+            n = ((df["timestamp"] >= s) & (df["timestamp"] <= e)).sum()
+            print(f"  {name:8s} {s.date()} to {e.date()}  ({n} rows, {len(subs)} subperiods)")
