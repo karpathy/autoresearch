@@ -40,6 +40,7 @@ TIME_BUDGET = 240  # seconds for training
 
 FORWARD_HOURS = 24      # predict 24-hour forward returns
 THRESHOLD = 0.005       # 0.5% threshold for long/short signals
+POSITION_SCALE = 0.02   # prediction level for full position (±1.0)
 FEE_RATE = 0.001        # 0.1% per trade (one side)
 SLIPPAGE_RATE = 0.0005  # 0.05% per trade (one side)
 
@@ -225,10 +226,11 @@ def _backtest(predictions: np.ndarray, close_prices: np.ndarray,
     n = len(predictions)
     assert len(close_prices) == n and len(timestamps) == n
 
-    # Determine positions: +1 = long, -1 = short, 0 = flat
-    positions = np.zeros(n, dtype=np.float64)
-    positions[predictions > THRESHOLD] = 1.0
-    positions[predictions < -THRESHOLD] = -1.0
+    # Continuous position sizing: linear ramp from 0 at ±THRESHOLD to ±1.0 at ±POSITION_SCALE
+    abs_pred = np.abs(predictions)
+    scale_range = POSITION_SCALE - THRESHOLD
+    raw_size = np.where(abs_pred > THRESHOLD, (abs_pred - THRESHOLD) / scale_range, 0.0)
+    positions = np.clip(raw_size, 0.0, 1.0) * np.sign(predictions)
 
     # Compute hourly price returns
     price_returns = np.zeros(n)
@@ -243,17 +245,18 @@ def _backtest(predictions: np.ndarray, close_prices: np.ndarray,
         pos = positions[i - 1]
         portfolio_returns[i] = pos * price_returns[i]
 
-        # Count trades: position change incurs fees + slippage
+        # Fee model: cost proportional to position change magnitude
         prev_pos = positions[i - 2] if i >= 2 else 0.0
+        pos_change = abs(pos - prev_pos)
 
-        if pos != prev_pos:
-            cost = 0.0
-            if prev_pos != 0.0:
-                cost += FEE_RATE + SLIPPAGE_RATE  # close old
-            if pos != 0.0:
-                cost += FEE_RATE + SLIPPAGE_RATE  # open new
-                n_trades += 1
+        if pos_change > 1e-10:
+            cost = pos_change * (FEE_RATE + SLIPPAGE_RATE)
             portfolio_returns[i] -= cost
+
+        # Count trades on zero-crossings only (direction changes)
+        if (prev_pos > 0 and pos < 0) or (prev_pos < 0 and pos > 0) \
+                or (prev_pos == 0 and pos != 0) or (prev_pos != 0 and pos == 0):
+            n_trades += 1
 
     # Equity curve
     equity = np.cumprod(1.0 + portfolio_returns)
@@ -380,10 +383,10 @@ def evaluate_model(predict_fn: callable, n_params: int) -> dict:
     else:
         dd_mult = 1.0 / (1.0 + ((dd - 0.10) / 0.15) ** 2)
 
-    # Trade count: total across all splits, ramp to 150
-    # (~50 per split on average for full credit)
+    # Trade count: total across all splits, ramp to 100
+    # (~33 per split on average for full credit)
     total_trades = sum(r["n_trades"] for r in split_results)
-    trade_mult = min(1.0, total_trades / 150.0)
+    trade_mult = min(1.0, total_trades / 100.0)
 
     # Consistency: fraction of ALL subperiods that are profitable.
     # 7 total subperiods across train (3) + val (2) + holdout (2).
