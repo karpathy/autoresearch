@@ -185,6 +185,73 @@ def download_data() -> pd.DataFrame:
     return df
 
 
+EXTENDED_PARQUET_PATH = CACHE_DIR / "btcusdt_1h_extended.parquet"
+
+
+def _download_extended_data() -> pd.DataFrame:
+    """Download BTC/USD hourly data through the current month (including 2026).
+
+    Uses a separate cache from download_data() so the regular evaluation
+    pipeline is unaffected. Intended for fresh holdout validation only.
+    """
+    if EXTENDED_PARQUET_PATH.exists():
+        print(f"Loading cached extended data from {EXTENDED_PARQUET_PATH}")
+        return pd.read_parquet(EXTENDED_PARQUET_PATH)
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    print("Downloading extended BTC/USD hourly data (including 2026)...")
+
+    now = pd.Timestamp.now()
+    frames = []
+    for year in range(2018, now.year + 1):
+        for month in range(1, 13):
+            if year == now.year and month > now.month:
+                break
+            print(f"  Downloading {year}-{month:02d}...", end=" ", flush=True)
+            df = _download_month(year, month)
+            if df is not None:
+                print(f"{len(df)} rows")
+                frames.append(df)
+            else:
+                print("skipped (not available)")
+
+    if not frames:
+        raise RuntimeError("No data downloaded. Check network connectivity.")
+
+    raw = pd.concat(frames, ignore_index=True)
+
+    timestamps = raw["open_time"].values.astype(np.float64)
+    is_microseconds = timestamps > 1e15
+    ts_seconds = np.where(is_microseconds, timestamps / 1e6, timestamps / 1e3)
+    raw["timestamp"] = pd.to_datetime(ts_seconds, unit="s", utc=True)
+    raw["timestamp"] = raw["timestamp"].dt.tz_localize(None)
+
+    df = pd.DataFrame({
+        "timestamp": raw["timestamp"],
+        "open": raw["open"].astype(float),
+        "high": raw["high"].astype(float),
+        "low": raw["low"].astype(float),
+        "close": raw["close"].astype(float),
+        "volume": raw["volume"].astype(float),
+    })
+
+    df = df.sort_values("timestamp").drop_duplicates(subset="timestamp").reset_index(drop=True)
+    full_idx = pd.date_range(df["timestamp"].min(), df["timestamp"].max(), freq="h")
+    df = df.set_index("timestamp").reindex(full_idx).ffill().reset_index()
+    df = df.rename(columns={"index": "timestamp"})
+
+    # Filter from TRAIN_START but NO upper bound — include all available data
+    df = df[df["timestamp"] >= TRAIN_START].reset_index(drop=True)
+
+    print(f"Extended total: {len(df)} hourly candles "
+          f"({df['timestamp'].min()} to {df['timestamp'].max()})")
+
+    df.to_parquet(EXTENDED_PARQUET_PATH, index=False)
+    print(f"Cached to {EXTENDED_PARQUET_PATH}")
+
+    return df
+
+
 def _load_all_data() -> pd.DataFrame:
     """Load the full dataset (all periods). Internal use only."""
     return download_data()
@@ -409,18 +476,116 @@ def evaluate_model(predict_fn: callable) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Fresh Holdout Validation (human-only diagnostic)
+# ---------------------------------------------------------------------------
+
+def _run_fresh_holdout():
+    """Validate the trained model on 2026 data never seen by any evaluation split."""
+    import train as train_module
+
+    FRESH_START = pd.Timestamp("2026-01-01")
+
+    # 1. Download extended data (including 2026)
+    extended_df = _download_extended_data()
+
+    fresh_mask = extended_df["timestamp"] >= FRESH_START
+    n_fresh = fresh_mask.sum()
+    if n_fresh == 0:
+        print("\nERROR: No 2026 data available. Cannot run fresh holdout validation.")
+        return
+
+    fresh_end = extended_df.loc[fresh_mask, "timestamp"].max()
+    n_months = (fresh_end - FRESH_START).days / 30.0
+    if n_months < 2:
+        print(f"\nWARNING: Only {n_months:.1f} months of 2026 data available. "
+              "Results may be noisy.")
+
+    # 2. Train the model (prints normal evaluation output)
+    print("\n" + "=" * 50)
+    print("Training model (standard pipeline)...")
+    print("=" * 50 + "\n")
+    train_module.main()
+
+    # Capture the evaluation results from the trained model
+    eval_result = evaluate_model(train_module.predict_on_data)
+
+    # 3. Generate predictions on the FULL extended dataset (for lookback context)
+    print("\n" + "=" * 50)
+    print("=== FRESH HOLDOUT VALIDATION ===")
+    print("=" * 50)
+
+    predictions, timestamps = train_module.predict_on_data(extended_df)
+    pred_df = pd.DataFrame({"timestamp": timestamps, "prediction": predictions})
+
+    # 4. Extract the fresh holdout slice
+    fresh_data = extended_df[fresh_mask].reset_index(drop=True)
+    merged = fresh_data.merge(pred_df, on="timestamp", how="inner")
+
+    if len(merged) == 0:
+        print("\nERROR: No predictions align with 2026 data.")
+        return
+
+    # 5. Backtest on the fresh holdout
+    subperiods = [(FRESH_START, fresh_end)]
+    result = _backtest(
+        predictions=merged["prediction"].values,
+        close_prices=merged["close"].values,
+        timestamps=merged["timestamp"].values,
+        subperiods=subperiods,
+    )
+
+    total_return = result["total_return"]
+
+    # 6. Print results
+    print(f"\nFresh holdout period: {FRESH_START.date()} to {fresh_end.date()}")
+    print(f"(This data was NEVER used in any evaluation split)")
+    print(f"Fresh holdout rows:  {len(merged)}")
+    print()
+    print(f"Sharpe:       {result['sharpe']:.4f}")
+    print(f"Max drawdown: {result['max_drawdown']:.1%}")
+    print(f"Trades:       {result['n_trades']}")
+    print(f"Total return: {total_return:+.1%}")
+    print()
+    print(f"For comparison, the model's evaluation results:")
+    print(f"  sharpe_min:   {eval_result['sharpe_min']:.4f}")
+    print(f"  max_drawdown: {eval_result['max_drawdown']:.1%}")
+    print(f"  total_trades: {eval_result['total_trades']}")
+    print(f"  consistency:  {eval_result['consistency']}")
+    print()
+
+    sharpe = result["sharpe"]
+    if sharpe > 1.0:
+        verdict = "PASS"
+    elif sharpe > 0.5:
+        verdict = "CAUTION"
+    else:
+        verdict = "FAIL"
+
+    print(f"Verdict: {verdict}")
+    print(f"  (PASS: Sharpe > 1.0, CAUTION: 0.5-1.0, FAIL: < 0.5)")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    df = download_data()
-    print(f"\nData summary:")
-    print(f"  Rows: {len(df)}")
-    print(f"  Range: {df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]}")
-    train = load_train_data()
-    print(f"  Train: {len(train)} rows "
-          f"({train['timestamp'].iloc[0]} to {train['timestamp'].iloc[-1]})")
-    n_val = ((df["timestamp"] >= VAL_START) & (df["timestamp"] <= VAL_END)).sum()
-    n_holdout = ((df["timestamp"] >= HOLDOUT_START) & (df["timestamp"] <= HOLDOUT_END)).sum()
-    print(f"  Val:     {n_val} rows")
-    print(f"  Holdout: {n_holdout} rows")
+    parser = argparse.ArgumentParser(description="Autotrader data preparation and validation")
+    parser.add_argument("--validate", action="store_true",
+                        help="Run fresh holdout validation on 2026 data")
+    args = parser.parse_args()
+
+    if args.validate:
+        _run_fresh_holdout()
+    else:
+        df = download_data()
+        print(f"\nData summary:")
+        print(f"  Rows: {len(df)}")
+        print(f"  Range: {df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]}")
+        train = load_train_data()
+        print(f"  Train: {len(train)} rows "
+              f"({train['timestamp'].iloc[0]} to {train['timestamp'].iloc[-1]})")
+        n_val = ((df["timestamp"] >= VAL_START) & (df["timestamp"] <= VAL_END)).sum()
+        n_holdout = ((df["timestamp"] >= HOLDOUT_START) & (df["timestamp"] <= HOLDOUT_END)).sum()
+        print(f"  Val:     {n_val} rows")
+        print(f"  Holdout: {n_holdout} rows")
