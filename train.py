@@ -235,7 +235,7 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarra
     pred_std = all_tree_preds.std(axis=0)
 
     # Adaptive confidence: scale down when trees disagree (high uncertainty)
-    confidence = 1.0 / (1.0 + pred_std)
+    confidence = 1.0 / (1.0 + 2.0 * pred_std)
     sigma_preds = sigma_preds * confidence
 
     sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
