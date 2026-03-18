@@ -59,5 +59,6 @@ def test_implementation_executor_blocks_traversal():
     )
     executor = ImplementationExecutor(slice_def)
 
-    with pytest.raises(ValueError):
-        executor.run(["autosaas/../README.md"])
+    with pytest.raises(ValueError) as excinfo:
+        executor.run(["autosaas/../autosaas/task_slicer.py"])
+    assert "traversal" in str(excinfo.value)

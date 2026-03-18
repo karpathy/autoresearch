@@ -18,6 +18,16 @@ class ImplementationExecutor:
         if normalized.startswith("/"):
             raise ValueError("Absolute paths are not allowed in the execution boundary.")
 
+        if len(normalized) >= 2 and normalized[1] == ":" and normalized[0].isalpha():
+            raise ValueError("Absolute paths are not allowed in the execution boundary.")
+
+        if normalized.startswith("//"):
+            raise ValueError("Absolute paths are not allowed in the execution boundary.")
+
+        segments = normalized.split("/")
+        if any(segment == ".." for segment in segments):
+            raise ValueError("Path traversal is not allowed within the execution boundary.")
+
         normalized = normpath(normalized)
         if normalized == ".." or normalized.startswith("../") or "/../" in normalized:
             raise ValueError("Path traversal is not allowed within the execution boundary.")
