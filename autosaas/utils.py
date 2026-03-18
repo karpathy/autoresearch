@@ -52,8 +52,9 @@ def wait_for_app_ready(
     if not url:
         return False, "no url provided for app boot", 0.0
 
+    normalized = url if "://" in url else f"http://{url}"
     start = perf_counter()
-    parsed = urlparse(url)
+    parsed = urlparse(normalized)
     scheme = parsed.scheme or "http"
     host = parsed.hostname
     if not host:
@@ -66,6 +67,7 @@ def wait_for_app_ready(
     port = parsed.port or (443 if scheme == "https" else 80)
     connection_cls = HTTPSConnection if scheme == "https" else HTTPConnection
     last_error = None
+    last_status: int | None = None
 
     while perf_counter() - start < timeout_s:
         conn = None
@@ -75,6 +77,7 @@ def wait_for_app_ready(
             response = conn.getresponse()
             response.read()
             duration = perf_counter() - start
+            last_status = response.status
             if response.status < 400:
                 return True, f"status {response.status}", duration
         except Exception as exc:  # pragma: no cover - best-effort polling
@@ -89,6 +92,8 @@ def wait_for_app_ready(
 
     duration = perf_counter() - start
     message = f"timed out waiting for {url}"
+    if last_status is not None:
+        message += f" (last status {last_status})"
     if last_error:
-        message = f"{message}: {last_error}"
+        message += f": {last_error}"
     return False, message, duration
