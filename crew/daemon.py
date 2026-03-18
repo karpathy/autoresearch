@@ -68,6 +68,19 @@ class Config:
             "heartbeat_interval_seconds": 30,
             "graceful_shutdown_timeout_seconds": 60,
         },
+        "swarm": {
+            "enabled": False,
+            "max_agents": 1,
+            "roles": {
+                "researcher": 1,
+                "teacher": 1,
+                "critic": 0,
+                "distiller": 0,
+            },
+        },
+        "hardware": {
+            "profile": None,  # Auto-detect if not set
+        },
     }
 
     def __init__(self, config_path: Path = None):
@@ -784,6 +797,7 @@ def main():
     parser.add_argument("--config", type=Path, default=None, help="Config file path")
     parser.add_argument("--foreground", action="store_true", help="Run in foreground")
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
+    parser.add_argument("--swarm", action="store_true", help="Force swarm mode")
 
     args = parser.parse_args()
 
@@ -794,9 +808,71 @@ def main():
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
-    # Start daemon
-    daemon = CrewDaemon(args.config, args.foreground)
-    daemon.start()
+    config = Config(args.config)
+
+    # Swarm mode: multi-agent pool + message bus
+    swarm_cfg = getattr(config, "swarm", None)
+    swarm_enabled = args.swarm or (swarm_cfg and getattr(swarm_cfg, "enabled", False))
+    max_agents = getattr(swarm_cfg, "max_agents", 1) if swarm_cfg else 1
+
+    if swarm_enabled and max_agents > 1:
+        _start_swarm(config)
+    else:
+        daemon = CrewDaemon(args.config, args.foreground)
+        daemon.start()
+
+
+def _start_swarm(config: "Config"):
+    """Start multi-agent swarm mode."""
+    from crew.messaging.bus import get_bus
+    from crew.agents.pool import AgentPool, register_agent_class
+    from crew.agents.researcher import ResearcherAgent
+    from crew.agents.teacher import TeacherAgent
+    from crew.agents.critic import CriticAgent
+    from crew.agents.distiller import DistillerAgent
+    from crew.hardware.detector import HardwareDetector
+
+    # Register concrete agent classes
+    register_agent_class("researcher", ResearcherAgent)
+    register_agent_class("teacher", TeacherAgent)
+    register_agent_class("critic", CriticAgent)
+    register_agent_class("distiller", DistillerAgent)
+
+    # Detect hardware profile
+    hw_config = getattr(config, "hardware", None)
+    hw_override = getattr(hw_config, "profile", None) if hw_config else None
+    detector = HardwareDetector()
+    profile_name, profile_info = detector.detect(force=False)
+    if hw_override:
+        profile_name = hw_override
+        profile_info = detector.PROFILES.get(hw_override, profile_info)
+
+    logger.info(f"Swarm mode: hardware profile={profile_name}, max_agents={profile_info.get('max_agents', 2)}")
+
+    # Build swarm config dict
+    swarm_cfg = {}
+    if hasattr(config, "swarm"):
+        for attr in dir(config.swarm):
+            if not attr.startswith("_"):
+                swarm_cfg[attr] = getattr(config.swarm, attr)
+
+    # Start agent pool
+    bus = get_bus()
+    pool = AgentPool(swarm_cfg, bus=bus, hardware_profile=profile_name)
+    pool.start()
+
+    logger.info("Swarm started. Press Ctrl+C to stop.")
+    try:
+        while True:
+            time.sleep(30)
+            stats = pool.status()
+            logger.info(
+                f"Swarm status: {stats['total_agents']} agents, "
+                f"queue={stats.get('queue', {})}"
+            )
+    except KeyboardInterrupt:
+        logger.info("Swarm shutting down...")
+        pool.stop()
 
 
 if __name__ == "__main__":

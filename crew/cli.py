@@ -125,6 +125,8 @@ class CLI:
             cmd.append("--foreground")
         if args.verbose:
             cmd.append("--verbose")
+        if getattr(args, "swarm", False):
+            cmd.append("--swarm")
 
         try:
             if args.foreground:
@@ -407,7 +409,120 @@ Current: Task #{current_task if current_task else 'None'}"""
 
     def cmd_knowledge(self, args):
         """Browse the knowledge base."""
-        print("Knowledge base commands not yet implemented.")
+        action = getattr(args, "action", "list")
+        if action == "query":
+            from crew.knowledge.store import KnowledgeStore
+            store = KnowledgeStore()
+            tags = [args.tag] if getattr(args, "tag", None) else []
+            entries = store.query(
+                tags=tags,
+                min_confidence=getattr(args, "min_confidence", "low"),
+                limit=getattr(args, "limit", 20),
+            )
+            if not entries:
+                print("No knowledge entries found.")
+                return
+            print(f"Knowledge entries ({len(entries)}):")
+            print("-" * 60)
+            for e in entries:
+                print(f"[{e.id}] [{e.confidence}] [{e.category}] {e.insight[:80]}")
+                if e.tags:
+                    print(f"       tags: {', '.join(e.tags)}")
+        elif action == "gc":
+            from crew.knowledge.lifecycle import LifecycleManager
+            from crew.knowledge.store import KnowledgeStore
+            mgr = LifecycleManager(KnowledgeStore())
+            report = mgr.run_gc_pass()
+            print(f"GC complete: scored={report.entries_scored}, "
+                  f"warm→cold={report.warm_to_cold}, "
+                  f"cold→archive={report.cold_to_archive}, "
+                  f"freed={report.space_freed_mb:.1f}MB")
+        else:
+            print("Usage: crew knowledge [query|gc]")
+            print("  query [--tag TAG] [--min-confidence LEVEL] [--limit N]")
+            print("  gc    Run garbage collection pass")
+
+    def cmd_agents(self, args):
+        """Show swarm agent pool status."""
+        action = getattr(args, "action", "status")
+        if action == "status":
+            try:
+                from crew.agents.pool import AgentPool
+                from crew.messaging.bus import get_bus
+                bus = get_bus()
+                # Load pool state from registry if available
+                import yaml
+                from pathlib import Path
+                registry_path = Path("data/agents/registry.yaml")
+                if registry_path.exists():
+                    data = yaml.safe_load(registry_path.read_text()) or {}
+                    agents = data.get("agents", [])
+                    updated = data.get("updated_at", "unknown")
+                    print(f"Agent Registry (updated: {updated})")
+                    print("-" * 60)
+                    headers = ["ID", "Role", "Status", "Capabilities"]
+                    rows = [
+                        [
+                            a["id"],
+                            a["role"],
+                            a.get("status", "?"),
+                            ", ".join(a.get("capabilities", [])[:3]),
+                        ]
+                        for a in agents
+                    ]
+                    self.print_table(rows, headers, [20, 12, 10, 40])
+                else:
+                    print("No agent registry found. Start swarm with: crew start --swarm")
+            except Exception as e:
+                print(f"Error reading agent status: {e}", file=sys.stderr)
+        elif action == "spawn":
+            role = getattr(args, "role", None)
+            if not role:
+                print("Usage: crew agents spawn <role>", file=sys.stderr)
+                return
+            data = self.client.send_command("spawn_agent", {"role": role})
+            if data:
+                print(f"Spawned: {data.get('agent_id', '?')}")
+            else:
+                print("Daemon not running or command failed.", file=sys.stderr)
+        else:
+            print("Usage: crew agents [status|spawn <role>]")
+
+    def cmd_cf(self, args):
+        """Cloudflare free-tier credit management."""
+        action = getattr(args, "action", "status")
+        try:
+            from crew.cloudflare.credits import CreditTracker
+            tracker = CreditTracker()
+
+            if action == "status":
+                print("Cloudflare Free Tier Credits")
+                print("=" * 50)
+                for service in ["workers_ai", "d1", "r2", "kv"]:
+                    pct = tracker.usage_pct(service) * 100
+                    status = tracker.priority_for_service(service)
+                    bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))
+                    print(f"  {service:<12} [{bar}] {pct:5.1f}% ({status})")
+                mins = tracker.minutes_until_reset()
+                print(f"\n  Reset in: {mins // 60}h {mins % 60}m")
+                if tracker.should_run_eod_batch():
+                    print("  ⚡ End-of-day batch recommended now!")
+
+            elif action == "burn":
+                # Trigger end-of-day burn of remaining credits
+                budget = tracker.get_teacher_daily_budget()
+                print("End-of-Day Credit Burn Plan")
+                print("=" * 50)
+                print(f"  Neurons remaining: {budget['neurons_available']}")
+                print(f"  Examples/hour:     {budget['examples_per_hour']}")
+                print(f"  Reset in:          {tracker.minutes_until_reset()} min")
+                print()
+                print("To execute: crew study --burn-credits")
+
+            else:
+                print("Usage: crew cf [status|burn]")
+        except ImportError as e:
+            print(f"Cloudflare module not available: {e}", file=sys.stderr)
 
     def cmd_study(self, args):
         """Show study queue or current study topic."""
@@ -520,6 +635,7 @@ def main():
     start_parser.add_argument("--foreground", action="store_true")
     start_parser.add_argument("--verbose", action="store_true")
     start_parser.add_argument("--config", type=Path)
+    start_parser.add_argument("--swarm", action="store_true", help="Enable multi-agent swarm mode")
 
     stop_parser = subparsers.add_parser("stop", help="Stop the daemon")
 
@@ -586,6 +702,38 @@ def main():
 
     triggers_parser = subparsers.add_parser("triggers", help="Manage triggers")
 
+    # Swarm / agents
+    agents_parser = subparsers.add_parser("agents", help="Manage swarm agent pool")
+    agents_parser.add_argument(
+        "action",
+        nargs="?",
+        choices=["status", "spawn"],
+        default="status",
+    )
+    agents_parser.add_argument("role", nargs="?", help="Role for spawn action")
+
+    # Knowledge extended
+    knowledge_parser.add_argument(
+        "action",
+        nargs="?",
+        choices=["list", "query", "gc"],
+        default="list",
+    )
+    knowledge_parser.add_argument("--tag", help="Filter by tag")
+    knowledge_parser.add_argument("--min-confidence", default="low",
+                                   dest="min_confidence",
+                                   choices=["low", "medium", "high", "very_high"])
+    knowledge_parser.add_argument("--limit", type=int, default=20)
+
+    # Cloudflare credit management
+    cf_parser = subparsers.add_parser("cf", help="Cloudflare free-tier credits")
+    cf_parser.add_argument(
+        "action",
+        nargs="?",
+        choices=["status", "burn"],
+        default="status",
+    )
+
     args = parser.parse_args()
 
     # Dispatch to command handler
@@ -631,6 +779,10 @@ def main():
         cli.cmd_config(args)
     elif args.command == "triggers":
         cli.cmd_triggers(args)
+    elif args.command == "agents":
+        cli.cmd_agents(args)
+    elif args.command == "cf":
+        cli.cmd_cf(args)
     else:
         parser.print_help()
 
