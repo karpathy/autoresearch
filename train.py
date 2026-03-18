@@ -101,7 +101,16 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     vwap_dev = np.where(vwap_24 > 0, (close - vwap_24) / vwap_24, 0.0)
     feature_cols.append(vwap_dev)
 
-    # 9. Hour of day (cyclical)
+    # 9. Return autocorrelation at lag 24h (rolling over 168h window)
+    # Captures momentum persistence: high autocorrelation = trending market
+    ret_24h = np.full(len(close), np.nan)
+    ret_24h[24:] = close[24:] / close[:-24] - 1.0
+    ret_24h_series = pd.Series(ret_24h)
+    ret_24h_lagged = ret_24h_series.shift(24)
+    autocorr = ret_24h_series.rolling(168, min_periods=168).corr(ret_24h_lagged).values
+    feature_cols.append(np.nan_to_num(autocorr, nan=0.0))
+
+    # 10. Hour of day (cyclical)
     dt = pd.to_datetime(ts)
     hours = dt.hour
     feature_cols.append(np.sin(2 * np.pi * hours / 24))
@@ -160,8 +169,8 @@ def count_model_params(model=None) -> int:
 # ---------------------------------------------------------------------------
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
-    """Apply 48h rolling mean to smooth noisy tree-based predictions."""
-    return pd.Series(raw_preds).rolling(48, min_periods=1).mean().values
+    """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
+    return pd.Series(raw_preds).ewm(span=48, min_periods=1).mean().values
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
