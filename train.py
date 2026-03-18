@@ -62,7 +62,6 @@ def apply_rotary_emb(x, cos, sin):
     assert x.ndim == 4
     d = x.shape[3] // 2
     x1, x2 = x[..., :d], x[..., d:]
-    # cos, sin now have head dimension, so broadcast properly
     y1 = x1 * cos + x2 * sin
     y2 = x1 * (-sin) + x2 * cos
     return torch.cat([y1, y2], 3)
@@ -206,23 +205,13 @@ class GPT(nn.Module):
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
         if device is None:
             device = self.transformer.wte.weight.device
-        # Create different RoPE frequencies for different heads
-        n_heads = self.config.n_head
-        cos_list, sin_list = [], []
-        for head_idx in range(n_heads):
-            # First half of heads use higher base frequency, second half use standard
-            head_base = 50000 if head_idx < n_heads // 2 else 10000
-            channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
-            inv_freq = 1.0 / (head_base ** (channel_range / head_dim))
-            t = torch.arange(seq_len, dtype=torch.float32, device=device)
-            freqs = torch.outer(t, inv_freq)
-            cos, sin = freqs.cos(), freqs.sin()
-            cos, sin = cos.bfloat16(), sin.bfloat16()
-            cos_list.append(cos)
-            sin_list.append(sin)
-        # Stack along head dimension: [1, seq_len, n_heads, head_dim//2]
-        cos = torch.stack(cos_list, dim=2)[None, :, :, :]
-        sin = torch.stack(sin_list, dim=2)[None, :, :, :]
+        channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
+        inv_freq = 1.0 / (base ** (channel_range / head_dim))
+        t = torch.arange(seq_len, dtype=torch.float32, device=device)
+        freqs = torch.outer(t, inv_freq)
+        cos, sin = freqs.cos(), freqs.sin()
+        cos, sin = cos.bfloat16(), sin.bfloat16()
+        cos, sin = cos[None, :, None, :], sin[None, :, None, :]
         return cos, sin
 
     def _compute_window_sizes(self, config):
@@ -287,12 +276,22 @@ class GPT(nn.Module):
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
-        for shape in sorted({p.shape for p in matrix_params}):
-            group_params = [p for p in matrix_params if p.shape == shape]
-            param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
-            ))
+        # Group matrix params by layer depth for different weight decay rates
+        layer_params = [[] for _ in range(self.config.n_layer)]
+        for i, block in enumerate(self.transformer.h):
+            layer_params[i].extend(list(block.parameters()))
+        
+        for layer_idx, params in enumerate(layer_params):
+            if not params:
+                continue
+            # Higher weight decay for early layers, lower for later layers
+            layer_weight_decay = weight_decay * (1.5 - 0.5 * layer_idx / (self.config.n_layer - 1))
+            for shape in sorted({p.shape for p in params}):
+                group_params = [p for p in params if p.shape == shape]
+                param_groups.append(dict(
+                    kind='muon', params=group_params, lr=matrix_lr,
+                    momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=layer_weight_decay,
+                ))
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
