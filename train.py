@@ -95,8 +95,8 @@ class CausalSelfAttention(nn.Module):
             gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))
             v = v + gate.unsqueeze(-1) * ve
 
-        cos, sin = cos_sin
-        q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
+        cos_qk, sin_qk, cos_v, sin_v = cos_sin
+        q, k = apply_rotary_emb(q, cos_qk, sin_qk), apply_rotary_emb(k, cos_qk, sin_qk)
         q, k = norm(q), norm(k)
 
         if _WIN32 or _USE_SDPA:
@@ -165,9 +165,13 @@ class GPT(nn.Module):
         })
         # Rotary embeddings
         self.rotary_seq_len = config.sequence_len * 10
-        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
-        self.register_buffer("cos", cos, persistent=False)
-        self.register_buffer("sin", sin, persistent=False)
+        # Different RoPE frequencies for Q/K vs V projections
+        cos_qk, sin_qk = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, base=50000)
+        cos_v, sin_v = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, base=10000)
+        self.register_buffer("cos_qk", cos_qk, persistent=False)
+        self.register_buffer("sin_qk", sin_qk, persistent=False)
+        self.register_buffer("cos_v", cos_v, persistent=False)
+        self.register_buffer("sin_v", sin_v, persistent=False)
 
     @torch.no_grad()
     def init_weights(self):
@@ -195,8 +199,10 @@ class GPT(nn.Module):
                 torch.nn.init.zeros_(block.attn.ve_gate.weight)
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
-        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
-        self.cos, self.sin = cos, sin
+        cos_qk, sin_qk = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, base=50000)
+        cos_v, sin_v = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, base=10000)
+        self.cos_qk, self.sin_qk = cos_qk, sin_qk
+        self.cos_v, self.sin_v = cos_v, sin_v
         # Cast embeddings to bf16
         self.transformer.wte.to(dtype=torch.bfloat16)
         for ve in self.value_embeds.values():
@@ -290,7 +296,7 @@ class GPT(nn.Module):
     def forward(self, idx, targets=None, reduction='mean'):
         B, T = idx.size()
         assert T <= self.cos.size(1)
-        cos_sin = self.cos[:, :T], self.sin[:, :T]
+        cos_sin = self.cos_qk[:, :T], self.sin_qk[:, :T], self.cos_v[:, :T], self.sin_v[:, :T]
 
         x = self.transformer.wte(idx)
         x = norm(x)
@@ -464,7 +470,7 @@ MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
 SCALAR_LR = 0.5         # learning rate for per-layer scalars (Adam)
 WEIGHT_DECAY = 0.2      # cautious weight decay for Muon
 ADAM_BETAS = (0.8, 0.95) # Adam beta1, beta2
-WARMUP_RATIO = 0.05     # fraction of time budget for LR warmup
+WARMUP_RATIO = 0.0      # fraction of time budget for LR warmup
 WARMDOWN_RATIO = 0.75   # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
