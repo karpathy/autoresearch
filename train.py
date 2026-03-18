@@ -56,6 +56,16 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         ret[lb:] = close[lb:] / close[:-lb] - 1.0
         feature_cols.append(ret / vol_safe)
 
+    # 1b. Momentum divergence: short-term vs long-term return agreement
+    #     Positive = both agree on direction, negative = divergence
+    ret_24 = np.full(len(close), np.nan)
+    ret_24[24:] = close[24:] / close[:-24] - 1.0
+    ret_168 = np.full(len(close), np.nan)
+    ret_168[168:] = close[168:] / close[:-168] - 1.0
+    # Product of vol-normalized returns: positive when aligned, negative when divergent
+    mom_div = (ret_24 / vol_safe) * (ret_168 / vol_safe)
+    feature_cols.append(np.nan_to_num(mom_div, nan=0.0))
+
     # 2. Volatility (rolling std of hourly returns) — raw, not normalized
     for w in VOLATILITY_WINDOWS:
         vol = hr_series.rolling(w, min_periods=w).std().values
