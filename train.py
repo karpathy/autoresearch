@@ -240,7 +240,7 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarra
     sigma_preds = sigma_preds * confidence
 
     sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
-    sigma_preds = sigma_preds * 1.0  # base scale
+    sigma_preds = sigma_preds * 1.5  # base scale
     sigma_smoothed = _smooth_predictions(sigma_preds)
     return sigma_smoothed, timestamps, vol_safe
 
