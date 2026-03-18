@@ -268,6 +268,7 @@ def main():
         max_depth=4,
         min_samples_leaf=200,
         learning_rate=0.05,
+        loss='huber',
         subsample=0.8,
         random_state=42,
     )
