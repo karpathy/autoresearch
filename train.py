@@ -77,7 +77,7 @@ class CausalSelfAttention(nn.Module):
         assert self.n_embd % self.n_head == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
         self.c_q = nn.Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
-        self.c_k = self.c_q  # Share Q and K weights for parameter efficiency
+        self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 32
@@ -276,12 +276,25 @@ class GPT(nn.Module):
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
-        for shape in sorted({p.shape for p in matrix_params}):
-            group_params = [p for p in matrix_params if p.shape == shape]
-            param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
-            ))
+        # Group matrix params by layer for layer-specific learning rates
+        layer_params = [[] for _ in range(self.config.n_layer)]
+        for i, block in enumerate(self.transformer.h):
+            layer_params[i].extend(list(block.parameters()))
+        
+        for layer_idx, params in enumerate(layer_params):
+            if not params:
+                continue
+            # Layer-specific learning rate: earlier layers get lower LR
+            layer_lr_factor = 0.5 + 1.5 * (layer_idx / (self.config.n_layer - 1))
+            layer_lr = matrix_lr * layer_lr_factor
+            
+            # Group by shape within each layer
+            for shape in sorted({p.shape for p in params}):
+                group_params = [p for p in params if p.shape == shape]
+                param_groups.append(dict(
+                    kind='muon', params=group_params, lr=layer_lr,
+                    momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+                ))
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
