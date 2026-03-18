@@ -165,15 +165,9 @@ class GPT(nn.Module):
         })
         # Rotary embeddings
         self.rotary_seq_len = config.sequence_len * 10
-        # Layer-specific RoPE frequencies - higher for later layers
-        self.cos_buffers = nn.ModuleList()
-        self.sin_buffers = nn.ModuleList()
-        for layer_idx in range(config.n_layer):
-            # Scale base frequency: 10000 for first layer, up to 50000 for last layer
-            base_freq = 10000 + (40000 * layer_idx / max(1, config.n_layer - 1))
-            cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, base=base_freq)
-            self.register_buffer(f"cos_{layer_idx}", cos, persistent=False)
-            self.register_buffer(f"sin_{layer_idx}", sin, persistent=False)
+        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
+        self.register_buffer("cos", cos, persistent=False)
+        self.register_buffer("sin", sin, persistent=False)
 
     @torch.no_grad()
     def init_weights(self):
@@ -199,8 +193,10 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             if block.attn.ve_gate is not None:
                 torch.nn.init.zeros_(block.attn.ve_gate.weight)
-        # Layer-specific rotary embeddings already initialized above
-        pass
+        # Rotary embeddings
+        head_dim = self.config.n_embd // self.config.n_head
+        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
+        self.cos, self.sin = cos, sin
         # Cast embeddings to bf16
         self.transformer.wte.to(dtype=torch.bfloat16)
         for ve in self.value_embeds.values():
@@ -275,8 +271,8 @@ class GPT(nn.Module):
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
         param_groups = [
             dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=(adam_betas[0], 0.99), eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=(adam_betas[0], 0.9), eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=(adam_betas[0], 0.9), eps=1e-10, weight_decay=0.001),
+            dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=(adam_betas[0], 0.85), eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=(adam_betas[0], 0.85), eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
@@ -294,8 +290,7 @@ class GPT(nn.Module):
     def forward(self, idx, targets=None, reduction='mean'):
         B, T = idx.size()
         assert T <= self.cos.size(1)
-        # Will be set per layer
-        cos_sin = None
+        cos_sin = self.cos[:, :T], self.sin[:, :T]
 
         x = self.transformer.wte(idx)
         x = norm(x)
@@ -303,11 +298,7 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
-            # Layer-specific RoPE frequencies
-            layer_cos = getattr(self, f"cos_{i}")[:, :T]
-            layer_sin = getattr(self, f"sin_{i}")[:, :T]
-            layer_cos_sin = layer_cos, layer_sin
-            x = block(x, ve, layer_cos_sin, self.window_sizes[i])
+            x = block(x, ve, cos_sin, self.window_sizes[i])
         x = norm(x)
 
         softcap = 15
