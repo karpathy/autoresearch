@@ -455,8 +455,23 @@ DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
 # ---------------------------------------------------------------------------
 
 t_start = time.time()
-torch.manual_seed(42)
-torch.cuda.manual_seed(42)
+
+def sdr_seed():
+    """Seed RNG from SDR entropy (ADC quantization noise via sdr-rand on nemesis)."""
+    import json
+    from urllib.request import urlopen
+    try:
+        resp = json.loads(urlopen("http://192.168.86.24:9090/api/entropy?bytes=8&format=json", timeout=2).read())
+        seed = int(resp["entropy_hex"], 16)
+        print(f"SDR entropy seed: {seed:#018x}")
+    except Exception as e:
+        seed = int.from_bytes(os.urandom(8), "big")
+        print(f"SDR unavailable ({e}), fallback seed: {seed:#018x}")
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    return seed
+
+sdr_seed()
 torch.set_float32_matmul_precision("high")
 device = torch.device("cuda")
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)

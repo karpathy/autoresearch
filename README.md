@@ -49,6 +49,20 @@ Hi have a look at program.md and let's kick off a new experiment! let's do the s
 
 The `program.md` file is essentially a super lightweight "skill".
 
+## SDR entropy seeding
+
+This fork replaces the fixed `torch.manual_seed(42)` with true hardware randomness from an RTL-SDR radio receiver. Each training run is seeded with entropy extracted from ADC quantization noise — physically random, not pseudorandom.
+
+The entropy comes from [sdr-random](https://github.com/DeepBlueDynamics/sdr-random), a lightweight Rust service that captures IQ samples from an RTL-SDR dongle and serves random bytes over HTTP. `train.py` fetches 8 bytes at startup to seed PyTorch's RNG, with an `os.urandom` fallback if the SDR is unavailable.
+
+```bash
+# Start the entropy server (on a machine with an RTL-SDR attached)
+sdr-rand local --port 9090
+
+# train.py automatically fetches a seed from http://<host>:9090/api/entropy
+uv run train.py
+```
+
 ## Project structure
 
 ```
