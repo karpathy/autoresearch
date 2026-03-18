@@ -187,7 +187,7 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
     sigma_preds = model.predict(features)
     raw_preds = sigma_preds * vol_safe
-    compressed = 0.012 * np.tanh(raw_preds / 0.012)
+    compressed = 0.010 * np.tanh(raw_preds / 0.010)
     preds = _smooth_predictions(compressed)
     return preds, timestamps
 
