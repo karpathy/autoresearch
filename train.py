@@ -173,10 +173,11 @@ def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     return pd.Series(raw_preds).ewm(span=48, min_periods=1).mean().values
 
 
-def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """Generate predictions on arbitrary OHLCV data.
+def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Generate sigma-space predictions on arbitrary OHLCV data.
 
-    Model predicts in sigma-space; denormalize to raw return space.
+    Returns smoothed sigma predictions — the backtester handles
+    position sizing and thresholding in sigma-space directly.
     """
     features, timestamps, vol_safe = compute_features(df)
     features = np.nan_to_num(features, nan=0.0)
@@ -186,10 +187,8 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         raise RuntimeError("Model not trained. Run train.py first.")
 
     sigma_preds = model.predict(features)
-    raw_preds = sigma_preds * vol_safe
-    compressed = 0.012 * np.tanh(raw_preds / 0.012)
-    preds = _smooth_predictions(compressed)
-    return preds, timestamps
+    sigma_smoothed = _smooth_predictions(sigma_preds)
+    return sigma_smoothed, timestamps, vol_safe
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +235,7 @@ def main():
         max_iter=500,
         max_depth=4,
         learning_rate=0.02,
-        min_samples_leaf=200,
+        min_samples_leaf=100,
         max_bins=255,
         l2_regularization=0.1,
         loss="squared_error",
@@ -247,7 +246,7 @@ def main():
     # Combined with 1.2x asymmetric weighting on positive returns.
     ts_float = train_timestamps.astype("datetime64[h]").astype(np.float64)
     ts_norm = (ts_float - ts_float.min()) / (ts_float.max() - ts_float.min())
-    time_weights = np.exp(1.6 * ts_norm)
+    time_weights = np.exp(0.8 * ts_norm)
     asym_weights = np.where(targets > 0, 1.2, 1.0)
     sample_weights = time_weights * asym_weights
     model.fit(features, targets, sample_weight=sample_weights)

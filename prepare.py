@@ -39,8 +39,8 @@ PARQUET_PATH = CACHE_DIR / "btcusdt_1h.parquet"
 TIME_BUDGET = 240  # seconds for training
 
 FORWARD_HOURS = 24      # predict 24-hour forward returns
-THRESHOLD = 0.005       # 0.5% threshold for long/short signals
-POSITION_SCALE = 0.02   # prediction level for full position (±1.0)
+SIGMA_THRESHOLD = 0.5   # sigma threshold for trading (regime-invariant)
+SIGMA_FULL_POSITION = 2.0  # sigma for full position size (±1.0)
 FEE_RATE = 0.001        # 0.1% per trade (one side)
 SLIPPAGE_RATE = 0.0005  # 0.05% per trade (one side)
 
@@ -242,12 +242,15 @@ def load_train_data() -> pd.DataFrame:
 # Backtesting Engine (internal)
 # ---------------------------------------------------------------------------
 
-def _backtest(predictions: np.ndarray, close_prices: np.ndarray,
+def _backtest(sigma_predictions: np.ndarray, close_prices: np.ndarray,
               timestamps: np.ndarray, subperiods: list) -> dict:
-    """Run backtest on predictions against actual prices.
+    """Run backtest on sigma-space predictions against actual prices.
+
+    Position sizing is done in sigma-space (regime-invariant).
+    Portfolio returns are computed in dollar terms against actual prices.
 
     Args:
-        predictions: Array of forward-return predictions, one per timestamp.
+        sigma_predictions: Array of sigma-space predictions, one per timestamp.
         close_prices: Array of close prices aligned with predictions.
         timestamps: Array of pd.Timestamp aligned with predictions.
         subperiods: List of (start, end) Timestamp tuples for consistency check.
@@ -256,14 +259,16 @@ def _backtest(predictions: np.ndarray, close_prices: np.ndarray,
         dict with keys: sharpe, max_drawdown, n_trades, total_return,
                         subperiod_returns (list of floats).
     """
-    n = len(predictions)
+    n = len(sigma_predictions)
     assert len(close_prices) == n and len(timestamps) == n
 
-    # Continuous position sizing: linear ramp from 0 at ±THRESHOLD to ±1.0 at ±POSITION_SCALE
-    abs_pred = np.abs(predictions)
-    scale_range = POSITION_SCALE - THRESHOLD
-    raw_size = np.where(abs_pred > THRESHOLD, (abs_pred - THRESHOLD) / scale_range, 0.0)
-    positions = np.clip(raw_size, 0.0, 1.0) * np.sign(predictions)
+    # Continuous position sizing in sigma-space: linear ramp from 0 at
+    # ±SIGMA_THRESHOLD to ±1.0 at ±SIGMA_FULL_POSITION
+    abs_sigma = np.abs(sigma_predictions)
+    sigma_scale = SIGMA_FULL_POSITION - SIGMA_THRESHOLD
+    raw_size = np.where(abs_sigma > SIGMA_THRESHOLD,
+                        (abs_sigma - SIGMA_THRESHOLD) / sigma_scale, 0.0)
+    positions = np.clip(raw_size, 0.0, 1.0) * np.sign(sigma_predictions)
 
     # Compute hourly price returns
     price_returns = np.zeros(n)
@@ -346,7 +351,8 @@ def evaluate_model(predict_fn: callable) -> dict:
     Args:
         predict_fn: Callable that takes a pd.DataFrame (with columns
             timestamp, open, high, low, close, volume) and returns
-            (predictions: np.ndarray, timestamps: np.ndarray).
+            (sigma_predictions: np.ndarray, timestamps: np.ndarray,
+             vol: np.ndarray). Predictions are in sigma-space.
             Must work on arbitrary date ranges.
 
     Returns:
@@ -360,17 +366,17 @@ def evaluate_model(predict_fn: callable) -> dict:
     # Generate predictions on the FULL dataset so features have full
     # lookback context even at the start of val/holdout periods.
     all_data = _load_all_data()
-    predictions, timestamps = predict_fn(all_data)
-    predictions = np.asarray(predictions, dtype=np.float64).ravel()
+    sigma_preds, timestamps, vol = predict_fn(all_data)
+    sigma_preds = np.asarray(sigma_preds, dtype=np.float64).ravel()
     timestamps = np.asarray(timestamps).ravel()
 
-    assert len(predictions) == len(timestamps), (
-        f"predict_fn returned {len(predictions)} predictions but "
+    assert len(sigma_preds) == len(timestamps), (
+        f"predict_fn returned {len(sigma_preds)} predictions but "
         f"{len(timestamps)} timestamps"
     )
 
     # Build prediction lookup
-    pred_df = pd.DataFrame({"timestamp": timestamps, "prediction": predictions})
+    pred_df = pd.DataFrame({"timestamp": timestamps, "sigma_pred": sigma_preds})
 
     # Backtest each split independently
     split_results = []
@@ -392,7 +398,7 @@ def evaluate_model(predict_fn: callable) -> dict:
             continue
 
         bt = _backtest(
-            predictions=merged["prediction"].values,
+            sigma_predictions=merged["sigma_pred"].values,
             close_prices=merged["close"].values,
             timestamps=merged["timestamp"].values,
             subperiods=subperiods,
@@ -539,6 +545,110 @@ def _run_fresh_holdout():
 
 
 # ---------------------------------------------------------------------------
+# Per-Split Diagnostic (human-only)
+# ---------------------------------------------------------------------------
+
+def _run_diagnostic():
+    """Per-split and per-subperiod diagnostic breakdown.
+
+    Human-only tool for diagnosing which subperiods are losing money.
+    Trains the model, runs the same evaluation as evaluate_model(),
+    but prints intermediate per-split results instead of aggregating.
+    """
+    import train as train_module
+
+    # 1. Train the model
+    print("=" * 60)
+    print("Training model...")
+    print("=" * 60 + "\n")
+    train_module.main()
+
+    # 2. Generate sigma predictions on full dataset (same as evaluate_model)
+    all_data = _load_all_data()
+    sigma_preds, timestamps, vol = train_module.predict_on_data(all_data)
+    sigma_preds = np.asarray(sigma_preds, dtype=np.float64).ravel()
+    timestamps = np.asarray(timestamps).ravel()
+    pred_df = pd.DataFrame({"timestamp": timestamps, "sigma_pred": sigma_preds})
+
+    # 3. Backtest each split and collect results
+    splits = _get_splits()
+    split_names = ["Train", "Val", "Holdout"]
+    split_results = []
+    split_subperiods = []
+
+    for split_start, split_end, subperiods in splits:
+        mask = (all_data["timestamp"] >= split_start) & (all_data["timestamp"] <= split_end)
+        split_data = all_data[mask].reset_index(drop=True)
+        merged = split_data.merge(pred_df, on="timestamp", how="inner")
+
+        if len(merged) == 0:
+            split_results.append({
+                "sharpe": -10.0, "max_drawdown": -1.0,
+                "n_trades": 0, "total_return": -1.0,
+                "subperiod_returns": [-1.0] * len(subperiods),
+            })
+        else:
+            bt = _backtest(
+                sigma_predictions=merged["sigma_pred"].values,
+                close_prices=merged["close"].values,
+                timestamps=merged["timestamp"].values,
+                subperiods=subperiods,
+            )
+            split_results.append(bt)
+        split_subperiods.append(subperiods)
+
+    # 4. Compute composite score (same formula as evaluate_model)
+    sharpes = [r["sharpe"] for r in split_results]
+    base = min(sharpes)
+    worst_dd_raw = min(r["max_drawdown"] for r in split_results)
+    dd = abs(worst_dd_raw)
+    dd_mult = 1.0 if dd <= 0.10 else 1.0 / (1.0 + ((dd - 0.10) / 0.15) ** 2)
+    total_trades = sum(r["n_trades"] for r in split_results)
+    trade_mult = min(1.0, total_trades / 100.0)
+    all_sp_returns = []
+    for r in split_results:
+        all_sp_returns.extend(r["subperiod_returns"])
+    n_profitable = sum(1 for ret in all_sp_returns if ret > 0)
+    n_total = len(all_sp_returns)
+    consistency = n_profitable / n_total if n_total > 0 else 0.0
+    score = base * dd_mult * trade_mult * consistency
+
+    # 5. Print diagnostic breakdown
+    print("\n" + "=" * 60)
+    print("=== DIAGNOSTIC BREAKDOWN ===")
+    print("(Human-only — this information is hidden from the agent)")
+    print("=" * 60)
+    print(f"\nOverall: score={score:.4f}, sharpe_min={base:.4f}, "
+          f"consistency={n_profitable}/{n_total}")
+    print(f"  dd_mult={dd_mult:.4f}, trade_mult={trade_mult:.4f}")
+
+    losing_subperiods = []
+    sp_idx = 0
+
+    for i, (name, (s, e, subperiods), result) in enumerate(
+            zip(split_names, splits, split_results)):
+        print(f"\n--- Split {i+1}: {name} ({s.date()} to {e.date()}) ---")
+        print(f"  Sharpe: {result['sharpe']:.4f}"
+              f"{'  <-- MIN' if result['sharpe'] == base else ''}")
+        print(f"  Max drawdown: {result['max_drawdown']:.1%}")
+        print(f"  Trades: {result['n_trades']}")
+        print(f"  Total return: {result['total_return']:+.1%}")
+
+        for j, ((sp_start, sp_end), sp_ret) in enumerate(
+                zip(subperiods, result["subperiod_returns"])):
+            mark = "+" if sp_ret > 0 else "-"
+            symbol = "OK" if sp_ret > 0 else "LOSS"
+            print(f"  Subperiod {j+1} ({sp_start.date()} to {sp_end.date()}): "
+                  f"return {sp_ret:+.2%}  {symbol}")
+            if sp_ret <= 0:
+                losing_subperiods.append(f"{name}-{j+1}")
+            sp_idx += 1
+
+    print(f"\nLosing subperiods: {', '.join(losing_subperiods) if losing_subperiods else 'None'}")
+    print()
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -546,10 +656,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Autotrader data preparation and validation")
     parser.add_argument("--validate", action="store_true",
                         help="Run signal quality validation on holdout window")
+    parser.add_argument("--diagnose", action="store_true",
+                        help="Per-split diagnostic breakdown (human-only)")
     args = parser.parse_args()
 
     if args.validate:
         _run_fresh_holdout()
+    elif args.diagnose:
+        _run_diagnostic()
     else:
         df = download_data()
         print(f"\nData summary:")

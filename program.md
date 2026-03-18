@@ -14,7 +14,8 @@ To set up a new experiment, work with the user to:
    - `train.py` — the file you modify. Model architecture, feature engineering, training loop.
 4. **Verify data exists**: Check that `~/.cache/autotrader/` contains the cached parquet file. If not, tell the human to run `uv run prepare.py`.
 5. **Initialize results.tsv**: Create `results.tsv` with just the header row. This file is gitignored — it lives only on disk and is never committed. Git operations (commit, reset) will not affect it.
-6. **Confirm and go**: Confirm setup looks good.
+6. **Initialize experiment-log.md**: Create an empty `experiment-log.md`. Also gitignored. This is the lab notebook for reasoning and observations.
+7. **Confirm and go**: Confirm setup looks good.
 
 Once you get confirmation, kick off the experimentation.
 
@@ -55,6 +56,7 @@ Each experiment runs on a single machine. The training script runs for a **fixed
 8. **No hardcoded regime filters.** No "go flat when X" or "never go short" rules.
 9. **One change per experiment.** Each experiment should isolate a single conceptual change. Coupled parameters that only make sense together (e.g. n_estimators + learning_rate) count as one change. Unrelated changes (e.g. adding a feature AND changing the loss function) do not. If you change two unrelated things and the score drops, you don't know which one caused it.
 10. **Don't abandon near-misses.** If an experiment scores within ~90% of the best, the approach is promising — try adjusting the obvious knob before moving to a completely different idea. Distinguish "wrong approach" from "wrong parameterization."
+11. **Don't ignore stagnant consistency.** If consistency hasn't improved in 10+ experiments while score keeps rising, you're optimizing Sharpe on the winning subperiods and ignoring the losing ones. That's overfitting to the evaluation structure. Prioritize experiments that target the losing subperiods, even if they temporarily reduce Sharpe.
 
 Score improvements are audited by the `experiment-auditor` subagent. If it detects gaming, the experiment is discarded regardless of score.
 
@@ -124,12 +126,29 @@ LOOP FOREVER:
 7. Read out the results: `grep "^score:" run.log`
 8. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the stack trace. If fixable, fix and re-run. Otherwise give up on this idea.
 9. Append the results to `results.tsv` (gitignored — no need to commit it)
-10. **If score improved**, invoke the `experiment-auditor` subagent to check for gaming. Tell it the experiment description and results. If the auditor returns FAIL, treat the experiment as discarded and `git reset --hard HEAD~1`. If PASS, keep the commit.
-11. If score is equal or worse, `git reset --hard HEAD~1` to discard the experiment.
-12. If 5 consecutive experiments without improvement, invoke the `experiment-coach` subagent for diagnosis and direction. Follow its prescription.
+10. Append a brief entry to `experiment-log.md` (gitignored). This is a lab notebook — write for your future self and the coach. Use this format:
+
+```
+## <commit> — <short description>
+**Hypothesis:** Why you tried this and what you expected.
+**Result:** Score, key metrics, keep/discard.
+**Observation:** What this tells you. What to try next.
+```
+11. **If score improved**, invoke the `experiment-auditor` subagent to check for gaming. Tell it the experiment description and results. If the auditor returns FAIL, treat the experiment as discarded and `git reset --hard HEAD~1`. If PASS, keep the commit.
+12. If score is equal or worse, `git reset --hard HEAD~1` to discard the experiment.
+13. If 5 consecutive experiments without improvement, invoke the `experiment-coach` subagent for diagnosis and direction. Follow its prescription.
+14. If consistency hasn't improved in 10+ experiments (even if score is improving), invoke the `experiment-coach`. Improving Sharpe on winning subperiods while ignoring losing ones is a trap.
 
 **Timeout**: Each experiment should take ~5 minutes total (4 minutes training + evaluation overhead). If a run exceeds 10 minutes, kill it and treat it as a failure.
 
 **Crashes**: If a run crashes, use judgment: fix simple bugs and re-run, or skip and log "crash."
 
-**NEVER STOP**: Once the experiment loop has begun, do NOT pause to ask the human if you should continue. The human expects you to work indefinitely until manually stopped. If you run out of ideas, think harder — re-read the in-scope files for new angles, revisit near-miss experiments and try them in isolation, try more radical architectural changes. The loop runs until the human interrupts you, period.
+**Autonomy**: Once the experiment loop has begun, do NOT pause to ask the human if you should continue. Run experiments continuously. If you run out of ideas, think harder — re-read the in-scope files for new angles, revisit near-miss experiments and try them in isolation, try more radical architectural changes.
+
+**Plateau detection**: If the coach has been invoked twice without producing an improvement (i.e. ~15+ consecutive non-improving experiments), stop the loop. Write a summary to `plateau-report.md` containing:
+- Current best score and configuration
+- What the last 15+ experiments tried and why they failed
+- Which near-misses came closest and what they suggest
+- Your assessment of what structural change is needed to break through (e.g. new data, evaluation change, architectural shift beyond what's available)
+
+Then stop and wait for the human. Plateaus usually mean the agent has exhausted what's possible within the current system constraints — the next breakthrough requires a human decision (e.g. changing the evaluation system, the backtester, or the scoring formula).
