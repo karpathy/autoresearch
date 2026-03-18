@@ -284,8 +284,8 @@ class GPT(nn.Module):
         for layer_idx, params in enumerate(layer_params):
             if not params:
                 continue
-            # Exponentially increasing weight decay from 0.06 to 0.32 across layers
-            layer_wd = 0.06 * (0.32 / 0.06) ** (layer_idx / max(1, self.config.n_layer - 1))
+            # Exponentially increasing weight decay from 0.08 to 0.35 across layers
+            layer_wd = 0.08 * (0.35 / 0.08) ** (layer_idx / (self.config.n_layer - 1))
             for shape in sorted({p.shape for p in params}):
                 group_params = [p for p in params if p.shape == shape]
                 if group_params:
