@@ -7,6 +7,7 @@ AutoSaaS assumes the target repository exposes a tiny contract that lets the con
 1. `project.autosaas.yaml` at the repo root.
    - It must define the `commands` mapping with `lint`, `typecheck`, `test`, `dev`, and `smoke` keys.
    - These commands are the ones AutoSaaS will attempt to execute via `validation_pipeline.run_required_gates` when `dry_run=False`.
+      - (Currently the validation loop only considers `lint`, `typecheck`, `test`, `app_boot`, and `smoke`; the `dev` command is retained for future workflows but is not part of gate validation today.)
 2. `package.json` (if present) is parsed by `repo_context_loader` to infer `scripts`, `framework`, and `package_manager`. Missing or malformed JSON is tolerated, but providing it improves context accuracy.
 
 ## Optional helpers

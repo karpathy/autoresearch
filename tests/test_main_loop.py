@@ -3,6 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import autosaas.main as main_module
 from autosaas.main import run_once
 
 
@@ -11,3 +12,31 @@ def test_run_once_emits_redacted_report_for_single_slice(tmp_path):
     assert result.slice_name
     assert result.status in {"keep", "revert", "blocked", "crash"}
     assert "sk_live" not in result.report
+
+
+def test_run_once_filters_unsupported_gates(tmp_path, monkeypatch):
+    config_path = tmp_path / "project.autosaas.yaml"
+    config_path.write_text(
+        """
+commands:
+  lint: echo lint
+  typecheck: echo typecheck
+  test: echo test
+  dev: echo dev
+  smoke: echo smoke
+"""
+    )
+
+    captured = {}
+
+    def fake_run_required_gates(run, required_gates, command_map, cwd):
+        captured["gates"] = tuple(required_gates)
+        run.status = "pass"
+        run.gate_results = []
+        return run
+
+    monkeypatch.setattr(main_module, "run_required_gates", fake_run_required_gates)
+
+    run_once(target_repo=tmp_path, request="Add billing status badge", dry_run=False)
+
+    assert "dev" not in captured.get("gates", ())

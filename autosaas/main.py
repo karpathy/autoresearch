@@ -22,6 +22,9 @@ class RunResult:
     report: str
 
 
+SUPPORTED_VALIDATION_GATES = ("lint", "typecheck", "test", "app_boot", "smoke")
+
+
 def _load_target_commands(repo_path: Path) -> Mapping[str, str]:
     config_path = repo_path / "project.autosaas.yaml"
     if not config_path.is_file():
@@ -59,9 +62,13 @@ def run_once(target_repo: Path | str, request: str, dry_run: bool = False) -> Ru
         if not command_map:
             run.status = "blocked"
         else:
-            run = run_required_gates(run, list(command_map.keys()), command_map, repo_path)
-            gate_outcomes = {gate.name: gate.passed for gate in run.gate_results}
-            run.status = decide_keep_or_revert(gate_outcomes)
+            supported_gates = [gate for gate in SUPPORTED_VALIDATION_GATES if gate in command_map]
+            if not supported_gates:
+                run.status = "blocked"
+            else:
+                run = run_required_gates(run, supported_gates, command_map, repo_path)
+                gate_outcomes = {gate.name: gate.passed for gate in run.gate_results}
+                run.status = decide_keep_or_revert(gate_outcomes)
 
     report = format_slice_run(run)
     redacted = redact_text(report, literals=context_data.get("sensitive_paths"))

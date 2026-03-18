@@ -2,7 +2,7 @@
 
 Validation is deterministic and localized to the target repository. The steps implemented in `autosaas/validation_pipeline.py` are as follows:
 
-1. `run_required_gates` takes a `SliceRun`, a list of gate names (like `lint`, `typecheck`, `test`, `smoke`), and a command map derived from `project.autosaas.yaml`.
+1. `run_required_gates` takes a `SliceRun`, a list of gate names (like `lint`, `typecheck`, `test`, `smoke`), and a command map derived from `project.autosaas.yaml`. The controller only passes the supported subset (`lint`, `typecheck`, `test`, `app_boot`, `smoke`); other entries such as `dev` are ignored until future flows need them.
 2. Gates are executed following `_GATE_ORDER = ["lint", "typecheck", "test", "app_boot", "smoke"]`. The pipeline runs each gate in that order if it appears in the requested list, and stops as soon as one gate fails.
 3. Each gate yields a `GateResult` (name, passed flag, summary, duration) that becomes part of the `SliceRun`.
 4. When a gate fails, the run status is immediately set to `revert` and no further gates are launched.

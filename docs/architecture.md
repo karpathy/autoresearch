@@ -6,7 +6,7 @@ This repository centers on AutoSaaS's orchestration loop, which lives in `autosa
 
 1. `load_repo_context` infers what kind of project the target repo is (framework, package manager, scripts, sensitive files) without requiring any secrets.
 2. `choose_next_slice` turns an operator request into a `TaskSlice`, establishing the allowed file patterns the implementation is permitted to touch.
-3. `ImplementationExecutor` reinforces those patterns and tracks touched paths; the main loop uses it to prove the slice has a defined scope before validating outcomes.
+3. `ImplementationExecutor` is available to enforce allowed patterns and record touched paths; the current simulated flow instantiates it and calls `run([])`, so the touched-files slice is empty until we wire up real edits.
 4. `run_required_gates` (via `validation_pipeline`) attempts to run configured lint/typecheck/test/smoke gates in a deterministic order and reports results.
 5. `decide_keep_or_revert` turns the gate verdicts into a user-facing disposition and `reporter.format_slice_run` yields the human-readable summary.
 6. `privacy_guard.redact_text` scrubs any sensitive literals or configured tokens (e.g., `sk_live`) from that summary before it reaches the operator.
