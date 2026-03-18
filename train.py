@@ -267,7 +267,7 @@ def main():
     train_start = time.time()
 
     model = ExtraTreesRegressor(
-        n_estimators=2000,
+        n_estimators=3000,
         max_depth=10,
         min_samples_leaf=400,
         random_state=42,
