@@ -56,6 +56,16 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         ret[lb:] = close[lb:] / close[:-lb] - 1.0
         feature_cols.append(ret / vol_safe)
 
+    # 1a. Volume-weighted cumulative return (emphasizes moves on high volume)
+    vol_avg = pd.Series(volume).rolling(168, min_periods=168).mean().values
+    vol_avg_safe = np.where(vol_avg > 0, vol_avg, 1.0)
+    vol_weight = volume / vol_avg_safe  # relative volume (1.0 = average)
+    vw_returns = hourly_returns * vol_weight
+    vw_series = pd.Series(vw_returns)
+    for lb in [24, 72, 168]:
+        vw_cum = vw_series.rolling(lb, min_periods=lb).sum().values
+        feature_cols.append(np.nan_to_num(vw_cum / vol_safe, nan=0.0))
+
     # 1b. Momentum divergence: short-term vs long-term return agreement
     #     Positive = both agree on direction, negative = divergence
     ret_24 = np.full(len(close), np.nan)
