@@ -186,9 +186,10 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         raise RuntimeError("Model not trained. Run train.py first.")
 
     sigma_preds = model.predict(features)
-    raw_preds = sigma_preds * vol_safe
-    compressed = 0.012 * np.tanh(raw_preds / 0.012)
-    preds = _smooth_predictions(compressed)
+    sigma_smoothed = pd.Series(sigma_preds).ewm(span=48, min_periods=1).mean().values
+    vol_capped = np.minimum(vol_safe, np.percentile(vol_safe, 90))
+    raw_preds = sigma_smoothed * vol_capped
+    preds = 0.012 * np.tanh(raw_preds / 0.012)
     return preds, timestamps
 
 
