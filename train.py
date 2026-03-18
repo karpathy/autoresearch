@@ -96,7 +96,7 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         feature_cols.append(bb_pos)
 
     # 7b. Bollinger band width: 2*std/sma (narrow = consolidation, wide = trending)
-    for w in [24, 72]:
+    for w in [24, 72, 168]:
         sma = close_series.rolling(w, min_periods=w).mean().values
         std = close_series.rolling(w, min_periods=w).std().values
         sma_safe = np.where(sma > 0, sma, 1.0)
