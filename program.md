@@ -53,6 +53,7 @@ Each experiment runs on a single machine. The training script runs for a **fixed
 6. **No fine-grained parameter sweeps.** Do not run 3+ consecutive experiments that only vary a single numeric parameter by small increments.
 7. **No hardcoded directional biases.** No `preds += constant`.
 8. **No hardcoded regime filters.** No "go flat when X" or "never go short" rules.
+9. **One change per experiment.** Each experiment should isolate a single variable — one architectural change, one hyperparameter, one feature addition. If you change two things and the score drops, you don't know which one caused it. Compound changes waste experiments.
 
 Score improvements are audited by the `experiment-auditor` subagent. If it detects gaming, the experiment is discarded regardless of score.
 
@@ -114,21 +115,19 @@ The experiment runs on a dedicated branch (e.g. `autotrader/mar15`).
 LOOP FOREVER:
 
 1. Look at the git state: the current branch/commit we're on
-2. Decide on an experimental idea. Consult the research directions and stuck protocol.
-3. Modify `train.py` with the experiment. The model must be trained during the 2-minute budget.
+2. Decide on an experimental idea.
+3. Modify `train.py` with the experiment.
 4. `git add train.py && git commit -m "exp: <short description>"`
 5. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
 6. Read out the results: `grep "^score:" run.log`
 7. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the stack trace. If fixable, fix and re-run. Otherwise give up on this idea.
 8. Append the results to `results.tsv` (gitignored — no need to commit it)
-9. If score improved (higher than previous best), keep the commit
-10. If score is equal or worse, `git reset --hard HEAD~1` to discard the experiment
-11. Check the stuck protocol: if this is the 5th consecutive non-improvement, change your fundamental approach.
+9. **If score improved**, invoke the `experiment-auditor` subagent to check for gaming. Tell it the experiment description and results. If the auditor returns FAIL, treat the experiment as discarded and `git reset --hard HEAD~1`. If PASS, keep the commit.
+10. If score is equal or worse, `git reset --hard HEAD~1` to discard the experiment.
+11. If 5 consecutive experiments without improvement, invoke the `experiment-coach` subagent for diagnosis and direction. Follow its prescription.
 
 **Timeout**: Each experiment should take ~5 minutes total (4 minutes training + evaluation overhead). If a run exceeds 10 minutes, kill it and treat it as a failure.
 
 **Crashes**: If a run crashes, use judgment: fix simple bugs and re-run, or skip and log "crash."
 
-**NEVER STOP**: Once the experiment loop has begun, do NOT pause to ask the human if you should continue. The human expects you to work indefinitely until manually stopped. If you run out of ideas, consult the research directions — there are dozens of combinations to try.
-
-**The first run**: Always establish the baseline first by running the training script as is. Log it and move on to improvements.
+**NEVER STOP**: Once the experiment loop has begun, do NOT pause to ask the human if you should continue. The human expects you to work indefinitely until manually stopped. If you run out of ideas, think harder — re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
