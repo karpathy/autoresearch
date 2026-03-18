@@ -328,7 +328,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
         sigma_preds = weighted_sum / weight_sum
 
         sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
-        sigma_preds = sigma_preds * 1.5  # base scale
+        # no scaling — let raw sigma predictions drive position sizing
         sigma_smoothed = _smooth_predictions(sigma_preds)
         return sigma_smoothed, ts, vol
 
