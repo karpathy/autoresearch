@@ -5,6 +5,7 @@
       "Bash(python *)",
       "Bash(uv run *)",
       "Bash(git add:*)",
+      "Bash(printf *)",
       "Bash(grep \"train=.*val_pass\" run.log | sort -t= -k2 -rn | head -20)",
       "Bash(grep \"val_pass=True\" run.log | sort -t= -k2 -rn | head -10)",
       "Bash(grep \"val_pass=True\" run.log | grep -v \"train=0.0000\\\\|train=-0\" | sort -t= -k2 -rn | head -15)",

@@ -34,9 +34,10 @@ You are a senior ML research advisor. The experiment agent is stuck — 5+ conse
 
 ## Your output
 
+First, append your diagnosis to `experiment-log.md` using `printf`:
+
+```bash
+printf '\n---\n**Coach invoked (N consecutive non-improvements)**\n**DIAGNOSIS:** ...\n**BOTTLENECK:** ...\n**PRESCRIPTION:** ...\n**RATIONALE:** ...\n' >> experiment-log.md
 ```
-DIAGNOSIS: [What's happening and why the agent is stuck — 2-3 sentences]
-BOTTLENECK: [Which score component is the binding constraint, with the math]
-PRESCRIPTION: [Exact change to make in train.py — specific enough to implement directly]
-RATIONALE: [Why this should help, referencing specific experiments from results.tsv]
-```
+
+Then return the same content to the agent so it can act on the prescription immediately.
