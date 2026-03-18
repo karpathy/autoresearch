@@ -205,13 +205,24 @@ class GPT(nn.Module):
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
         if device is None:
             device = self.transformer.wte.weight.device
-        channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
-        inv_freq = 1.0 / (base ** (channel_range / head_dim))
-        t = torch.arange(seq_len, dtype=torch.float32, device=device)
-        freqs = torch.outer(t, inv_freq)
-        cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.bfloat16(), sin.bfloat16()
-        cos, sin = cos[None, :, None, :], sin[None, :, None, :]
+        n_heads = self.config.n_head
+        # Create different base frequencies for different heads
+        cos_list, sin_list = [], []
+        for head_idx in range(n_heads):
+            # First half of heads use higher base frequency, second half use standard
+            head_base = 50000 if head_idx < n_heads // 2 else 10000
+            channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
+            inv_freq = 1.0 / (head_base ** (channel_range / head_dim))
+            t = torch.arange(seq_len, dtype=torch.float32, device=device)
+            freqs = torch.outer(t, inv_freq)
+            cos, sin = freqs.cos(), freqs.sin()
+            cos, sin = cos.bfloat16(), sin.bfloat16()
+            cos_list.append(cos)
+            sin_list.append(sin)
+        # Stack along head dimension
+        cos = torch.stack(cos_list, dim=2)  # [1, seq_len, n_head, head_dim//2]
+        sin = torch.stack(sin_list, dim=2)  # [1, seq_len, n_head, head_dim//2]
+        cos, sin = cos[None, :, :, :], sin[None, :, :, :]
         return cos, sin
 
     def _compute_window_sizes(self, config):
@@ -464,7 +475,7 @@ MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
 SCALAR_LR = 0.5         # learning rate for per-layer scalars (Adam)
 WEIGHT_DECAY = 0.2      # cautious weight decay for Muon
 ADAM_BETAS = (0.8, 0.95) # Adam beta1, beta2
-WARMUP_RATIO = 0.05     # fraction of time budget for LR warmup
+WARMUP_RATIO = 0.0      # fraction of time budget for LR warmup
 WARMDOWN_RATIO = 0.75   # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
