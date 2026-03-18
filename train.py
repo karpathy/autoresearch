@@ -289,36 +289,29 @@ def build_model(train_df: pd.DataFrame) -> callable:
     selected = importances >= threshold
     features_pruned = features[:, selected]
 
-    # --- Train pass 2: GBT-dominant blend with ExtraTrees ---
-    gbt = HistGradientBoostingRegressor(
-        max_iter=5000,
-        max_depth=4,
-        min_samples_leaf=600,
-        learning_rate=0.01,
-        max_leaf_nodes=20,
-        l2_regularization=3.0,
-        random_state=42,
-    )
-    gbt.fit(features_pruned, targets)
+    # --- Train pass 2: hyperparameter-diverse GBT ensemble ---
+    gbt_configs = [
+        {"max_depth": 4, "min_samples_leaf": 600, "l2_regularization": 3.0, "max_leaf_nodes": 20},
+        {"max_depth": 3, "min_samples_leaf": 800, "l2_regularization": 5.0, "max_leaf_nodes": 15},
+        {"max_depth": 5, "min_samples_leaf": 400, "l2_regularization": 2.0, "max_leaf_nodes": 31},
+    ]
+    models = []
+    for cfg in gbt_configs:
+        m = HistGradientBoostingRegressor(
+            max_iter=5000, learning_rate=0.01, random_state=42, **cfg,
+        )
+        m.fit(features_pruned, targets)
+        models.append(m)
 
-    et = ExtraTreesRegressor(
-        n_estimators=3000,
-        max_depth=7,
-        min_samples_leaf=600,
-        random_state=42,
-        n_jobs=-1,
-    )
-    et.fit(features_pruned, targets)
-
-    blend_weights = [0.75, 0.25]  # GBT-dominant
-    models = [gbt, et]
+    blend_weights = [1.0 / len(models)] * len(models)
 
     # Approximate param count
-    n_params = sum(
-        gbt._predictors[j][0].get_n_leaf_nodes()
-        for j in range(len(gbt._predictors))
-    )
-    n_params += count_model_params([et])
+    n_params = 0
+    for m in models:
+        n_params += sum(
+            m._predictors[j][0].get_n_leaf_nodes()
+            for j in range(len(m._predictors))
+        )
 
     # --- Return prediction closure ---
     def predict_fn(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
