@@ -27,16 +27,13 @@ VOLATILITY_WINDOWS = [24, 168]
 MAX_LOOKBACK = 168  # maximum lookback window (1 week)
 
 
-def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute features from OHLCV data.
-
-    All return-based features are vol-normalized (divided by 168h rolling vol)
-    so the model sees "how many sigma" rather than raw percentages.
-    This makes features more comparable across different volatility regimes.
 
     Returns:
         features: (N, n_features) array where N = len(df) - MAX_LOOKBACK.
         timestamps: (N,) array of pd.Timestamp aligned with features.
+        vol_safe: (N,) array of 168h rolling vol for target normalization.
     """
     close = df["close"].values.astype(np.float64)
     volume = df["volume"].values.astype(np.float64)
@@ -121,8 +118,9 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     valid_start = MAX_LOOKBACK
     features = features[valid_start:]
     timestamps = ts[valid_start:]
+    vol_trimmed = vol_safe[valid_start:]
 
-    return features, timestamps
+    return features, timestamps, vol_trimmed
 
 
 def compute_targets(df: pd.DataFrame) -> np.ndarray:
@@ -169,18 +167,18 @@ def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     """Generate predictions on arbitrary OHLCV data.
 
-    This function is passed to evaluate_model() which calls it on
-    the full dataset internally. Must work on any date range.
+    Model predicts in sigma-space; denormalize to raw return space.
     """
-    features, timestamps = compute_features(df)
+    features, timestamps, vol_safe = compute_features(df)
     features = np.nan_to_num(features, nan=0.0)
 
     model = _trained_model
     if model is None:
         raise RuntimeError("Model not trained. Run train.py first.")
 
-    raw_preds = model.predict(features)
-    compressed = 0.02 * np.tanh(raw_preds / 0.02)
+    sigma_preds = model.predict(features)
+    raw_preds = sigma_preds * vol_safe
+    compressed = 0.012 * np.tanh(raw_preds / 0.012)
     preds = _smooth_predictions(compressed)
     return preds, timestamps
 
@@ -200,7 +198,7 @@ def main():
     print(f"  {len(train_df)} rows")
 
     # --- Compute features and targets ---
-    features, timestamps = compute_features(train_df)
+    features, timestamps, vol_safe = compute_features(train_df)
     targets = compute_targets(train_df)
 
     # Align: targets need same trimming as features (MAX_LOOKBACK from start)
@@ -210,10 +208,12 @@ def main():
     valid = ~np.isnan(targets)
     features = features[valid]
     targets = targets[valid]
+    vol_train = vol_safe[valid]
     train_timestamps = timestamps[valid]
 
-    # Winsorize targets at ±5% to reduce influence of extreme returns
-    targets = np.clip(targets, -0.05, 0.05)
+    # Vol-normalize targets first, then winsorize in sigma-space
+    targets = targets / vol_train
+    targets = np.clip(targets, -5.0, 5.0)
 
     features = np.nan_to_num(features, nan=0.0)
 
