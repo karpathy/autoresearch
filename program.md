@@ -56,6 +56,7 @@ Each experiment runs on a single machine. The training script runs for a **fixed
 8. **No hardcoded regime filters.** No "go flat when X" or "never go short" rules.
 9. **One change per experiment.** Each experiment should isolate a single conceptual change. Coupled parameters that only make sense together (e.g. n_estimators + learning_rate) count as one change. Unrelated changes (e.g. adding a feature AND changing the loss function) do not. If you change two unrelated things and the score drops, you don't know which one caused it.
 10. **Don't abandon near-misses.** If an experiment scores within ~90% of the best, the approach is promising — try adjusting the obvious knob before moving to a completely different idea. Distinguish "wrong approach" from "wrong parameterization."
+11. **Don't ignore stagnant consistency.** If consistency hasn't improved in 10+ experiments while score keeps rising, you're optimizing Sharpe on the winning subperiods and ignoring the losing ones. That's overfitting to the evaluation structure. Prioritize experiments that target the losing subperiods, even if they temporarily reduce Sharpe.
 
 Score improvements are audited by the `experiment-auditor` subagent. If it detects gaming, the experiment is discarded regardless of score.
 
@@ -136,6 +137,7 @@ LOOP FOREVER:
 11. **If score improved**, invoke the `experiment-auditor` subagent to check for gaming. Tell it the experiment description and results. If the auditor returns FAIL, treat the experiment as discarded and `git reset --hard HEAD~1`. If PASS, keep the commit.
 12. If score is equal or worse, `git reset --hard HEAD~1` to discard the experiment.
 13. If 5 consecutive experiments without improvement, invoke the `experiment-coach` subagent for diagnosis and direction. Follow its prescription.
+14. If consistency hasn't improved in 10+ experiments (even if score is improving), invoke the `experiment-coach`. Improving Sharpe on winning subperiods while ignoring losing ones is a trap.
 
 **Timeout**: Each experiment should take ~5 minutes total (4 minutes training + evaluation overhead). If a run exceeds 10 minutes, kill it and treat it as a failure.
 
