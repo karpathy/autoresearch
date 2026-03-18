@@ -95,6 +95,14 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         bb_pos = (close - sma) / (2 * std_safe)
         feature_cols.append(bb_pos)
 
+    # 7b. Bollinger band width: 2*std/sma (narrow = consolidation, wide = trending)
+    for w in [24, 72]:
+        sma = close_series.rolling(w, min_periods=w).mean().values
+        std = close_series.rolling(w, min_periods=w).std().values
+        sma_safe = np.where(sma > 0, sma, 1.0)
+        bb_width = 2 * std / sma_safe
+        feature_cols.append(bb_width)
+
     # 8. VWAP deviation (volume-weighted average price vs close)
     vwap_24 = (pd.Series(close * volume).rolling(24, min_periods=24).sum().values /
                pd.Series(volume).rolling(24, min_periods=24).sum().values)
