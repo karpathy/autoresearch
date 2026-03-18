@@ -27,9 +27,10 @@ commands:
 """
     )
 
-    captured = {}
+    captured = {"called": False, "gates": ()}
 
     def fake_run_required_gates(run, required_gates, command_map, cwd):
+        captured["called"] = True
         captured["gates"] = tuple(required_gates)
         run.status = "pass"
         run.gate_results = []
@@ -39,4 +40,5 @@ commands:
 
     run_once(target_repo=tmp_path, request="Add billing status badge", dry_run=False)
 
-    assert "dev" not in captured.get("gates", ())
+    assert captured["called"]
+    assert captured["gates"] == ("lint", "typecheck", "test", "smoke")
