@@ -235,7 +235,7 @@ def main():
         max_iter=500,
         max_depth=4,
         learning_rate=0.02,
-        min_samples_leaf=100,
+        min_samples_leaf=200,
         max_bins=255,
         l2_regularization=1.0,
         loss="squared_error",
