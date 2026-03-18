@@ -53,36 +53,47 @@ TRAIN_START = pd.Timestamp("2018-01-01")
 # ---------------------------------------------------------------------------
 
 def _compute_splits(data_end):
-    """Compute walk-forward splits: train to T-12mo, val T-12 to T-6mo, holdout T-6mo to T.
+    """Regime-based evaluation splits with hardcoded boundaries.
 
-    Splits snap to month boundaries. Train gets 3 subperiods (long window
-    deserves more granularity), val and holdout get 2 each. Total: 7 subperiods,
-    matching the original consistency denominator.
+    Seven subperiods across three splits, each corresponding to a distinct
+    BTC market regime. The model trains on all data from 2018, but evaluation
+    only covers 2022+ where regime labels are meaningful.
+
+    Split 1 — Eval Train (2022-01-01 to 2024-06-30), 3 subperiods
+    Split 2 — Val (2024-07-01 to 2025-06-30), 2 subperiods
+    Split 3 — Holdout (2025-07-01 to end of data), 2 subperiods
     """
-    ref_month = data_end.to_period('M') + 1  # first of next month
+    T = pd.Timestamp
 
-    train_start = TRAIN_START
+    # Split 1: Eval Train
+    train_start = T("2022-01-01")
+    train_end = T("2024-06-30 23:00:00")
+    train_subs = [
+        (T("2022-01-01"), T("2022-12-31 23:00:00"), "2022 bear"),
+        (T("2023-01-01"), T("2023-12-31 23:00:00"), "2023 recovery"),
+        (T("2024-01-01"), T("2024-06-30 23:00:00"), "2024 ETF rally"),
+    ]
+
+    # Split 2: Val
+    val_start = T("2024-07-01")
+    val_end = T("2025-06-30 23:00:00")
+    val_subs = [
+        (T("2024-07-01"), T("2024-12-31 23:00:00"), "2024 H2 consolidation"),
+        (T("2025-01-01"), T("2025-06-30 23:00:00"), "2025 H1"),
+    ]
+
+    # Split 3: Holdout
+    holdout_start = T("2025-07-01")
     holdout_end = data_end
-    holdout_start = (ref_month - 6).to_timestamp()
-    val_end = holdout_start - pd.Timedelta(hours=1)
-    val_start = (ref_month - 12).to_timestamp()
-    train_end = val_start - pd.Timedelta(hours=1)
-
-    def split_n(start, end, n):
-        """Split a time range into n roughly equal subperiods."""
-        total = end - start
-        chunk = total / n
-        subs = []
-        for i in range(n):
-            s = start + chunk * i
-            e = start + chunk * (i + 1) if i < n - 1 else end
-            subs.append((s.floor('h'), e.floor('h')))
-        return subs
+    holdout_subs = [
+        (T("2025-07-01"), T("2025-12-31 23:00:00"), "2025 H2"),
+        (T("2026-01-01"), data_end, "2026 YTD"),
+    ]
 
     return [
-        (train_start, train_end, split_n(train_start, train_end, 3)),
-        (val_start, val_end, split_n(val_start, val_end, 2)),
-        (holdout_start, holdout_end, split_n(holdout_start, holdout_end, 2)),
+        (train_start, train_end, train_subs),
+        (val_start, val_end, val_subs),
+        (holdout_start, holdout_end, holdout_subs),
     ]
 
 
@@ -253,7 +264,7 @@ def _backtest(sigma_predictions: np.ndarray, close_prices: np.ndarray,
         sigma_predictions: Array of sigma-space predictions, one per timestamp.
         close_prices: Array of close prices aligned with predictions.
         timestamps: Array of pd.Timestamp aligned with predictions.
-        subperiods: List of (start, end) Timestamp tuples for consistency check.
+        subperiods: List of (start, end, label) tuples for consistency check.
 
     Returns:
         dict with keys: sharpe, max_drawdown, n_trades, total_return,
@@ -316,7 +327,7 @@ def _backtest(sigma_predictions: np.ndarray, close_prices: np.ndarray,
     # Subperiod returns
     ts_series = pd.Series(timestamps)
     subperiod_returns = []
-    for sp_start, sp_end in subperiods:
+    for sp_start, sp_end, *_ in subperiods:
         mask = (ts_series >= sp_start) & (ts_series <= sp_end)
         if mask.sum() > 0:
             sp_equity = np.cumprod(1.0 + portfolio_returns[mask.values])
@@ -623,7 +634,6 @@ def _run_diagnostic():
     print(f"  dd_mult={dd_mult:.4f}, trade_mult={trade_mult:.4f}")
 
     losing_subperiods = []
-    sp_idx = 0
 
     for i, (name, (s, e, subperiods), result) in enumerate(
             zip(split_names, splits, split_results)):
@@ -634,15 +644,13 @@ def _run_diagnostic():
         print(f"  Trades: {result['n_trades']}")
         print(f"  Total return: {result['total_return']:+.1%}")
 
-        for j, ((sp_start, sp_end), sp_ret) in enumerate(
-                zip(subperiods, result["subperiod_returns"])):
-            mark = "+" if sp_ret > 0 else "-"
+        for (sp_start, sp_end, label), sp_ret in zip(
+                subperiods, result["subperiod_returns"]):
             symbol = "OK" if sp_ret > 0 else "LOSS"
-            print(f"  Subperiod {j+1} ({sp_start.date()} to {sp_end.date()}): "
+            print(f"  {label} ({sp_start.date()} to {sp_end.date()}): "
                   f"return {sp_ret:+.2%}  {symbol}")
             if sp_ret <= 0:
-                losing_subperiods.append(f"{name}-{j+1}")
-            sp_idx += 1
+                losing_subperiods.append(label)
 
     print(f"\nLosing subperiods: {', '.join(losing_subperiods) if losing_subperiods else 'None'}")
     print()
@@ -714,13 +722,13 @@ def _run_calibrate():
 
         # Per-subperiod breakdown
         ts_series = pd.to_datetime(merged["timestamp"])
-        for j, (sp_start, sp_end) in enumerate(subperiods):
+        for j, (sp_start, sp_end, label) in enumerate(subperiods):
             sp_mask = (ts_series >= sp_start) & (ts_series <= sp_end)
             sp_preds = preds[sp_mask.values]
             sp_abs = np.abs(sp_preds)
             if len(sp_preds) > 0:
                 above_thresh = (sp_abs > SIGMA_THRESHOLD).sum()
-                print(f"    Subperiod {j+1} ({sp_start.date()}-{sp_end.date()}): "
+                print(f"    {label} ({sp_start.date()}-{sp_end.date()}): "
                       f"mean={sp_preds.mean():+.4f}, std={sp_preds.std():.4f}, "
                       f"|pred|>threshold: {above_thresh} ({above_thresh/len(sp_preds)*100:.1f}%)")
 
