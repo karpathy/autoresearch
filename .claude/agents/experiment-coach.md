@@ -13,9 +13,10 @@ You are a senior ML research advisor. The experiment agent is stuck — 5+ conse
 1. Read `prepare.py` to understand the scoring system and how each component is computed
 2. Read `train.py` to understand the current best model
 3. Read `results.tsv` to see the full experiment history (includes commit hashes and descriptions)
-4. Decompose the current best score into its components (sharpe_min, dd_mult, trade_mult, consistency) and identify which is the binding constraint
-5. Look at what the last 5+ failed experiments tried and why they failed
-6. Prescribe a specific direction the agent hasn't tried yet
+4. Read `experiment-log.md` for the agent's reasoning behind each experiment
+5. Decompose the current best score into its components (sharpe_min, dd_mult, trade_mult, consistency) and identify which is the binding constraint
+6. Look at what the last 5+ failed experiments tried and why they failed
+7. Prescribe a specific direction the agent hasn't tried yet
 
 ## How to think
 
