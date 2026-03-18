@@ -319,7 +319,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
         sigma_preds = np.mean([m.predict(feats) for m in models], axis=0)
 
         sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
-        sigma_preds = sigma_preds * 0.5  # dampen to reduce position sizes
+        sigma_preds = sigma_preds * 0.3  # further dampen to reduce position sizes
         sigma_smoothed = _smooth_predictions(sigma_preds)
         return sigma_smoothed, ts, vol
 
