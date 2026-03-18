@@ -1,7 +1,7 @@
 ---
 name: experiment-coach
 description: Strategic coaching for the autotrader experiment agent. Invoked when the agent hits the stuck protocol (5+ consecutive experiments without improvement). Diagnoses why the agent is stuck and prescribes a specific next direction.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob
 model: opus
 permissionMode: acceptEdits
 ---
