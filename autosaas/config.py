@@ -28,7 +28,10 @@ def load_target_config(config_path: Path) -> TargetConfig:
     Intentionally narrow: only the `commands.*` keys used by the early scaffolding
     are supported/validated here.
     """
-    raw_data = yaml.safe_load(config_path.read_text())
+    try:
+        raw_data = yaml.safe_load(config_path.read_text())
+    except yaml.YAMLError as exc:
+        raise ValueError("project.autosaas.yaml contains invalid YAML") from exc
     data = raw_data if raw_data is not None else {}
     if not isinstance(data, dict):
         raise ValueError("project.autosaas.yaml must be a mapping")

@@ -68,7 +68,13 @@ def run_once(target_repo: Path | str, request: str, dry_run: bool = False) -> Ru
         if dry_run:
             run.status = "keep"
         else:
-            command_map = _load_target_commands(repo_path)
+            try:
+                command_map = _load_target_commands(repo_path)
+            except (ValueError, KeyError) as exc:
+                run.status = "blocked"
+                blocked_report = _sanitize_report(f"blocked: {exc}", sensitive_literals)
+                return RunResult(slice_name=run.slice_name, status=run.status, report=blocked_report)
+
             if not command_map:
                 run.status = "blocked"
             else:

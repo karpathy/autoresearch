@@ -19,3 +19,10 @@ AutoSaaS assumes the target repository exposes a tiny contract that lets the con
 ## Dry run tolerance
 
 - When `dry_run=True`, none of the commands need to exist and the configuration file may be absent. The controller still walks the same pipeline in a minimal form (slice selection, executor scope, redacted reporting) so integration tests and documentation can rely on the same interfaces as a real run.
+
+## Status outcomes
+
+- `keep`: dry-run completed successfully, or all required validation gates passed.
+- `revert`: one or more required validation gates failed.
+- `blocked`: the target repo contract is missing or invalid for a real run.
+- `crash`: the engine itself encountered an unexpected internal error.

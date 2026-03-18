@@ -62,3 +62,13 @@ def test_run_once_handles_exceptions_and_returns_crash(tmp_path, monkeypatch):
 
     assert result.status == "crash"
     assert "boom" in result.report
+
+
+def test_run_once_returns_blocked_for_invalid_target_config(tmp_path):
+    config_path = tmp_path / "project.autosaas.yaml"
+    config_path.write_text("[]")
+
+    result = run_once(target_repo=tmp_path, request="Add billing status badge", dry_run=False)
+
+    assert result.status == "blocked"
+    assert "project.autosaas.yaml" in result.report
