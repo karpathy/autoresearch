@@ -22,21 +22,18 @@ from prepare import (
 # Feature Engineering
 # ---------------------------------------------------------------------------
 
-RETURN_LOOKBACKS = [1, 4, 12, 24, 72, 168]
+RETURN_LOOKBACKS = [1, 4, 12, 24, 48, 72, 168]
 VOLATILITY_WINDOWS = [24, 168]
 MAX_LOOKBACK = 168  # maximum lookback window (1 week)
 
 
-def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compute features from OHLCV data.
-
-    All return-based features are vol-normalized (divided by 168h rolling vol)
-    so the model sees "how many sigma" rather than raw percentages.
-    This makes features more comparable across different volatility regimes.
 
     Returns:
         features: (N, n_features) array where N = len(df) - MAX_LOOKBACK.
         timestamps: (N,) array of pd.Timestamp aligned with features.
+        vol_safe: (N,) array of 168h rolling vol for target normalization.
     """
     close = df["close"].values.astype(np.float64)
     volume = df["volume"].values.astype(np.float64)
@@ -83,7 +80,37 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     hl_range_24 = pd.Series(hl_range).rolling(24, min_periods=24).mean().values
     feature_cols.append(hl_range_24)
 
-    # 6. Hour of day (cyclical)
+    # 6. RSI-like indicator (proportion of up-hours in window)
+    up = (hourly_returns > 0).astype(np.float64)
+    for w in [24, 72, 168]:
+        rsi = pd.Series(up).rolling(w, min_periods=w).mean().values
+        feature_cols.append(rsi - 0.5)  # center around zero
+
+    # 7. Bollinger band position: (close - SMA) / (2 * std)
+    close_series = pd.Series(close)
+    for w in [24, 72]:
+        sma = close_series.rolling(w, min_periods=w).mean().values
+        std = close_series.rolling(w, min_periods=w).std().values
+        std_safe = np.where(std > 0, std, 1.0)
+        bb_pos = (close - sma) / (2 * std_safe)
+        feature_cols.append(bb_pos)
+
+    # 8. VWAP deviation (volume-weighted average price vs close)
+    vwap_24 = (pd.Series(close * volume).rolling(24, min_periods=24).sum().values /
+               pd.Series(volume).rolling(24, min_periods=24).sum().values)
+    vwap_dev = np.where(vwap_24 > 0, (close - vwap_24) / vwap_24, 0.0)
+    feature_cols.append(vwap_dev)
+
+    # 9. Return autocorrelation at lag 24h (rolling over 168h window)
+    # Captures momentum persistence: high autocorrelation = trending market
+    ret_24h = np.full(len(close), np.nan)
+    ret_24h[24:] = close[24:] / close[:-24] - 1.0
+    ret_24h_series = pd.Series(ret_24h)
+    ret_24h_lagged = ret_24h_series.shift(24)
+    autocorr = ret_24h_series.rolling(168, min_periods=168).corr(ret_24h_lagged).values
+    feature_cols.append(np.nan_to_num(autocorr, nan=0.0))
+
+    # 10. Hour of day (cyclical)
     dt = pd.to_datetime(ts)
     hours = dt.hour
     feature_cols.append(np.sin(2 * np.pi * hours / 24))
@@ -100,8 +127,9 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     valid_start = MAX_LOOKBACK
     features = features[valid_start:]
     timestamps = ts[valid_start:]
+    vol_trimmed = vol_safe[valid_start:]
 
-    return features, timestamps
+    return features, timestamps, vol_trimmed
 
 
 def compute_targets(df: pd.DataFrame) -> np.ndarray:
@@ -141,25 +169,25 @@ def count_model_params(model=None) -> int:
 # ---------------------------------------------------------------------------
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
-    """Apply 48h rolling mean to smooth noisy tree-based predictions."""
-    return pd.Series(raw_preds).rolling(48, min_periods=1).mean().values
+    """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
+    return pd.Series(raw_preds).ewm(span=48, min_periods=1).mean().values
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     """Generate predictions on arbitrary OHLCV data.
 
-    This function is passed to evaluate_model() which calls it on
-    the full dataset internally. Must work on any date range.
+    Model predicts in sigma-space; denormalize to raw return space.
     """
-    features, timestamps = compute_features(df)
+    features, timestamps, vol_safe = compute_features(df)
     features = np.nan_to_num(features, nan=0.0)
 
     model = _trained_model
     if model is None:
         raise RuntimeError("Model not trained. Run train.py first.")
 
-    raw_preds = model.predict(features)
-    compressed = 0.02 * np.tanh(raw_preds / 0.02)
+    sigma_preds = model.predict(features)
+    raw_preds = sigma_preds * vol_safe
+    compressed = 0.012 * np.tanh(raw_preds / 0.012)
     preds = _smooth_predictions(compressed)
     return preds, timestamps
 
@@ -179,7 +207,7 @@ def main():
     print(f"  {len(train_df)} rows")
 
     # --- Compute features and targets ---
-    features, timestamps = compute_features(train_df)
+    features, timestamps, vol_safe = compute_features(train_df)
     targets = compute_targets(train_df)
 
     # Align: targets need same trimming as features (MAX_LOOKBACK from start)
@@ -189,10 +217,12 @@ def main():
     valid = ~np.isnan(targets)
     features = features[valid]
     targets = targets[valid]
+    vol_train = vol_safe[valid]
     train_timestamps = timestamps[valid]
 
-    # Winsorize targets at ±5% to reduce influence of extreme returns
-    targets = np.clip(targets, -0.05, 0.05)
+    # Vol-normalize targets first, then winsorize in sigma-space
+    targets = targets / vol_train
+    targets = np.clip(targets, -5.0, 5.0)
 
     features = np.nan_to_num(features, nan=0.0)
 
@@ -203,13 +233,14 @@ def main():
     train_start = time.time()
 
     model = GradientBoostingRegressor(
-        n_estimators=300,
+        n_estimators=250,
         max_depth=3,
-        learning_rate=0.025,
-        subsample=0.8,
-        min_samples_leaf=200,
-        max_features=0.8,
-        loss="squared_error",
+        learning_rate=0.03,
+        subsample=0.7,
+        min_samples_leaf=300,
+        max_features=0.6,
+        loss="huber",
+        alpha=0.8,
         random_state=42,
     )
     # Time-decay weighting: recent data is more relevant than old data.
