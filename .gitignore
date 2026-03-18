@@ -21,3 +21,7 @@ dev/
 
 # Results file
 results.tsv
+data/*
+!data/Criteo_x1/
+data/Criteo_x1/*
+!data/Criteo_x1/features.json

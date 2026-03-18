@@ -1,389 +1,292 @@
-"""
-One-time data preparation for autoresearch experiments.
-Downloads data shards and trains a BPE tokenizer.
-
-Usage:
-    python prepare.py                  # full prep (download + tokenizer)
-    python prepare.py --num-shards 8   # download only 8 shards (for testing)
-
-Data and tokenizer are stored in ~/.cache/autoresearch/.
-"""
-
 import os
-import sys
-import time
-import math
+import json
 import argparse
-import pickle
-from multiprocessing import Pool
+import zipfile
 
+import numpy as np
+import pandas as pd
 import requests
-import pyarrow.parquet as pq
-import rustbpe
-import tiktoken
-import torch
 
-# ---------------------------------------------------------------------------
-# Constants (fixed, do not modify)
-# ---------------------------------------------------------------------------
+CTR_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+CTR_DATASET_DIR = os.path.join(CTR_CACHE_DIR, "datasets")
+FEATURE_CONFIG_NAMES = ("features.json", "feature_config.json")
 
-MAX_SEQ_LEN = 2048       # context length
-TIME_BUDGET = 300        # training time budget in seconds (5 minutes)
-EVAL_TOKENS = 40 * 524288  # number of tokens for val eval
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "autoresearch")
-DATA_DIR = os.path.join(CACHE_DIR, "data")
-TOKENIZER_DIR = os.path.join(CACHE_DIR, "tokenizer")
-BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main"
-MAX_SHARD = 6542 # the last datashard is shard_06542.parquet
-VAL_SHARD = MAX_SHARD  # pinned validation shard (shard_06542)
-VAL_FILENAME = f"shard_{VAL_SHARD:05d}.parquet"
-VOCAB_SIZE = 8192
-
-# BPE split pattern (GPT-4 style, with \p{N}{1,2} instead of {1,3})
-SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
-
-SPECIAL_TOKENS = [f"<|reserved_{i}|>" for i in range(4)]
-BOS_TOKEN = "<|reserved_0|>"
-
-# ---------------------------------------------------------------------------
-# Data download
-# ---------------------------------------------------------------------------
-
-def download_single_shard(index):
-    """Download one parquet shard with retries. Returns True on success."""
-    filename = f"shard_{index:05d}.parquet"
-    filepath = os.path.join(DATA_DIR, filename)
-    if os.path.exists(filepath):
-        return True
-
-    url = f"{BASE_URL}/{filename}"
-    max_attempts = 5
-    for attempt in range(1, max_attempts + 1):
-        try:
-            response = requests.get(url, stream=True, timeout=30)
-            response.raise_for_status()
-            temp_path = filepath + ".tmp"
-            with open(temp_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
-            os.rename(temp_path, filepath)
-            print(f"  Downloaded {filename}")
-            return True
-        except (requests.RequestException, IOError) as e:
-            print(f"  Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
-            for path in [filepath + ".tmp", filepath]:
-                if os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
-            if attempt < max_attempts:
-                time.sleep(2 ** attempt)
-    return False
+DATASET_URLS = {
+    "Criteo_x1": "https://huggingface.co/datasets/reczoo/Criteo_x1/resolve/main/Criteo_x1.zip?download=true",
+    "Criteo_x2": "https://huggingface.co/datasets/reczoo/Criteo_x2/resolve/main/Criteo_x2.zip?download=true",
+    "Criteo_x4": "https://huggingface.co/datasets/reczoo/Criteo_x4/resolve/main/Criteo_x4.zip?download=true",
+    "Avazu_x1": "https://huggingface.co/datasets/reczoo/Avazu_x1/resolve/main/Avazu_x1.zip?download=true",
+    "Avazu_x2": "https://huggingface.co/datasets/reczoo/Avazu_x2/resolve/main/Avazu_x2.zip?download=true",
+    "Avazu_x4": "https://huggingface.co/datasets/reczoo/Avazu_x4/resolve/main/Avazu_x4.zip?download=true",
+    "KKBox_x1": "https://huggingface.co/datasets/reczoo/KKBox_x1/resolve/main/KKBox_x1.zip?download=true",
+    "Frappe_x1": "https://huggingface.co/datasets/reczoo/Frappe_x1/resolve/main/Frappe_x1.zip?download=true",
+    "MovielensLatest_x1": "https://huggingface.co/datasets/reczoo/MovielensLatest_x1/resolve/main/MovielensLatest_x1.zip?download=true",
+    "TaobaoAd_x1": "https://huggingface.co/datasets/reczoo/TaobaoAd_x1/resolve/main/TaobaoAd_x1.zip?download=true",
+    "AmazonElectronics_x1": "https://huggingface.co/datasets/reczoo/AmazonElectronics_x1/resolve/main/AmazonElectronics_x1.zip?download=true",
+    "iPinYou_x1": "https://huggingface.co/datasets/reczoo/iPinYou_x1/resolve/main/iPinYou_x1.zip?download=true",
+    "MicroVideo1.7M_x1": "https://huggingface.co/datasets/reczoo/MicroVideo1.7M_x1/resolve/main/MicroVideo1.7M_x1.zip?download=true",
+    "KuaiVideo_x1": "https://huggingface.co/datasets/reczoo/KuaiVideo_x1/resolve/main/KuaiVideo_x1.zip?download=true",
+    "MIND_small_x1": "https://huggingface.co/datasets/reczoo/MIND_small_x1/resolve/main/MIND_small_x1.zip?download=true",
+}
 
 
-def download_data(num_shards, download_workers=8):
-    """Download training shards + pinned validation shard."""
-    os.makedirs(DATA_DIR, exist_ok=True)
-    num_train = min(num_shards, MAX_SHARD)
-    ids = list(range(num_train))
-    if VAL_SHARD not in ids:
-        ids.append(VAL_SHARD)
-
-    # Count what's already downloaded
-    existing = sum(1 for i in ids if os.path.exists(os.path.join(DATA_DIR, f"shard_{i:05d}.parquet")))
-    if existing == len(ids):
-        print(f"Data: all {len(ids)} shards already downloaded at {DATA_DIR}")
-        return
-
-    needed = len(ids) - existing
-    print(f"Data: downloading {needed} shards ({existing} already exist)...")
-
-    workers = max(1, min(download_workers, needed))
-    with Pool(processes=workers) as pool:
-        results = pool.map(download_single_shard, ids)
-
-    ok = sum(1 for r in results if r)
-    print(f"Data: {ok}/{len(ids)} shards ready at {DATA_DIR}")
-
-# ---------------------------------------------------------------------------
-# Tokenizer training
-# ---------------------------------------------------------------------------
-
-def list_parquet_files():
-    """Return sorted list of parquet file paths in the data directory."""
-    files = sorted(f for f in os.listdir(DATA_DIR) if f.endswith(".parquet") and not f.endswith(".tmp"))
-    return [os.path.join(DATA_DIR, f) for f in files]
+def _read_raw_data(path):
+    if path.endswith(".parquet") or path.endswith(".pq"):
+        return pd.read_parquet(path)
+    return pd.read_csv(path)
 
 
-def text_iterator(max_chars=1_000_000_000, doc_cap=10_000):
-    """Yield documents from training split (all shards except pinned val shard)."""
-    parquet_paths = [p for p in list_parquet_files() if not p.endswith(VAL_FILENAME)]
-    nchars = 0
-    for filepath in parquet_paths:
-        pf = pq.ParquetFile(filepath)
-        for rg_idx in range(pf.num_row_groups):
-            rg = pf.read_row_group(rg_idx)
-            for text in rg.column("text").to_pylist():
-                doc = text[:doc_cap] if len(text) > doc_cap else text
-                nchars += len(doc)
-                yield doc
-                if nchars >= max_chars:
-                    return
+def _download_file(url, dst_path):
+    resp = requests.get(url, stream=True, timeout=60)
+    resp.raise_for_status()
+    with open(dst_path, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                f.write(chunk)
 
 
-def train_tokenizer():
-    """Train BPE tokenizer using rustbpe, save as tiktoken pickle."""
-    tokenizer_pkl = os.path.join(TOKENIZER_DIR, "tokenizer.pkl")
-    token_bytes_path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
-
-    if os.path.exists(tokenizer_pkl) and os.path.exists(token_bytes_path):
-        print(f"Tokenizer: already trained at {TOKENIZER_DIR}")
-        return
-
-    os.makedirs(TOKENIZER_DIR, exist_ok=True)
-
-    parquet_files = list_parquet_files()
-    if len(parquet_files) < 2:
-        print("Tokenizer: need at least 2 data shards (1 train + 1 val). Download more data first.")
-        sys.exit(1)
-
-    # --- Train with rustbpe ---
-    print("Tokenizer: training BPE tokenizer...")
-    t0 = time.time()
-
-    tokenizer = rustbpe.Tokenizer()
-    vocab_size_no_special = VOCAB_SIZE - len(SPECIAL_TOKENS)
-    tokenizer.train_from_iterator(text_iterator(), vocab_size_no_special, pattern=SPLIT_PATTERN)
-
-    # Build tiktoken encoding from trained merges
-    pattern = tokenizer.get_pattern()
-    mergeable_ranks = {bytes(k): v for k, v in tokenizer.get_mergeable_ranks()}
-    tokens_offset = len(mergeable_ranks)
-    special_tokens = {name: tokens_offset + i for i, name in enumerate(SPECIAL_TOKENS)}
-    enc = tiktoken.Encoding(
-        name="rustbpe",
-        pat_str=pattern,
-        mergeable_ranks=mergeable_ranks,
-        special_tokens=special_tokens,
-    )
-
-    # Save tokenizer
-    with open(tokenizer_pkl, "wb") as f:
-        pickle.dump(enc, f)
-
-    t1 = time.time()
-    print(f"Tokenizer: trained in {t1 - t0:.1f}s, saved to {tokenizer_pkl}")
-
-    # --- Build token_bytes lookup for BPB evaluation ---
-    print("Tokenizer: building token_bytes lookup...")
-    special_set = set(SPECIAL_TOKENS)
-    token_bytes_list = []
-    for token_id in range(enc.n_vocab):
-        token_str = enc.decode([token_id])
-        if token_str in special_set:
-            token_bytes_list.append(0)
-        else:
-            token_bytes_list.append(len(token_str.encode("utf-8")))
-    token_bytes_tensor = torch.tensor(token_bytes_list, dtype=torch.int32)
-    torch.save(token_bytes_tensor, token_bytes_path)
-    print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
-
-    # Sanity check
-    test = "Hello world! Numbers: 123. Unicode: 你好"
-    encoded = enc.encode_ordinary(test)
-    decoded = enc.decode(encoded)
-    assert decoded == test, f"Tokenizer roundtrip failed: {test!r} -> {decoded!r}"
-    print(f"Tokenizer: sanity check passed (vocab_size={enc.n_vocab})")
-
-# ---------------------------------------------------------------------------
-# Runtime utilities (imported by train.py)
-# ---------------------------------------------------------------------------
-
-class Tokenizer:
-    """Minimal tokenizer wrapper. Training is handled above."""
-
-    def __init__(self, enc):
-        self.enc = enc
-        self.bos_token_id = enc.encode_single_token(BOS_TOKEN)
-
-    @classmethod
-    def from_directory(cls, tokenizer_dir=TOKENIZER_DIR):
-        with open(os.path.join(tokenizer_dir, "tokenizer.pkl"), "rb") as f:
-            enc = pickle.load(f)
-        return cls(enc)
-
-    def get_vocab_size(self):
-        return self.enc.n_vocab
-
-    def get_bos_token_id(self):
-        return self.bos_token_id
-
-    def encode(self, text, prepend=None, num_threads=8):
-        if prepend is not None:
-            prepend_id = prepend if isinstance(prepend, int) else self.enc.encode_single_token(prepend)
-        if isinstance(text, str):
-            ids = self.enc.encode_ordinary(text)
-            if prepend is not None:
-                ids.insert(0, prepend_id)
-        elif isinstance(text, list):
-            ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
-            if prepend is not None:
-                for row in ids:
-                    row.insert(0, prepend_id)
-        else:
-            raise ValueError(f"Invalid input type: {type(text)}")
-        return ids
-
-    def decode(self, ids):
-        return self.enc.decode(ids)
+def _extract_zip(zip_path, target_dir):
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        zf.extractall(target_dir)
 
 
-def get_token_bytes(device="cpu"):
-    path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
-    with open(path, "rb") as f:
-        return torch.load(f, map_location=device)
+def _find_data_file(root_dir):
+    preferred = [
+        "train.parquet",
+        "train.pq",
+        "train.csv",
+        "data.parquet",
+        "data.csv",
+    ]
+    for name in preferred:
+        candidate = os.path.join(root_dir, name)
+        if os.path.isfile(candidate):
+            return candidate
+    candidates = []
+    for base, _, files in os.walk(root_dir):
+        for fname in files:
+            if fname.endswith((".parquet", ".pq", ".csv")):
+                candidates.append(os.path.join(base, fname))
+    if not candidates:
+        raise FileNotFoundError(f"No data file found under {root_dir}")
+    return sorted(candidates)[0]
 
 
-def _document_batches(split, tokenizer_batch_size=128):
-    """Infinite iterator over document batches from parquet files."""
-    parquet_paths = list_parquet_files()
-    assert len(parquet_paths) > 0, "No parquet files found. Run prepare.py first."
-    val_path = os.path.join(DATA_DIR, VAL_FILENAME)
-    if split == "train":
-        parquet_paths = [p for p in parquet_paths if p != val_path]
-        assert len(parquet_paths) > 0, "No training shards found."
+def _download_dataset(dataset_id):
+    url = DATASET_URLS.get(dataset_id)
+    if not url:
+        raise ValueError(f"Unknown dataset id: {dataset_id}")
+    target_dir = os.path.join(CTR_DATASET_DIR, dataset_id)
+    os.makedirs(target_dir, exist_ok=True)
+    try:
+        _find_data_file(target_dir)
+        return target_dir
+    except FileNotFoundError:
+        pass
+    zip_path = os.path.join(target_dir, f"{dataset_id}.zip")
+    if not os.path.isfile(zip_path):
+        _download_file(url, zip_path)
+    _extract_zip(zip_path, target_dir)
+    return target_dir
+
+
+def _resolve_data_path(data_path):
+    if os.path.isfile(data_path):
+        return data_path
+    if os.path.isdir(data_path):
+        return _find_data_file(data_path)
+    dataset_id = data_path.strip()
+    if dataset_id in DATASET_URLS:
+        dataset_dir = _download_dataset(dataset_id)
+        return _find_data_file(dataset_dir)
+    raise FileNotFoundError(f"Data path not found: {data_path}")
+
+
+def _output_dir_for_data_path(data_path):
+    parent = os.path.basename(os.path.dirname(data_path))
+    stem = os.path.splitext(os.path.basename(data_path))[0]
+    suffix = "sample" if stem.startswith("sample") else stem
+    return os.path.join(CTR_CACHE_DIR, f"{parent}_{suffix}")
+
+
+def _find_feature_config(data_path, feature_config_path):
+    if feature_config_path:
+        if os.path.isfile(feature_config_path):
+            return feature_config_path
+        raise FileNotFoundError(f"Feature config not found: {feature_config_path}")
+    base_dir = os.path.dirname(data_path)
+    for name in FEATURE_CONFIG_NAMES:
+        candidate = os.path.join(base_dir, name)
+        if os.path.isfile(candidate):
+            return candidate
+    raise FileNotFoundError(f"Feature config not found under {base_dir}")
+
+
+def _load_feature_config(data_path, feature_config_path):
+    config_path = _find_feature_config(data_path, feature_config_path)
+    with open(config_path, "r") as f:
+        config = json.load(f)
+    label_col = config.get("label_col", "label")
+    cat_cols = list(config.get("categorical_cols") or [])
+    num_cols = list(config.get("numerical_cols") or [])
+    if not cat_cols or not num_cols:
+        raise ValueError(f"Feature config missing categorical_cols or numerical_cols: {config_path}")
+    return label_col, cat_cols, num_cols, config_path
+
+
+def _resolve_columns(df, label_col, cat_cols, num_cols):
+    if not cat_cols and not num_cols:
+        for c in df.columns:
+            if c == label_col:
+                continue
+            if pd.api.types.is_numeric_dtype(df[c]):
+                num_cols.append(c)
+            else:
+                cat_cols.append(c)
     else:
-        parquet_paths = [val_path]
-    epoch = 1
-    while True:
-        for filepath in parquet_paths:
-            pf = pq.ParquetFile(filepath)
-            for rg_idx in range(pf.num_row_groups):
-                rg = pf.read_row_group(rg_idx)
-                batch = rg.column('text').to_pylist()
-                for i in range(0, len(batch), tokenizer_batch_size):
-                    yield batch[i:i+tokenizer_batch_size], epoch
-        epoch += 1
+        used = set(cat_cols) | set(num_cols) | {label_col}
+        for c in df.columns:
+            if c in used:
+                continue
+            if pd.api.types.is_numeric_dtype(df[c]):
+                num_cols.append(c)
+            else:
+                cat_cols.append(c)
+    return cat_cols, num_cols
 
 
-def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
-    """
-    BOS-aligned dataloader with best-fit packing.
-    Every row starts with BOS. Documents packed using best-fit to minimize cropping.
-    When no document fits remaining space, crops shortest doc to fill exactly.
-    100% utilization (no padding).
-    """
-    assert split in ["train", "val"]
-    row_capacity = T + 1
-    batches = _document_batches(split)
-    bos_token = tokenizer.get_bos_token_id()
-    doc_buffer = []
-    epoch = 1
+def _split_df(df, test_ratio, seed):
+    if "split" in df.columns:
+        train_df = df[df["split"] == "train"].copy()
+        val_df = df[df["split"] == "val"].copy()
+        if len(train_df) > 0 and len(val_df) > 0:
+            return train_df, val_df
+    df = df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+    n_val = max(1, int(len(df) * test_ratio))
+    val_df = df.iloc[:n_val].copy()
+    train_df = df.iloc[n_val:].copy()
+    return train_df, val_df
 
-    def refill_buffer():
-        nonlocal epoch
-        doc_batch, epoch = next(batches)
-        token_lists = tokenizer.encode(doc_batch, prepend=bos_token)
-        doc_buffer.extend(token_lists)
 
-    # Pre-allocate buffers: [inputs (B*T) | targets (B*T)]
-    row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
-    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=True)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device="cuda")
-    cpu_inputs = cpu_buffer[:B * T].view(B, T)
-    cpu_targets = cpu_buffer[B * T:].view(B, T)
-    inputs = gpu_buffer[:B * T].view(B, T)
-    targets = gpu_buffer[B * T:].view(B, T)
+def _encode_categorical(series, categories):
+    cat = pd.Categorical(series, categories=categories)
+    codes = np.asarray(cat.codes)
+    codes = codes + 1
+    codes[codes < 0] = 0
+    return codes
 
-    while True:
-        for row_idx in range(B):
-            pos = 0
-            while pos < row_capacity:
-                while len(doc_buffer) < buffer_size:
-                    refill_buffer()
 
-                remaining = row_capacity - pos
+def prepare_ctr_data(
+    data_path,
+    label_col=None,
+    cat_cols=None,
+    num_cols=None,
+    test_ratio=0.1,
+    seed=42,
+    force=False,
+    feature_config_path=None,
+):
+    data_path = _resolve_data_path(data_path)
+    output_dir = _output_dir_for_data_path(data_path)
+    meta_path = os.path.join(output_dir, "meta.json")
+    os.makedirs(output_dir, exist_ok=True)
+    if not force and os.path.exists(meta_path):
+        required = [
+            os.path.join(output_dir, "X_cat_train.npy"),
+            os.path.join(output_dir, "X_num_train.npy"),
+            os.path.join(output_dir, "y_train.npy"),
+            os.path.join(output_dir, "X_cat_val.npy"),
+            os.path.join(output_dir, "X_num_val.npy"),
+            os.path.join(output_dir, "y_val.npy"),
+        ]
+        if all(os.path.exists(p) for p in required):
+            return
+    cfg_label, cfg_cat_cols, cfg_num_cols, cfg_path = _load_feature_config(
+        data_path, feature_config_path
+    )
+    if label_col is None:
+        label_col = cfg_label
+    cat_cols = list(cat_cols or cfg_cat_cols)
+    num_cols = list(num_cols or cfg_num_cols)
+    df = _read_raw_data(data_path)
+    if label_col not in df.columns:
+        raise ValueError(f"Label column not found: {label_col}")
+    cat_cols, num_cols = _resolve_columns(df, label_col, cat_cols, num_cols)
+    train_df, val_df = _split_df(df, test_ratio, seed)
+    y_train = train_df[label_col].to_numpy().astype(np.float32)
+    y_val = val_df[label_col].to_numpy().astype(np.float32)
+    X_cat_train = np.zeros((len(train_df), len(cat_cols)), dtype=np.int64)
+    X_cat_val = np.zeros((len(val_df), len(cat_cols)), dtype=np.int64)
+    cat_dims = []
+    for i, col in enumerate(cat_cols):
+        categories = train_df[col].astype("category").cat.categories
+        X_cat_train[:, i] = _encode_categorical(train_df[col], categories)
+        X_cat_val[:, i] = _encode_categorical(val_df[col], categories)
+        cat_dims.append(int(len(categories) + 1))
+    X_num_train = np.zeros((len(train_df), len(num_cols)), dtype=np.float32)
+    X_num_val = np.zeros((len(val_df), len(num_cols)), dtype=np.float32)
+    num_stats = []
+    for i, col in enumerate(num_cols):
+        tr = train_df[col].astype(np.float32)
+        mean = float(np.nanmean(tr))
+        std = float(np.nanstd(tr))
+        if std == 0.0:
+            std = 1.0
+        num_stats.append([mean, std])
+        tr_filled = np.nan_to_num(tr, nan=mean)
+        val_filled = np.nan_to_num(val_df[col].astype(np.float32), nan=mean)
+        X_num_train[:, i] = (tr_filled - mean) / std
+        X_num_val[:, i] = (val_filled - mean) / std
+    meta = {
+        "data_path": data_path,
+        "label_col": label_col,
+        "cat_cols": cat_cols,
+        "num_cols": num_cols,
+        "cat_dims": cat_dims,
+        "num_stats": num_stats,
+        "test_ratio": test_ratio,
+        "seed": seed,
+        "feature_config": cfg_path,
+        "output_dir": output_dir,
+    }
+    with open(meta_path, "w") as f:
+        json.dump(meta, f)
+    np.save(os.path.join(output_dir, "X_cat_train.npy"), X_cat_train)
+    np.save(os.path.join(output_dir, "X_num_train.npy"), X_num_train)
+    np.save(os.path.join(output_dir, "y_train.npy"), y_train)
+    np.save(os.path.join(output_dir, "X_cat_val.npy"), X_cat_val)
+    np.save(os.path.join(output_dir, "X_num_val.npy"), X_num_val)
+    np.save(os.path.join(output_dir, "y_val.npy"), y_val)
 
-                # Find largest doc that fits entirely
-                best_idx = -1
-                best_len = 0
-                for i, doc in enumerate(doc_buffer):
-                    doc_len = len(doc)
-                    if doc_len <= remaining and doc_len > best_len:
-                        best_idx = i
-                        best_len = doc_len
 
-                if best_idx >= 0:
-                    doc = doc_buffer.pop(best_idx)
-                    row_buffer[row_idx, pos:pos + len(doc)] = torch.tensor(doc, dtype=torch.long)
-                    pos += len(doc)
-                else:
-                    # No doc fits — crop shortest to fill remaining
-                    shortest_idx = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
-                    doc = doc_buffer.pop(shortest_idx)
-                    row_buffer[row_idx, pos:pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
-                    pos += remaining
+def load_ctr_data(data_path, feature_config_path=None):
+    data_path = _resolve_data_path(data_path)
+    output_dir = _output_dir_for_data_path(data_path)
+    meta_path = os.path.join(output_dir, "meta.json")
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+    X_cat_train = np.load(os.path.join(output_dir, "X_cat_train.npy"))
+    X_num_train = np.load(os.path.join(output_dir, "X_num_train.npy"))
+    y_train = np.load(os.path.join(output_dir, "y_train.npy"))
+    X_cat_val = np.load(os.path.join(output_dir, "X_cat_val.npy"))
+    X_num_val = np.load(os.path.join(output_dir, "X_num_val.npy"))
+    y_val = np.load(os.path.join(output_dir, "y_val.npy"))
+    return meta, (X_cat_train, X_num_train, y_train), (X_cat_val, X_num_val, y_val)
 
-        cpu_inputs.copy_(row_buffer[:, :-1])
-        cpu_targets.copy_(row_buffer[:, 1:])
-        gpu_buffer.copy_(cpu_buffer, non_blocking=True)
-        yield inputs, targets, epoch
-
-# ---------------------------------------------------------------------------
-# Evaluation (DO NOT CHANGE — this is the fixed metric)
-# ---------------------------------------------------------------------------
-
-@torch.no_grad()
-def evaluate_bpb(model, tokenizer, batch_size):
-    """
-    Bits per byte (BPB): vocab size-independent evaluation metric.
-    Sums per-token cross-entropy (in nats), sums target byte lengths,
-    then converts nats/byte to bits/byte. Special tokens (byte length 0)
-    are excluded from both sums.
-    Uses fixed MAX_SEQ_LEN so results are comparable across configs.
-    """
-    token_bytes = get_token_bytes(device="cuda")
-    val_loader = make_dataloader(tokenizer, batch_size, MAX_SEQ_LEN, "val")
-    steps = EVAL_TOKENS // (batch_size * MAX_SEQ_LEN)
-    total_nats = 0.0
-    total_bytes = 0
-    for _ in range(steps):
-        x, y, _ = next(val_loader)
-        loss_flat = model(x, y, reduction='none').view(-1)
-        y_flat = y.view(-1)
-        nbytes = token_bytes[y_flat]
-        mask = nbytes > 0
-        total_nats += (loss_flat * mask).sum().item()
-        total_bytes += nbytes.sum().item()
-    return total_nats / (math.log(2) * total_bytes)
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Prepare data and tokenizer for autoresearch")
-    parser.add_argument("--num-shards", type=int, default=10, help="Number of training shards to download (-1 = all). Val shard is always pinned.")
-    parser.add_argument("--download-workers", type=int, default=8, help="Number of parallel download workers")
+    parser = argparse.ArgumentParser(description="Prepare data for CTR autoresearch")
+    parser.add_argument("--data-path", required=True)
+    parser.add_argument("--feature-config", default="")
+    parser.add_argument("--test-ratio", type=float, default=0.1)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
-
-    num_shards = MAX_SHARD if args.num_shards == -1 else args.num_shards
-
-    print(f"Cache directory: {CACHE_DIR}")
-    print()
-
-    # Step 1: Download data
-    download_data(num_shards, download_workers=args.download_workers)
-    print()
-
-    # Step 2: Train tokenizer
-    train_tokenizer()
-    print()
+    prepare_ctr_data(
+        data_path=args.data_path,
+        test_ratio=args.test_ratio,
+        seed=args.seed,
+        force=args.force,
+        feature_config_path=args.feature_config or None,
+    )
     print("Done! Ready to train.")
