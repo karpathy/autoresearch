@@ -39,8 +39,8 @@ PARQUET_PATH = CACHE_DIR / "btcusdt_1h.parquet"
 TIME_BUDGET = 240  # seconds for training
 
 FORWARD_HOURS = 24      # predict 24-hour forward returns
-THRESHOLD = 0.005       # 0.5% threshold for long/short signals
-POSITION_SCALE = 0.02   # prediction level for full position (±1.0)
+SIGMA_THRESHOLD = 0.5   # sigma threshold for trading (regime-invariant)
+SIGMA_FULL_POSITION = 2.0  # sigma for full position size (±1.0)
 FEE_RATE = 0.001        # 0.1% per trade (one side)
 SLIPPAGE_RATE = 0.0005  # 0.05% per trade (one side)
 
@@ -242,12 +242,15 @@ def load_train_data() -> pd.DataFrame:
 # Backtesting Engine (internal)
 # ---------------------------------------------------------------------------
 
-def _backtest(predictions: np.ndarray, close_prices: np.ndarray,
+def _backtest(sigma_predictions: np.ndarray, close_prices: np.ndarray,
               timestamps: np.ndarray, subperiods: list) -> dict:
-    """Run backtest on predictions against actual prices.
+    """Run backtest on sigma-space predictions against actual prices.
+
+    Position sizing is done in sigma-space (regime-invariant).
+    Portfolio returns are computed in dollar terms against actual prices.
 
     Args:
-        predictions: Array of forward-return predictions, one per timestamp.
+        sigma_predictions: Array of sigma-space predictions, one per timestamp.
         close_prices: Array of close prices aligned with predictions.
         timestamps: Array of pd.Timestamp aligned with predictions.
         subperiods: List of (start, end) Timestamp tuples for consistency check.
@@ -256,14 +259,16 @@ def _backtest(predictions: np.ndarray, close_prices: np.ndarray,
         dict with keys: sharpe, max_drawdown, n_trades, total_return,
                         subperiod_returns (list of floats).
     """
-    n = len(predictions)
+    n = len(sigma_predictions)
     assert len(close_prices) == n and len(timestamps) == n
 
-    # Continuous position sizing: linear ramp from 0 at ±THRESHOLD to ±1.0 at ±POSITION_SCALE
-    abs_pred = np.abs(predictions)
-    scale_range = POSITION_SCALE - THRESHOLD
-    raw_size = np.where(abs_pred > THRESHOLD, (abs_pred - THRESHOLD) / scale_range, 0.0)
-    positions = np.clip(raw_size, 0.0, 1.0) * np.sign(predictions)
+    # Continuous position sizing in sigma-space: linear ramp from 0 at
+    # ±SIGMA_THRESHOLD to ±1.0 at ±SIGMA_FULL_POSITION
+    abs_sigma = np.abs(sigma_predictions)
+    sigma_scale = SIGMA_FULL_POSITION - SIGMA_THRESHOLD
+    raw_size = np.where(abs_sigma > SIGMA_THRESHOLD,
+                        (abs_sigma - SIGMA_THRESHOLD) / sigma_scale, 0.0)
+    positions = np.clip(raw_size, 0.0, 1.0) * np.sign(sigma_predictions)
 
     # Compute hourly price returns
     price_returns = np.zeros(n)
@@ -346,7 +351,8 @@ def evaluate_model(predict_fn: callable) -> dict:
     Args:
         predict_fn: Callable that takes a pd.DataFrame (with columns
             timestamp, open, high, low, close, volume) and returns
-            (predictions: np.ndarray, timestamps: np.ndarray).
+            (sigma_predictions: np.ndarray, timestamps: np.ndarray,
+             vol: np.ndarray). Predictions are in sigma-space.
             Must work on arbitrary date ranges.
 
     Returns:
@@ -360,17 +366,17 @@ def evaluate_model(predict_fn: callable) -> dict:
     # Generate predictions on the FULL dataset so features have full
     # lookback context even at the start of val/holdout periods.
     all_data = _load_all_data()
-    predictions, timestamps = predict_fn(all_data)
-    predictions = np.asarray(predictions, dtype=np.float64).ravel()
+    sigma_preds, timestamps, vol = predict_fn(all_data)
+    sigma_preds = np.asarray(sigma_preds, dtype=np.float64).ravel()
     timestamps = np.asarray(timestamps).ravel()
 
-    assert len(predictions) == len(timestamps), (
-        f"predict_fn returned {len(predictions)} predictions but "
+    assert len(sigma_preds) == len(timestamps), (
+        f"predict_fn returned {len(sigma_preds)} predictions but "
         f"{len(timestamps)} timestamps"
     )
 
     # Build prediction lookup
-    pred_df = pd.DataFrame({"timestamp": timestamps, "prediction": predictions})
+    pred_df = pd.DataFrame({"timestamp": timestamps, "sigma_pred": sigma_preds})
 
     # Backtest each split independently
     split_results = []
@@ -392,7 +398,7 @@ def evaluate_model(predict_fn: callable) -> dict:
             continue
 
         bt = _backtest(
-            predictions=merged["prediction"].values,
+            sigma_predictions=merged["sigma_pred"].values,
             close_prices=merged["close"].values,
             timestamps=merged["timestamp"].values,
             subperiods=subperiods,
@@ -557,12 +563,12 @@ def _run_diagnostic():
     print("=" * 60 + "\n")
     train_module.main()
 
-    # 2. Generate predictions on full dataset (same as evaluate_model)
+    # 2. Generate sigma predictions on full dataset (same as evaluate_model)
     all_data = _load_all_data()
-    predictions, timestamps = train_module.predict_on_data(all_data)
-    predictions = np.asarray(predictions, dtype=np.float64).ravel()
+    sigma_preds, timestamps, vol = train_module.predict_on_data(all_data)
+    sigma_preds = np.asarray(sigma_preds, dtype=np.float64).ravel()
     timestamps = np.asarray(timestamps).ravel()
-    pred_df = pd.DataFrame({"timestamp": timestamps, "prediction": predictions})
+    pred_df = pd.DataFrame({"timestamp": timestamps, "sigma_pred": sigma_preds})
 
     # 3. Backtest each split and collect results
     splits = _get_splits()
@@ -583,7 +589,7 @@ def _run_diagnostic():
             })
         else:
             bt = _backtest(
-                predictions=merged["prediction"].values,
+                sigma_predictions=merged["sigma_pred"].values,
                 close_prices=merged["close"].values,
                 timestamps=merged["timestamp"].values,
                 subperiods=subperiods,

@@ -173,10 +173,11 @@ def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     return pd.Series(raw_preds).ewm(span=48, min_periods=1).mean().values
 
 
-def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """Generate predictions on arbitrary OHLCV data.
+def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Generate sigma-space predictions on arbitrary OHLCV data.
 
-    Model predicts in sigma-space; denormalize to raw return space.
+    Returns smoothed sigma predictions — the backtester handles
+    position sizing and thresholding in sigma-space directly.
     """
     features, timestamps, vol_safe = compute_features(df)
     features = np.nan_to_num(features, nan=0.0)
@@ -186,12 +187,8 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         raise RuntimeError("Model not trained. Run train.py first.")
 
     sigma_preds = model.predict(features)
-    vol_cap = np.percentile(vol_safe, 90)
-    vol_capped = np.minimum(vol_safe, vol_cap)
-    raw_preds = sigma_preds * vol_capped
-    compressed = 0.010 * np.tanh(raw_preds / 0.010)
-    preds = _smooth_predictions(compressed)
-    return preds, timestamps
+    sigma_smoothed = _smooth_predictions(sigma_preds)
+    return sigma_smoothed, timestamps, vol_safe
 
 
 # ---------------------------------------------------------------------------
