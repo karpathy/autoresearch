@@ -39,8 +39,8 @@ PARQUET_PATH = CACHE_DIR / "btcusdt_1h.parquet"
 TIME_BUDGET = 240  # seconds for training
 
 FORWARD_HOURS = 24      # predict 24-hour forward returns
-SIGMA_THRESHOLD = 0.5   # sigma threshold for trading (regime-invariant)
-SIGMA_FULL_POSITION = 2.0  # sigma for full position size (±1.0)
+SIGMA_THRESHOLD = 0.20   # sigma threshold for trading (regime-invariant)
+SIGMA_FULL_POSITION = 0.50  # sigma for full position size (±1.0)
 FEE_RATE = 0.001        # 0.1% per trade (one side)
 SLIPPAGE_RATE = 0.0005  # 0.05% per trade (one side)
 
@@ -649,6 +649,85 @@ def _run_diagnostic():
 
 
 # ---------------------------------------------------------------------------
+# Prediction Calibration Diagnostic (human-only)
+# ---------------------------------------------------------------------------
+
+def _run_calibrate():
+    """Per-split prediction distribution statistics.
+
+    Trains the model, runs predict_on_data on full dataset, then prints
+    per-split stats on absolute sigma predictions to help calibrate
+    SIGMA_THRESHOLD and SIGMA_FULL_POSITION.
+    """
+    import train as train_module
+
+    print("=" * 60)
+    print("Training model...")
+    print("=" * 60 + "\n")
+    train_module.main()
+
+    all_data = _load_all_data()
+    sigma_preds, timestamps, vol = train_module.predict_on_data(all_data)
+    sigma_preds = np.asarray(sigma_preds, dtype=np.float64).ravel()
+    timestamps = np.asarray(timestamps).ravel()
+    pred_df = pd.DataFrame({"timestamp": timestamps, "sigma_pred": sigma_preds})
+
+    splits = _get_splits()
+    split_names = ["Train", "Val", "Holdout"]
+    thresholds = [0.1, 0.2, 0.3, 0.5, 0.75, 1.0]
+
+    print("\n" + "=" * 60)
+    print("=== PREDICTION CALIBRATION (human-only) ===")
+    print("=" * 60)
+    print(f"\nCurrent constants: SIGMA_THRESHOLD={SIGMA_THRESHOLD}, "
+          f"SIGMA_FULL_POSITION={SIGMA_FULL_POSITION}")
+
+    for name, (split_start, split_end, subperiods) in zip(split_names, splits):
+        mask = (all_data["timestamp"] >= split_start) & (all_data["timestamp"] <= split_end)
+        split_data = all_data[mask].reset_index(drop=True)
+        merged = split_data.merge(pred_df, on="timestamp", how="inner")
+
+        if len(merged) == 0:
+            print(f"\n--- {name}: no predictions ---")
+            continue
+
+        preds = merged["sigma_pred"].values
+        abs_preds = np.abs(preds)
+
+        print(f"\n--- {name} ({split_start.date()} to {split_end.date()}, "
+              f"n={len(preds)}) ---")
+        print(f"  Raw sigma predictions:")
+        print(f"    mean:  {preds.mean():+.4f}    std: {preds.std():.4f}")
+        print(f"    min:   {preds.min():+.4f}    max: {preds.max():+.4f}")
+        print(f"  Absolute sigma predictions:")
+        print(f"    mean:  {abs_preds.mean():.4f}")
+        print(f"    p10:   {np.percentile(abs_preds, 10):.4f}")
+        print(f"    p25:   {np.percentile(abs_preds, 25):.4f}")
+        print(f"    p50:   {np.percentile(abs_preds, 50):.4f}")
+        print(f"    p75:   {np.percentile(abs_preds, 75):.4f}")
+        print(f"    p90:   {np.percentile(abs_preds, 90):.4f}")
+        print(f"  Threshold exceedance (|sigma_pred| > threshold):")
+        for t in thresholds:
+            count = (abs_preds > t).sum()
+            pct = count / len(abs_preds) * 100
+            print(f"    > {t:.2f}:  {count:6d}  ({pct:5.1f}%)")
+
+        # Per-subperiod breakdown
+        ts_series = pd.to_datetime(merged["timestamp"])
+        for j, (sp_start, sp_end) in enumerate(subperiods):
+            sp_mask = (ts_series >= sp_start) & (ts_series <= sp_end)
+            sp_preds = preds[sp_mask.values]
+            sp_abs = np.abs(sp_preds)
+            if len(sp_preds) > 0:
+                above_thresh = (sp_abs > SIGMA_THRESHOLD).sum()
+                print(f"    Subperiod {j+1} ({sp_start.date()}-{sp_end.date()}): "
+                      f"mean={sp_preds.mean():+.4f}, std={sp_preds.std():.4f}, "
+                      f"|pred|>threshold: {above_thresh} ({above_thresh/len(sp_preds)*100:.1f}%)")
+
+    print()
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -658,12 +737,16 @@ if __name__ == "__main__":
                         help="Run signal quality validation on holdout window")
     parser.add_argument("--diagnose", action="store_true",
                         help="Per-split diagnostic breakdown (human-only)")
+    parser.add_argument("--calibrate", action="store_true",
+                        help="Per-split prediction distribution stats (human-only)")
     args = parser.parse_args()
 
     if args.validate:
         _run_fresh_holdout()
     elif args.diagnose:
         _run_diagnostic()
+    elif args.calibrate:
+        _run_calibrate()
     else:
         df = download_data()
         print(f"\nData summary:")
