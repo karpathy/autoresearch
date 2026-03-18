@@ -241,14 +241,7 @@ def main():
         loss="squared_error",
         random_state=42,
     )
-    # Time-decay weighting: recent data is more relevant than old data.
-    # Exponential decay so 2022 data is ~5x more weighted than 2018 data.
-    # Combined with 1.2x asymmetric weighting on positive returns.
-    ts_float = train_timestamps.astype("datetime64[h]").astype(np.float64)
-    ts_norm = (ts_float - ts_float.min()) / (ts_float.max() - ts_float.min())
-    time_weights = np.exp(0.8 * ts_norm)
-    sample_weights = time_weights
-    model.fit(features, targets, sample_weight=sample_weights)
+    model.fit(features, targets)
 
     training_seconds = time.time() - train_start
     print(f"Training complete in {training_seconds:.1f}s")
