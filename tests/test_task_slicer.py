@@ -33,3 +33,31 @@ def test_implementation_executor_respects_slice_boundaries():
     with pytest.raises(ValueError) as excinfo:
         executor.run(["README.md"])
     assert "outside allowed patterns" in str(excinfo.value)
+
+
+def test_implementation_executor_all_or_nothing():
+    slice_def = TaskSlice(
+        name="slice",
+        summary="slice",
+        success_criteria=("criteria",),
+        allowed_file_patterns=("autosaas/**",),
+    )
+    executor = ImplementationExecutor(slice_def)
+
+    with pytest.raises(ValueError):
+        executor.run(["autosaas/task_slicer.py", "README.md"])
+
+    assert executor.touched_files == set()
+
+
+def test_implementation_executor_blocks_traversal():
+    slice_def = TaskSlice(
+        name="slice",
+        summary="slice",
+        success_criteria=("criteria",),
+        allowed_file_patterns=("autosaas/**",),
+    )
+    executor = ImplementationExecutor(slice_def)
+
+    with pytest.raises(ValueError):
+        executor.run(["autosaas/../README.md"])
