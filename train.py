@@ -229,9 +229,17 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarra
     if model is None:
         raise RuntimeError("Model not trained. Run train.py first.")
 
-    sigma_preds = model.predict(features)
+    # Compute per-sample prediction mean and std across all trees
+    all_tree_preds = np.array([tree.predict(features) for tree in model.estimators_])
+    sigma_preds = all_tree_preds.mean(axis=0)
+    pred_std = all_tree_preds.std(axis=0)
+
+    # Adaptive confidence: scale down when trees disagree (high uncertainty)
+    confidence = 1.0 / (1.0 + pred_std)
+    sigma_preds = sigma_preds * confidence
+
     sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
-    sigma_preds = sigma_preds * 0.7  # scale down to reduce position sizes
+    sigma_preds = sigma_preds * 0.7  # base scale
     sigma_smoothed = _smooth_predictions(sigma_preds)
     return sigma_smoothed, timestamps, vol_safe
 
