@@ -329,7 +329,7 @@ def main():
     ensemble_configs = [
         {"n_estimators": 3000, "max_depth": 7, "min_samples_leaf": 600},   # original (strong regularization)
         {"n_estimators": 2000, "max_depth": 5, "min_samples_leaf": 800},   # very shallow + heavy regularization
-        {"n_estimators": 2000, "max_depth": 8, "min_samples_leaf": 500},   # slightly deeper
+        {"n_estimators": 2000, "max_depth": 7, "min_samples_leaf": 500},   # moderate regularization variant
         {"n_estimators": 2000, "max_depth": 6, "min_samples_leaf": 700},   # intermediate
         {"n_estimators": 2000, "max_depth": 7, "min_samples_leaf": 400, "max_features": 0.7},  # feature subsampling
     ]
