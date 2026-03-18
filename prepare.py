@@ -55,39 +55,38 @@ TRAIN_START = pd.Timestamp("2018-01-01")
 def _compute_splits(data_end):
     """Regime-based evaluation splits with hardcoded boundaries.
 
-    Seven subperiods across three splits, each corresponding to a distinct
-    BTC market regime. The model trains on all data from 2018, but evaluation
-    only covers 2022+ where regime labels are meaningful.
+    Six subperiods across three splits, each corresponding to a distinct
+    BTC market regime. The model trains on 2021-2023 data, but evaluation
+    covers 2022-2025 where regime labels are meaningful.
 
-    Split 1 — Eval Train (2022-01-01 to 2024-06-30), 3 subperiods
-    Split 2 — Val (2024-07-01 to 2025-06-30), 2 subperiods
-    Split 3 — Holdout (2025-07-01 to end of data), 2 subperiods
+    Split 1 — Eval Train (2022-01-01 to 2023-12-31), 2 subperiods
+    Split 2 — Val (2024-01-01 to 2024-12-31), 2 subperiods
+    Split 3 — Holdout (2025-01-01 to 2025-12-31), 2 subperiods
     """
     T = pd.Timestamp
 
-    # Split 1: Eval Train
+    # Split 1: Eval Train (scored, but model also trains on 2021 data)
     train_start = T("2022-01-01")
-    train_end = T("2024-06-30 23:00:00")
+    train_end = T("2023-12-31 23:00:00")
     train_subs = [
         (T("2022-01-01"), T("2022-12-31 23:00:00"), "2022 bear"),
         (T("2023-01-01"), T("2023-12-31 23:00:00"), "2023 recovery"),
-        (T("2024-01-01"), T("2024-06-30 23:00:00"), "2024 ETF rally"),
     ]
 
     # Split 2: Val
-    val_start = T("2024-07-01")
-    val_end = T("2025-06-30 23:00:00")
+    val_start = T("2024-01-01")
+    val_end = T("2024-12-31 23:00:00")
     val_subs = [
+        (T("2024-01-01"), T("2024-06-30 23:00:00"), "2024 ETF rally"),
         (T("2024-07-01"), T("2024-12-31 23:00:00"), "2024 H2 consolidation"),
-        (T("2025-01-01"), T("2025-06-30 23:00:00"), "2025 H1"),
     ]
 
     # Split 3: Holdout
-    holdout_start = T("2025-07-01")
-    holdout_end = data_end
+    holdout_start = T("2025-01-01")
+    holdout_end = T("2025-12-31 23:00:00")
     holdout_subs = [
+        (T("2025-01-01"), T("2025-06-30 23:00:00"), "2025 H1"),
         (T("2025-07-01"), T("2025-12-31 23:00:00"), "2025 H2"),
-        (T("2026-01-01"), data_end, "2026 YTD"),
     ]
 
     return [
@@ -107,6 +106,9 @@ def _get_splits():
         all_data = _load_all_data()
         data_end = all_data["timestamp"].max()
         _cached_splits = _compute_splits(data_end)
+        # Print training data window (distinct from eval splits)
+        val_start = _cached_splits[1][0]
+        print(f"  Training data: 2021-01-01 to {(val_start - pd.Timedelta(hours=1)).date()}")
         for name, (s, e, subs) in zip(["Train", "Val", "Holdout"], _cached_splits):
             print(f"  {name}: {s.date()} to {e.date()} ({len(subs)} subperiods)")
     return _cached_splits
@@ -237,15 +239,17 @@ def _load_all_data() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def load_train_data() -> pd.DataFrame:
-    """Return OHLCV DataFrame for the training period only.
+    """Return OHLCV DataFrame for the training period.
 
-    The training window is computed from walk-forward splits (everything
-    before the validation window). The agent should use ONLY this data.
+    Training data starts at 2021-01-01 (includes 2021 bull run as additional
+    regime context) and ends before the validation split. The eval train split
+    (2022-2023) is a subset — the model trains on more data than it's scored on.
     """
     df = _load_all_data()
     splits = _get_splits()
-    train_start, train_end, _ = splits[0]
-    mask = (df["timestamp"] >= train_start) & (df["timestamp"] <= train_end)
+    val_start = splits[1][0]  # first day of val
+    train_start = pd.Timestamp("2021-01-01")
+    mask = (df["timestamp"] >= train_start) & (df["timestamp"] < val_start)
     return df[mask].reset_index(drop=True)
 
 
@@ -432,14 +436,20 @@ def evaluate_model(predict_fn: callable) -> dict:
     else:
         dd_mult = 1.0 / (1.0 + ((dd - 0.10) / 0.15) ** 2)
 
-    # Trade count: total across all splits, ramp to 100
-    # (~33 per split on average for full credit)
+    # Trade count: per-split exponential (one trade per 7 prediction cycles
+    # for full credit). Min across splits penalizes going silent on any split.
+    splits = _get_splits()
+    split_trade_mults = []
+    for (split_start, split_end, _), result in zip(splits, split_results):
+        split_hours = (split_end - split_start).total_seconds() / 3600
+        scale = split_hours / (FORWARD_HOURS * 7)
+        split_trade_mults.append(1 - math.exp(-result["n_trades"] / scale))
+    trade_mult = min(split_trade_mults)
     total_trades = sum(r["n_trades"] for r in split_results)
-    trade_mult = min(1.0, total_trades / 100.0)
 
     # Consistency: fraction of ALL subperiods that are profitable.
-    # 7 total subperiods: 3 train + 2 val + 2 holdout.
-    # A model overfit to train gets at most 3/7 ≈ 0.43x.
+    # 6 total subperiods: 2 train + 2 val + 2 holdout.
+    # A model overfit to train gets at most 2/6 ≈ 0.33x.
     all_sp_returns = []
     for r in split_results:
         all_sp_returns.extend(r["subperiod_returns"])
@@ -617,15 +627,27 @@ def _run_diagnostic():
     worst_dd_raw = min(r["max_drawdown"] for r in split_results)
     dd = abs(worst_dd_raw)
     dd_mult = 1.0 if dd <= 0.10 else 1.0 / (1.0 + ((dd - 0.10) / 0.15) ** 2)
+
+    # Per-split trade multiplier (same as evaluate_model)
+    split_trade_mults = []
+    for (split_start, split_end, _), result in zip(splits, split_results):
+        split_hours = (split_end - split_start).total_seconds() / 3600
+        scale = split_hours / (FORWARD_HOURS * 7)
+        split_trade_mults.append(1 - math.exp(-result["n_trades"] / scale))
+    trade_mult = min(split_trade_mults)
     total_trades = sum(r["n_trades"] for r in split_results)
-    trade_mult = min(1.0, total_trades / 100.0)
+
     all_sp_returns = []
     for r in split_results:
         all_sp_returns.extend(r["subperiod_returns"])
     n_profitable = sum(1 for ret in all_sp_returns if ret > 0)
     n_total = len(all_sp_returns)
     consistency = n_profitable / n_total if n_total > 0 else 0.0
-    score = base * dd_mult * trade_mult * consistency
+
+    if base >= 0:
+        score = base * dd_mult * trade_mult * consistency
+    else:
+        score = base / max(dd_mult, 0.01) / max(trade_mult, 0.01) / max(consistency, 0.01)
 
     # 5. Print diagnostic breakdown
     print("\n" + "=" * 60)
@@ -644,7 +666,8 @@ def _run_diagnostic():
         print(f"  Sharpe: {result['sharpe']:.4f}"
               f"{'  <-- MIN' if result['sharpe'] == base else ''}")
         print(f"  Max drawdown: {result['max_drawdown']:.1%}")
-        print(f"  Trades: {result['n_trades']}")
+        print(f"  Trades: {result['n_trades']}  (trade_mult={split_trade_mults[i]:.4f})"
+              f"{'  <-- MIN' if split_trade_mults[i] == trade_mult else ''}")
         print(f"  Total return: {result['total_return']:+.1%}")
 
         for (sp_start, sp_end, label), sp_ret in zip(
