@@ -1,1 +1,1 @@
-timestamp\trun_id\tbranch\tbase_commit\thead_commit\tslice\tstatus\tfiles_changed\tgates_passed\tgates_failed\tsummary
+timestamp	run_id	branch	base_commit	head_commit	slice	status	files_changed	gates_passed	gates_failed	summary

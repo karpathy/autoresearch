@@ -32,7 +32,7 @@ commands:
     def fake_run_required_gates(run, required_gates, command_map, cwd):
         captured["called"] = True
         captured["gates"] = tuple(required_gates)
-        run.status = "pass"
+        run.status = "keep"
         run.gate_results = []
         return run
 
@@ -42,3 +42,23 @@ commands:
 
     assert captured["called"]
     assert captured["gates"] == ("lint", "typecheck", "test", "smoke")
+
+
+def test_run_once_redacts_full_sk_live_token(tmp_path, monkeypatch):
+    monkeypatch.setattr(main_module, "format_slice_run", lambda run: "status sk_live_ABC123 secret")
+
+    result = run_once(target_repo=tmp_path, request="Add billing status badge", dry_run=True)
+
+    assert "sk_live" not in result.report
+    assert "ABC123" not in result.report
+
+
+def test_run_once_handles_exceptions_and_returns_crash(tmp_path, monkeypatch):
+    def raise_error(repo_path):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(main_module, "load_repo_context", raise_error)
+    result = run_once(target_repo=tmp_path, request="recover", dry_run=True)
+
+    assert result.status == "crash"
+    assert "boom" in result.report

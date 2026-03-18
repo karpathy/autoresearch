@@ -4,4 +4,4 @@ commands:
   test: pnpm test
   dev: pnpm dev
   smoke: pnpm playwright test
-
+app_boot_url: http://localhost:3000

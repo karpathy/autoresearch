@@ -32,7 +32,7 @@ def run_required_gates(run: SliceRun, required_gates: list[str], command_map: di
         run.gate_results = gate_results
         return run
 
-    run.status = "pass"
+    run.status = "keep"
     run.gate_results = gate_results
     return run
 

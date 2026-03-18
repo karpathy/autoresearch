@@ -11,6 +11,8 @@ This repository centers on AutoSaaS's orchestration loop, which lives in `autosa
 5. `decide_keep_or_revert` turns the gate verdicts into a user-facing disposition and `reporter.format_slice_run` yields the human-readable summary.
 6. `privacy_guard.redact_text` scrubs any sensitive literals or configured tokens (e.g., `sk_live`) from that summary before it reaches the operator.
 
+When all supported gates pass, the pipeline now sets the slice status to `keep` and the branch keeper leaves it there; any failure (or an unexpectedly empty gate set) produces `revert` so the automation never reports success by accident.
+
 ## Dry-run posture
 
 Dry-run mode deliberately avoids touching real repositories or running commands. It still walks the same flow, but the validation stage is skipped and the slice status defaults to `keep`. This guarantees deterministic behavior for integration tests and early validation without deploying real change sets.
