@@ -203,7 +203,7 @@ def count_model_params(model=None) -> int:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
-    return pd.Series(raw_preds).ewm(span=36, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=24, min_periods=1).mean().values
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
