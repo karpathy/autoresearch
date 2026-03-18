@@ -9,7 +9,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.ensemble import ExtraTreesRegressor
 
 from prepare import (
     FORWARD_HOURS,
@@ -152,15 +152,14 @@ _trained_model = None
 
 
 def count_model_params(model=None) -> int:
-    """Return approximate parameter count for the HistGBR model."""
+    """Return approximate parameter count for the tree ensemble model."""
     if model is None:
         model = _trained_model
     if model is None:
         return 0
     n_params = 0
-    for predictor_list in model._predictors:
-        for predictor in predictor_list:
-            n_params += predictor.get_n_leaf_nodes()
+    for tree in model.estimators_:
+        n_params += tree.tree_.node_count
     return n_params
 
 
@@ -170,7 +169,7 @@ def count_model_params(model=None) -> int:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
-    return pd.Series(raw_preds).ewm(span=72, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=36, min_periods=1).mean().values
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -232,15 +231,12 @@ def main():
     print("Training GBR...")
     train_start = time.time()
 
-    model = HistGradientBoostingRegressor(
-        max_iter=500,
-        max_depth=4,
-        learning_rate=0.02,
+    model = ExtraTreesRegressor(
+        n_estimators=200,
+        max_depth=6,
         min_samples_leaf=200,
-        max_bins=255,
-        l2_regularization=1.0,
-        loss="squared_error",
         random_state=42,
+        n_jobs=-1,
     )
     model.fit(features, targets)
 
