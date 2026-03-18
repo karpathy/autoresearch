@@ -9,15 +9,19 @@ wheels/
 # Virtual environments
 .venv
 worktrees/
-results/
-queue/
 
 # Agent prompt files (generated per-session by launchers)
 CLAUDE.md
 AGENTS.md
 
-# Experimental code/artifacts
-dev/
-
-# Results file
+# AutoSaaS local runtime artifacts
+.autosaas/
+autosaas_runs/
+autosaas_logs/
+artifacts/
+queue/
+results/
 results.tsv
+*.log
+*.sqlite3
+*.db
