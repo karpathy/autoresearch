@@ -22,7 +22,7 @@ from prepare import (
 # Feature Engineering
 # ---------------------------------------------------------------------------
 
-RETURN_LOOKBACKS = [1, 4, 12, 24, 72, 168]
+RETURN_LOOKBACKS = [1, 4, 12, 24, 48, 72, 168]
 VOLATILITY_WINDOWS = [24, 168]
 MAX_LOOKBACK = 168  # maximum lookback window (1 week)
 
