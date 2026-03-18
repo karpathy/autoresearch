@@ -355,7 +355,8 @@ def _backtest(sigma_predictions: np.ndarray, close_prices: np.ndarray,
 def _eval_window(build_model_fn, all_data, window, window_idx):
     """Train a model on one window's training data and backtest on its eval period.
 
-    Returns (backtest_result, train_seconds).
+    Returns (backtest_result, train_seconds, eval_preds) where eval_preds is
+    the array of sigma predictions on the eval period (for diagnostics).
     """
     train_mask = ((all_data["timestamp"] >= window["train_start"]) &
                   (all_data["timestamp"] <= window["train_end"]))
@@ -391,16 +392,18 @@ def _eval_window(build_model_fn, all_data, window, window_idx):
             "sharpe": -10.0, "max_drawdown": -1.0,
             "n_trades": 0, "total_return": -1.0,
             "subperiod_returns": [-1.0] * len(window["subperiods"]),
-        }, train_seconds
+        }, train_seconds, np.array([])
+
+    eval_preds = merged["sigma_pred"].values
 
     bt = _backtest(
-        sigma_predictions=merged["sigma_pred"].values,
+        sigma_predictions=eval_preds,
         close_prices=merged["close"].values,
         timestamps=merged["timestamp"].values,
         subperiods=window["subperiods"],
     )
     print("evaluated")
-    return bt, train_seconds
+    return bt, train_seconds, eval_preds
 
 
 # ---------------------------------------------------------------------------
@@ -432,7 +435,7 @@ def evaluate_model(build_model_fn: callable) -> dict:
     print(f"Evaluating ({len(windows)} walk-forward windows)...")
     window_results = []
     for i, w in enumerate(windows):
-        bt, _ = _eval_window(build_model_fn, all_data, w, i + 1)
+        bt, _, _ = _eval_window(build_model_fn, all_data, w, i + 1)
         window_results.append(bt)
 
     # --- Composite score ---
@@ -485,12 +488,22 @@ def evaluate_model(build_model_fn: callable) -> dict:
 # Per-Window Diagnostic (human-only)
 # ---------------------------------------------------------------------------
 
+def _pred_stats_line(preds):
+    """One-line prediction distribution summary."""
+    abs_p = np.abs(preds)
+    e10 = (abs_p > 0.10).sum() / len(preds) * 100
+    e20 = (abs_p > 0.20).sum() / len(preds) * 100
+    e30 = (abs_p > 0.30).sum() / len(preds) * 100
+    return (f"  Predictions: mean={preds.mean():+.4f}, std={preds.std():.4f}, "
+            f"|pred|>0.10: {e10:.0f}%, >0.20: {e20:.0f}%, >0.30: {e30:.0f}%")
+
+
 def _run_diagnostic():
-    """Per-window and per-subperiod diagnostic breakdown.
+    """Per-window diagnostic breakdown with prediction stats.
 
     Human-only tool. Retrains the recipe on each walk-forward window and
-    prints per-window backtest results. Also trains on 2023-2025 and
-    evaluates on 2026+ as the true holdout.
+    prints per-window backtest results and prediction distributions. Also
+    trains on 2023-2025 and evaluates on 2026+ as the true holdout.
     """
     import train as train_module
 
@@ -502,10 +515,13 @@ def _run_diagnostic():
     print("=" * 60 + "\n")
 
     window_results = []
+    window_preds = []
     window_train_times = []
     for i, w in enumerate(windows):
-        bt, train_time = _eval_window(train_module.build_model, all_data, w, i + 1)
+        bt, train_time, eval_preds = _eval_window(
+            train_module.build_model, all_data, w, i + 1)
         window_results.append(bt)
+        window_preds.append(eval_preds)
         window_train_times.append(train_time)
 
     # Compute composite score (same formula as evaluate_model)
@@ -546,7 +562,8 @@ def _run_diagnostic():
 
     losing_subperiods = []
 
-    for i, (w, result) in enumerate(zip(windows, window_results)):
+    for i, (w, result, preds) in enumerate(
+            zip(windows, window_results, window_preds)):
         train_range = f"{w['train_start'].date()}-{w['train_end'].date()}"
         eval_range = f"{w['eval_start'].date()}-{w['eval_end'].date()}"
         print(f"\n--- Window {i+1}: Train {train_range}, Eval {eval_range} ---")
@@ -564,6 +581,9 @@ def _run_diagnostic():
                   f"return {sp_ret:+.2%}  {symbol}")
             if sp_ret <= 0:
                 losing_subperiods.append(label)
+
+        if len(preds) > 0:
+            print(_pred_stats_line(preds))
 
     print(f"\nLosing subperiods: {', '.join(losing_subperiods) if losing_subperiods else 'None'}")
 
@@ -583,7 +603,7 @@ def _run_diagnostic():
             "eval_end": th_eval_end,
             "subperiods": [(th_eval_start, th_eval_end, "2026 YTD")],
         }
-        bt_th, th_train_time = _eval_window(
+        bt_th, _, th_preds = _eval_window(
             train_module.build_model, all_data, th_window, "holdout")
         print(f"\n--- True Holdout (UNSCORED) ---")
         print(f"  (Trained on {th_train_start.date()}-{th_train_end.date()}, "
@@ -593,136 +613,8 @@ def _run_diagnostic():
         print(f"  Trades: {bt_th['n_trades']}")
         print(f"  Total return: {bt_th['total_return']:+.1%}")
         print(f"  2026 YTD: return {bt_th['subperiod_returns'][0]:+.2%}")
-
-    print()
-
-
-# ---------------------------------------------------------------------------
-# Prediction Calibration Diagnostic (human-only)
-# ---------------------------------------------------------------------------
-
-def _run_calibrate():
-    """Per-window prediction distribution statistics.
-
-    Retrains the recipe on each walk-forward window and prints prediction
-    distribution stats for each eval period. Helps calibrate SIGMA_THRESHOLD
-    and SIGMA_FULL_POSITION.
-    """
-    import train as train_module
-
-    all_data = _load_all_data()
-    windows = _get_walk_forward_windows()
-    thresholds = [0.1, 0.2, 0.3, 0.5, 0.75, 1.0]
-
-    print("=" * 60)
-    print("Training and calibrating across walk-forward windows...")
-    print("=" * 60)
-    print(f"\nCurrent constants: SIGMA_THRESHOLD={SIGMA_THRESHOLD}, "
-          f"SIGMA_FULL_POSITION={SIGMA_FULL_POSITION}")
-
-    for i, w in enumerate(windows):
-        # Train on this window's data
-        train_mask = ((all_data["timestamp"] >= w["train_start"]) &
-                      (all_data["timestamp"] <= w["train_end"]))
-        train_data = all_data[train_mask].reset_index(drop=True)
-
-        print(f"\n  Training Window {i+1} "
-              f"({w['train_start'].date()}-{w['train_end'].date()})...", flush=True)
-        predict_fn = train_module.build_model(train_data)
-
-        # Predict on full dataset
-        sigma_preds, timestamps, vol = predict_fn(all_data)
-        sigma_preds = np.asarray(sigma_preds, dtype=np.float64).ravel()
-        timestamps = np.asarray(timestamps).ravel()
-        pred_df = pd.DataFrame({"timestamp": timestamps, "sigma_pred": sigma_preds})
-
-        # Extract eval period predictions
-        eval_mask = ((all_data["timestamp"] >= w["eval_start"]) &
-                     (all_data["timestamp"] <= w["eval_end"]))
-        eval_data = all_data[eval_mask].reset_index(drop=True)
-        merged = eval_data.merge(pred_df, on="timestamp", how="inner")
-
-        if len(merged) == 0:
-            print(f"\n--- Window {i+1}: no predictions ---")
-            continue
-
-        preds = merged["sigma_pred"].values
-        abs_preds = np.abs(preds)
-
-        eval_range = f"{w['eval_start'].date()} to {w['eval_end'].date()}"
-        train_range = f"{w['train_start'].date()}-{w['train_end'].date()}"
-        print(f"\n--- Window {i+1}: Train {train_range}, Eval {eval_range} "
-              f"(n={len(preds)}) ---")
-        print(f"  Raw sigma predictions:")
-        print(f"    mean:  {preds.mean():+.4f}    std: {preds.std():.4f}")
-        print(f"    min:   {preds.min():+.4f}    max: {preds.max():+.4f}")
-        print(f"  Absolute sigma predictions:")
-        print(f"    mean:  {abs_preds.mean():.4f}")
-        print(f"    p10:   {np.percentile(abs_preds, 10):.4f}")
-        print(f"    p25:   {np.percentile(abs_preds, 25):.4f}")
-        print(f"    p50:   {np.percentile(abs_preds, 50):.4f}")
-        print(f"    p75:   {np.percentile(abs_preds, 75):.4f}")
-        print(f"    p90:   {np.percentile(abs_preds, 90):.4f}")
-        print(f"  Threshold exceedance (|sigma_pred| > threshold):")
-        for t in thresholds:
-            count = (abs_preds > t).sum()
-            pct = count / len(abs_preds) * 100
-            print(f"    > {t:.2f}:  {count:6d}  ({pct:5.1f}%)")
-
-        # Per-subperiod breakdown
-        ts_series = pd.to_datetime(merged["timestamp"])
-        for sp_start, sp_end, label in w["subperiods"]:
-            sp_mask = (ts_series >= sp_start) & (ts_series <= sp_end)
-            sp_preds = preds[sp_mask.values]
-            sp_abs = np.abs(sp_preds)
-            if len(sp_preds) > 0:
-                above_thresh = (sp_abs > SIGMA_THRESHOLD).sum()
-                print(f"    {label} ({sp_start.date()}-{sp_end.date()}): "
-                      f"mean={sp_preds.mean():+.4f}, std={sp_preds.std():.4f}, "
-                      f"|pred|>threshold: {above_thresh} "
-                      f"({above_thresh/len(sp_preds)*100:.1f}%)")
-
-    # True holdout: train on 2023-2025, predict on 2026+
-    T = pd.Timestamp
-    th_train_start = T("2023-01-01")
-    th_train_end = T("2025-12-31 23:00:00")
-    th_eval_start = T("2026-01-01")
-
-    th_eval_data = all_data[all_data["timestamp"] >= th_eval_start]
-    if len(th_eval_data) > 0:
-        print(f"\n  Training true holdout window "
-              f"({th_train_start.date()}-{th_train_end.date()})...", flush=True)
-        th_train_mask = ((all_data["timestamp"] >= th_train_start) &
-                         (all_data["timestamp"] <= th_train_end))
-        th_train_data = all_data[th_train_mask].reset_index(drop=True)
-        predict_fn = train_module.build_model(th_train_data)
-
-        sigma_preds, timestamps, vol = predict_fn(all_data)
-        sigma_preds = np.asarray(sigma_preds, dtype=np.float64).ravel()
-        timestamps = np.asarray(timestamps).ravel()
-        pred_df = pd.DataFrame({"timestamp": timestamps, "sigma_pred": sigma_preds})
-
-        merged_th = th_eval_data.merge(pred_df, on="timestamp", how="inner")
-        if len(merged_th) > 0:
-            th_preds = merged_th["sigma_pred"].values
-            th_abs = np.abs(th_preds)
-            th_start = merged_th["timestamp"].min()
-            th_end = merged_th["timestamp"].max()
-            print(f"\n--- True Holdout (UNSCORED) ({th_start.date()} to {th_end.date()}, "
-                  f"n={len(th_preds)}) ---")
-            print(f"  (Trained on {th_train_start.date()}-{th_train_end.date()})")
-            print(f"  Raw sigma predictions:")
-            print(f"    mean:  {th_preds.mean():+.4f}    std: {th_preds.std():.4f}")
-            print(f"    min:   {th_preds.min():+.4f}    max: {th_preds.max():+.4f}")
-            print(f"  Absolute sigma predictions:")
-            print(f"    mean:  {th_abs.mean():.4f}")
-            print(f"    p50:   {np.percentile(th_abs, 50):.4f}")
-            print(f"    p90:   {np.percentile(th_abs, 90):.4f}")
-            print(f"  Threshold exceedance (|sigma_pred| > threshold):")
-            for t in thresholds:
-                count = (th_abs > t).sum()
-                pct = count / len(th_abs) * 100
-                print(f"    > {t:.2f}:  {count:6d}  ({pct:5.1f}%)")
+        if len(th_preds) > 0:
+            print(_pred_stats_line(th_preds))
 
     print()
 
@@ -734,15 +626,11 @@ def _run_calibrate():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Autotrader data preparation and diagnostics")
     parser.add_argument("--diagnose", action="store_true",
-                        help="Per-window diagnostic breakdown + true holdout (human-only)")
-    parser.add_argument("--calibrate", action="store_true",
-                        help="Per-window prediction distribution stats (human-only)")
+                        help="Per-window diagnostic breakdown + prediction stats + true holdout (human-only)")
     args = parser.parse_args()
 
     if args.diagnose:
         _run_diagnostic()
-    elif args.calibrate:
-        _run_calibrate()
     else:
         df = download_data()
         print(f"\nData summary:")
