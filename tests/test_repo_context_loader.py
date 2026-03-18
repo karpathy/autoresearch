@@ -12,3 +12,5 @@ def test_load_repo_context_detects_nextjs_repo(tmp_path):
     ctx = load_repo_context(tmp_path)
     assert ctx.framework == "nextjs"
     assert ctx.package_manager in {"pnpm", "npm", "yarn", "unknown"}
+    assert ctx.scripts == {"lint": "next lint", "dev": "next dev"}
+    assert ctx.sensitive_paths == [".env", ".env.local", ".env.production"]
