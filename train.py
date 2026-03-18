@@ -194,6 +194,7 @@ def compute_targets(df: pd.DataFrame) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 _trained_model = None
+_selected_features = None  # boolean mask from feature importance pruning
 
 
 def count_model_params(model=None) -> int:
@@ -225,6 +226,10 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarra
     """
     features, timestamps, vol_safe = compute_features(df)
     features = np.nan_to_num(features, nan=0.0)
+
+    # Apply feature importance pruning mask if available
+    if _selected_features is not None:
+        features = features[:, _selected_features]
 
     model = _trained_model
     if model is None:
@@ -294,11 +299,31 @@ def main():
     )
     model.fit(features, targets)
 
+    # Feature importance pruning: remove low-signal features to improve split quality
+    importances = model.feature_importances_
+    threshold = np.mean(importances)
+    selected = importances >= threshold
+    print(f"  Feature pruning: {selected.sum()}/{len(importances)} features selected "
+          f"(importance >= {threshold:.4f})")
+    features_pruned = features[:, selected]
+
+    # Retrain on pruned feature set
+    model2 = ExtraTreesRegressor(
+        n_estimators=3000,
+        max_depth=7,
+        min_samples_leaf=600,
+        random_state=42,
+        n_jobs=-1,
+    )
+    model2.fit(features_pruned, targets)
+
     training_seconds = time.time() - train_start
     print(f"Training complete in {training_seconds:.1f}s")
 
-    _trained_model = model
-    n_params = count_model_params(model)
+    global _selected_features
+    _selected_features = selected
+    _trained_model = model2
+    n_params = count_model_params(model2)
     print(f"  Model parameters (node count): {n_params}")
 
     # --- Evaluate (black box) ---
