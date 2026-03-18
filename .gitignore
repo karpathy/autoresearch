@@ -27,6 +27,7 @@ dev/
 results.tsv
 analysis.md
 experiment-log.md
+plateau-report.md
 
 # Run logs
 run.log

@@ -539,6 +539,110 @@ def _run_fresh_holdout():
 
 
 # ---------------------------------------------------------------------------
+# Per-Split Diagnostic (human-only)
+# ---------------------------------------------------------------------------
+
+def _run_diagnostic():
+    """Per-split and per-subperiod diagnostic breakdown.
+
+    Human-only tool for diagnosing which subperiods are losing money.
+    Trains the model, runs the same evaluation as evaluate_model(),
+    but prints intermediate per-split results instead of aggregating.
+    """
+    import train as train_module
+
+    # 1. Train the model
+    print("=" * 60)
+    print("Training model...")
+    print("=" * 60 + "\n")
+    train_module.main()
+
+    # 2. Generate predictions on full dataset (same as evaluate_model)
+    all_data = _load_all_data()
+    predictions, timestamps = train_module.predict_on_data(all_data)
+    predictions = np.asarray(predictions, dtype=np.float64).ravel()
+    timestamps = np.asarray(timestamps).ravel()
+    pred_df = pd.DataFrame({"timestamp": timestamps, "prediction": predictions})
+
+    # 3. Backtest each split and collect results
+    splits = _get_splits()
+    split_names = ["Train", "Val", "Holdout"]
+    split_results = []
+    split_subperiods = []
+
+    for split_start, split_end, subperiods in splits:
+        mask = (all_data["timestamp"] >= split_start) & (all_data["timestamp"] <= split_end)
+        split_data = all_data[mask].reset_index(drop=True)
+        merged = split_data.merge(pred_df, on="timestamp", how="inner")
+
+        if len(merged) == 0:
+            split_results.append({
+                "sharpe": -10.0, "max_drawdown": -1.0,
+                "n_trades": 0, "total_return": -1.0,
+                "subperiod_returns": [-1.0] * len(subperiods),
+            })
+        else:
+            bt = _backtest(
+                predictions=merged["prediction"].values,
+                close_prices=merged["close"].values,
+                timestamps=merged["timestamp"].values,
+                subperiods=subperiods,
+            )
+            split_results.append(bt)
+        split_subperiods.append(subperiods)
+
+    # 4. Compute composite score (same formula as evaluate_model)
+    sharpes = [r["sharpe"] for r in split_results]
+    base = min(sharpes)
+    worst_dd_raw = min(r["max_drawdown"] for r in split_results)
+    dd = abs(worst_dd_raw)
+    dd_mult = 1.0 if dd <= 0.10 else 1.0 / (1.0 + ((dd - 0.10) / 0.15) ** 2)
+    total_trades = sum(r["n_trades"] for r in split_results)
+    trade_mult = min(1.0, total_trades / 100.0)
+    all_sp_returns = []
+    for r in split_results:
+        all_sp_returns.extend(r["subperiod_returns"])
+    n_profitable = sum(1 for ret in all_sp_returns if ret > 0)
+    n_total = len(all_sp_returns)
+    consistency = n_profitable / n_total if n_total > 0 else 0.0
+    score = base * dd_mult * trade_mult * consistency
+
+    # 5. Print diagnostic breakdown
+    print("\n" + "=" * 60)
+    print("=== DIAGNOSTIC BREAKDOWN ===")
+    print("(Human-only — this information is hidden from the agent)")
+    print("=" * 60)
+    print(f"\nOverall: score={score:.4f}, sharpe_min={base:.4f}, "
+          f"consistency={n_profitable}/{n_total}")
+    print(f"  dd_mult={dd_mult:.4f}, trade_mult={trade_mult:.4f}")
+
+    losing_subperiods = []
+    sp_idx = 0
+
+    for i, (name, (s, e, subperiods), result) in enumerate(
+            zip(split_names, splits, split_results)):
+        print(f"\n--- Split {i+1}: {name} ({s.date()} to {e.date()}) ---")
+        print(f"  Sharpe: {result['sharpe']:.4f}"
+              f"{'  <-- MIN' if result['sharpe'] == base else ''}")
+        print(f"  Max drawdown: {result['max_drawdown']:.1%}")
+        print(f"  Trades: {result['n_trades']}")
+        print(f"  Total return: {result['total_return']:+.1%}")
+
+        for j, ((sp_start, sp_end), sp_ret) in enumerate(
+                zip(subperiods, result["subperiod_returns"])):
+            mark = "+" if sp_ret > 0 else "-"
+            symbol = "OK" if sp_ret > 0 else "LOSS"
+            print(f"  Subperiod {j+1} ({sp_start.date()} to {sp_end.date()}): "
+                  f"return {sp_ret:+.2%}  {symbol}")
+            if sp_ret <= 0:
+                losing_subperiods.append(f"{name}-{j+1}")
+            sp_idx += 1
+
+    print(f"\nLosing subperiods: {', '.join(losing_subperiods) if losing_subperiods else 'None'}")
+    print()
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -546,10 +650,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Autotrader data preparation and validation")
     parser.add_argument("--validate", action="store_true",
                         help="Run signal quality validation on holdout window")
+    parser.add_argument("--diagnose", action="store_true",
+                        help="Per-split diagnostic breakdown (human-only)")
     args = parser.parse_args()
 
     if args.validate:
         _run_fresh_holdout()
+    elif args.diagnose:
+        _run_diagnostic()
     else:
         df = download_data()
         print(f"\nData summary:")
