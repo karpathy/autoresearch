@@ -30,10 +30,7 @@ def _load_target_commands(repo_path: Path) -> Mapping[str, str]:
     config_path = repo_path / "project.autosaas.yaml"
     if not config_path.is_file():
         return {}
-    try:
-        config = load_target_config(config_path)
-    except Exception:
-        return {}
+    config = load_target_config(config_path)
 
     commands: dict[str, str] = {
         "lint": config.commands.lint,
