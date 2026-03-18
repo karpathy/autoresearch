@@ -22,3 +22,6 @@ dev/
 # Results file
 results.tsv
 logs/
+
+# Runtime data (task files, knowledge DB, credits, fallback storage)
+data/
