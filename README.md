@@ -87,6 +87,46 @@ I think these would be the reasonable hyperparameters to play with. Ask your fav
 - [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
 - [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
 
+## Community Results
+
+Results from the community running autoresearch on different hardware. As noted in the design choices section, results are not directly comparable across hardware tiers — each platform finds its own optimal config for the 5-minute budget.
+
+### NVIDIA RTX 3090 (24 GB VRAM)
+
+**Run:** ~1,800 experiments over ~48 hours (March 2026), agent: Claude Sonnet 4.6
+
+| val_bpb | Δ vs baseline | Config |
+|---------|--------------|--------|
+| 1.5963 | — | depth=8, device_bs=16 — **baseline** |
+| 1.1917 | -25.3% | `TOTAL_BATCH_SIZE=2**17`, grad_accum=2, sqrt-scaled LR |
+| 1.1209 | -29.8% | `TOTAL_BATCH_SIZE=2**16`, grad_accum=1, scaled LR |
+| 1.1134 | -30.3% | `TOTAL_BATCH_SIZE=2**16`, original LRs (don't scale) |
+| 1.1064 | -30.7% | depth=6, dim=512 |
+| 1.1016 | -31.0% | depth=5, dim=512 |
+| **1.1008** | **-31.1%** | **depth=5, dim=512, SSSS window pattern — best** |
+
+**Winning configuration:**
+
+```python
+DEPTH = 5                    # shallower wins at 5-min budget on this GPU
+ASPECT_RATIO = 102           # → dim ≈ 512
+HEAD_DIM = 128
+TOTAL_BATCH_SIZE = 2**16     # ~65K tokens/step
+DEVICE_BATCH_SIZE = 32       # safe for RTX 3090 at this depth/dim
+WARMUP_RATIO = 0.0
+WARMDOWN_RATIO = 0.6         # slightly longer warmdown than default
+window_pattern = "SSSS"      # all sliding-window layers
+```
+
+**Key findings for RTX 3090 users:**
+
+1. **Shallower beats deeper at 5-minute budget.** depth=4–5 consistently outperforms depth=8+. A shallower model gets more optimizer steps in 300 seconds, which matters more than capacity at this compute scale. depth=3 is too shallow (capacity bottleneck); depth=6+ loses too many steps.
+2. **`TOTAL_BATCH_SIZE = 2**16` is the sweet spot.** `2**17` with grad accumulation gives too few steps; `2**15` introduces gradient noise. `2**16` with `grad_accum=1` maximizes clean optimizer steps.
+3. **Do not scale learning rates with batch size.** The standard sqrt-scaling rule hurt performance. Original baseline LRs work better at `2**16`.
+4. **`WARMDOWN_RATIO = 0.6` beats 0.5.** Marginally but consistently. Diminishing returns beyond 0.6.
+5. **SSSS window pattern beats SSSL (default).** Small but consistent improvement.
+6. **OOM notes:** The default `DEVICE_BATCH_SIZE=128` causes OOM on RTX 3090 — reduce to 16–32. Any config using depth=18+ will OOM even at `device_bs=8`. Keep an eye on peak VRAM in run logs.
+
 ## License
 
 MIT
