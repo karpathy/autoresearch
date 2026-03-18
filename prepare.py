@@ -447,7 +447,10 @@ def evaluate_model(predict_fn: callable) -> dict:
     n_total = len(all_sp_returns)
     consistency = n_profitable / n_total if n_total > 0 else 0.0
 
-    score = base * dd_mult * trade_mult * consistency
+    if base >= 0:
+        score = base * dd_mult * trade_mult * consistency
+    else:
+        score = base
 
     return {
         "score": score,
