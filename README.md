@@ -28,16 +28,39 @@ uv run prepare.py
 uv run train.py
 ```
 
+### Platform notes
+
+**H100 / Hopper GPUs**: Everything works out of the box. Flash Attention 3 + torch.compile + Triton.
+
+**RTX 3060 / 4090 / consumer GPUs**: FA3 is Hopper-only. The script auto-detects and falls back to PyTorch SDPA. You'll need to tune hyperparameters for your VRAM:
+
+```bash
+# Example for RTX 3060 12GB
+# In train.py, set:
+DEPTH = 4
+DEVICE_BATCH_SIZE = 16
+TOTAL_BATCH_SIZE = 2**16
+WINDOW_PATTERN = "SL"
+```
+
+**Windows**: Triton isn't available on Windows, so `torch.compile` is automatically disabled. Training runs in eager mode (slower but functional).
+
+**Data**: The script expects data in `~/.cache/autoresearch/`. Run `uv run prepare.py` once to download and prepare it.
+
 ## Running the agent
 
 The agent harness gives any LLM provider structured tools to run experiments autonomously.
 
 ```bash
 # Install agent dependencies (pick your provider)
-pip install anthropic openai google-genai
+uv pip install anthropic  # or: openai, google-genai
+
+# Set your API key
+export ANTHROPIC_API_KEY=sk-ant-...  # Linux/Mac
+set ANTHROPIC_API_KEY=sk-ant-...     # Windows
 
 # Run with Claude
-python agent.py --provider anthropic --model claude-sonnet-4-20250514
+uv run python agent.py --provider anthropic --model claude-sonnet-4-20250514
 
 # Run with GPT
 python agent.py --provider openai --model gpt-4o

@@ -5,8 +5,12 @@ Usage: uv run train.py
 """
 
 import os
+import sys
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+# Disable torch.compile on Windows (no Triton)
+if sys.platform == "win32":
+    os.environ["TORCHDYNAMO_DISABLE"] = "1"
 
 import gc
 import math
@@ -17,11 +21,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+try:
+    from kernels import get_kernel
+    cap = torch.cuda.get_device_capability()
+    repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+    fa3 = get_kernel(repo).flash_attn_interface
+    USE_FA3 = True
+except Exception:
+    fa3 = None
+    USE_FA3 = False
+    print("Flash Attention 3 unavailable, using PyTorch SDPA fallback")
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -90,7 +99,13 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        if USE_FA3:
+            y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        else:
+            # SDPA fallback: (B, T, H, D) -> (B, H, T, D)
+            q2, k2, v2 = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+            y = F.scaled_dot_product_attention(q2, k2, v2, is_causal=True)
+            y = y.transpose(1, 2)
         y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
@@ -180,7 +195,9 @@ class GPT(nn.Module):
         for ve in self.value_embeds.values():
             ve.to(dtype=torch.bfloat16)
 
-    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=ROPE_BASE, device=None):
+    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=None, device=None):
+        if base is None:
+            base = ROPE_BASE
         if device is None:
             device = self.transformer.wte.weight.device
         channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
@@ -470,11 +487,11 @@ class MuonAdamW(torch.optim.Optimizer):
 # Model architecture
 ASPECT_RATIO = 57       # model_dim = depth * ASPECT_RATIO (was 64)
 HEAD_DIM = 128          # target head dimension for attention
-WINDOW_PATTERN = "SSSSL" # sliding window pattern: 4:1 short:long ratio (was SSSL)
+WINDOW_PATTERN = "SL"   # sliding window pattern (simpler for small model)
 ROPE_BASE = 200_000     # RoPE base frequency (was 10000)
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**18 # ~262K tokens — more steps in 5min (was 2**19)
+TOTAL_BATCH_SIZE = 2**16 # ~65K tokens — tuned for RTX 3060 12GB
 EMBEDDING_LR = 0.9      # learning rate for token embeddings (was 0.6)
 UNEMBEDDING_LR = 0.005  # learning rate for lm_head (was 0.004)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
@@ -495,8 +512,8 @@ INIT_SCALE = 0.68       # init scale multiplier (was 1.0)
 WEBER_C_SQ = 1.0        # characteristic velocity² (Weber "speed of light" squared)
 
 # Model size
-DEPTH = 9               # number of transformer layers (was 8)
-DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
+DEPTH = 4               # number of transformer layers (tuned for RTX 3060)
+DEVICE_BATCH_SIZE = 16   # per-device batch size (tuned for 12GB VRAM)
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
@@ -568,7 +585,10 @@ optimizer = model.setup_optimizer(
     weight_decay=WEIGHT_DECAY,
 )
 
-model = torch.compile(model, dynamic=False)
+try:
+    model = torch.compile(model, dynamic=False)
+except Exception:
+    print("torch.compile unavailable (Triton missing), running eager mode")
 
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
 x, y, epoch = next(train_loader)  # prefetch first batch
