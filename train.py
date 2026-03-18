@@ -165,9 +165,14 @@ class GPT(nn.Module):
         })
         # Rotary embeddings
         self.rotary_seq_len = config.sequence_len * 10
-        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
-        self.register_buffer("cos", cos, persistent=False)
-        self.register_buffer("sin", sin, persistent=False)
+        # Layer-specific RoPE frequencies - higher for later layers
+        self.cos_buffers = nn.ModuleList()
+        self.sin_buffers = nn.ModuleList()
+        for i in range(config.n_layer):
+            layer_base = base * (1.5 ** (i / config.n_layer))
+            cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, base=layer_base, layer_idx=i)
+            self.register_buffer(f"cos_{i}", cos, persistent=False)
+            self.register_buffer(f"sin_{i}", sin, persistent=False)
 
     @torch.no_grad()
     def init_weights(self):
@@ -193,16 +198,19 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             if block.attn.ve_gate is not None:
                 torch.nn.init.zeros_(block.attn.ve_gate.weight)
-        # Rotary embeddings
+        # Rotary embeddings - reinitialize layer-specific frequencies
         head_dim = self.config.n_embd // self.config.n_head
-        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
-        self.cos, self.sin = cos, sin
+        for i in range(self.config.n_layer):
+            layer_base = 10000 * (1.5 ** (i / self.config.n_layer))
+            cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, base=layer_base, layer_idx=i)
+            setattr(self, f"cos_{i}", cos)
+            setattr(self, f"sin_{i}", sin)
         # Cast embeddings to bf16
         self.transformer.wte.to(dtype=torch.bfloat16)
         for ve in self.value_embeds.values():
             ve.to(dtype=torch.bfloat16)
 
-    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
+    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None, layer_idx=None):
         if device is None:
             device = self.transformer.wte.weight.device
         channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
@@ -293,7 +301,8 @@ class GPT(nn.Module):
     def forward(self, idx, targets=None, reduction='mean'):
         B, T = idx.size()
         assert T <= self.cos.size(1)
-        cos_sin = self.cos[:, :T], self.sin[:, :T]
+        # Will be set per layer
+        cos_sin = None
 
         x = self.transformer.wte(idx)
         x = norm(x)
@@ -301,7 +310,10 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[i])
+            layer_cos = getattr(self, f"cos_{i}")[:, :T]
+            layer_sin = getattr(self, f"sin_{i}")[:, :T]
+            layer_cos_sin = layer_cos, layer_sin
+            x = block(x, ve, layer_cos_sin, self.window_sizes[i])
         x = norm(x)
 
         softcap = 15
