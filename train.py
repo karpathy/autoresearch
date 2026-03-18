@@ -284,14 +284,15 @@ class GPT(nn.Module):
         for layer_idx, params in enumerate(layer_params):
             if not params:
                 continue
-            # Higher weight decay for early layers, lower for later layers
+            # Higher decay for early layers, lower for later layers
             layer_weight_decay = weight_decay * (1.5 - 0.5 * layer_idx / (self.config.n_layer - 1))
             for shape in sorted({p.shape for p in params}):
                 group_params = [p for p in params if p.shape == shape]
-                param_groups.append(dict(
-                    kind='muon', params=group_params, lr=matrix_lr,
-                    momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=layer_weight_decay,
-                ))
+                if group_params:
+                    param_groups.append(dict(
+                        kind='muon', params=group_params, lr=matrix_lr,
+                        momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=layer_weight_decay,
+                    ))
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
