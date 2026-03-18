@@ -219,13 +219,13 @@ def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     return pd.Series(raw_preds).ewm(span=24, min_periods=1).mean().values
 
 
-def _confidence_scaled_predict(model, features: np.ndarray) -> np.ndarray:
-    """Produce confidence-scaled predictions from a single ExtraTrees model."""
+def _confidence_scaled_predict(model, features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Produce confidence-scaled predictions and confidence weights from a single model."""
     all_tree_preds = np.array([tree.predict(features) for tree in model.estimators_])
     preds = all_tree_preds.mean(axis=0)
     pred_std = all_tree_preds.std(axis=0)
     confidence = 1.0 / (1.0 + 2.0 * pred_std)
-    return preds * confidence
+    return preds * confidence, confidence
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -244,11 +244,15 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarra
     if not _trained_models:
         raise RuntimeError("Model not trained. Run train.py first.")
 
-    # Average confidence-scaled predictions across all ensemble members
-    ensemble_preds = np.zeros(len(features))
+    # Confidence-weighted ensemble: trust each model proportional to its confidence
+    weighted_sum = np.zeros(len(features))
+    weight_sum = np.zeros(len(features))
     for model in _trained_models:
-        ensemble_preds += _confidence_scaled_predict(model, features)
-    sigma_preds = ensemble_preds / len(_trained_models)
+        scaled_pred, confidence = _confidence_scaled_predict(model, features)
+        weighted_sum += scaled_pred * confidence  # double-weight by confidence
+        weight_sum += confidence
+    weight_sum = np.where(weight_sum > 0, weight_sum, 1.0)
+    sigma_preds = weighted_sum / weight_sum
 
     sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
     sigma_preds = sigma_preds * 1.5  # base scale
