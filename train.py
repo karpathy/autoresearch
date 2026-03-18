@@ -258,21 +258,14 @@ class GPT(nn.Module):
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02,
                         weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5):
         model_dim = self.config.n_embd
-        # Separate attention components for different learning rates
-        qkv_params = []
-        output_proj_params = []
-        other_matrix_params = []
-        for block in self.transformer.h:
-            qkv_params.extend([block.attn.c_q.weight, block.attn.c_k.weight, block.attn.c_v.weight])
-            output_proj_params.append(block.attn.c_proj.weight)
-            other_matrix_params.extend([block.mlp.c_fc.weight, block.mlp.c_proj.weight])
-            if block.attn.ve_gate is not None:
-                other_matrix_params.append(block.attn.ve_gate.weight)
+        matrix_params = list(self.transformer.h.parameters())
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
+        assert len(list(self.parameters())) == (len(matrix_params) + len(embedding_params) +
+            len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params))
         # Scale LR ∝ 1/√dmodel (tuned at 768 dim)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
@@ -283,21 +276,35 @@ class GPT(nn.Module):
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
-        # Group QKV projections by shape
-        for shape in sorted({p.shape for p in qkv_params}):
-            group_params = [p for p in qkv_params if p.shape == shape]
+        # Separate attention components for different weight decay
+        attn_output_params = []
+        attn_qkv_params = []
+        other_matrix_params = []
+        
+        for block in self.transformer.h:
+            attn_output_params.append(block.attn.c_proj.weight)
+            attn_qkv_params.extend([block.attn.c_q.weight, block.attn.c_k.weight, block.attn.c_v.weight])
+            other_matrix_params.extend([block.mlp.c_fc.weight, block.mlp.c_proj.weight])
+            if block.attn.ve_gate is not None:
+                other_matrix_params.append(block.attn.ve_gate.weight)
+        
+        # Group by shape for attention output (higher weight decay)
+        for shape in sorted({p.shape for p in attn_output_params}):
+            group_params = [p for p in attn_output_params if p.shape == shape]
             param_groups.append(dict(
                 kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=0.3,
             ))
-        # Group output projections by shape with lower learning rate
-        for shape in sorted({p.shape for p in output_proj_params}):
-            group_params = [p for p in output_proj_params if p.shape == shape]
+        
+        # Group by shape for Q/K/V projections (lower weight decay)
+        for shape in sorted({p.shape for p in attn_qkv_params}):
+            group_params = [p for p in attn_qkv_params if p.shape == shape]
             param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr * 0.5,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+                kind='muon', params=group_params, lr=matrix_lr,
+                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=0.1,
             ))
-        # Group other matrix params by shape
+        
+        # Group by shape for other matrix parameters (standard weight decay)
         for shape in sorted({p.shape for p in other_matrix_params}):
             group_params = [p for p in other_matrix_params if p.shape == shape]
             param_groups.append(dict(
