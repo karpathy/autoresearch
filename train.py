@@ -276,37 +276,8 @@ class GPT(nn.Module):
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
-        # Separate attention components for different weight decay
-        attn_output_params = []
-        attn_qkv_params = []
-        other_matrix_params = []
-        
-        for block in self.transformer.h:
-            attn_output_params.append(block.attn.c_proj.weight)
-            attn_qkv_params.extend([block.attn.c_q.weight, block.attn.c_k.weight, block.attn.c_v.weight])
-            other_matrix_params.extend([block.mlp.c_fc.weight, block.mlp.c_proj.weight])
-            if block.attn.ve_gate is not None:
-                other_matrix_params.append(block.attn.ve_gate.weight)
-        
-        # Group by shape for attention output (higher decay)
-        for shape in sorted({p.shape for p in attn_output_params}):
-            group_params = [p for p in attn_output_params if p.shape == shape]
-            param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=0.3,
-            ))
-        
-        # Group by shape for Q/K/V projections (lower decay)
-        for shape in sorted({p.shape for p in attn_qkv_params}):
-            group_params = [p for p in attn_qkv_params if p.shape == shape]
-            param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=0.1,
-            ))
-        
-        # Group by shape for other matrix params (standard decay)
-        for shape in sorted({p.shape for p in other_matrix_params}):
-            group_params = [p for p in other_matrix_params if p.shape == shape]
+        for shape in sorted({p.shape for p in matrix_params}):
+            group_params = [p for p in matrix_params if p.shape == shape]
             param_groups.append(dict(
                 kind='muon', params=group_params, lr=matrix_lr,
                 momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
@@ -493,7 +464,7 @@ MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
 SCALAR_LR = 0.5         # learning rate for per-layer scalars (Adam)
 WEIGHT_DECAY = 0.2      # cautious weight decay for Muon
 ADAM_BETAS = (0.8, 0.95) # Adam beta1, beta2
-WARMUP_RATIO = 0.0      # fraction of time budget for LR warmup
+WARMUP_RATIO = 0.05     # fraction of time budget for LR warmup
 WARMDOWN_RATIO = 0.75   # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
