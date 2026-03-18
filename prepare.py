@@ -15,6 +15,8 @@ import time
 import math
 import argparse
 import pickle
+import hashlib
+import json
 from multiprocessing import Pool
 
 import requests
@@ -49,6 +51,39 @@ SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| 
 
 SPECIAL_TOKENS = [f"<|reserved_{i}|>" for i in range(4)]
 BOS_TOKEN = "<|reserved_0|>"
+
+# ---------------------------------------------------------------------------
+# Cache integrity utilities
+# ---------------------------------------------------------------------------
+
+def _compute_file_hash(filepath, algorithm="sha256"):
+    """Compute hash of a file for integrity verification."""
+    h = hashlib.new(algorithm)
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _save_metadata(tokenizer_dir, tokenizer_hash, token_bytes_hash):
+    """Save artifact hashes to metadata file."""
+    metadata = {
+        "tokenizer_hash": tokenizer_hash,
+        "token_bytes_hash": token_bytes_hash,
+        "version": 1,
+    }
+    metadata_path = os.path.join(tokenizer_dir, "metadata.json")
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+
+def _load_metadata(tokenizer_dir):
+    """Load artifact hashes from metadata file."""
+    metadata_path = os.path.join(tokenizer_dir, "metadata.json")
+    if not os.path.exists(metadata_path):
+        return None
+    with open(metadata_path, "r") as f:
+        return json.load(f)
 
 # ---------------------------------------------------------------------------
 # Data download
@@ -142,8 +177,9 @@ def train_tokenizer():
     """Train BPE tokenizer using rustbpe, save as tiktoken pickle."""
     tokenizer_pkl = os.path.join(TOKENIZER_DIR, "tokenizer.pkl")
     token_bytes_path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
+    metadata_path = os.path.join(TOKENIZER_DIR, "metadata.json")
 
-    if os.path.exists(tokenizer_pkl) and os.path.exists(token_bytes_path):
+    if os.path.exists(tokenizer_pkl) and os.path.exists(token_bytes_path) and os.path.exists(metadata_path):
         print(f"Tokenizer: already trained at {TOKENIZER_DIR}")
         return
 
@@ -195,6 +231,12 @@ def train_tokenizer():
     torch.save(token_bytes_tensor, token_bytes_path)
     print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
 
+    # --- Save integrity metadata ---
+    tokenizer_hash = _compute_file_hash(tokenizer_pkl)
+    token_bytes_hash = _compute_file_hash(token_bytes_path)
+    _save_metadata(TOKENIZER_DIR, tokenizer_hash, token_bytes_hash)
+    print(f"Tokenizer: saved integrity metadata to {metadata_path}")
+
     # Sanity check
     test = "Hello world! Numbers: 123. Unicode: 你好"
     encoded = enc.encode_ordinary(test)
@@ -215,7 +257,21 @@ class Tokenizer:
 
     @classmethod
     def from_directory(cls, tokenizer_dir=TOKENIZER_DIR):
-        with open(os.path.join(tokenizer_dir, "tokenizer.pkl"), "rb") as f:
+        tokenizer_pkl = os.path.join(tokenizer_dir, "tokenizer.pkl")
+        
+        # Verify integrity if metadata exists
+        metadata = _load_metadata(tokenizer_dir)
+        if metadata is not None:
+            expected_hash = metadata.get("tokenizer_hash")
+            if expected_hash:
+                actual_hash = _compute_file_hash(tokenizer_pkl)
+                if actual_hash != expected_hash:
+                    raise RuntimeError(
+                        f"Tokenizer integrity check failed. The cached tokenizer may be corrupted or tampered. "
+                        f"Please re-run `uv run prepare.py` to regenerate."
+                    )
+        
+        with open(tokenizer_pkl, "rb") as f:
             enc = pickle.load(f)
         return cls(enc)
 
@@ -247,8 +303,21 @@ class Tokenizer:
 
 def get_token_bytes(device="cpu"):
     path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
-    with open(path, "rb") as f:
-        return torch.load(f, map_location=device)
+    
+    # Verify integrity if metadata exists
+    metadata = _load_metadata(TOKENIZER_DIR)
+    if metadata is not None:
+        expected_hash = metadata.get("token_bytes_hash")
+        if expected_hash:
+            actual_hash = _compute_file_hash(path)
+            if actual_hash != expected_hash:
+                raise RuntimeError(
+                    f"token_bytes integrity check failed. The cached file may be corrupted or tampered. "
+                    f"Please re-run `uv run prepare.py` to regenerate."
+                )
+    
+    # Use weights_only=True for safer loading
+    return torch.load(path, map_location=device, weights_only=True)
 
 
 def _document_batches(split, tokenizer_batch_size=128):
