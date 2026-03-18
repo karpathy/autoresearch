@@ -450,7 +450,7 @@ def evaluate_model(predict_fn: callable) -> dict:
     if base >= 0:
         score = base * dd_mult * trade_mult * consistency
     else:
-        score = base
+        score = base / max(dd_mult, 0.01) / max(trade_mult, 0.01) / max(consistency, 0.01)
 
     return {
         "score": score,
