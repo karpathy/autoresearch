@@ -170,7 +170,7 @@ def count_model_params(model=None) -> int:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
-    return pd.Series(raw_preds).ewm(span=48, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=72, min_periods=1).mean().values
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -187,6 +187,7 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarra
         raise RuntimeError("Model not trained. Run train.py first.")
 
     sigma_preds = model.predict(features)
+    sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
     sigma_smoothed = _smooth_predictions(sigma_preds)
     return sigma_smoothed, timestamps, vol_safe
 
@@ -235,21 +236,13 @@ def main():
         max_iter=500,
         max_depth=4,
         learning_rate=0.02,
-        min_samples_leaf=100,
+        min_samples_leaf=200,
         max_bins=255,
-        l2_regularization=0.1,
+        l2_regularization=1.0,
         loss="squared_error",
         random_state=42,
     )
-    # Time-decay weighting: recent data is more relevant than old data.
-    # Exponential decay so 2022 data is ~5x more weighted than 2018 data.
-    # Combined with 1.2x asymmetric weighting on positive returns.
-    ts_float = train_timestamps.astype("datetime64[h]").astype(np.float64)
-    ts_norm = (ts_float - ts_float.min()) / (ts_float.max() - ts_float.min())
-    time_weights = np.exp(0.8 * ts_norm)
-    asym_weights = np.where(targets > 0, 1.2, 1.0)
-    sample_weights = time_weights * asym_weights
-    model.fit(features, targets, sample_weight=sample_weights)
+    model.fit(features, targets)
 
     training_seconds = time.time() - train_start
     print(f"Training complete in {training_seconds:.1f}s")
