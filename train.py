@@ -163,16 +163,11 @@ class GPT(nn.Module):
             str(i): nn.Embedding(config.vocab_size, kv_dim)
             for i in range(config.n_layer) if has_ve(i, config.n_layer)
         })
-        # Rotary embeddings - different base frequencies per layer
+        # Rotary embeddings
         self.rotary_seq_len = config.sequence_len * 10
-        head_dim = config.n_embd // config.n_head
-        self.cos_sin_layers = nn.ModuleList()
-        for i in range(config.n_layer):
-            # Exponentially increase base frequency from 10000 to 50000 across layers
-            base_freq = 10000 * (50000 / 10000) ** (i / max(1, config.n_layer - 1))
-            cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, base=base_freq)
-            self.register_buffer(f"cos_{i}", cos, persistent=False)
-            self.register_buffer(f"sin_{i}", sin, persistent=False)
+        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
+        self.register_buffer("cos", cos, persistent=False)
+        self.register_buffer("sin", sin, persistent=False)
 
     @torch.no_grad()
     def init_weights(self):
@@ -182,8 +177,9 @@ class GPT(nn.Module):
         n_embd = self.config.n_embd
         s = 3**0.5 * n_embd**-0.5
         for block in self.transformer.h:
-            torch.nn.init.uniform_(block.attn.c_q.weight, -s, s)
-            torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
+            s_qk = 0.3 * s  # smaller init for Q/K projections
+            torch.nn.init.uniform_(block.attn.c_q.weight, -s_qk, s_qk)
+            torch.nn.init.uniform_(block.attn.c_k.weight, -s_qk, s_qk)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight)
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
@@ -294,17 +290,15 @@ class GPT(nn.Module):
 
     def forward(self, idx, targets=None, reduction='mean'):
         B, T = idx.size()
-        
+        assert T <= self.cos.size(1)
+        cos_sin = self.cos[:, :T], self.sin[:, :T]
+
         x = self.transformer.wte(idx)
         x = norm(x)
         x0 = x
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
-            # Use layer-specific RoPE frequencies
-            cos = getattr(self, f"cos_{i}")[:, :T]
-            sin = getattr(self, f"sin_{i}")[:, :T]
-            cos_sin = cos, sin
             x = block(x, ve, cos_sin, self.window_sizes[i])
         x = norm(x)
 
