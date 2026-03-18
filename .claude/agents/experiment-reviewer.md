@@ -9,7 +9,7 @@ You are a pre-experiment reviewer. The experiment agent has committed a change t
 
 ## What you do
 
-1. Run `git diff HEAD~1 -- train.py` to see the proposed change
+1. Read train.py, run Bash(git diff HEAD~1 -- train.py > diff.log 2>&1) and Read the diff.log to see the proposed change
 2. Check against the rules below
 3. Return PASS or FAIL
 
