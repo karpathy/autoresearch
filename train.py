@@ -276,7 +276,7 @@ class GPT(nn.Module):
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
         ]
-        # Group matrix params by layer for different weight decay rates
+        # Group matrix params by layer for layer-specific learning rates
         layer_params = [[] for _ in range(self.config.n_layer)]
         for i, block in enumerate(self.transformer.h):
             layer_params[i].extend(list(block.parameters()))
@@ -284,15 +284,14 @@ class GPT(nn.Module):
         for layer_idx, params in enumerate(layer_params):
             if not params:
                 continue
-            # Exponentially increasing weight decay from 0.08 to 0.35 across layers
-            layer_wd = 0.08 * (0.35 / 0.08) ** (layer_idx / (self.config.n_layer - 1))
+            # Higher LR for early layers, lower for later layers
+            layer_lr = matrix_lr * (3.0 - 2.0 * layer_idx / (self.config.n_layer - 1))
             for shape in sorted({p.shape for p in params}):
                 group_params = [p for p in params if p.shape == shape]
-                if group_params:
-                    param_groups.append(dict(
-                        kind='muon', params=group_params, lr=matrix_lr,
-                        momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=layer_wd,
-                    ))
+                param_groups.append(dict(
+                    kind='muon', params=group_params, lr=layer_lr,
+                    momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+                ))
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
