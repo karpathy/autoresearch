@@ -95,8 +95,9 @@ class CausalSelfAttention(nn.Module):
             gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))
             v = v + gate.unsqueeze(-1) * ve
 
-        cos, sin = cos_sin
-        q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
+        cos_qk, sin_qk, cos_v, sin_v = cos_sin
+        q, k = apply_rotary_emb(q, cos_qk, sin_qk), apply_rotary_emb(k, cos_qk, sin_qk)
+        v = apply_rotary_emb(v, cos_v, sin_v)
         q, k = norm(q), norm(k)
 
         if _WIN32 or _USE_SDPA:
@@ -163,11 +164,14 @@ class GPT(nn.Module):
             str(i): nn.Embedding(config.vocab_size, kv_dim)
             for i in range(config.n_layer) if has_ve(i, config.n_layer)
         })
-        # Rotary embeddings
+        # Rotary embeddings - different bases for Q/K vs V
         self.rotary_seq_len = config.sequence_len * 10
-        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
-        self.register_buffer("cos", cos, persistent=False)
-        self.register_buffer("sin", sin, persistent=False)
+        cos_qk, sin_qk = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, base=50000)
+        cos_v, sin_v = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, base=10000)
+        self.register_buffer("cos_qk", cos_qk, persistent=False)
+        self.register_buffer("sin_qk", sin_qk, persistent=False)
+        self.register_buffer("cos_v", cos_v, persistent=False)
+        self.register_buffer("sin_v", sin_v, persistent=False)
 
     @torch.no_grad()
     def init_weights(self):
@@ -195,8 +199,10 @@ class GPT(nn.Module):
                 torch.nn.init.zeros_(block.attn.ve_gate.weight)
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
-        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
-        self.cos, self.sin = cos, sin
+        cos_qk, sin_qk = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, base=50000)
+        cos_v, sin_v = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim, base=10000)
+        self.cos_qk, self.sin_qk = cos_qk, sin_qk
+        self.cos_v, self.sin_v = cos_v, sin_v
         # Cast embeddings to bf16
         self.transformer.wte.to(dtype=torch.bfloat16)
         for ve in self.value_embeds.values():
@@ -289,8 +295,8 @@ class GPT(nn.Module):
 
     def forward(self, idx, targets=None, reduction='mean'):
         B, T = idx.size()
-        assert T <= self.cos.size(1)
-        cos_sin = self.cos[:, :T], self.sin[:, :T]
+        assert T <= self.cos_qk.size(1)
+        cos_sin = (self.cos_qk[:, :T], self.sin_qk[:, :T], self.cos_v[:, :T], self.sin_v[:, :T])
 
         x = self.transformer.wte(idx)
         x = norm(x)
