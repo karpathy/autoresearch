@@ -237,7 +237,7 @@ def main():
         max_depth=3,
         learning_rate=0.03,
         subsample=0.7,
-        min_samples_leaf=300,
+        min_samples_leaf=200,
         max_features=0.6,
         loss="huber",
         alpha=0.8,
