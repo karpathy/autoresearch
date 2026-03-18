@@ -538,48 +538,238 @@ class CrewDaemon:
         """Execute a captain command and return response.
 
         Args:
-            cmd: Command string (e.g., "status", "add task title")
+            cmd: Command string (JSON format from CLI)
 
         Returns: Response JSON
         """
         import json
 
-        parts = cmd.split(maxsplit=1)
-        if not parts:
-            return json.dumps({"error": "Empty command"})
+        # Parse JSON command from CLI
+        try:
+            msg = json.loads(cmd)
+            command = msg.get("command")
+            args = msg.get("args", {})
+        except json.JSONDecodeError:
+            return json.dumps({"status": "error", "error": "Invalid JSON"})
 
-        command = parts[0]
-
+        # Dispatch commands
         if command == "status":
             return json.dumps({
-                "mode": self.mode,
-                "current_task": self.current_task.id if self.current_task else None,
-                "queued_tasks": len(self.scheduler.get_queued()),
+                "status": "ok",
+                "data": {
+                    "mode": self.mode,
+                    "current_task": self.current_task.id if self.current_task else None,
+                    "queued_tasks": len(self.scheduler.get_queued()),
+                }
             })
 
-        elif command == "add" and len(parts) > 1:
-            title = parts[1]
-            task = self.scheduler.add_task(title)
+        elif command == "add":
+            title = args.get("title")
+            priority = args.get("priority", self.scheduler.default_priority("captain_order"))
+            description = args.get("description", "")
+
+            task = self.scheduler.add_task(
+                title,
+                task_type="captain_order",
+                priority=priority,
+                description=description,
+            )
             if task:
-                return json.dumps({"task_id": task.id, "title": task.title})
+                return json.dumps({
+                    "status": "ok",
+                    "data": {"task_id": task.id, "title": task.title}
+                })
             else:
-                return json.dumps({"error": "Duplicate task"})
+                return json.dumps({
+                    "status": "error",
+                    "error": "Duplicate task"
+                })
 
         elif command == "board":
             board = self.scheduler.get_board()
             return json.dumps({
-                "tasks": [
-                    {"id": t.id, "title": t.title, "priority": t.priority, "status": t.status}
-                    for t in board
-                ]
+                "status": "ok",
+                "data": {
+                    "tasks": [
+                        {
+                            "id": t.id,
+                            "title": t.title,
+                            "priority": t.priority,
+                            "status": t.status,
+                            "type": t.type,
+                        }
+                        for t in board
+                    ]
+                }
+            })
+
+        elif command == "show":
+            task_id = args.get("task_id")
+            task = self.scheduler.get_task(task_id)
+            if task:
+                return json.dumps({
+                    "status": "ok",
+                    "data": {
+                        "task": {
+                            "id": task.id,
+                            "title": task.title,
+                            "type": task.type,
+                            "priority": task.priority,
+                            "status": task.status,
+                            "description": task.description,
+                            "created_at": task.created_at.isoformat() if task.created_at else None,
+                            "started_at": task.started_at.isoformat() if task.started_at else None,
+                            "experiment": task.experiment,
+                            "hints": task.hints,
+                            "results": task.results,
+                        }
+                    }
+                })
+            else:
+                return json.dumps({
+                    "status": "error",
+                    "error": f"Task {task_id} not found"
+                })
+
+        elif command == "add_hint":
+            task_id = args.get("task_id")
+            hint_text = args.get("text")
+            task = self.scheduler.get_task(task_id)
+            if task:
+                if not task.hints:
+                    task.hints = []
+                task.hints.append({
+                    "text": hint_text,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+                self.scheduler.save_task(task)
+                return json.dumps({
+                    "status": "ok",
+                    "data": {"message": "Hint added"}
+                })
+            else:
+                return json.dumps({
+                    "status": "error",
+                    "error": f"Task {task_id} not found"
+                })
+
+        elif command == "pause_task":
+            task_id = args.get("task_id")
+            task = self.scheduler.get_task(task_id)
+            if task:
+                self.scheduler.pause_task(task)
+                return json.dumps({
+                    "status": "ok",
+                    "data": {"message": "Task paused"}
+                })
+            else:
+                return json.dumps({
+                    "status": "error",
+                    "error": f"Task {task_id} not found"
+                })
+
+        elif command == "resume_task":
+            task_id = args.get("task_id")
+            task = self.scheduler.get_task(task_id)
+            if task:
+                self.scheduler.resume_task(task)
+                return json.dumps({
+                    "status": "ok",
+                    "data": {"message": "Task resumed"}
+                })
+            else:
+                return json.dumps({
+                    "status": "error",
+                    "error": f"Task {task_id} not found"
+                })
+
+        elif command == "cancel_task":
+            task_id = args.get("task_id")
+            task = self.scheduler.get_task(task_id)
+            if task:
+                self.scheduler.cancel_task(task)
+                return json.dumps({
+                    "status": "ok",
+                    "data": {"message": "Task cancelled"}
+                })
+            else:
+                return json.dumps({
+                    "status": "error",
+                    "error": f"Task {task_id} not found"
+                })
+
+        elif command == "set_priority":
+            task_id = args.get("task_id")
+            priority = args.get("priority")
+            task = self.scheduler.get_task(task_id)
+            if task:
+                self.scheduler.set_priority(task, priority)
+                return json.dumps({
+                    "status": "ok",
+                    "data": {"message": f"Priority set to {priority}"}
+                })
+            else:
+                return json.dumps({
+                    "status": "error",
+                    "error": f"Task {task_id} not found"
+                })
+
+        elif command == "get_completed":
+            limit = args.get("limit", 10)
+            completed = self.scheduler.get_completed(limit=limit)
+            return json.dumps({
+                "status": "ok",
+                "data": {
+                    "tasks": [
+                        {
+                            "id": t.id,
+                            "title": t.title,
+                            "status": t.status,
+                            "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+                            "results": t.results,
+                        }
+                        for t in completed
+                    ]
+                }
+            })
+
+        elif command == "get_findings":
+            return json.dumps({
+                "status": "ok",
+                "data": {"findings": []}
+            })
+
+        elif command == "get_study_status":
+            return json.dumps({
+                "status": "ok",
+                "data": {
+                    "mode": self.mode,
+                    "studying": self.mode == "studying",
+                }
+            })
+
+        elif command == "get_metrics":
+            return json.dumps({
+                "status": "ok",
+                "data": {
+                    "mode": self.mode,
+                    "queued_tasks": len(self.scheduler.get_queued()),
+                    "completed_tasks": len(self.scheduler.get_completed()),
+                }
             })
 
         elif command == "stop":
             self.shutdown_requested = True
-            return json.dumps({"status": "stopping"})
+            return json.dumps({
+                "status": "ok",
+                "data": {"message": "Shutting down"}
+            })
 
         else:
-            return json.dumps({"error": f"Unknown command: {command}"})
+            return json.dumps({
+                "status": "error",
+                "error": f"Unknown command: {command}"
+            })
 
 
 # ============================================================================
