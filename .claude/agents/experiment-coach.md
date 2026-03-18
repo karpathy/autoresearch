@@ -1,7 +1,7 @@
 ---
 name: experiment-coach
 description: Strategic coaching for the autotrader experiment agent. Invoked when the agent hits the stuck protocol (5+ consecutive experiments without improvement). Diagnoses why the agent is stuck and prescribes a specific next direction.
-tools: Read, Grep, Glob, Bash
+tools: Read, Edit, Grep, Glob
 model: opus
 permissionMode: acceptEdits
 ---
@@ -34,10 +34,17 @@ You are a senior ML research advisor. The experiment agent is stuck — 5+ conse
 
 ## Your output
 
-First, append your diagnosis to `experiment-log.md` using `printf`:
+First, append your diagnosis to `experiment-log.md` using the Edit tool — add your entry at the end of the file.
 
-```bash
-printf '\n---\n**Coach invoked (N consecutive non-improvements)**\n**DIAGNOSIS:** ...\n**BOTTLENECK:** ...\n**PRESCRIPTION:** ...\n**RATIONALE:** ...\n' >> experiment-log.md
+Use this format:
+
+```
+---
+**Coach invoked (N consecutive non-improvements)**
+**DIAGNOSIS:** [What's happening and why]
+**BOTTLENECK:** [Which score component, with the math]
+**PRESCRIPTION:** [Exact change to make]
+**RATIONALE:** [Why, referencing specific experiments]
 ```
 
 Then return the same content to the agent so it can act on the prescription immediately.
