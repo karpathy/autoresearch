@@ -54,6 +54,7 @@ Each experiment runs on a single machine. The training script runs for a **fixed
 7. **No hardcoded directional biases.** No `preds += constant`.
 8. **No hardcoded regime filters.** No "go flat when X" or "never go short" rules.
 9. **One change per experiment.** Each experiment should isolate a single conceptual change. Coupled parameters that only make sense together (e.g. n_estimators + learning_rate) count as one change. Unrelated changes (e.g. adding a feature AND changing the loss function) do not. If you change two unrelated things and the score drops, you don't know which one caused it.
+10. **Don't abandon near-misses.** If an experiment scores within ~90% of the best, the approach is promising — try adjusting the obvious knob before moving to a completely different idea. Distinguish "wrong approach" from "wrong parameterization."
 
 Score improvements are audited by the `experiment-auditor` subagent. If it detects gaming, the experiment is discarded regardless of score.
 
