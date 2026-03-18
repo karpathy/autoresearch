@@ -193,19 +193,20 @@ def compute_targets(df: pd.DataFrame) -> np.ndarray:
 # Model
 # ---------------------------------------------------------------------------
 
-_trained_model = None
+_trained_models = []  # list of trained ExtraTrees models for ensemble
 _selected_features = None  # boolean mask from feature importance pruning
 
 
-def count_model_params(model=None) -> int:
-    """Return approximate parameter count for the tree ensemble model."""
-    if model is None:
-        model = _trained_model
-    if model is None:
+def count_model_params(models=None) -> int:
+    """Return approximate parameter count for the ensemble."""
+    if models is None:
+        models = _trained_models
+    if not models:
         return 0
     n_params = 0
-    for tree in model.estimators_:
-        n_params += tree.tree_.node_count
+    for model in models:
+        for tree in model.estimators_:
+            n_params += tree.tree_.node_count
     return n_params
 
 
@@ -218,11 +219,20 @@ def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     return pd.Series(raw_preds).ewm(span=24, min_periods=1).mean().values
 
 
+def _confidence_scaled_predict(model, features: np.ndarray) -> np.ndarray:
+    """Produce confidence-scaled predictions from a single ExtraTrees model."""
+    all_tree_preds = np.array([tree.predict(features) for tree in model.estimators_])
+    preds = all_tree_preds.mean(axis=0)
+    pred_std = all_tree_preds.std(axis=0)
+    confidence = 1.0 / (1.0 + 2.0 * pred_std)
+    return preds * confidence
+
+
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Generate sigma-space predictions on arbitrary OHLCV data.
 
-    Returns smoothed sigma predictions — the backtester handles
-    position sizing and thresholding in sigma-space directly.
+    Ensembles multiple models: each model's predictions are confidence-scaled
+    independently, then averaged. This produces diverse, well-calibrated signals.
     """
     features, timestamps, vol_safe = compute_features(df)
     features = np.nan_to_num(features, nan=0.0)
@@ -231,18 +241,14 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarra
     if _selected_features is not None:
         features = features[:, _selected_features]
 
-    model = _trained_model
-    if model is None:
+    if not _trained_models:
         raise RuntimeError("Model not trained. Run train.py first.")
 
-    # Compute per-sample prediction mean and std across all trees
-    all_tree_preds = np.array([tree.predict(features) for tree in model.estimators_])
-    sigma_preds = all_tree_preds.mean(axis=0)
-    pred_std = all_tree_preds.std(axis=0)
-
-    # Adaptive confidence: scale down when trees disagree (high uncertainty)
-    confidence = 1.0 / (1.0 + 2.0 * pred_std)
-    sigma_preds = sigma_preds * confidence
+    # Average confidence-scaled predictions across all ensemble members
+    ensemble_preds = np.zeros(len(features))
+    for model in _trained_models:
+        ensemble_preds += _confidence_scaled_predict(model, features)
+    sigma_preds = ensemble_preds / len(_trained_models)
 
     sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
     sigma_preds = sigma_preds * 1.5  # base scale
@@ -255,7 +261,7 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarra
 # ---------------------------------------------------------------------------
 
 def main():
-    global _trained_model
+    global _trained_models
 
     total_start = time.time()
 
@@ -286,45 +292,57 @@ def main():
 
     print(f"  Training samples: {len(features)}, Features: {features.shape[1]}")
 
-    # --- Train GBR ---
-    print("Training GBR...")
+    # --- Train pass 1: feature selection ---
+    print("Training pass 1 (feature selection)...")
     train_start = time.time()
 
-    model = ExtraTreesRegressor(
+    selector = ExtraTreesRegressor(
         n_estimators=3000,
         max_depth=7,
         min_samples_leaf=600,
         random_state=42,
         n_jobs=-1,
     )
-    model.fit(features, targets)
+    selector.fit(features, targets)
 
-    # Feature importance pruning: remove low-signal features to improve split quality
-    importances = model.feature_importances_
+    # Feature importance pruning
+    importances = selector.feature_importances_
     threshold = np.mean(importances)
     selected = importances >= threshold
     print(f"  Feature pruning: {selected.sum()}/{len(importances)} features selected "
           f"(importance >= {threshold:.4f})")
     features_pruned = features[:, selected]
 
-    # Retrain on pruned feature set
-    model2 = ExtraTreesRegressor(
-        n_estimators=3000,
-        max_depth=7,
-        min_samples_leaf=600,
-        random_state=42,
-        n_jobs=-1,
-    )
-    model2.fit(features_pruned, targets)
+    # --- Train pass 2: diverse ensemble on pruned features ---
+    # Each model has different hyperparameters for prediction diversity
+    # All use the same pruned features and random_state=42
+    ensemble_configs = [
+        {"n_estimators": 3000, "max_depth": 7, "min_samples_leaf": 600},   # original (strong regularization)
+        {"n_estimators": 2000, "max_depth": 5, "min_samples_leaf": 800},   # very shallow + heavy regularization
+        {"n_estimators": 2000, "max_depth": 8, "min_samples_leaf": 500},   # slightly deeper
+        {"n_estimators": 2000, "max_depth": 6, "min_samples_leaf": 700},   # intermediate
+        {"n_estimators": 2000, "max_depth": 7, "min_samples_leaf": 400, "max_features": 0.7},  # feature subsampling
+    ]
+
+    models = []
+    for i, cfg in enumerate(ensemble_configs):
+        print(f"  Training model {i+1}/{len(ensemble_configs)}: {cfg}")
+        m = ExtraTreesRegressor(
+            random_state=42,
+            n_jobs=-1,
+            **cfg,
+        )
+        m.fit(features_pruned, targets)
+        models.append(m)
 
     training_seconds = time.time() - train_start
-    print(f"Training complete in {training_seconds:.1f}s")
+    print(f"Training complete in {training_seconds:.1f}s ({len(models)} models)")
 
     global _selected_features
     _selected_features = selected
-    _trained_model = model2
-    n_params = count_model_params(model2)
-    print(f"  Model parameters (node count): {n_params}")
+    _trained_models = models
+    n_params = count_model_params(models)
+    print(f"  Total model parameters (node count): {n_params}")
 
     # --- Evaluate (black box) ---
     print("Evaluating...")
