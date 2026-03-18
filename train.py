@@ -288,7 +288,7 @@ def main():
     model = ExtraTreesRegressor(
         n_estimators=3000,
         max_depth=7,
-        min_samples_leaf=400,
+        min_samples_leaf=600,
         random_state=42,
         n_jobs=-1,
     )
