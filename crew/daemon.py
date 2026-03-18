@@ -72,10 +72,25 @@ class Config:
             "enabled": False,
             "max_agents": 1,
             "roles": {
+                # Core agents
                 "researcher": 1,
                 "teacher": 1,
                 "critic": 0,
                 "distiller": 0,
+                # Research agents
+                "scientist": 0,
+                # Creative agents
+                "writer": 0,
+                "editor": 0,
+                # Software agents
+                "code_reviewer": 0,
+                # Quality agents
+                "consistency": 0,
+                # Business agents
+                "project_manager": 0,
+                "strategy": 0,
+                # Security agents
+                "security": 0,
             },
         },
         "hardware": {
@@ -830,13 +845,41 @@ def _start_swarm(config: "Config"):
     from crew.agents.teacher import TeacherAgent
     from crew.agents.critic import CriticAgent
     from crew.agents.distiller import DistillerAgent
+    from crew.agents.scientist import ScientistAgent
+    from crew.agents.code_reviewer import CodeReviewerAgent
+    from crew.agents.editor import EditorAgent
+    from crew.agents.writer import WriterAgent
+    from crew.agents.project_manager import ProjectManagerAgent
+    from crew.agents.consistency import ConsistencyAgent
+    from crew.agents.security import SecurityAgent
+    from crew.agents.strategy import StrategyAgent
     from crew.hardware.detector import HardwareDetector
 
-    # Register concrete agent classes
+    # Register concrete agent classes (core)
     register_agent_class("researcher", ResearcherAgent)
     register_agent_class("teacher", TeacherAgent)
     register_agent_class("critic", CriticAgent)
     register_agent_class("distiller", DistillerAgent)
+
+    # Register concrete agent classes (research & analysis)
+    register_agent_class("scientist", ScientistAgent)
+
+    # Register concrete agent classes (creative & content)
+    register_agent_class("writer", WriterAgent)
+    register_agent_class("editor", EditorAgent)
+
+    # Register concrete agent classes (software & engineering)
+    register_agent_class("code_reviewer", CodeReviewerAgent)
+
+    # Register concrete agent classes (quality & consistency)
+    register_agent_class("consistency", ConsistencyAgent)
+
+    # Register concrete agent classes (business & strategy)
+    register_agent_class("project_manager", ProjectManagerAgent)
+    register_agent_class("strategy", StrategyAgent)
+
+    # Register concrete agent classes (security)
+    register_agent_class("security", SecurityAgent)
 
     # Detect hardware profile
     hw_config = getattr(config, "hardware", None)
