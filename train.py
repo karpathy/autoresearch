@@ -289,8 +289,8 @@ def build_model(train_df: pd.DataFrame) -> callable:
     selected = importances >= threshold
     features_pruned = features[:, selected]
 
-    # --- Train pass 2: HistGradientBoosting with intermediate regularization ---
-    model = HistGradientBoostingRegressor(
+    # --- Train pass 2: GBT-dominant blend with ExtraTrees ---
+    gbt = HistGradientBoostingRegressor(
         max_iter=5000,
         max_depth=4,
         min_samples_leaf=600,
@@ -299,14 +299,26 @@ def build_model(train_df: pd.DataFrame) -> callable:
         l2_regularization=3.0,
         random_state=42,
     )
-    model.fit(features_pruned, targets)
-    models = [model]
+    gbt.fit(features_pruned, targets)
 
-    # Approximate param count from number of leaf nodes
-    n_params = sum(
-        model._predictors[i][0].get_n_leaf_nodes()
-        for i in range(len(model._predictors))
+    et = ExtraTreesRegressor(
+        n_estimators=3000,
+        max_depth=7,
+        min_samples_leaf=600,
+        random_state=42,
+        n_jobs=-1,
     )
+    et.fit(features_pruned, targets)
+
+    blend_weights = [0.75, 0.25]  # GBT-dominant
+    models = [gbt, et]
+
+    # Approximate param count
+    n_params = sum(
+        gbt._predictors[j][0].get_n_leaf_nodes()
+        for j in range(len(gbt._predictors))
+    )
+    n_params += count_model_params([et])
 
     # --- Return prediction closure ---
     def predict_fn(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -315,8 +327,9 @@ def build_model(train_df: pd.DataFrame) -> callable:
         feats = np.nan_to_num(feats, nan=0.0)
         feats = feats[:, selected]
 
-        # Simple prediction
-        sigma_preds = np.mean([m.predict(feats) for m in models], axis=0)
+        # Weighted blend prediction
+        preds = [m.predict(feats) for m in models]
+        sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
 
         sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
         sigma_preds = sigma_preds * 0.3  # further dampen to reduce position sizes
