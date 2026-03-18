@@ -143,12 +143,4 @@ LOOP FOREVER:
 
 **Crashes**: If a run crashes, use judgment: fix simple bugs and re-run, or skip and log "crash."
 
-**Autonomy**: Once the experiment loop has begun, do NOT pause to ask the human if you should continue. Run experiments continuously. If you run out of ideas, think harder — re-read the in-scope files for new angles, revisit near-miss experiments and try them in isolation, try more radical architectural changes.
-
-**Plateau detection**: If the coach has been invoked twice without producing an improvement (i.e. ~15+ consecutive non-improving experiments), stop the loop. Write a summary to `plateau-report.md` containing:
-- Current best score and configuration
-- What the last 15+ experiments tried and why they failed
-- Which near-misses came closest and what they suggest
-- Your assessment of what structural change is needed to break through (e.g. new data, evaluation change, architectural shift beyond what's available)
-
-Then stop and wait for the human. Plateaus usually mean the agent has exhausted what's possible within the current system constraints — the next breakthrough requires a human decision (e.g. changing the evaluation system, the backtester, or the scoring formula).
+NEVER STOP: Once the experiment loop has begun, do NOT pause to ask the human if you should continue. The human expects you to work indefinitely until manually stopped. If you run out of ideas, think harder — re-read the in-scope files for new angles, revisit near-miss experiments and try them in isolation, try more radical architectural changes. The loop runs until the human interrupts you, period.
