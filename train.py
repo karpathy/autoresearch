@@ -84,6 +84,12 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     volume_ratio = np.where(vol_168 > 0, vol_24 / vol_168, 1.0)
     feature_cols.append(volume_ratio)
 
+    # 4b. Volume momentum: rate of change of volume (24h avg vs 72h avg lagged by 24h)
+    vol_72 = vol_series.rolling(72, min_periods=72).mean()
+    vol_72_lagged = vol_72.shift(24).values
+    vol_momentum = np.where(vol_72_lagged > 0, vol_24 / vol_72_lagged - 1.0, 0.0)
+    feature_cols.append(np.nan_to_num(vol_momentum, nan=0.0))
+
     # 5. High-low range volatility (24h average, normalized by price)
     high = df["high"].values.astype(np.float64)
     low = df["low"].values.astype(np.float64)
