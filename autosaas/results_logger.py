@@ -4,7 +4,8 @@ from pathlib import Path
 
 
 RESULTS_TSV_HEADER = (
-    "timestamp\trun_id\tbranch\tslice\tgate\tpassed\tsummary\tduration_s\n"
+    "timestamp\trun_id\tbranch\tbase_commit\thead_commit\tslice\tstatus\t"
+    "files_changed\tgates_passed\tgates_failed\tsummary\n"
 )
 
 
@@ -18,4 +19,3 @@ def ensure_results_file(results_path: Path) -> None:
     if results_path.exists():
         return
     results_path.write_text(RESULTS_TSV_HEADER)
-

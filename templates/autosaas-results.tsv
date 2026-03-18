@@ -1,2 +1,1 @@
-timestamp\trun_id\tbranch\tslice\tgate\tpassed\tsummary\tduration_s
-
+timestamp\trun_id\tbranch\tbase_commit\thead_commit\tslice\tstatus\tfiles_changed\tgates_passed\tgates_failed\tsummary
