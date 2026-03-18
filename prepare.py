@@ -55,39 +55,38 @@ TRAIN_START = pd.Timestamp("2018-01-01")
 def _compute_splits(data_end):
     """Regime-based evaluation splits with hardcoded boundaries.
 
-    Seven subperiods across three splits, each corresponding to a distinct
-    BTC market regime. The model trains on all data from 2018, but evaluation
-    only covers 2022+ where regime labels are meaningful.
+    Six subperiods across three splits, each corresponding to a distinct
+    BTC market regime. The model trains on 2021-2023 data, but evaluation
+    covers 2022-2025 where regime labels are meaningful.
 
-    Split 1 — Eval Train (2022-01-01 to 2024-06-30), 3 subperiods
-    Split 2 — Val (2024-07-01 to 2025-06-30), 2 subperiods
-    Split 3 — Holdout (2025-07-01 to end of data), 2 subperiods
+    Split 1 — Eval Train (2022-01-01 to 2023-12-31), 2 subperiods
+    Split 2 — Val (2024-01-01 to 2024-12-31), 2 subperiods
+    Split 3 — Holdout (2025-01-01 to 2025-12-31), 2 subperiods
     """
     T = pd.Timestamp
 
-    # Split 1: Eval Train
+    # Split 1: Eval Train (scored, but model also trains on 2021 data)
     train_start = T("2022-01-01")
-    train_end = T("2024-06-30 23:00:00")
+    train_end = T("2023-12-31 23:00:00")
     train_subs = [
         (T("2022-01-01"), T("2022-12-31 23:00:00"), "2022 bear"),
         (T("2023-01-01"), T("2023-12-31 23:00:00"), "2023 recovery"),
-        (T("2024-01-01"), T("2024-06-30 23:00:00"), "2024 ETF rally"),
     ]
 
     # Split 2: Val
-    val_start = T("2024-07-01")
-    val_end = T("2025-06-30 23:00:00")
+    val_start = T("2024-01-01")
+    val_end = T("2024-12-31 23:00:00")
     val_subs = [
+        (T("2024-01-01"), T("2024-06-30 23:00:00"), "2024 ETF rally"),
         (T("2024-07-01"), T("2024-12-31 23:00:00"), "2024 H2 consolidation"),
-        (T("2025-01-01"), T("2025-06-30 23:00:00"), "2025 H1"),
     ]
 
     # Split 3: Holdout
-    holdout_start = T("2025-07-01")
-    holdout_end = data_end
+    holdout_start = T("2025-01-01")
+    holdout_end = T("2025-12-31 23:00:00")
     holdout_subs = [
+        (T("2025-01-01"), T("2025-06-30 23:00:00"), "2025 H1"),
         (T("2025-07-01"), T("2025-12-31 23:00:00"), "2025 H2"),
-        (T("2026-01-01"), data_end, "2026 YTD"),
     ]
 
     return [
@@ -107,6 +106,9 @@ def _get_splits():
         all_data = _load_all_data()
         data_end = all_data["timestamp"].max()
         _cached_splits = _compute_splits(data_end)
+        # Print training data window (distinct from eval splits)
+        val_start = _cached_splits[1][0]
+        print(f"  Training data: 2021-01-01 to {(val_start - pd.Timedelta(hours=1)).date()}")
         for name, (s, e, subs) in zip(["Train", "Val", "Holdout"], _cached_splits):
             print(f"  {name}: {s.date()} to {e.date()} ({len(subs)} subperiods)")
     return _cached_splits
@@ -237,15 +239,17 @@ def _load_all_data() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def load_train_data() -> pd.DataFrame:
-    """Return OHLCV DataFrame for the training period only.
+    """Return OHLCV DataFrame for the training period.
 
-    The training window is computed from walk-forward splits (everything
-    before the validation window). The agent should use ONLY this data.
+    Training data starts at 2021-01-01 (includes 2021 bull run as additional
+    regime context) and ends before the validation split. The eval train split
+    (2022-2023) is a subset — the model trains on more data than it's scored on.
     """
     df = _load_all_data()
     splits = _get_splits()
-    train_start, train_end, _ = splits[0]
-    mask = (df["timestamp"] >= train_start) & (df["timestamp"] <= train_end)
+    val_start = splits[1][0]  # first day of val
+    train_start = pd.Timestamp("2021-01-01")
+    mask = (df["timestamp"] >= train_start) & (df["timestamp"] < val_start)
     return df[mask].reset_index(drop=True)
 
 
@@ -432,14 +436,20 @@ def evaluate_model(predict_fn: callable) -> dict:
     else:
         dd_mult = 1.0 / (1.0 + ((dd - 0.10) / 0.15) ** 2)
 
-    # Trade count: total across all splits, ramp to 100
-    # (~33 per split on average for full credit)
+    # Trade count: per-split exponential (one trade per 7 prediction cycles
+    # for full credit). Min across splits penalizes going silent on any split.
+    splits = _get_splits()
+    split_trade_mults = []
+    for (split_start, split_end, _), result in zip(splits, split_results):
+        split_hours = (split_end - split_start).total_seconds() / 3600
+        scale = split_hours / (FORWARD_HOURS * 7)
+        split_trade_mults.append(1 - math.exp(-result["n_trades"] / scale))
+    trade_mult = min(split_trade_mults)
     total_trades = sum(r["n_trades"] for r in split_results)
-    trade_mult = min(1.0, total_trades / 100.0)
 
     # Consistency: fraction of ALL subperiods that are profitable.
-    # 7 total subperiods: 3 train + 2 val + 2 holdout.
-    # A model overfit to train gets at most 3/7 ≈ 0.43x.
+    # 6 total subperiods: 2 train + 2 val + 2 holdout.
+    # A model overfit to train gets at most 2/6 ≈ 0.33x.
     all_sp_returns = []
     for r in split_results:
         all_sp_returns.extend(r["subperiod_returns"])
@@ -447,7 +457,10 @@ def evaluate_model(predict_fn: callable) -> dict:
     n_total = len(all_sp_returns)
     consistency = n_profitable / n_total if n_total > 0 else 0.0
 
-    score = base * dd_mult * trade_mult * consistency
+    if base >= 0:
+        score = base * dd_mult * trade_mult * consistency
+    else:
+        score = base / max(dd_mult, 0.01) / max(trade_mult, 0.01) / max(consistency, 0.01)
 
     return {
         "score": score,
@@ -456,103 +469,6 @@ def evaluate_model(predict_fn: callable) -> dict:
         "total_trades": total_trades,
         "consistency": f"{n_profitable}/{n_total}",
     }
-
-
-# ---------------------------------------------------------------------------
-# Fresh Holdout Validation (human-only diagnostic)
-# ---------------------------------------------------------------------------
-
-def _run_fresh_holdout():
-    """Validate the trained model — signal quality on the holdout window."""
-    import train as train_module
-    from scipy.stats import spearmanr
-
-    all_data = _load_all_data()
-    splits = _get_splits()
-    holdout_start, holdout_end, _ = splits[2]
-
-    # 1. Train the model (prints normal evaluation output)
-    print("\n" + "=" * 50)
-    print("Training model (standard pipeline)...")
-    print("=" * 50 + "\n")
-    train_module.main()
-
-    # Capture the evaluation results
-    eval_result = evaluate_model(train_module.predict_on_data)
-
-    # 2. Signal quality on holdout window
-    print("\n" + "=" * 50)
-    print("=== SIGNAL QUALITY (sigma-space, pre-pipeline) ===")
-    print("=" * 50)
-    print(f"\nHoldout window: {holdout_start.date()} to {holdout_end.date()}")
-
-    # Raw sigma predictions (no EMA, no vol denorm, no tanh)
-    features, feat_timestamps, vol_safe = train_module.compute_features(all_data)
-    features = np.nan_to_num(features, nan=0.0)
-    sigma_preds = train_module._trained_model.predict(features)
-
-    # Actual 24h forward returns, vol-normalized to sigma-space
-    raw_targets = train_module.compute_targets(all_data)
-    raw_targets = raw_targets[train_module.MAX_LOOKBACK:]
-    actual_sigma = raw_targets / vol_safe
-
-    # Holdout slice (excluding last 24h with no future data)
-    holdout_mask = (
-        (pd.to_datetime(feat_timestamps) >= holdout_start) &
-        (pd.to_datetime(feat_timestamps) <= holdout_end) &
-        ~np.isnan(raw_targets)
-    )
-    n_holdout_hours = holdout_mask.sum()
-
-    if n_holdout_hours == 0:
-        print("\nNo holdout hours with known future returns. Cannot assess signal.")
-    else:
-        sig_preds = sigma_preds[holdout_mask]
-        sig_actuals = actual_sigma[holdout_mask]
-
-        # Directional accuracy (excluding low-conviction predictions)
-        conviction_mask = np.abs(sig_preds) >= 0.1
-        n_low_conviction = (~conviction_mask).sum()
-        if conviction_mask.sum() > 0:
-            signs_match = np.sign(sig_preds[conviction_mask]) == np.sign(sig_actuals[conviction_mask])
-            directional_acc = signs_match.mean() * 100
-        else:
-            directional_acc = float("nan")
-
-        # Rank correlation (all hours)
-        rho, pvalue = spearmanr(sig_preds, sig_actuals)
-
-        print(f"Holdout hours:         {n_holdout_hours}  (excluding last 24h with no future data)")
-        print()
-        print(f"Directional accuracy:  {directional_acc:.1f}%  (sign match, excluding low-conviction)")
-        print(f"  Random baseline:     50.0%")
-        print(f"  Low-conviction excluded: {n_low_conviction} hours (|sigma_pred| < 0.1)")
-        print()
-        print(f"Rank correlation:      {rho:.4f}  (Spearman rho)")
-        print(f"  p-value:             {pvalue:.4f}")
-        print()
-        print(f"Sigma prediction stats:")
-        print(f"  mean:  {sig_preds.mean():.4f}    actual mean:  {sig_actuals.mean():.4f}")
-        print(f"  std:   {sig_preds.std():.4f}    actual std:   {sig_actuals.std():.4f}")
-        print()
-
-        print(f"For comparison, the model's evaluation results:")
-        print(f"  score:        {eval_result['score']:.4f}")
-        print(f"  sharpe_min:   {eval_result['sharpe_min']:.4f}")
-        print(f"  max_drawdown: {eval_result['max_drawdown']:.1%}")
-        print(f"  total_trades: {eval_result['total_trades']}")
-        print(f"  consistency:  {eval_result['consistency']}")
-        print()
-
-        if directional_acc > 53 and rho > 0.03:
-            sig_verdict = "SIGNAL PRESENT"
-        elif directional_acc > 51 or rho > 0.01:
-            sig_verdict = "INCONCLUSIVE"
-        else:
-            sig_verdict = "NO SIGNAL"
-
-        print(f"Signal verdict: {sig_verdict}")
-        print(f"  (SIGNAL PRESENT: accuracy > 53% AND rho > 0.03)")
 
 
 # ---------------------------------------------------------------------------
@@ -614,15 +530,27 @@ def _run_diagnostic():
     worst_dd_raw = min(r["max_drawdown"] for r in split_results)
     dd = abs(worst_dd_raw)
     dd_mult = 1.0 if dd <= 0.10 else 1.0 / (1.0 + ((dd - 0.10) / 0.15) ** 2)
+
+    # Per-split trade multiplier (same as evaluate_model)
+    split_trade_mults = []
+    for (split_start, split_end, _), result in zip(splits, split_results):
+        split_hours = (split_end - split_start).total_seconds() / 3600
+        scale = split_hours / (FORWARD_HOURS * 7)
+        split_trade_mults.append(1 - math.exp(-result["n_trades"] / scale))
+    trade_mult = min(split_trade_mults)
     total_trades = sum(r["n_trades"] for r in split_results)
-    trade_mult = min(1.0, total_trades / 100.0)
+
     all_sp_returns = []
     for r in split_results:
         all_sp_returns.extend(r["subperiod_returns"])
     n_profitable = sum(1 for ret in all_sp_returns if ret > 0)
     n_total = len(all_sp_returns)
     consistency = n_profitable / n_total if n_total > 0 else 0.0
-    score = base * dd_mult * trade_mult * consistency
+
+    if base >= 0:
+        score = base * dd_mult * trade_mult * consistency
+    else:
+        score = base / max(dd_mult, 0.01) / max(trade_mult, 0.01) / max(consistency, 0.01)
 
     # 5. Print diagnostic breakdown
     print("\n" + "=" * 60)
@@ -641,7 +569,8 @@ def _run_diagnostic():
         print(f"  Sharpe: {result['sharpe']:.4f}"
               f"{'  <-- MIN' if result['sharpe'] == base else ''}")
         print(f"  Max drawdown: {result['max_drawdown']:.1%}")
-        print(f"  Trades: {result['n_trades']}")
+        print(f"  Trades: {result['n_trades']}  (trade_mult={split_trade_mults[i]:.4f})"
+              f"{'  <-- MIN' if split_trade_mults[i] == trade_mult else ''}")
         print(f"  Total return: {result['total_return']:+.1%}")
 
         for (sp_start, sp_end, label), sp_ret in zip(
@@ -653,6 +582,31 @@ def _run_diagnostic():
                 losing_subperiods.append(label)
 
     print(f"\nLosing subperiods: {', '.join(losing_subperiods) if losing_subperiods else 'None'}")
+
+    # True holdout: 2026+ (not part of scoring)
+    holdout_end = splits[2][1]  # end of scored holdout
+    true_holdout_mask = all_data["timestamp"] > holdout_end
+    if true_holdout_mask.sum() > 0:
+        true_holdout_data = all_data[true_holdout_mask].reset_index(drop=True)
+        merged_th = true_holdout_data.merge(pred_df, on="timestamp", how="inner")
+        if len(merged_th) > 0:
+            th_start = merged_th["timestamp"].min()
+            th_end = merged_th["timestamp"].max()
+            th_subperiods = [(th_start, th_end, "2026 YTD")]
+            bt_th = _backtest(
+                sigma_predictions=merged_th["sigma_pred"].values,
+                close_prices=merged_th["close"].values,
+                timestamps=merged_th["timestamp"].values,
+                subperiods=th_subperiods,
+            )
+            print(f"\n--- True Holdout (UNSCORED) ---")
+            print(f"  Sharpe: {bt_th['sharpe']:.4f}")
+            print(f"  Max drawdown: {bt_th['max_drawdown']:.1%}")
+            print(f"  Trades: {bt_th['n_trades']}")
+            print(f"  Total return: {bt_th['total_return']:+.1%}")
+            print(f"  2026 YTD ({th_start.date()} to {th_end.date()}): "
+                  f"return {bt_th['subperiod_returns'][0]:+.2%}")
+
     print()
 
 
@@ -732,6 +686,32 @@ def _run_calibrate():
                       f"mean={sp_preds.mean():+.4f}, std={sp_preds.std():.4f}, "
                       f"|pred|>threshold: {above_thresh} ({above_thresh/len(sp_preds)*100:.1f}%)")
 
+    # True holdout: 2026+ (unscored)
+    holdout_end = splits[2][1]
+    true_holdout_mask = (all_data["timestamp"] > holdout_end)
+    if true_holdout_mask.sum() > 0:
+        th_data = all_data[true_holdout_mask].reset_index(drop=True)
+        merged_th = th_data.merge(pred_df, on="timestamp", how="inner")
+        if len(merged_th) > 0:
+            th_preds = merged_th["sigma_pred"].values
+            th_abs = np.abs(th_preds)
+            th_start = merged_th["timestamp"].min()
+            th_end = merged_th["timestamp"].max()
+            print(f"\n--- True Holdout (UNSCORED) ({th_start.date()} to {th_end.date()}, "
+                  f"n={len(th_preds)}) ---")
+            print(f"  Raw sigma predictions:")
+            print(f"    mean:  {th_preds.mean():+.4f}    std: {th_preds.std():.4f}")
+            print(f"    min:   {th_preds.min():+.4f}    max: {th_preds.max():+.4f}")
+            print(f"  Absolute sigma predictions:")
+            print(f"    mean:  {th_abs.mean():.4f}")
+            print(f"    p50:   {np.percentile(th_abs, 50):.4f}")
+            print(f"    p90:   {np.percentile(th_abs, 90):.4f}")
+            print(f"  Threshold exceedance (|sigma_pred| > threshold):")
+            for t in thresholds:
+                count = (th_abs > t).sum()
+                pct = count / len(th_abs) * 100
+                print(f"    > {t:.2f}:  {count:6d}  ({pct:5.1f}%)")
+
     print()
 
 
@@ -740,18 +720,14 @@ def _run_calibrate():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Autotrader data preparation and validation")
-    parser.add_argument("--validate", action="store_true",
-                        help="Run signal quality validation on holdout window")
+    parser = argparse.ArgumentParser(description="Autotrader data preparation and diagnostics")
     parser.add_argument("--diagnose", action="store_true",
-                        help="Per-split diagnostic breakdown (human-only)")
+                        help="Per-split diagnostic breakdown + true holdout (human-only)")
     parser.add_argument("--calibrate", action="store_true",
                         help="Per-split prediction distribution stats (human-only)")
     args = parser.parse_args()
 
-    if args.validate:
-        _run_fresh_holdout()
-    elif args.diagnose:
+    if args.diagnose:
         _run_diagnostic()
     elif args.calibrate:
         _run_calibrate()

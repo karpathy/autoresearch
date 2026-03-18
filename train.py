@@ -56,6 +56,17 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         ret[lb:] = close[lb:] / close[:-lb] - 1.0
         feature_cols.append(ret / vol_safe)
 
+    # 1b. Momentum divergence: short-term vs long-term return agreement
+    #     Positive = both agree on direction, negative = divergence
+    ret_24 = np.full(len(close), np.nan)
+    ret_24[24:] = close[24:] / close[:-24] - 1.0
+    ret_168 = np.full(len(close), np.nan)
+    ret_168[168:] = close[168:] / close[:-168] - 1.0
+    # Product of vol-normalized returns: positive when aligned, negative when divergent
+    mom_div = (ret_24 / vol_safe) * (ret_168 / vol_safe)
+    feature_cols.append(np.nan_to_num(mom_div, nan=0.0))
+    feature_cols.append(np.nan_to_num(np.abs(mom_div), nan=0.0))  # magnitude of alignment
+
     # 2. Volatility (rolling std of hourly returns) — raw, not normalized
     for w in VOLATILITY_WINDOWS:
         vol = hr_series.rolling(w, min_periods=w).std().values
@@ -95,6 +106,14 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         bb_pos = (close - sma) / (2 * std_safe)
         feature_cols.append(bb_pos)
 
+    # 7b. Bollinger band width: 2*std/sma (narrow = consolidation, wide = trending)
+    for w in [24, 72, 168]:
+        sma = close_series.rolling(w, min_periods=w).mean().values
+        std = close_series.rolling(w, min_periods=w).std().values
+        sma_safe = np.where(sma > 0, sma, 1.0)
+        bb_width = 2 * std / sma_safe
+        feature_cols.append(bb_width)
+
     # 8. VWAP deviation (volume-weighted average price vs close)
     vwap_24 = (pd.Series(close * volume).rolling(24, min_periods=24).sum().values /
                pd.Series(volume).rolling(24, min_periods=24).sum().values)
@@ -110,7 +129,33 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     autocorr = ret_24h_series.rolling(168, min_periods=168).corr(ret_24h_lagged).values
     feature_cols.append(np.nan_to_num(autocorr, nan=0.0))
 
-    # 10. Hour of day (cyclical)
+    # 10. Chop / consolidation detection features
+    # a) Rolling price range as fraction of price (high in chop, low in trend)
+    for w in [168, 720]:  # 1 week, 30 days
+        roll_max = pd.Series(close).rolling(w, min_periods=w).max().values
+        roll_min = pd.Series(close).rolling(w, min_periods=w).min().values
+        price_range = np.where(close > 0, (roll_max - roll_min) / close, 0.0)
+        feature_cols.append(price_range)
+
+    # b) Directional efficiency: net move / total path length
+    #    Near ±1 in trends, near 0 in chop
+    for w in [72, 168]:
+        net_move = np.full(len(close), np.nan)
+        net_move[w:] = close[w:] - close[:-w]
+        path_length = pd.Series(np.abs(np.diff(close, prepend=close[0]))).rolling(
+            w, min_periods=w).sum().values
+        path_safe = np.where(path_length > 0, path_length, 1.0)
+        efficiency = net_move / path_safe
+        feature_cols.append(np.nan_to_num(efficiency, nan=0.0))
+
+    # c) Absolute return magnitude (low = chop, high = trending)
+    for w in [72, 168]:
+        abs_ret = np.full(len(close), np.nan)
+        abs_ret[w:] = np.abs(close[w:] / close[:-w] - 1.0)
+        abs_ret_norm = abs_ret / vol_safe  # normalize by vol
+        feature_cols.append(np.nan_to_num(abs_ret_norm, nan=0.0))
+
+    # 11. Hour of day (cyclical)
     dt = pd.to_datetime(ts)
     hours = dt.hour
     feature_cols.append(np.sin(2 * np.pi * hours / 24))
@@ -169,7 +214,7 @@ def count_model_params(model=None) -> int:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
-    return pd.Series(raw_preds).ewm(span=36, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=12, min_periods=1).mean().values
 
 
 def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -185,8 +230,17 @@ def predict_on_data(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarra
     if model is None:
         raise RuntimeError("Model not trained. Run train.py first.")
 
-    sigma_preds = model.predict(features)
+    # Compute per-sample prediction mean and std across all trees
+    all_tree_preds = np.array([tree.predict(features) for tree in model.estimators_])
+    sigma_preds = all_tree_preds.mean(axis=0)
+    pred_std = all_tree_preds.std(axis=0)
+
+    # Adaptive confidence: scale down when trees disagree (high uncertainty)
+    confidence = 1.0 / (1.0 + 2.0 * pred_std)
+    sigma_preds = sigma_preds * confidence
+
     sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
+    sigma_preds = sigma_preds * 0.7  # base scale
     sigma_smoothed = _smooth_predictions(sigma_preds)
     return sigma_smoothed, timestamps, vol_safe
 
@@ -232,9 +286,9 @@ def main():
     train_start = time.time()
 
     model = ExtraTreesRegressor(
-        n_estimators=200,
-        max_depth=6,
-        min_samples_leaf=200,
+        n_estimators=3000,
+        max_depth=10,
+        min_samples_leaf=400,
         random_state=42,
         n_jobs=-1,
     )
