@@ -110,7 +110,33 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     autocorr = ret_24h_series.rolling(168, min_periods=168).corr(ret_24h_lagged).values
     feature_cols.append(np.nan_to_num(autocorr, nan=0.0))
 
-    # 10. Hour of day (cyclical)
+    # 10. Chop / consolidation detection features
+    # a) Rolling price range as fraction of price (high in chop, low in trend)
+    for w in [168, 720]:  # 1 week, 30 days
+        roll_max = pd.Series(close).rolling(w, min_periods=w).max().values
+        roll_min = pd.Series(close).rolling(w, min_periods=w).min().values
+        price_range = np.where(close > 0, (roll_max - roll_min) / close, 0.0)
+        feature_cols.append(price_range)
+
+    # b) Directional efficiency: net move / total path length
+    #    Near ±1 in trends, near 0 in chop
+    for w in [72, 168]:
+        net_move = np.full(len(close), np.nan)
+        net_move[w:] = close[w:] - close[:-w]
+        path_length = pd.Series(np.abs(np.diff(close, prepend=close[0]))).rolling(
+            w, min_periods=w).sum().values
+        path_safe = np.where(path_length > 0, path_length, 1.0)
+        efficiency = net_move / path_safe
+        feature_cols.append(np.nan_to_num(efficiency, nan=0.0))
+
+    # c) Absolute return magnitude (low = chop, high = trending)
+    for w in [72, 168]:
+        abs_ret = np.full(len(close), np.nan)
+        abs_ret[w:] = np.abs(close[w:] / close[:-w] - 1.0)
+        abs_ret_norm = abs_ret / vol_safe  # normalize by vol
+        feature_cols.append(np.nan_to_num(abs_ret_norm, nan=0.0))
+
+    # 11. Hour of day (cyclical)
     dt = pd.to_datetime(ts)
     hours = dt.hour
     feature_cols.append(np.sin(2 * np.pi * hours / 24))
