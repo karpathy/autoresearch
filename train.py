@@ -237,7 +237,7 @@ def main():
         learning_rate=0.02,
         min_samples_leaf=100,
         max_bins=255,
-        l2_regularization=0.1,
+        l2_regularization=1.0,
         loss="squared_error",
         random_state=42,
     )
