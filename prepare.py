@@ -300,7 +300,7 @@ def _backtest(predictions: np.ndarray, close_prices: np.ndarray,
 # Public Evaluation API
 # ---------------------------------------------------------------------------
 
-def evaluate_model(predict_fn: callable, n_params: int) -> dict:
+def evaluate_model(predict_fn: callable) -> dict:
     """Black-box model evaluation across all temporal splits.
 
     Runs the model on training, validation, and holdout data internally.
@@ -315,11 +315,10 @@ def evaluate_model(predict_fn: callable, n_params: int) -> dict:
             timestamp, open, high, low, close, volume) and returns
             (predictions: np.ndarray, timestamps: np.ndarray).
             Must work on arbitrary date ranges.
-        n_params: Number of trainable parameters in the model.
 
     Returns:
         dict with keys: score, sharpe_min, max_drawdown, total_trades,
-                        consistency, n_params.
+                        consistency.
         sharpe_min is the minimum Sharpe across all evaluation periods.
         max_drawdown is the worst drawdown across all periods.
         total_trades is the sum across all periods.
@@ -398,11 +397,7 @@ def evaluate_model(predict_fn: callable, n_params: int) -> dict:
     n_total = len(all_sp_returns)
     consistency = n_profitable / n_total if n_total > 0 else 0.0
 
-    # Parameter count: gentle complexity penalty
-    n_params_k = n_params / 1000.0
-    param_mult = 1.0 / (1.0 + 0.01 * n_params_k)
-
-    score = base * dd_mult * trade_mult * consistency * param_mult
+    score = base * dd_mult * trade_mult * consistency
 
     return {
         "score": score,
@@ -410,7 +405,6 @@ def evaluate_model(predict_fn: callable, n_params: int) -> dict:
         "max_drawdown": worst_dd_raw,
         "total_trades": total_trades,
         "consistency": f"{n_profitable}/{n_total}",
-        "n_params": n_params,
     }
 
 

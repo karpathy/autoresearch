@@ -262,7 +262,7 @@ def main():
 
     # --- Evaluate (black box) ---
     print("Evaluating...")
-    result = evaluate_model(predict_on_data, n_params)
+    result = evaluate_model(predict_on_data)
 
     total_seconds = time.time() - total_start
 
@@ -274,7 +274,7 @@ def main():
     print(f"max_drawdown:     {result['max_drawdown']:.1%}")
     print(f"total_trades:     {result['total_trades']}")
     print(f"consistency:      {result['consistency']}")
-    print(f"n_params:         {result['n_params']}")
+    print(f"n_params:         {n_params}")
     print(f"training_seconds: {training_seconds:.1f}")
     print(f"total_seconds:    {total_seconds:.1f}")
 
