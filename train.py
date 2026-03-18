@@ -331,7 +331,7 @@ def main():
         {"n_estimators": 2000, "max_depth": 5, "min_samples_leaf": 800},   # very shallow + heavy regularization
         {"n_estimators": 2000, "max_depth": 7, "min_samples_leaf": 500},   # moderate regularization variant
         {"n_estimators": 2000, "max_depth": 6, "min_samples_leaf": 700},   # intermediate
-        {"n_estimators": 2000, "max_depth": 7, "min_samples_leaf": 400, "max_features": 0.7},  # feature subsampling
+        {"n_estimators": 2000, "max_depth": 7, "min_samples_leaf": 600, "max_features": 0.8},  # feature subsampling + matching regularization
     ]
 
     models = []
