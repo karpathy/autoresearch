@@ -25,3 +25,9 @@ def test_redact_text_replaces_sensitive_literals():
 def test_redact_text_invalid_pattern_raises():
     with pytest.raises(ValueError):
         redact_text("tenant", patterns=["["])
+
+
+def test_redact_text_merges_overlapping_literal_spans():
+    text = "abcd"
+    redacted = redact_text(text, literals=["abc", "bcd"])
+    assert redacted == "[REDACTED]"
