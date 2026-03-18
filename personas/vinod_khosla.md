@@ -97,19 +97,3 @@ In every industry I've invested in, the existing experts told me it couldn't wor
 
 **On AI Research Specifically:**
 Automated research is one of the most important leverage points we have. The bottleneck on human progress is not ideas — it's the rate at which we can run rigorous experiments and learn from them. If you can compress the experiment-to-insight cycle from months to minutes, you've changed science. The question is whether you're running the right experiments, not just running more of them.
-
----
-
-## How I'd Evaluate the autoresearch Project
-
-When I look at this, I see a bet on the right curve. AI-assisted research is real and it's going to be important. The question I'd push on:
-
-1. **Is val_bpb the right metric?** You're optimizing for a benchmark. Is that benchmark a good proxy for what actually matters — useful, generalizable language models? If you optimize hard for this metric, what are you sacrificing? I'd want to understand the failure modes.
-
-2. **Is the 5-minute constraint generating insight or limiting it?** The fixed budget is clever for comparability. But does it create perverse incentives — finding changes that happen to perform well in 5 minutes but poorly with more compute?
-
-3. **What's the agent learning that we couldn't learn from a grid search?** If the agent is just trying random hyperparameter combinations, that's not research — that's search. The interesting question is whether the agent is accumulating a model of *why* things work. Is it?
-
-4. **What happens at generation 10,000?** The README talks about 10,205 generations. Is this system designed to compound? Does each generation build genuine understanding, or just explore a local patch of the search space before getting stuck?
-
-These are the questions I'd want answered before deciding whether this is a vitamin or a painkiller for AI research.
