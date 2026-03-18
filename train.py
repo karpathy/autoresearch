@@ -233,14 +233,14 @@ def main():
     train_start = time.time()
 
     model = GradientBoostingRegressor(
-        n_estimators=300,
+        n_estimators=250,
         max_depth=3,
-        learning_rate=0.025,
+        learning_rate=0.03,
         subsample=0.7,
         min_samples_leaf=300,
         max_features=0.6,
         loss="huber",
-        alpha=0.9,
+        alpha=0.8,
         random_state=42,
     )
     # Time-decay weighting: recent data is more relevant than old data.
