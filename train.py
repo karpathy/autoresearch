@@ -280,8 +280,19 @@ def build_model(train_df: pd.DataFrame) -> callable:
 
     features = np.nan_to_num(features, nan=0.0)
 
-    # --- Train: single GBT on all features (no pre-selection) ---
-    model = HistGradientBoostingRegressor(
+    # --- Train: two-model ensemble for diversity ---
+    model_conservative = HistGradientBoostingRegressor(
+        max_iter=300,
+        max_depth=4,
+        min_samples_leaf=600,
+        learning_rate=0.01,
+        max_leaf_nodes=20,
+        l2_regularization=3.0,
+        random_state=42,
+    )
+    model_conservative.fit(features, targets)
+
+    model_aggressive = HistGradientBoostingRegressor(
         max_iter=500,
         max_depth=4,
         min_samples_leaf=600,
@@ -290,17 +301,19 @@ def build_model(train_df: pd.DataFrame) -> callable:
         l2_regularization=3.0,
         random_state=42,
     )
-    model.fit(features, targets)
-    selected = np.ones(features.shape[1], dtype=bool)  # keep all features
-    models = [model]
+    model_aggressive.fit(features, targets)
 
-    blend_weights = [1.0]
+    selected = np.ones(features.shape[1], dtype=bool)
+    models = [model_conservative, model_aggressive]
+    blend_weights = [0.5, 0.5]
 
     # Approximate param count
-    n_params = sum(
-        model._predictors[j][0].get_n_leaf_nodes()
-        for j in range(len(model._predictors))
-    )
+    n_params = 0
+    for m in models:
+        n_params += sum(
+            m._predictors[j][0].get_n_leaf_nodes()
+            for j in range(len(m._predictors))
+        )
 
     # --- Return prediction closure ---
     def predict_fn(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
