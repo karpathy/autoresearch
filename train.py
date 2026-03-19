@@ -287,6 +287,11 @@ def build_model(train_df: pd.DataFrame) -> callable:
 
     features = np.nan_to_num(features, nan=0.0)
 
+    # --- Monotonic constraint: 168h return (feature index 6) must be increasing ---
+    # Prevents "strong momentum → predict reversal" pathology on 2021 bull market
+    mono_cst = np.zeros(features.shape[1], dtype=int)
+    mono_cst[6] = 1  # 168h vol-normalized return → monotonically increasing
+
     # --- Train: two-model ensemble for diversity ---
     model_conservative = HistGradientBoostingRegressor(
         max_iter=300,
@@ -295,6 +300,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
         learning_rate=0.01,
         max_leaf_nodes=20,
         l2_regularization=3.0,
+        monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
     model_conservative.fit(features, targets)
@@ -307,6 +313,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
         max_leaf_nodes=20,
         max_features=0.8,
         l2_regularization=3.0,
+        monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
     model_aggressive.fit(features, targets)
