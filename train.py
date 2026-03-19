@@ -120,8 +120,8 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         bb_pos = (close - sma) / (2 * std_safe)
         feature_cols.append(bb_pos)
 
-    # 7b. Bollinger band width: 2*std/sma (narrow = consolidation, wide = trending)
-    for w in [24, 72, 168]:
+    # 7b. Bollinger band width: 2*std/sma (24h removed — noisy with power transform)
+    for w in [72, 168]:
         sma = close_series.rolling(w, min_periods=w).mean().values
         std = close_series.rolling(w, min_periods=w).std().values
         sma_safe = np.where(sma > 0, sma, 1.0)
@@ -288,8 +288,8 @@ def build_model(train_df: pd.DataFrame) -> callable:
     mono_cst[5] = 1  # 72h vol-normalized return → monotonically increasing
     mono_cst[6] = 1  # 168h vol-normalized return → monotonically increasing
     mono_cst[7] = 1  # 24h VW cumulative return → monotonically increasing
-    mono_cst[30] = 1  # 72h directional efficiency → monotonically increasing
-    mono_cst[31] = 1  # 168h directional efficiency → monotonically increasing
+    mono_cst[29] = 1  # 72h directional efficiency → monotonically increasing
+    mono_cst[30] = 1  # 168h directional efficiency → monotonically increasing
 
     # --- Train: two-model ensemble for diversity ---
     model_conservative = HistGradientBoostingRegressor(
