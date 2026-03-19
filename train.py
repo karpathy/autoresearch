@@ -88,6 +88,12 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     vol_ratio = np.where(vol_safe > 0, vol_24h / vol_safe, 1.0)
     feature_cols.append(vol_ratio)
 
+    # 3b. Vol percentile rank: where does current 24h vol sit in its own 720h history?
+    # Regime-relative: 0.0 = historically low vol, 1.0 = historically high vol
+    vol_24h_series = pd.Series(vol_24h)
+    vol_pctile = vol_24h_series.rolling(720, min_periods=168).rank(pct=True).values
+    feature_cols.append(np.nan_to_num(vol_pctile - 0.5, nan=0.0))  # center around 0
+
     # 4. Volume ratio: 24h avg / 168h avg
     vol_series = pd.Series(volume)
     vol_24 = vol_series.rolling(24, min_periods=24).mean().values
