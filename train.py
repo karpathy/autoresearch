@@ -88,6 +88,12 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     vol_ratio = np.where(vol_safe > 0, vol_24h / vol_safe, 1.0)
     feature_cols.append(vol_ratio)
 
+    # 3b. Vol percentile rank: where does current 24h vol sit in its own 720h history?
+    # Regime-relative: 0.0 = historically low vol, 1.0 = historically high vol
+    vol_24h_series = pd.Series(vol_24h)
+    vol_pctile = vol_24h_series.rolling(720, min_periods=168).rank(pct=True).values
+    feature_cols.append(np.nan_to_num(vol_pctile - 0.5, nan=0.0))  # center around 0
+
     # 4. Volume ratio: 24h avg / 168h avg
     vol_series = pd.Series(volume)
     vol_24 = vol_series.rolling(24, min_periods=24).mean().values
@@ -153,6 +159,14 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         roll_min = pd.Series(close).rolling(w, min_periods=w).min().values
         price_range = np.where(close > 0, (roll_max - roll_min) / close, 0.0)
         feature_cols.append(price_range)
+
+    # a2) Trend strength: rolling R-squared of log(price) vs time
+    log_close = np.log(np.maximum(close, 1.0))
+    log_series = pd.Series(log_close)
+    time_idx = pd.Series(np.arange(len(close), dtype=np.float64))
+    for w in [168]:
+        r_sq = log_series.rolling(w, min_periods=w).corr(time_idx).values ** 2
+        feature_cols.append(np.nan_to_num(r_sq, nan=0.0))
 
     # b) Directional efficiency: net move / total path length
     #    Near ±1 in trends, near 0 in chop
@@ -223,7 +237,7 @@ def count_model_params(models) -> int:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
-    return pd.Series(raw_preds).ewm(span=30, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=40, min_periods=1).mean().values
 
 
 def _confidence_scaled_predict(model, features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -274,25 +288,9 @@ def build_model(train_df: pd.DataFrame) -> callable:
 
     features = np.nan_to_num(features, nan=0.0)
 
-    # --- Train pass 1: feature selection (lightweight) ---
-    selector = ExtraTreesRegressor(
-        n_estimators=1000,
-        max_depth=7,
-        min_samples_leaf=600,
-        random_state=42,
-        n_jobs=-1,
-    )
-    selector.fit(features, targets)
-
-    # Feature importance pruning
-    importances = selector.feature_importances_
-    threshold = np.mean(importances)
-    selected = importances >= threshold
-    features_pruned = features[:, selected]
-
-    # --- Train pass 2: single GBT (budget-constrained) ---
-    model = HistGradientBoostingRegressor(
-        max_iter=5000,
+    # --- Train: two-model ensemble for diversity ---
+    model_conservative = HistGradientBoostingRegressor(
+        max_iter=300,
         max_depth=4,
         min_samples_leaf=600,
         learning_rate=0.01,
@@ -300,16 +298,35 @@ def build_model(train_df: pd.DataFrame) -> callable:
         l2_regularization=3.0,
         random_state=42,
     )
-    model.fit(features_pruned, targets)
-    models = [model]
+    model_conservative.fit(features, targets)
 
-    blend_weights = [1.0]
+    model_aggressive = HistGradientBoostingRegressor(
+        max_iter=500,
+        max_depth=4,
+        min_samples_leaf=600,
+        learning_rate=0.01,
+        max_leaf_nodes=20,
+        max_features=0.8,
+        l2_regularization=3.0,
+        random_state=42,
+    )
+    model_aggressive.fit(features, targets)
+
+    selected = np.ones(features.shape[1], dtype=bool)
+    models = [model_conservative, model_aggressive]
+    blend_weights = [0.5, 0.5]
+
+    # Compute and store training prediction bias for demeaning
+    train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
+    pred_bias = float(np.mean(train_preds))
 
     # Approximate param count
-    n_params = sum(
-        model._predictors[j][0].get_n_leaf_nodes()
-        for j in range(len(model._predictors))
-    )
+    n_params = 0
+    for m in models:
+        n_params += sum(
+            m._predictors[j][0].get_n_leaf_nodes()
+            for j in range(len(m._predictors))
+        )
 
     # --- Return prediction closure ---
     def predict_fn(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -322,6 +339,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
         preds = [m.predict(feats) for m in models]
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
 
+        sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
         sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
         sigma_preds = sigma_preds * 0.3  # further dampen to reduce position sizes
         sigma_smoothed = _smooth_predictions(sigma_preds)
