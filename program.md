@@ -25,7 +25,7 @@ Once you get confirmation, kick off the experimentation.
 
 ## Experimentation
 
-Each experiment runs on a single machine. The training script runs for a **fixed time budget of 4 minutes** (wall clock training time, excluding startup and evaluation overhead). You launch it simply as: `uv run train.py`.
+Each experiment runs on a single machine. The training script runs for a **fixed time budget of 240 seconds** (wall clock training time, excluding startup and evaluation overhead). You launch it simply as: `uv run train.py`.
 
 **What you CAN do:**
 - Modify `train.py` — this is the only file you edit. Everything inside `build_model()` is fair game: model architecture, feature engineering, hyperparameters, ensemble composition, prediction pipeline, regularization, data preprocessing, normalization, etc.
