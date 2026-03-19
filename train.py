@@ -292,7 +292,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
 
     # --- Train pass 2: single GBT (budget-constrained) ---
     model = HistGradientBoostingRegressor(
-        max_iter=5000,
+        max_iter=300,
         max_depth=4,
         min_samples_leaf=600,
         learning_rate=0.01,
