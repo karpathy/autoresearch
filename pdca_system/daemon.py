@@ -1437,20 +1437,20 @@ def _worker(stage: str, lane: str = "any") -> None:
                                 merge_resolution=task.get("merge_resolution") is True,
                             )
                             task_completed = True
-                        if not run.summary.get("metrics_recovery_queued"):
-                            idea = run.summary.get("idea") or run.summary.get("notes") or ""
-                            description = run.summary.get("description") or ""
-                            _append_results_tsv(
-                                seed_id, run.metrics, run.signal or "error", idea, description
-                            )
-                            _regenerate_progress_png()
-                        if salvaged_ca:
-                            WORKFLOW.seed_repo.append_event(
-                                seed_id,
-                                "ca.salvaged",
-                                f"CA output contained final metrics, so the run was accepted despite agent exit code {exit_code}.",
-                                run_id=run_id,
-                            )
+                            if not run.summary.get("metrics_recovery_queued"):
+                                idea = run.summary.get("idea") or run.summary.get("notes") or ""
+                                description = run.summary.get("description") or ""
+                                _append_results_tsv(
+                                    seed_id, run.metrics, run.signal or "error", idea, description
+                                )
+                                _regenerate_progress_png()
+                            if salvaged_ca:
+                                WORKFLOW.seed_repo.append_event(
+                                    seed_id,
+                                    "ca.salvaged",
+                                    f"CA output contained final metrics, so the run was accepted despite agent exit code {exit_code}.",
+                                    run_id=run_id,
+                                )
             if task_completed:
                 move_to_done(task_path)
                 print(f"[{stage.upper()}] task {task['task_id']} done")
