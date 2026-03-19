@@ -164,8 +164,12 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     log_series = pd.Series(log_close)
     time_idx = pd.Series(np.arange(len(close), dtype=np.float64))
     for w in [168]:
-        r_sq = log_series.rolling(w, min_periods=w).corr(time_idx).values ** 2
+        corr = log_series.rolling(w, min_periods=w).corr(time_idx).values
+        r_sq = corr ** 2
         feature_cols.append(np.nan_to_num(r_sq, nan=0.0))
+        # Signed trend strength: R² × sign(correlation) — positive for uptrends
+        signed_trend = np.nan_to_num(r_sq * np.sign(corr), nan=0.0)
+        feature_cols.append(signed_trend)
 
     # b) Directional efficiency: net move / total path length
     #    Near ±1 in trends, near 0 in chop
@@ -295,8 +299,9 @@ def build_model(train_df: pd.DataFrame) -> callable:
     mono_cst[5] = 1  # 72h vol-normalized return → monotonically increasing
     mono_cst[6] = 1  # 168h vol-normalized return → monotonically increasing
     mono_cst[7] = 1  # 24h VW cumulative return → monotonically increasing
-    mono_cst[31] = 1  # 72h directional efficiency → monotonically increasing
-    mono_cst[32] = 1  # 168h directional efficiency → monotonically increasing
+    mono_cst[31] = 1  # signed trend strength → monotonically increasing
+    mono_cst[32] = 1  # 72h directional efficiency → monotonically increasing
+    mono_cst[33] = 1  # 168h directional efficiency → monotonically increasing
 
     # --- Train: two-model ensemble for diversity ---
     model_conservative = HistGradientBoostingRegressor(
