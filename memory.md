@@ -1,16 +1,20 @@
-Storage — what one entry looks like
-Normalize — std scaling before any similarity check
-Retrieve — cosine similarity to find closest past experiments
-Confidence — goes up on confirmation, down on contradiction
-Update rule — high similarity + same verdict → update confidence, high similarity + opposite verdict → call LLM to resolve
-Gate — before agent proposes next experiment, query memory first
+# Persistent Memory Layer for Autoresearch
 
+Built a persistent memory layer for @karpathy's `autoresearch` — an autonomous ML research agent that runs hundreds of experiments overnight.
 
-FLOW
+## The Problem
+The agent rediscovers the same dead ends every run. It has no memory of what it already tried.
 
-there'll be already present hyperparamters with some false values which later will be changed, when training starts, so we need to store the previous values and the new values AFTER NORMALIZING THE VALUE AS IT'LL CREATE PROBLEM AT THE TIME OF COSINE CALCULATION, and the confidence score of the new values, if the new values are better than the previous values then the confidence score will be increased, if the new values are worse than the previous values then the confidence score will be decreased, if the new values are same as the previous values then the confidence score will be same, if the new values are not same as the previous values then the confidence score will be decreased
+## The Fix
+- **Persistent Storage**: Every experiment (hyperparameters + `val_bpb`) gets stored in SQLite with a confidence score.
+- **Memory Gate**: Before proposing the next experiment, the agent queries memory first — that's the gate.
+- **Normalization**: Hyperparameters are std-normalized before comparison, so `DEPTH=8` and `LR=0.04` don't distort each other's scale.
+- **Retrieval**: Cosine similarity finds the closest past experiments in normalized hyperparameter space.
+- **Confidence Updates**: High similarity + same verdict → confidence goes up, no LLM needed.
+- **Conflict Resolution**: High similarity + opposite verdict → single LLM-as-judge call to resolve the contradiction.
+- **Ground Truth**: Resolved verdict gets written back as ground truth.
 
-So your architecture is actually:
+One expensive operation (LLM call) only when the math can't decide. Everything else is pure geometry.
 
-High similarity + same verdict → just update confidence, no LLM needed
-High similarity + opposite verdict → call LLM to resolve, that's your one expensive operation
+## Inspiration
+The architecture is directly inspired by CoALA (Sumers et al. 2023) — episodic memory for autonomous research agents.
