@@ -14,7 +14,33 @@ The agent rediscovers the same dead ends every run. It has no memory of what it 
 - **Conflict Resolution**: High similarity + opposite verdict → single LLM-as-judge call to resolve the contradiction.
 - **Ground Truth**: Resolved verdict gets written back as ground truth.
 
+## Flow
+Agent proposes experiment
+        ↓
+Query memory (should_run_experiment)
+        ↓
+Normalize hyperparameters (std scaling)
+        ↓
+Cosine similarity → find closest past experiments
+        ↓
+High similarity + same verdict   → update confidence
+High similarity + opposite verdict → LLM resolves
+        ↓
+Verdict written back as ground truth
+
 One expensive operation (LLM call) only when the math can't decide. Everything else is pure geometry.
+
+
+## Quick Start
+```bash
+pip install pydantic requests
+python test.py
+```
+To enable LLM conflict resolution:
+```bash
+export OPENAI_API_KEY=your_key
+python test.py
+```
 
 ## Inspiration
 The architecture is directly inspired by CoALA (Sumers et al. 2023) — episodic memory for autonomous research agents.

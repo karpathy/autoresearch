@@ -363,3 +363,34 @@ def record_verdict(conn: sqlite3.Connection, experiment_id: str, verdict: Verdic
     with conn:
         save_snapshot(conn, snap)
         update_experiment(conn, exp)
+
+
+def should_run_experiment(conn: sqlite3.Connection, hyperparameters: dict) -> tuple[bool, str]:
+    """
+    Gate function called before initiating a training run.
+    Returns (True, reason) if the parameters are worth exploring.
+    Returns (False, reason) if they closely match a high-confidence dead end.
+    """
+    similar_exps = retrieve_similar(conn, hyperparameters, k=1)
+    if not similar_exps:
+        return True, "No past experiments found. Novel."
+
+    most_similar, sim_score = similar_exps[0]
+    
+    if sim_score >= 0.90:
+        verdict = most_similar.last_verdict
+        conf = most_similar.confidence if most_similar.confidence is not None else 1.0
+        
+        # High similarity + REJECT + high confidence -> block
+        if verdict == Verdict.REJECT and conf >= 0.8:
+            return False, f"Blocked: Too similar to past REJECT exp {most_similar.id} (Sim: {sim_score:.2f}, Conf: {conf:.2f})"
+            
+        # High similarity + ACCEPT -> allow
+        if verdict == Verdict.ACCEPT:
+            return True, f"Allowed: Similar to past ACCEPT exp {most_similar.id} (Sim: {sim_score:.2f})"
+            
+        # High similarity + low confidence -> allow
+        if conf < 0.8:
+            return True, f"Allowed: Similar to past exp {most_similar.id} but confidence is low ({conf:.2f})"
+            
+    return True, f"Novel enough (Max sim: {sim_score:.2f} to exp {most_similar.id})"
