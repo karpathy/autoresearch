@@ -862,7 +862,8 @@ def _invoke_agent(
 
 def _build_metrics_recovery_prompt(task: dict[str, Any]) -> str:
     """Lightweight prompt for metrics-recovery CA: no protocol/docs, just task, log paths, report shape."""
-    task_json = json.dumps(task, indent=2)
+    # Keep any non-ASCII characters readable (e.g. Chinese) inside the generated prompt.
+    task_json = json.dumps(task, indent=2, ensure_ascii=False)
     source_run_id = task.get("source_run_id", "unknown")
     stdout_log = task.get("source_stdout_log_path", "missing")
     stderr_log = task.get("source_stderr_log_path", "missing")
@@ -883,7 +884,7 @@ def _build_metrics_recovery_prompt(task: dict[str, Any]) -> str:
             "num_params_M": 11.5,
             "depth": 4,
         },
-    }, indent=2)
+    }, indent=2, ensure_ascii=False)
     return (
         "METRICS RECOVERY (focused task). Do not read protocol or stage docs.\n\n"
         "Task (inline):\n"
@@ -919,7 +920,8 @@ def _build_sync_resolution_prompt(task: dict[str, Any]) -> str:
 
 def _build_merge_resolution_prompt(task: dict[str, Any]) -> str:
     """Lightweight prompt for merge-resolution CA: no protocol/docs, just commit, merge, report."""
-    task_json = json.dumps(task, indent=2)
+    # Keep any non-ASCII characters readable (e.g. Chinese) inside the generated prompt.
+    task_json = json.dumps(task, indent=2, ensure_ascii=False)
     target_branch = task.get("baseline_branch", "master")  # branch we want to merge into (e.g. master)
     worktree_path = task.get("worktree_path") or ""
     seed_id = task.get("seed_id", "")
@@ -933,7 +935,7 @@ def _build_merge_resolution_prompt(task: dict[str, Any]) -> str:
         "completed_at": completed_at,
         "commit_sha": "",
         "metrics": last_metrics,
-    }, indent=2)
+    }, indent=2, ensure_ascii=False)
 
     if seed_id == BASELINE_SEED_ID:
         # We are resolving the merge of __baseline__ INTO target_branch (e.g. master).
@@ -997,7 +999,8 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
     - CA baseline_measurement: full header + baseline retry/OOM/commit/run. Heavy.
     - CA normal: full header + adapt/run/commit/report. Heavy.
     """
-    task_json = json.dumps(task, indent=2)
+    # Keep any non-ASCII characters readable (e.g. Chinese) inside the generated prompt.
+    task_json = json.dumps(task, indent=2, ensure_ascii=False)
     rel_task = task_path.relative_to(PROJECT_ROOT).as_posix()
     worktree_path = task.get("worktree_path", "pdca_system/history/worktrees")
     agent_cwd = _agent_cwd(worktree_path)
@@ -1189,6 +1192,10 @@ def _regenerate_progress_png() -> None:
         else:
             valid["_label"] = ""
         valid["_label"] = valid["_label"].str[:45]
+
+        # `kept` was created earlier from `valid`; after adding `_label` we must
+        # recompute it, otherwise label rendering can raise `KeyError: '_label'`.
+        kept = valid[valid["status"] == "KEEP"]
 
         disc = in_range[in_range["status"] == "DISCARD"]
         kept_v = in_range[in_range["status"] == "KEEP"]
