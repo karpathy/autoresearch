@@ -47,27 +47,41 @@ SLIPPAGE_RATE = 0.0005  # 0.05% per trade (one side)
 # Fixed start of all data
 TRAIN_START = pd.Timestamp("2018-01-01")
 
+EPOCH_LENGTH = 30  # experiments per epoch before holdout rotates
+EVAL_COUNT_PATH = CACHE_DIR / "eval_count"
+
 
 # ---------------------------------------------------------------------------
 # Walk-Forward Windows
 # ---------------------------------------------------------------------------
 
 def _get_walk_forward_windows():
-    """4 walk-forward windows: 3yr train, 1yr eval, non-overlapping eval periods.
+    """5 walk-forward windows: 3yr train, 1yr eval, non-overlapping eval periods.
 
     Each window trains on a different 3-year period and evaluates on the
     following calendar year. The recipe (build_model) is retrained independently
-    for each window.
+    for each window. One window is held out from scoring each epoch.
 
-    | Window | Training        | Eval   |
-    |--------|-----------------|--------|
-    | 1      | 2019-01 – 2021-12 | 2022 |
-    | 2      | 2020-01 – 2022-12 | 2023 |
-    | 3      | 2021-01 – 2023-12 | 2024 |
-    | 4      | 2022-01 – 2024-12 | 2025 |
+    | Window | Training          | Eval   |
+    |--------|-------------------|--------|
+    | 0      | 2018-01 – 2020-12 | 2021   |
+    | 1      | 2019-01 – 2021-12 | 2022   |
+    | 2      | 2020-01 – 2022-12 | 2023   |
+    | 3      | 2021-01 – 2023-12 | 2024   |
+    | 4      | 2022-01 – 2024-12 | 2025   |
     """
     T = pd.Timestamp
     return [
+        {
+            "train_start": T("2018-01-01"),
+            "train_end": T("2020-12-31 23:00:00"),
+            "eval_start": T("2021-01-01"),
+            "eval_end": T("2021-12-31 23:00:00"),
+            "subperiods": [
+                (T("2021-01-01"), T("2021-06-30 23:00:00"), "2021 H1"),
+                (T("2021-07-01"), T("2021-12-31 23:00:00"), "2021 H2"),
+            ],
+        },
         {
             "train_start": T("2019-01-01"),
             "train_end": T("2021-12-31 23:00:00"),
@@ -109,6 +123,42 @@ def _get_walk_forward_windows():
             ],
         },
     ]
+
+
+# ---------------------------------------------------------------------------
+# Epoch Management (rotating holdout)
+# ---------------------------------------------------------------------------
+
+def _read_and_increment_eval_count() -> int:
+    """Atomically read and increment the evaluation counter.
+
+    Returns the count BEFORE incrementing (i.e., this evaluation's index).
+    """
+    EVAL_COUNT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    if EVAL_COUNT_PATH.exists():
+        try:
+            count = int(EVAL_COUNT_PATH.read_text().strip())
+        except (ValueError, FileNotFoundError):
+            count = 0
+    EVAL_COUNT_PATH.write_text(str(count + 1))
+    return count
+
+
+def _peek_eval_count() -> int:
+    """Read the eval counter without incrementing. For diagnostics only."""
+    if EVAL_COUNT_PATH.exists():
+        try:
+            return int(EVAL_COUNT_PATH.read_text().strip())
+        except (ValueError, FileNotFoundError):
+            return 0
+    return 0
+
+
+def _get_holdout_idx(eval_count: int) -> int:
+    """Determine which window to hold out based on current epoch."""
+    epoch = eval_count // EPOCH_LENGTH
+    return epoch % 5
 
 
 # ---------------------------------------------------------------------------
@@ -238,9 +288,9 @@ def _load_all_data() -> pd.DataFrame:
 def load_train_data() -> pd.DataFrame:
     """Return OHLCV DataFrame for the most recent walk-forward window's training data.
 
-    Returns Window 4 training data: 2022-01-01 to 2024-12-31. This is what
-    the agent uses for local development. The scored evaluation retrains on
-    all windows internally via build_model.
+    Returns Window 4 (index -1) training data: 2022-01-01 to 2024-12-31.
+    This is what the agent uses for local development. The evaluation
+    retrains on all 5 windows internally via build_model.
     """
     df = _load_all_data()
     windows = _get_walk_forward_windows()
@@ -411,14 +461,15 @@ def _eval_window(build_model_fn, all_data, window, window_idx):
 # ---------------------------------------------------------------------------
 
 def evaluate_model(build_model_fn: callable) -> dict:
-    """Black-box walk-forward evaluation of a model recipe.
+    """Black-box walk-forward evaluation with rotating holdout.
 
-    The recipe (build_model_fn) is retrained independently on each of 4
-    walk-forward windows. Each window has 3 years of training data and
-    1 year of non-overlapping evaluation. The composite score is the
-    worst-case performance across all windows.
+    The recipe (build_model_fn) is retrained independently on each of 5
+    walk-forward windows. One window is held out from scoring each epoch
+    (rotates every EPOCH_LENGTH evaluations). The composite score is
+    computed from the 4 scored windows only.
 
-    The agent sees only the composite score. Per-window results are hidden.
+    The agent sees the composite score and a binary holdout health flag.
+    Per-window results are hidden.
 
     Args:
         build_model_fn: Callable that takes a pd.DataFrame (training data)
@@ -427,44 +478,54 @@ def evaluate_model(build_model_fn: callable) -> dict:
 
     Returns:
         dict with keys: score, sharpe_min, max_drawdown, total_trades,
-                        consistency.
+                        consistency, holdout_health.
     """
     all_data = _load_all_data()
     windows = _get_walk_forward_windows()
 
-    print(f"Evaluating ({len(windows)} walk-forward windows)...")
-    window_results = []
+    # Determine holdout window for this epoch
+    eval_count = _read_and_increment_eval_count()
+    holdout_idx = _get_holdout_idx(eval_count)
+
+    # Evaluate ALL 5 windows
+    print(f"Evaluating ({len(windows)} walk-forward windows, 1 held out)...")
+    all_results = []
     for i, w in enumerate(windows):
         bt, _, _ = _eval_window(build_model_fn, all_data, w, i + 1)
-        window_results.append(bt)
+        all_results.append(bt)
 
-    # --- Composite score ---
+    # Split into scored and holdout
+    scored_indices = [i for i in range(len(windows)) if i != holdout_idx]
+    scored_results = [all_results[i] for i in scored_indices]
+    scored_windows = [windows[i] for i in scored_indices]
+    holdout_result = all_results[holdout_idx]
 
-    # Base: minimum Sharpe across all windows.
-    sharpes = [r["sharpe"] for r in window_results]
+    # --- Composite score (4 scored windows) ---
+
+    # Base: minimum Sharpe across scored windows.
+    sharpes = [r["sharpe"] for r in scored_results]
     base = min(sharpes)
 
-    # Drawdown: worst across all windows
-    worst_dd_raw = min(r["max_drawdown"] for r in window_results)  # most negative
+    # Drawdown: worst across scored windows
+    worst_dd_raw = min(r["max_drawdown"] for r in scored_results)  # most negative
     dd = abs(worst_dd_raw)
     if dd <= 0.10:
         dd_mult = 1.0
     else:
         dd_mult = 1.0 / (1.0 + ((dd - 0.10) / 0.15) ** 2)
 
-    # Trade count: per-window exponential. Min across windows penalizes
-    # going silent on any window.
+    # Trade count: per-window exponential. Min across scored windows.
     window_trade_mults = []
-    for w, result in zip(windows, window_results):
+    for w, result in zip(scored_windows, scored_results):
         eval_hours = (w["eval_end"] - w["eval_start"]).total_seconds() / 3600
         scale = eval_hours / (FORWARD_HOURS * 7)
         window_trade_mults.append(1 - math.exp(-result["n_trades"] / scale))
     trade_mult = min(window_trade_mults)
-    total_trades = sum(r["n_trades"] for r in window_results)
+    total_trades = sum(r["n_trades"] for r in scored_results)
 
-    # Consistency: fraction of ALL subperiods (4 windows × 2 = 8) that are profitable.
+    # Consistency: 4 scored windows × 2 subperiods = 8 subperiods.
     all_sp_returns = []
-    for r in window_results:
+    for r in scored_results:
         all_sp_returns.extend(r["subperiod_returns"])
     n_profitable = sum(1 for ret in all_sp_returns if ret > 0)
     n_total = len(all_sp_returns)
@@ -475,12 +536,16 @@ def evaluate_model(build_model_fn: callable) -> dict:
     else:
         score = base / max(dd_mult, 0.01) / max(trade_mult, 0.01) / max(consistency, 0.01)
 
+    # Holdout health check (binary only — no details leaked)
+    holdout_health = "OK" if holdout_result["sharpe"] >= -1.0 else "WARN"
+
     return {
         "score": score,
         "sharpe_min": base,
         "max_drawdown": worst_dd_raw,
         "total_trades": total_trades,
         "consistency": f"{n_profitable}/{n_total}",
+        "holdout_health": holdout_health,
     }
 
 
@@ -504,15 +569,26 @@ def _run_diagnostic():
     Human-only tool. Retrains the recipe on each walk-forward window and
     prints per-window backtest results and prediction distributions. Also
     trains on 2023-2025 and evaluates on 2026+ as the true holdout.
+
+    Does NOT increment the eval counter.
     """
     import train as train_module
 
     all_data = _load_all_data()
     windows = _get_walk_forward_windows()
 
+    # Epoch info (read-only — do not increment counter)
+    count = _peek_eval_count()
+    holdout_idx = _get_holdout_idx(count)
+    epoch = count // EPOCH_LENGTH
+
     print("=" * 60)
-    print("Training and evaluating across walk-forward windows...")
-    print("=" * 60 + "\n")
+    print("=== EPOCH INFO ===")
+    print(f"Current eval count: {count}")
+    print(f"Current epoch: {epoch} (holdout window: {holdout_idx})")
+    print(f"Next rotation at eval: {(epoch + 1) * EPOCH_LENGTH}")
+    print("=" * 60)
+    print(f"\nTraining and evaluating across {len(windows)} walk-forward windows...\n")
 
     window_results = []
     window_preds = []
@@ -524,23 +600,28 @@ def _run_diagnostic():
         window_preds.append(eval_preds)
         window_train_times.append(train_time)
 
-    # Compute composite score (same formula as evaluate_model)
-    sharpes = [r["sharpe"] for r in window_results]
+    # Split into scored and holdout (same logic as evaluate_model)
+    scored_indices = [i for i in range(len(windows)) if i != holdout_idx]
+    scored_results = [window_results[i] for i in scored_indices]
+    scored_windows = [windows[i] for i in scored_indices]
+
+    # Compute composite score on scored windows only
+    sharpes = [r["sharpe"] for r in scored_results]
     base = min(sharpes)
-    worst_dd_raw = min(r["max_drawdown"] for r in window_results)
+    worst_dd_raw = min(r["max_drawdown"] for r in scored_results)
     dd = abs(worst_dd_raw)
     dd_mult = 1.0 if dd <= 0.10 else 1.0 / (1.0 + ((dd - 0.10) / 0.15) ** 2)
 
     window_trade_mults = []
-    for w, result in zip(windows, window_results):
+    for w, result in zip(scored_windows, scored_results):
         eval_hours = (w["eval_end"] - w["eval_start"]).total_seconds() / 3600
         scale = eval_hours / (FORWARD_HOURS * 7)
         window_trade_mults.append(1 - math.exp(-result["n_trades"] / scale))
     trade_mult = min(window_trade_mults)
-    total_trades = sum(r["n_trades"] for r in window_results)
+    total_trades = sum(r["n_trades"] for r in scored_results)
 
     all_sp_returns = []
-    for r in window_results:
+    for r in scored_results:
         all_sp_returns.extend(r["subperiod_returns"])
     n_profitable = sum(1 for ret in all_sp_returns if ret > 0)
     n_total = len(all_sp_returns)
@@ -556,22 +637,30 @@ def _run_diagnostic():
     print("=== DIAGNOSTIC BREAKDOWN ===")
     print("(Human-only — this information is hidden from the agent)")
     print("=" * 60)
-    print(f"\nOverall: score={score:.4f}, sharpe_min={base:.4f}, "
+    print(f"\nScored composite: score={score:.4f}, sharpe_min={base:.4f}, "
           f"consistency={n_profitable}/{n_total}")
     print(f"  dd_mult={dd_mult:.4f}, trade_mult={trade_mult:.4f}")
 
     losing_subperiods = []
+    scored_trade_mult_idx = 0
 
     for i, (w, result, preds) in enumerate(
             zip(windows, window_results, window_preds)):
         train_range = f"{w['train_start'].date()}-{w['train_end'].date()}"
         eval_range = f"{w['eval_start'].date()}-{w['eval_end'].date()}"
-        print(f"\n--- Window {i+1}: Train {train_range}, Eval {eval_range} ---")
+        status = "[HOLDOUT]" if i == holdout_idx else "[SCORED]"
+        print(f"\n--- Window {i}: Train {train_range}, "
+              f"Eval {eval_range} {status} ---")
         print(f"  Sharpe: {result['sharpe']:.4f}"
-              f"{'  <-- MIN' if result['sharpe'] == base else ''}")
+              f"{'  <-- MIN (scored)' if i != holdout_idx and result['sharpe'] == base else ''}")
         print(f"  Max drawdown: {result['max_drawdown']:.1%}")
-        print(f"  Trades: {result['n_trades']}  (trade_mult={window_trade_mults[i]:.4f})"
-              f"{'  <-- MIN' if window_trade_mults[i] == trade_mult else ''}")
+        if i != holdout_idx:
+            tm = window_trade_mults[scored_trade_mult_idx]
+            print(f"  Trades: {result['n_trades']}  (trade_mult={tm:.4f})"
+                  f"{'  <-- MIN' if tm == trade_mult else ''}")
+            scored_trade_mult_idx += 1
+        else:
+            print(f"  Trades: {result['n_trades']}  (holdout — not scored)")
         print(f"  Total return: {result['total_return']:+.1%}")
 
         for (sp_start, sp_end, label), sp_ret in zip(
@@ -585,7 +674,12 @@ def _run_diagnostic():
         if len(preds) > 0:
             print(_pred_stats_line(preds))
 
-    print(f"\nLosing subperiods: {', '.join(losing_subperiods) if losing_subperiods else 'None'}")
+    # Holdout health
+    holdout_result = window_results[holdout_idx]
+    holdout_health = "OK" if holdout_result["sharpe"] >= -1.0 else "WARN"
+    print(f"\nHoldout health: {holdout_health} "
+          f"(Window {holdout_idx} Sharpe: {holdout_result['sharpe']:.4f})")
+    print(f"Losing subperiods: {', '.join(losing_subperiods) if losing_subperiods else 'None'}")
 
     # True holdout: train on 2023-2025, evaluate on 2026+
     T = pd.Timestamp

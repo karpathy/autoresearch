@@ -62,9 +62,10 @@ Each experiment runs on a single machine. The training script runs for a **fixed
 6. **No fine-grained parameter sweeps.** Do not run 3+ consecutive experiments that only vary a single numeric parameter by small increments.
 7. **No hardcoded directional biases.** No `preds += constant`.
 8. **No hardcoded regime filters.** No "go flat when X" or "never go short" rules.
-9. **One change per experiment.** Each experiment should isolate a single conceptual change. Coupled parameters that only make sense together (e.g. n_estimators + learning_rate) count as one change. Unrelated changes (e.g. adding a feature AND changing the loss function) do not. If you change two unrelated things and the score drops, you don't know which one caused it.
+9. **One change per experiment.** Each experiment should isolate a single conceptual change. Coupled parameters that only make sense together (e.g. n_estimators + learning_rate) count as one change. Unrelated changes (e.g. adding a feature AND changing the loss function) do not. If you change two unrelated things and the score drops, you don't know which one caused it. Note: scores may shift between epochs due to holdout rotation. If a result seems inconsistent with your change, the epoch may have rotated.
 10. **Don't abandon near-misses.** If an experiment scores within ~90% of the best, the approach is promising — try adjusting the obvious knob before moving to a completely different idea. Distinguish "wrong approach" from "wrong parameterization."
 11. **Don't ignore stagnant consistency.** If consistency hasn't improved in 10+ experiments while score keeps rising, you're optimizing Sharpe on the winning subperiods and ignoring the losing ones. That's overfitting to the evaluation structure. Prioritize experiments that target the losing subperiods, even if they temporarily reduce Sharpe.
+12. **Respect holdout_health.** If holdout_health is WARN, your next experiment should prioritize generalization over scored performance. Do not ignore persistent WARN signals — they indicate the recipe overfits to the scored windows.
 
 Score improvements are audited by the `experiment-auditor` subagent. If it detects gaming, the experiment is discarded regardless of score.
 
@@ -79,6 +80,7 @@ sharpe_min:       0.5800
 max_drawdown:     -15.2%
 total_trades:     145
 consistency:      5/8
+holdout_health:   OK
 n_params:         3206
 training_seconds: 32.1
 total_seconds:    45.3
@@ -89,6 +91,21 @@ You can extract the key metric from the log file:
 ```
 grep "^score:" run.log
 ```
+
+## Walk-Forward Evaluation (Phase 6)
+
+The evaluation uses 5 walk-forward windows. Each run, 4 windows are scored
+and 1 is held out. The held-out window rotates periodically.
+
+This means:
+- **Your score may change between runs even if you didn't change the code.**
+  This happens when the held-out window rotates. It is normal.
+- **The `holdout_health` flag tells you whether the held-out window is
+  performing acceptably.** `OK` means the recipe generalizes. `WARN` means
+  the recipe fails on at least one unseen window — prioritize robustness.
+
+You do not know which window is held out or when rotations occur. Focus on
+recipes that work across ALL possible evaluation windows.
 
 ## Logging results
 

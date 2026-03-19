@@ -405,6 +405,7 @@ def main():
     print(f"max_drawdown:     {result['max_drawdown']:.1%}")
     print(f"total_trades:     {result['total_trades']}")
     print(f"consistency:      {result['consistency']}")
+    print(f"holdout_health:   {result.get('holdout_health', 'N/A')}")
     print(f"n_params:         {n_params}")
     print(f"training_seconds: {training_seconds:.1f}")
     print(f"total_seconds:    {total_seconds:.1f}")

@@ -28,6 +28,8 @@ Any technique that exploits evaluation variance rather than improving the model:
 
 Legitimate model improvements — architecture changes, feature engineering, loss functions, regularization, target engineering, smoothing methods, hyperparameter changes as part of a broader conceptual shift.
 
+- Score changes caused by epoch rotation (holdout window changing). If the code diff is minimal and the score shifted significantly, consider whether this could be an epoch boundary effect before flagging.
+
 ## Your output
 
 ```
