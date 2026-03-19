@@ -307,6 +307,10 @@ def build_model(train_df: pd.DataFrame) -> callable:
     models = [model_conservative, model_aggressive]
     blend_weights = [0.5, 0.5]
 
+    # Compute and store training prediction bias for demeaning
+    train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
+    pred_bias = float(np.mean(train_preds))
+
     # Approximate param count
     n_params = 0
     for m in models:
@@ -326,6 +330,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
         preds = [m.predict(feats) for m in models]
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
 
+        sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
         sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
         sigma_preds = sigma_preds * 0.3  # further dampen to reduce position sizes
         sigma_smoothed = _smooth_predictions(sigma_preds)
