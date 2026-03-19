@@ -23,7 +23,7 @@ from prepare import (
 # Feature Engineering
 # ---------------------------------------------------------------------------
 
-RETURN_LOOKBACKS = [1, 4, 12, 24, 48, 72, 168]
+RETURN_LOOKBACKS = [4, 12, 24, 48, 72, 168]  # 1h removed — noisiest with power transform
 VOLATILITY_WINDOWS = [24, 168]
 MAX_LOOKBACK = 168  # maximum lookback window (1 week)
 
@@ -283,13 +283,13 @@ def build_model(train_df: pd.DataFrame) -> callable:
     # --- Monotonic constraints: longer-horizon returns must be increasing ---
     # Prevents "strong momentum → predict reversal" pathology across multiple horizons
     mono_cst = np.zeros(features.shape[1], dtype=int)
-    mono_cst[3] = 1  # 24h vol-normalized return → monotonically increasing
-    mono_cst[4] = 1  # 48h vol-normalized return → monotonically increasing
-    mono_cst[5] = 1  # 72h vol-normalized return → monotonically increasing
-    mono_cst[6] = 1  # 168h vol-normalized return → monotonically increasing
-    mono_cst[7] = 1  # 24h VW cumulative return → monotonically increasing
-    mono_cst[29] = 1  # 72h directional efficiency → monotonically increasing
-    mono_cst[30] = 1  # 168h directional efficiency → monotonically increasing
+    mono_cst[2] = 1  # 24h vol-normalized return → monotonically increasing
+    mono_cst[3] = 1  # 48h vol-normalized return → monotonically increasing
+    mono_cst[4] = 1  # 72h vol-normalized return → monotonically increasing
+    mono_cst[5] = 1  # 168h vol-normalized return → monotonically increasing
+    mono_cst[6] = 1  # 24h VW cumulative return → monotonically increasing
+    mono_cst[28] = 1  # 72h directional efficiency → monotonically increasing
+    mono_cst[29] = 1  # 168h directional efficiency → monotonically increasing
 
     # --- Train: two-model ensemble for diversity ---
     model_conservative = HistGradientBoostingRegressor(
