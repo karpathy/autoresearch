@@ -101,4 +101,7 @@ if [[ "$HOUR" -ge 2 && "$HOUR" -lt 4 ]]; then
     timeout 1800 "$REPO/.venv/bin/python3" run_agent.py >> "$LOG" 2>&1 || true
 fi
 
+# ── Harness research (10 AM daily) ─────────────────────────────────────────────
+# 0 10 * * * cd /home/craigm26/opencastor-autoresearch && python harness_research/run.py >> /tmp/harness_research.log 2>&1
+
 echo "[cron] $(date) — Done."
