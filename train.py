@@ -274,23 +274,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
 
     features = np.nan_to_num(features, nan=0.0)
 
-    # --- Train pass 1: feature selection (lightweight) ---
-    selector = ExtraTreesRegressor(
-        n_estimators=1000,
-        max_depth=7,
-        min_samples_leaf=600,
-        random_state=42,
-        n_jobs=-1,
-    )
-    selector.fit(features, targets)
-
-    # Feature importance pruning
-    importances = selector.feature_importances_
-    threshold = np.mean(importances)
-    selected = importances >= threshold
-    features_pruned = features[:, selected]
-
-    # --- Train pass 2: single GBT (budget-constrained) ---
+    # --- Train: single GBT on all features (no pre-selection) ---
     model = HistGradientBoostingRegressor(
         max_iter=300,
         max_depth=4,
@@ -300,7 +284,8 @@ def build_model(train_df: pd.DataFrame) -> callable:
         l2_regularization=3.0,
         random_state=42,
     )
-    model.fit(features_pruned, targets)
+    model.fit(features, targets)
+    selected = np.ones(features.shape[1], dtype=bool)  # keep all features
     models = [model]
 
     blend_weights = [1.0]
