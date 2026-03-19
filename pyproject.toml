@@ -15,6 +15,10 @@ dependencies = [
     "torch==2.5.1",
 ]
 
+[project.optional-dependencies]
+# FA3 requires sm_80+ (Ampere/Hopper); install with: uv sync --extra fa3
+fa3 = ["kernels>=0.11.7"]
+
 [tool.uv.sources]
 torch = [
     { index = "pytorch-cu121" },
