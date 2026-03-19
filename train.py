@@ -12,18 +12,23 @@ import gc
 import math
 import time
 from dataclasses import dataclass, asdict
+from pathlib import Path
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+fa3 = None
 
-from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
+from prepare import (
+    MAX_SEQ_LEN,
+    TIME_BUDGET,
+    TOKENIZER_DIR,
+    Tokenizer,
+    make_dataloader,
+    evaluate_bpb,
+)
 
 # ---------------------------------------------------------------------------
 # GPT Model
@@ -454,7 +459,80 @@ DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
 # Setup: tokenizer, model, optimizer, dataloader
 # ---------------------------------------------------------------------------
 
+def fail_preflight(message, hint=None):
+    print("---")
+    print("PRECHECK_FAIL")
+    print(f"reason: {message}")
+    if hint is not None:
+        print(f"hint:   {hint}")
+    raise SystemExit(1)
+
+
+def run_preflight_checks():
+    if not torch.cuda.is_available():
+        fail_preflight(
+            "CUDA is not available.",
+            "This script requires one NVIDIA GPU with a working CUDA PyTorch install.",
+        )
+
+    device_count = torch.cuda.device_count()
+    if device_count < 1:
+        fail_preflight(
+            "No CUDA devices were found.",
+            "Check your NVIDIA driver and that the GPU is visible to this environment.",
+        )
+    if device_count > 1:
+        print(f"Preflight: detected {device_count} CUDA devices; training will use cuda:0 only.")
+
+    cap = torch.cuda.get_device_capability(0)
+    device_name = torch.cuda.get_device_name(0)
+    print(f"Preflight: using CUDA device 0: {device_name} (capability={cap[0]}.{cap[1]})")
+
+    tokenizer_dir = Path(TOKENIZER_DIR)
+    tokenizer_path = tokenizer_dir / "tokenizer.pkl"
+    token_bytes_path = tokenizer_dir / "token_bytes.pt"
+    missing = [str(p) for p in (tokenizer_path, token_bytes_path) if not p.exists()]
+    if missing:
+        fail_preflight(
+            f"Tokenizer artifacts are missing: {', '.join(missing)}",
+            "Run `uv run prepare.py` once to download data and build the tokenizer cache.",
+        )
+
+    if not WINDOW_PATTERN:
+        fail_preflight("WINDOW_PATTERN must be non-empty.", "Use a pattern such as 'L' or 'SSSL'.")
+    if any(c not in "SL" for c in WINDOW_PATTERN.upper()):
+        fail_preflight(
+            f"Invalid WINDOW_PATTERN='{WINDOW_PATTERN}'.",
+            "Only 'S' and 'L' are allowed.",
+        )
+
+    tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN
+    if TOTAL_BATCH_SIZE % tokens_per_fwdbwd != 0:
+        fail_preflight(
+            f"TOTAL_BATCH_SIZE ({TOTAL_BATCH_SIZE}) must be divisible by DEVICE_BATCH_SIZE*MAX_SEQ_LEN ({tokens_per_fwdbwd}).",
+            "Adjust TOTAL_BATCH_SIZE or DEVICE_BATCH_SIZE to make gradient accumulation an integer.",
+        )
+
+    return cap
+
+
+def load_flash_attention_kernel(cap):
+    # varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
+    repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+    try:
+        kernel = get_kernel(repo).flash_attn_interface
+    except Exception as e:
+        fail_preflight(
+            f"Failed to load flash attention kernel from '{repo}': {e}",
+            "Verify internet access to kernel repo and that your CUDA setup supports the selected kernel.",
+        )
+    print(f"Preflight: loaded attention kernel repo '{repo}'")
+    return kernel
+
+
 t_start = time.time()
+cap = run_preflight_checks()
+fa3 = load_flash_attention_kernel(cap)
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
@@ -493,7 +571,10 @@ num_flops_per_token = model.estimate_flops()
 print(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
 tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN
-assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0
+if TOTAL_BATCH_SIZE % tokens_per_fwdbwd != 0:
+    raise ValueError(
+        f"TOTAL_BATCH_SIZE ({TOTAL_BATCH_SIZE}) must be divisible by DEVICE_BATCH_SIZE*MAX_SEQ_LEN ({tokens_per_fwdbwd})."
+    )
 grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
 
 optimizer = model.setup_optimizer(
@@ -566,10 +647,9 @@ while True:
 
     train_loss_f = train_loss.item()
 
-    # Fast fail: abort if loss is exploding or NaN
-    if math.isnan(train_loss_f) or train_loss_f > 100:
-        print("FAIL")
-        exit(1)
+    # Fast fail: abort if loss is exploding or non-finite
+    if not math.isfinite(train_loss_f) or train_loss_f > 100:
+        raise RuntimeError(f"Training diverged (loss={train_loss_f:.6f}).")
 
     torch.cuda.synchronize()
     t1 = time.time()
