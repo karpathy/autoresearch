@@ -294,6 +294,8 @@ def build_model(train_df: pd.DataFrame) -> callable:
     mono_cst[4] = 1  # 48h vol-normalized return → monotonically increasing
     mono_cst[5] = 1  # 72h vol-normalized return → monotonically increasing
     mono_cst[6] = 1  # 168h vol-normalized return → monotonically increasing
+    mono_cst[31] = 1  # 72h directional efficiency → monotonically increasing
+    mono_cst[32] = 1  # 168h directional efficiency → monotonically increasing
 
     # --- Train: two-model ensemble for diversity ---
     model_conservative = HistGradientBoostingRegressor(
