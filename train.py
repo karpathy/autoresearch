@@ -287,9 +287,11 @@ def build_model(train_df: pd.DataFrame) -> callable:
 
     features = np.nan_to_num(features, nan=0.0)
 
-    # --- Monotonic constraint: 168h return (feature index 6) must be increasing ---
-    # Prevents "strong momentum → predict reversal" pathology on 2021 bull market
+    # --- Monotonic constraints: longer-horizon returns must be increasing ---
+    # Prevents "strong momentum → predict reversal" pathology across multiple horizons
     mono_cst = np.zeros(features.shape[1], dtype=int)
+    mono_cst[4] = 1  # 48h vol-normalized return → monotonically increasing
+    mono_cst[5] = 1  # 72h vol-normalized return → monotonically increasing
     mono_cst[6] = 1  # 168h vol-normalized return → monotonically increasing
 
     # --- Train: two-model ensemble for diversity ---
