@@ -26,6 +26,10 @@ fa3 = get_kernel(repo).flash_attn_interface
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
+# Clear previous results so a killed run leaves no file
+if os.path.exists("results.json"):
+    os.remove("results.json")
+
 # ---------------------------------------------------------------------------
 # GPT Model
 # ---------------------------------------------------------------------------
