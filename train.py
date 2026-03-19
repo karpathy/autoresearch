@@ -160,6 +160,14 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         price_range = np.where(close > 0, (roll_max - roll_min) / close, 0.0)
         feature_cols.append(price_range)
 
+    # a2) Trend strength: rolling R-squared of log(price) vs time
+    log_close = np.log(np.maximum(close, 1.0))
+    log_series = pd.Series(log_close)
+    time_idx = pd.Series(np.arange(len(close), dtype=np.float64))
+    for w in [168]:
+        r_sq = log_series.rolling(w, min_periods=w).corr(time_idx).values ** 2
+        feature_cols.append(np.nan_to_num(r_sq, nan=0.0))
+
     # b) Directional efficiency: net move / total path length
     #    Near ±1 in trends, near 0 in chop
     for w in [72, 168]:
