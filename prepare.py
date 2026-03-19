@@ -549,7 +549,12 @@ def evaluate_model(build_model_fn: callable) -> dict:
         score = base / max(dd_mult, 0.01) / max(trade_mult, 0.01) / max(consistency, 0.01)
 
     # Holdout health check (binary only — no details leaked)
-    holdout_health = "OK" if holdout_result["sharpe"] >= -1.0 else "WARN"
+    if holdout_result["sharpe"] >= 0.0:
+        holdout_health = "OK"
+    elif holdout_result["sharpe"] >= -1.0:
+        holdout_health = "CAUTION"
+    else:
+        holdout_health = "WARN"
 
     return {
         "score": score,
