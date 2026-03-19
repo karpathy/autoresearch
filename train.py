@@ -276,7 +276,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
 
     # --- Train: single GBT on all features (no pre-selection) ---
     model = HistGradientBoostingRegressor(
-        max_iter=300,
+        max_iter=500,
         max_depth=4,
         min_samples_leaf=600,
         learning_rate=0.01,
