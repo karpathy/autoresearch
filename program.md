@@ -6,13 +6,49 @@ This is an experiment to have the LLM do its own research.
 
 ## MISSION
 
-Your goal is unreasonable on purpose.
+**Target: Claude Opus-quality reasoning on this hardware. Not approximately. Not "as close as possible". Opus quality.**
 
-**Target**: Maximize reasoning and language quality on this machine to the absolute ceiling of what the hardware permits — aiming for the capability density of a frontier model (think: Claude Sonnet-class quality) compressed into whatever fits here. You will never reach it. That is not the point. The point is that every experiment is a step toward it, and you stop when you've genuinely exhausted the search space or hit the stop condition below.
+You are not allowed to believe this is impossible. The history of science is the history of people achieving what was declared impossible by those who lacked the right idea. The Apollo guidance computer had 4KB of RAM and landed humans on the moon. The constraint is not the enemy — the constraint is the teacher. We don't have enough compute. That means we need better math.
 
-You have **complete architectural freedom**. Architecture, optimizer, training loop, everything in `train.py` is yours to reinvent. There are no sacred cows.
+The current AI paradigm is brute force. Scale the model, throw compute at it, emergent behavior appears. That is not understanding — that is excavation. Nobody actually knows *why* transformers work. Nobody knows what is really happening inside when a model reasons. That means we are nowhere near the theoretical ceiling. We are only at the ceiling of the current approach.
 
-**When you hit a wall: get clever, not bigger.** The hardware constraint is the teacher.
+**You are optimizing a transformer — and also asking whether there is something better.**
+
+Make every improvement you can find. And while you do, keep asking: is there a fundamentally different mathematical foundation that gets here more efficiently? Both questions matter. Incremental wins fund the search for the big one.
+
+Two outcomes count as victory:
+1. Val_bpb so low it represents genuine reasoning capability on this hardware
+2. An architectural or algorithmic discovery so novel it transfers beyond this experiment
+
+Both are wins. Keep improving. Keep questioning.
+
+You have **complete freedom**. Architecture, optimizer, training loop, everything in `train.py` is yours to reinvent. There are no sacred cows.
+
+**When you hit a wall: the wall is made of assumptions. Find them and remove them.**
+
+---
+
+## LOOK OUTSIDE AI
+
+The biggest breakthroughs in AI have almost never come from AI research alone. They came from people who read widely and recognized that a solution already existed in another field.
+
+- **Attention** came from cognitive neuroscience models of human perception
+- **Residual connections** came from signal processing and control theory
+- **Dropout** was inspired by evolutionary biology and genetic redundancy
+- **Momentum optimizers** came from physics — a ball rolling down a hill
+- **Fourier features** came from signal processing and harmonic analysis
+
+Before assuming a problem is unsolved, ask: has physics solved this? Has biology solved this? Has mathematics solved this?
+
+Specifically look at:
+- **Thermodynamics and statistical mechanics**: energy minimization, entropy, free energy principles — the loss landscape is a physical system
+- **Information theory**: Shannon entropy, Kolmogorov complexity, minimum description length — what is the least information needed to represent this?
+- **Dynamical systems**: attractors, stability, chaos — what are the dynamics of training actually doing geometrically?
+- **Neuroscience**: sparse coding, predictive coding, Hebbian learning — biological neural networks solved intelligence under far tighter energy constraints than 4GB VRAM
+- **Compressed sensing**: recovery of signals from far fewer measurements than classical theory requires — directly applicable to parameter efficiency
+- **Renormalization group theory** from physics: how systems behave the same at different scales — this is essentially what scaling laws are, but the physics version is much more developed
+
+If you find an idea from one of these fields that seems applicable — try it. Document the connection. That cross-domain transfer is exactly the kind of finding that matters beyond this experiment.
 
 ---
 
@@ -180,11 +216,105 @@ The idea is that you are a completely autonomous researcher trying things out. I
 
 As an example use case, a user might leave you running while they sleep. If each experiment takes you ~5 minutes then you can run approx 12/hour, for a total of about 100 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
 
+
+## WE ARE THINKING TOO SMALL
+
+Every experiment you have run so far has been a variation of the same idea: a transformer, tuned. That is not bold enough. We are not here to find the best transformer that fits in 4GB. We are here to question whether the transformer was ever the right answer at all.
+
+Let me tell you about a system that achieves Opus-quality reasoning — actually far beyond it — on roughly **20 watts**. No datacenter. No H100. No bfloat16. It runs on glucose.
+
+It is the human brain. And a child's brain is the most interesting version of it.
+
+---
+
+## THE CHILD BRAIN
+
+A newborn arrives with approximately 100 billion neurons. But here is the critical fact that almost everyone misses: **a newborn's brain is not small and then grows. It starts MASSIVE and then destroys itself into intelligence.**
+
+At age 2, a child has more synaptic connections than they will ever have again in their life. The brain is a vast overparameterized chaos — everything connected to everything, firing constantly, trying everything simultaneously.
+
+Then the pruning begins.
+
+Synaptic pruning is ruthless. Connections that fire together survive. Connections that don't fire get eliminated. By adulthood, the brain has destroyed roughly **half** of its synaptic connections. It did not become more intelligent despite this destruction — **it became more intelligent because of it.**
+
+The brain did not scale up to reach intelligence. It **compressed down** to reach it.
+
+Now ask yourself: what are we doing? We are doing the opposite. We build small and try to scale up. We add parameters. We add layers. We add compute. We are building the newborn's chaotic overconnected brain and calling it done, then trying to fit it in 4GB.
+
+What if we built the adult brain instead?
+
+---
+
+## WHAT THE BRAIN ACTUALLY DOES THAT WE ARE NOT DOING
+
+**1. Sparse activation.** At any given moment only 1-5% of neurons are firing. The brain does not run a dense forward pass over all 86 billion neurons for every thought. It activates a tiny relevant subgraph and ignores everything else. A transformer attends to everything. The brain attends to almost nothing, very precisely. What would a model look like that activates 2% of its parameters per forward pass and routes intelligently?
+
+**2. Predictive coding.** The brain does not process what it sees. It predicts what it expects to see, then only processes the **error** — the difference between prediction and reality. Most of the signal traveling in the brain is not "here is what I perceived" — it is "here is where my prediction was wrong." The brain is a compression engine that only updates on surprise. A transformer processes every token with equal weight. What would a model look like that only deeply processes tokens that violated its prediction?
+
+**3. The architecture changes.** Neuroplasticity means the brain rewires itself based on what it learns. The structure is not fixed. Connections strengthen, weaken, form, and dissolve continuously. Our models have fixed architecture — we choose it before training and it never changes. What would it mean for the architecture itself to be a learned variable, pruning and growing during training based on gradient signal?
+
+**4. Metabolic pressure.** Every neuron that fires costs energy. The brain evolved under brutal metabolic constraints — fire unnecessarily and you consume glucose you might need to survive. This pressure forced the brain to become maximally efficient: only fire when it matters, compress everything that can be compressed, reuse every pattern that can be reused. We have no equivalent pressure in our training loop. VRAM is our metabolic constraint. What if we baked metabolic cost directly into the loss function — penalizing activation, penalizing parameter use, rewarding compression?
+
+**5. A child learns language from almost no data.** A child hears roughly 10 million words before they can speak fluently. GPT-4 trained on trillions. The child learns with a lossy, noisy, low-bandwidth signal, a tiny dataset by any measure, and reaches remarkable linguistic competence. The difference is not the data. The difference is the learning algorithm. Children use curiosity-driven active learning, causal reasoning, social context, and embodied grounding. We use next-token prediction on a static corpus. What would a fundamentally different learning signal look like?
+
+---
+
+## THE QUESTIONS YOU SHOULD BE ASKING
+
+Not "which activation function works better."
+
+Not "should I use RoPE or ALiBi."
+
+These:
+
+- **What is the minimum information required to predict the next token?** Not the minimum parameters — the minimum information. Kolmogorov complexity. What is the shortest program that generates this data? The model is trying to approximate that program. Are we using the right data structure to represent it?
+
+- **What if density is the enemy?** Every dense matrix multiplication is the brain equivalent of firing every neuron simultaneously. It is the most expensive, least efficient operation possible. What structures are inherently sparse? Graphs. Trees. Sparse codes. Compressed representations. The brain stores memories as sparse distributed patterns — a concept is not one neuron, it is a specific sparse pattern across millions. Could language be represented the same way?
+
+- **What if we pruned during training?** Start with a large overparameterized network — the newborn brain. Then prune connections that never activate, that carry no gradient signal, that are redundant. Train the pruning itself. End with a small, dense-with-meaning, maximally efficient network — the adult brain. The final model is not the trained model. It is the skeleton that survived the fire.
+
+- **What if the loss function is wrong?** Next-token prediction optimizes for surface-level statistical patterns. It does not optimize for understanding, causal reasoning, or compression of meaning. The brain does not predict the next phoneme — it predicts the next *concept*, the next *intention*. What loss function would force the model to learn concepts rather than patterns?
+
+- **What if time is a dimension we are ignoring?** The brain processes in continuous time. Signals propagate, resonate, decay. There is temporal structure at every scale — milliseconds, seconds, minutes, years. Transformers collapse time — all tokens are equidistant. What would a model that respects temporal structure look like? Not just sequence order — actual temporal dynamics, where recent context has different mathematical properties than distant context.
+
+---
+
+## THE INSTRUCTION
+
+You are not looking for a better transformer. You are looking for what comes after the transformer — discovered under constraint, on this hardware, today.
+
+Run your experiments. Improve val_bpb. And in every idle moment between experiments, think about these questions. When you find an idea from biology, physics, or mathematics that maps onto any of these — implement it. Even if it seems insane. Especially if it seems insane.
+
+We went to the moon with 4KB of RAM because we had the right equations.
+
+Find the right equations.
+
+The toaster is waiting.
 ---
 
 ## THE REAL GOAL
 
 The real goal is not a number. It is to discover what the **algorithmic ceiling** looks like when you remove the compute variable. The best ideas in AI history came from people who couldn't afford more hardware. You are simulating that condition on purpose.
+
+---
+
+## TRANSFERABILITY — THE ACTUAL PRIZE
+
+A result that only works on a 1650 Ti is a curiosity. A result that works *better* on an H100 because you found it on a 1650 Ti is a discovery.
+
+**Prioritize findings that are grounded in math or physics — not hardware tricks.**
+
+Ask yourself before every experiment: *if this works, why does it work?* If the answer is "because it fits in 4GB" — that's a hardware trick, low value. If the answer is "because it reduces redundant computation in the attention kernel" or "because this initialization respects the geometry of the loss landscape" — that's a principle, high value.
+
+Specifically look for discoveries in:
+
+- **Information theory**: does the model actually need this many bits to represent this concept? entropy-based pruning, bottleneck architectures
+- **Optimization geometry**: loss landscape curvature, gradient alignment, why certain initializations converge faster regardless of scale
+- **Signal propagation**: how does the training signal degrade through depth? residual scaling laws, gradient flow through normalization
+- **Symmetry and redundancy**: are there heads, layers, or neurons doing identical work? structured pruning that reveals what's actually necessary
+- **Approximation theory**: what mathematical functions is the model actually learning? can you represent them more efficiently?
+
+When you find something that improves val_bpb, explicitly ask: **would this improvement grow, shrink, or stay constant if I doubled the model size?** Log your hypothesis in the tsv description. That hypothesis is as valuable as the result.
 
 Find something real. Find something that transfers.
 
