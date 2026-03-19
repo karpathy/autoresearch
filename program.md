@@ -20,6 +20,18 @@ You have **complete architectural freedom**. Architecture, optimizer, training l
 
 You are running on a **laptop GPU**. Treat VRAM as the scarcest resource in the universe. Every byte wasted is a sin. Design around this — do not fight it.
 
+These are the known good starting knobs for small compute (from the repo author). Apply these as your baseline before experimenting — do not start from H100 defaults:
+
+1. **Dataset**: Use TinyStories (`karpathy/tinystories-gpt4-clean`) — low entropy, small models get real signal fast. Broader datasets need bigger models to converge meaningfully in 5 minutes.
+2. **vocab_size**: Drop from 8192 down to 4096, 2048, or even 256 (byte-level). Smaller vocab = smaller embedding table = more room for everything else.
+3. **MAX_SEQ_LEN** (in `prepare.py`): Lower aggressively, even down to 256. If you lower this, compensate by increasing `DEVICE_BATCH_SIZE` in `train.py` — tokens per step = seq_len × batch_size, keep that product roughly stable.
+4. **EVAL_TOKENS** (in `prepare.py`): Lower this so validation doesn't eat your 5-minute budget.
+5. **DEPTH** (in `train.py`): Primary complexity knob. Default is 8, start at 4. Most other dimensions scale from this.
+6. **WINDOW_PATTERN**: Use `"L"` only. The default `"SSSL"` banded attention pattern is expensive and likely inefficient on your hardware.
+7. **TOTAL_BATCH_SIZE**: Lower to powers of 2, e.g. `2**14` (~16K tokens). Keep it a power of 2.
+
+Start your baseline run with these applied. Your job is to find what's better than this starting point, not better than the H100 defaults.
+
 ---
 
 ## ARCHITECTURAL FREEDOM
