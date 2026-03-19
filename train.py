@@ -5,6 +5,7 @@ This file is the ONLY file the autonomous agent modifies.
 Usage: uv run train.py
 """
 
+import signal
 import time
 
 import numpy as np
@@ -359,7 +360,25 @@ def main():
     print(f"  Parameters (node count): {n_params}")
 
     # --- Evaluate (black box — retrains on all walk-forward windows) ---
-    result = evaluate_model(build_model)
+    def _timeout_handler(signum, frame):
+        raise TimeoutError("evaluation exceeded 240s budget")
+
+    old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(240)
+    try:
+        result = evaluate_model(build_model)
+    except TimeoutError:
+        print("TIMEOUT: evaluation exceeded 240s budget")
+        result = {
+            "score": -9999,
+            "sharpe_min": 0,
+            "max_drawdown": 0,
+            "total_trades": 0,
+            "consistency": "0/8",
+        }
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
 
     total_seconds = time.time() - total_start
 
