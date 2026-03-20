@@ -18,12 +18,7 @@ from dataclasses import dataclass, asdict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -40,6 +35,7 @@ class GPTConfig:
     n_kv_head: int = 6
     n_embd: int = 768
     window_pattern: str = "SSSL"
+    use_activation_checkpointing: bool = False
 
 
 def norm(x):
@@ -82,6 +78,21 @@ class CausalSelfAttention(nn.Module):
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 32
         self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+        self._mask_cache = {}
+
+    def _get_sdpa_mask(self, seq_len, window_size, device):
+        window = window_size[0] if isinstance(window_size, tuple) else window_size
+        cache_key = (seq_len, int(window), device.type, device.index)
+        mask = self._mask_cache.get(cache_key)
+        if mask is not None:
+            return mask
+        row = torch.arange(seq_len, device=device).unsqueeze(1)
+        col = torch.arange(seq_len, device=device).unsqueeze(0)
+        mask = col <= row  # causal
+        if window is not None and window >= 0 and window < seq_len:
+            mask = mask & (col >= (row - window))
+        self._mask_cache[cache_key] = mask
+        return mask
 
     def forward(self, x, ve, cos_sin, window_size):
         B, T, C = x.size()
@@ -99,8 +110,12 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
-        y = y.contiguous().view(B, T, -1)
+        q = q.transpose(1, 2)  # (B, H, T, D)
+        k = k.transpose(1, 2)  # (B, KVH, T, D)
+        v = v.transpose(1, 2)  # (B, KVH, T, D)
+        attn_mask = self._get_sdpa_mask(T, window_size, q.device)
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=False)
+        y = y.transpose(1, 2).contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
 
@@ -150,7 +165,7 @@ class GPT(nn.Module):
             for i in range(config.n_layer) if has_ve(i, config.n_layer)
         })
         # Rotary embeddings
-        self.rotary_seq_len = config.sequence_len * 10
+        self.rotary_seq_len = config.sequence_len
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
@@ -285,7 +300,11 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[i])
+            window_size = self.window_sizes[i]
+            if self.config.use_activation_checkpointing:
+                x = torch_checkpoint(block, x, ve, cos_sin, window_size, use_reentrant=False)
+            else:
+                x = block(x, ve, cos_sin, window_size)
         x = norm(x)
 
         softcap = 15
@@ -311,7 +330,6 @@ polar_express_coeffs = [
     (2.3465413258596377, -1.7097828382687081, 0.42323551169305323),
 ]
 
-@torch.compile(dynamic=False, fullgraph=True)
 def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t):
     p.mul_(1 - lr_t * wd_t)
     exp_avg.lerp_(grad, 1 - beta1_t)
@@ -322,7 +340,6 @@ def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_
     step_size = lr_t / bias1
     p.add_(exp_avg / denom, alpha=-step_size)
 
-@torch.compile(dynamic=False, fullgraph=True)
 def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momentum_buffer,
                     momentum_t, lr_t, wd_t, beta2_t, ns_steps, red_dim):
     # Nesterov momentum
@@ -457,7 +474,9 @@ FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
 DEPTH = 8               # number of transformer layers
-DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
+DEVICE_BATCH_SIZE = 4   # per-device batch size (small for 6GB VRAM)
+USE_ACTIVATION_CHECKPOINTING = True  # required for small VRAM GPUs
+
 
 # ---------------------------------------------------------------------------
 # Run config
@@ -488,6 +507,7 @@ run_config = dict(
     final_lr_frac=FINAL_LR_FRAC,
     depth=DEPTH,
     device_batch_size=DEVICE_BATCH_SIZE,
+    use_activation_checkpointing=USE_ACTIVATION_CHECKPOINTING,
     max_seq_len=MAX_SEQ_LEN,
     time_budget=TIME_BUDGET,
     git_commit=_git_commit_hash(),
@@ -519,6 +539,7 @@ def build_model_config(depth):
         sequence_len=MAX_SEQ_LEN, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
         window_pattern=WINDOW_PATTERN,
+        use_activation_checkpointing=USE_ACTIVATION_CHECKPOINTING,
     )
 
 config = build_model_config(DEPTH)
@@ -550,7 +571,7 @@ optimizer = model.setup_optimizer(
     weight_decay=WEIGHT_DECAY,
 )
 
-model = torch.compile(model, dynamic=False)
+# No torch.compile — eager mode for Blackwell consumer GPU compatibility
 
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
 x, y, epoch = next(train_loader)  # prefetch first batch
