@@ -6,3 +6,8 @@
 
 ---
 
+## d10b30b — baseline (expanding windows)
+**Hypothesis:** Establish baseline under new expanding window + sample weight decay infrastructure.
+**Result:** Score -1.9313, sharpe_min -0.2522, max_dd -2.6%, 121 trades, 6/8 consistency, holdout CAUTION. Keep (baseline).
+**Observation:** Massive regression from sliding-window best (0.6031). sharpe_min is negative — at least one window has a losing strategy. Trade count dropped from 230→121 (more training data may be shifting prediction magnitudes). The 0.7x partial demeaning was tuned for 3-year windows and is likely miscalibrated for expanding windows with decay weights. Next: sweep partial demeaning (0.5x, 0.8x).
+
