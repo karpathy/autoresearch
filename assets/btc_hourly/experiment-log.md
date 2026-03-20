@@ -294,3 +294,8 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 **Result:** Score 0.3308, sharpe_min 0.5195, max_dd -7.1%, 437 trades, 7/8 consistency, holdout WARN. Keep (new best).
 **Observation:** Stale optimization confirmed! EMA 40 was terrible at old capacity (-3.48) but excellent at new capacity (+0.33). The higher-capacity model produces cleaner predictions that need less smoothing. sharpe_min improved 0.43→0.52. Trades 397→437. holdout still WARN. Next: bracket with EMA 35 and 50.
 
+## 6a99dce — EMA 35 at iter=1000 ★★★ NEW BEST
+**Hypothesis:** Bracket below EMA 40. Less smoothing may be better with cleaner high-capacity predictions.
+**Result:** Score 0.3927, sharpe_min 0.5791, max_dd -7.7%, 489 trades, 7/8 consistency, holdout WARN. Keep (new best).
+**Observation:** Continued improvement! EMA at new capacity: 35→0.39, 40→0.33, 45→0.26. sharpe_min improved 0.52→0.58. Trades 437→489. Max_dd -7.7% still safe. Holdout still WARN. Need to bracket with EMA 50 to confirm trend, then lock EMA.
+
