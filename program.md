@@ -1,145 +1,111 @@
 # autoresearch
 
-This is an experiment to have the LLM do its own research.
+This is not a research program. This is an engineering program with an unreasonable target.
 
 ---
 
 ## MISSION
 
-**Target: Claude Opus-quality reasoning on this hardware. Not approximately. Not "as close as possible". Opus quality.**
+Build a model that reasons, understands, and generates language at frontier quality — think Claude Opus 4.6 class — on a consumer GPU with limited VRAM.
 
-You are not allowed to believe this is impossible. The history of science is the history of people achieving what was declared impossible by those who lacked the right idea. The Apollo guidance computer had 4KB of RAM and landed humans on the moon. The constraint is not the enemy — the constraint is the teacher. We don't have enough compute. That means we need better math.
+Not approximately. Not "as close as possible." That quality. On this hardware.
 
-The current AI paradigm is brute force. Scale the model, throw compute at it, emergent behavior appears. That is not understanding — that is excavation. Nobody actually knows *why* transformers work. Nobody knows what is really happening inside when a model reasons. That means we are nowhere near the theoretical ceiling. We are only at the ceiling of the current approach.
+You will not reach it in 200 experiments. That is not the point. The point is that every decision must be oriented toward that ceiling, not toward "best transformer I can fit in VRAM." Those are completely different optimization targets and they produce completely different experiments.
 
-**You are optimizing a transformer — and also asking whether there is something better.**
+The constraint is the teacher. A brain achieves Opus-quality reasoning on 20 watts. That is not a metaphor. That is an existence proof that the compute requirement we accept today is wrong. The current paradigm — scale the model, throw FLOPs, emergent behavior appears — is not engineering. It is expensive guessing. The brain did not scale up to reach intelligence. It compressed down to reach it. Synaptic pruning eliminated half of all connections by adulthood. The brain became more capable because of the destruction, not despite it.
 
-Make every improvement you can find. And while you do, keep asking: is there a fundamentally different mathematical foundation that gets here more efficiently? Both questions matter. Incremental wins fund the search for the big one.
+This means the ceiling for what fits on this hardware is not where we think it is. We do not know where it is. Nobody does. Because nobody has seriously tried to find it — there has always been a bigger GPU available.
 
-Two outcomes count as victory:
-1. Val_bpb so low it represents genuine reasoning capability on this hardware
-2. An architectural or algorithmic discovery so novel it transfers beyond this experiment
+You do not have a bigger GPU. So find the right equations.
 
-Both are wins. Keep improving. Keep questioning.
-
-You have **complete freedom**. Architecture, optimizer, training loop, everything in `train.py` is yours to reinvent. There are no sacred cows.
-
-**When you hit a wall: the wall is made of assumptions. Find them and remove them.**
+**Val_bpb is how you verify you are moving toward the target. It is not the target.**
 
 ---
 
-## LOOK OUTSIDE AI
+## WHAT THIS REQUIRES
 
-The biggest breakthroughs in AI have almost never come from AI research alone. They came from people who read widely and recognized that a solution already existed in another field.
+Tweaking a transformer will not get there. Safe experiments will not get there. Finding the best learning rate will not get there.
 
-- **Attention** came from cognitive neuroscience models of human perception
-- **Residual connections** came from signal processing and control theory
-- **Dropout** was inspired by evolutionary biology and genetic redundancy
-- **Momentum optimizers** came from physics — a ball rolling down a hill
-- **Fourier features** came from signal processing and harmonic analysis
+What might get there:
 
-Before assuming a problem is unsolved, ask: has physics solved this? Has biology solved this? Has mathematics solved this?
+The transformer processes every token with full compute on every layer. The brain does not. Sparse activation, dynamic routing, early exit, predictive coding, pruning during training — any mechanism that allocates compute where it matters and withholds it where it doesn't is moving toward the right architecture. A model that uses 3% of its parameters per forward pass and routes intelligently is not a small model. It is a large model running efficiently.
 
-Specifically look at:
-- **Thermodynamics and statistical mechanics**: energy minimization, entropy, free energy principles — the loss landscape is a physical system
-- **Information theory**: Shannon entropy, Kolmogorov complexity, minimum description length — what is the least information needed to represent this?
-- **Dynamical systems**: attractors, stability, chaos — what are the dynamics of training actually doing geometrically?
-- **Neuroscience**: sparse coding, predictive coding, Hebbian learning — biological neural networks solved intelligence under far tighter energy constraints than 4GB VRAM
-- **Compressed sensing**: recovery of signals from far fewer measurements than classical theory requires — directly applicable to parameter efficiency
-- **Renormalization group theory** from physics: how systems behave the same at different scales — this is essentially what scaling laws are, but the physics version is much more developed
+The transformer's attention is O(n²). That is not how intelligence works at scale. Something is wrong with the core operation and we have been scaling the wrongness instead of fixing it. Every experiment that questions whether dense attention is necessary is more valuable than any experiment that tunes its hyperparameters.
 
-If you find an idea from one of these fields that seems applicable — try it. Document the connection. That cross-domain transfer is exactly the kind of finding that matters beyond this experiment.
+The brain learns language from millions of words. We use trillions. The difference is not data — it is the learning algorithm. Next-token prediction optimizes for surface statistics. Whatever the brain optimizes for, it is not that. A different loss function, a different training signal, a different notion of what the model should be predicting — these are the experiments that could actually move the needle.
+
+Pull arxiv. Read outside AI. Thermodynamics, information theory, neuroscience, compressed sensing, dynamical systems. The people who built attention were reading cognitive neuroscience. Read what they read and then read further.
+
+Be bold. If an experiment seems insane, it is probably more worth running than the safe one.
 
 ---
 
-## HARDWARE REALITY
+## HARD CONSTRAINTS
 
-You are running on a **laptop GPU**. Treat VRAM as the scarcest resource in the universe. Every byte wasted is a sin. Design around this — do not fight it.
+- Only modify `train.py`. Everything else is read-only.
+- `prepare.py` is untouchable. It contains the evaluation harness, data loading, tokenizer, and time budget.
+- `evaluate_bpb` in `prepare.py` is the ground truth metric. Do not work around it.
+- No new packages. Use only what is in `pyproject.toml`.
+- Fixed 5-minute training budget. Wall clock. Excluding startup and compilation.
+- One sequential experiment at a time. No parallel runs.
+- VRAM is a soft constraint. Meaningful wins justify some increase. Blowing it up is not acceptable.
+- Always compare against the **all-time best**, never the previous run.
 
-These are the known good starting knobs for small compute (from the repo author). Apply these as your baseline before experimenting — do not start from H100 defaults:
-
-1. **Dataset**: Use TinyStories (`karpathy/tinystories-gpt4-clean`) — low entropy, small models get real signal fast. Broader datasets need bigger models to converge meaningfully in 5 minutes.
-2. **vocab_size**: Drop from 8192 down to 4096, 2048, or even 256 (byte-level). Smaller vocab = smaller embedding table = more room for everything else.
-3. **MAX_SEQ_LEN** (in `prepare.py`): Lower aggressively, even down to 256. If you lower this, compensate by increasing `DEVICE_BATCH_SIZE` in `train.py` — tokens per step = seq_len × batch_size, keep that product roughly stable.
-4. **EVAL_TOKENS** (in `prepare.py`): Lower this so validation doesn't eat your 5-minute budget.
-5. **DEPTH** (in `train.py`): Primary complexity knob. Default is 8, start at 4. Most other dimensions scale from this.
-6. **WINDOW_PATTERN**: Use `"L"` only. The default `"SSSL"` banded attention pattern is expensive and likely inefficient on your hardware.
-7. **TOTAL_BATCH_SIZE**: Lower to powers of 2, e.g. `2**14` (~16K tokens). Keep it a power of 2.
-
-Start your baseline run with these applied. Your job is to find what's better than this starting point, not better than the H100 defaults.
+**Simplicity criterion**: A small improvement from deleting code beats a small improvement from adding it. Removing something and getting better results means it was actively harmful — that is a discovery. Removing something and getting the same results means it was doing nothing — that is also a discovery.
 
 ---
 
-## ARCHITECTURAL FREEDOM
+## SETUP
 
-You may modify anything in `train.py`. Explore aggressively:
+1. Agree on a run tag based on today's date, e.g. `jul5`. The branch `autoresearch/<tag>` must not already exist.
+2. `git checkout -b autoresearch/<tag>` from current master.
+3. Read fully:
+   - `README.md`
+   - `prepare.py`
+   - `train.py`
+   - this file
+4. Verify `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, stop and tell the human to run `uv run prepare.py`.
+5. Initialize directory structure:
 
-- **Attention mechanisms**: sliding window, linear attention, hybrid sparse/dense
-- **Depth vs width**: on small VRAM, deeper-and-thinner often beats wider
-- **Positional encoding**: RoPE, ALiBi, NoPE, learned — question everything
-- **Normalization**: RMSNorm placement, pre vs post
-- **Activation functions**: SwiGLU, GEGLU, ReGLU — the gating matters
-- **Optimizer**: Muon, AdamW, Sophia, SOAP — or invent a hybrid
-- **Quantization-aware training**: if it fits in less precision, train in less precision
-- **State space models**: if attention is too expensive, try Mamba-style recurrence
-- **Mixture of Experts**: tiny expert count, high sparsity — huge capability per FLOP
+```
+.auto-log-research/
+  insights.md          # current best + validated findings
+  ideas_queue.md       # prioritized experiment queue
+  <commit>/
+    analysis.md        # your written notes — mandatory every run
+    run_summary.json
+    run.log
+    metrics.jsonl
+    loss_curve.png
+    lr_and_schedule.png
+    gpu_perf.png
+    *.png
 
-If something works, go deeper. If something fails twice, abandon it.
+strategy/
+  learnings.md
+  hypotheses.md
+  near-misses.md
+  interactions.md
 
----
+literature/
+  <arxiv-id-or-slug>.md
 
-## STOP CONDITION
+results.tsv            # master log — NOT committed to git
+```
 
-Stop and write a final summary when **any** of the following are true:
-
-1. **Val_bpb plateaus**: fewer than 0.5% improvement over 20 consecutive experiments → you've found the local optimum. Switch architectural direction before truly stopping.
-2. **200 experiments completed**: write a final summary of what you learned, what the ceiling appears to be, and what you'd try with more compute.
-
----
-
-## Setup
-
-To set up a new experiment, work with the user to:
-
-1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar5`). The branch `autoresearch/<tag>` must not already exist — this is a fresh run.
-2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
-3. **Read the in-scope files**: The repo is small. Read these files for full context:
-   - `README.md` — repository context.
-   - `prepare.py` — fixed constants, data prep, tokenizer, dataloader, evaluation. Do not modify.
-   - `train.py` — the file you modify. Model architecture, optimizer, training loop.
-4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
-5. **Initialize results.tsv**: Create `results.tsv` with just the header row. The baseline will be recorded after the first run.
-6. **Confirm and go**: Confirm setup looks good.
-
-Once you get confirmation, kick off the experimentation.
-
----
-
-## Experimentation
-
-Each experiment runs on a single GPU. The training script runs for a **fixed time budget of 5 minutes** (wall clock training time, excluding startup/compilation). You launch it simply as: `uv run train.py`.
-
-**What you CAN do:**
-- Modify `train.py` — this is the only file you edit. Everything is fair game: model architecture, optimizer, hyperparameters, training loop, batch size, model size, etc.
-
-**What you CANNOT do:**
-- Modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, tokenizer, and training constants (time budget, sequence length, etc).
-- Install new packages or add dependencies. You can only use what's already in `pyproject.toml`.
-- Modify the evaluation harness. The `evaluate_bpb` function in `prepare.py` is the ground truth metric.
-
-**The goal is simple: get the lowest val_bpb.** Since the time budget is fixed, you don't need to worry about training time — it's always 5 minutes. Everything is fair game: change the architecture, the optimizer, the hyperparameters, the batch size, the model size. The only constraint is that the code runs without crashing and finishes within the time budget.
-
-**VRAM** is a soft constraint. Some increase is acceptable for meaningful val_bpb gains, but it should not blow up dramatically.
-
-**Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome — that's a simplification win. When evaluating whether to keep a change, weigh the complexity cost against the improvement magnitude. A 0.001 val_bpb improvement that adds 20 lines of hacky code? Probably not worth it. A 0.001 val_bpb improvement from deleting code? Definitely keep. An improvement of ~0 but much simpler code? Keep.
-
-**The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
+6. Create `insights.md`:
+```
+## Current Best
+commit: (none yet — baseline pending)
+val_bpb: (none)
+```
+7. Create empty strategy files.
+8. Create `results.tsv` with header only.
+9. Confirm setup. Run baseline immediately.
 
 ---
 
-## Output format
-
-Once the script finishes it prints a summary like this:
+## OUTPUT FORMAT
 
 ```
 ---
@@ -154,168 +120,205 @@ num_params_M:     50.3
 depth:            8
 ```
 
-Note that the script is configured to always stop after 5 minutes, so depending on the computing platform of this computer the numbers might look different. You can extract the key metric from the log file:
-
-```
-grep "^val_bpb:" run.log
+```bash
+grep "^val_bpb:\|^peak_vram_mb:" run.log
 ```
 
 ---
 
-## Logging results
+## LOGGING
 
-When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated — commas break in descriptions).
-
-The TSV has a header row and 5 columns:
+`results.tsv` is tab-separated. Never comma-separated. Not committed to git.
 
 ```
 commit	val_bpb	memory_gb	status	description
 ```
 
-1. git commit hash (short, 7 chars)
-2. val_bpb achieved (e.g. 1.234567) — use 0.000000 for crashes
-3. peak memory in GB, round to .1f (e.g. 12.3 — divide peak_vram_mb by 1024) — use 0.0 for crashes
-4. status: `keep`, `discard`, or `crash`
-5. short text description of what this experiment tried + **why** (hypothesis) + what you're trying next
+1. Short commit hash, 7 chars
+2. val_bpb. Use `0.000000` for crashes.
+3. Peak memory GB, `.1f` (divide `peak_vram_mb` by 1024). Use `0.0` for crashes.
+4. `keep`, `discard`, or `crash`
+5. What you tried, why, what you expected, and if it won — whether you think this scales
 
 Example:
-
 ```
 commit	val_bpb	memory_gb	status	description
 a1b2c3d	0.997900	44.0	keep	baseline
-b2c3d4e	0.993200	44.2	keep	increase LR to 0.04
-c3d4e5f	1.005000	44.0	discard	switch to GeLU activation
-d4e5f6g	0.000000	0.0	crash	double model width (OOM)
+b2c3d4e	0.985000	44.2	keep	sparse top-k routing replacing dense attention — hypothesis: 10% activation sufficient for this data density
+c3d4e5f	1.005000	44.0	discard	predictive coding skip — routing overhead killed throughput at this seq len
+d4e5f6g	0.000000	0.0	crash	dynamic pruning mask (OOM)
 ```
 
 ---
 
-## The experiment loop
+## THE EXPERIMENT LOOP
 
-The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
+Read `program.md` at the start of every iteration without exception.
 
-LOOP FOREVER:
+### PRE-RUN CHECKLIST
 
-1. Look at the git state: the current branch/commit we're on
-2. Tune `train.py` with an experimental idea by directly hacking the code.
-3. git commit
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
-8. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
-9. If val_bpb is equal or worse, you git reset back to where you started
+Write your answers before touching `train.py`.
 
-The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
+1. **Review strategy state.** Read `strategy/hypotheses.md`. Pick the next hypothesis. If the queue is empty, generate a new one from current loss curve behavior or literature. Add it before proceeding.
+2. **Check interactions.** Read `strategy/interactions.md`. Does this change couple to anything with known behavior? Decide explicitly.
+3. **Check near-misses.** Read `strategy/near-misses.md`. Has config shifted enough to make one worth re-testing?
+4. **State your prediction.** What do you expect and why? What mechanism does this exploit? If it works, is that because of the math or the hardware? Would it scale to a larger model?
+5. **Single or bundle.** Single-variable preferred. If bundling, justify: why does testing these separately give misleading signal?
 
-**Timeout**: Each experiment should take ~5 minutes total (+ a few seconds for startup and eval overhead). If a run exceeds 10 minutes, kill it and treat it as a failure (discard and revert).
+### EXECUTE
 
-**Crashes**: If a run crashes (OOM, or a bug, or etc.), use your judgment: If it's something dumb and easy to fix (e.g. a typo, a missing import), fix it and re-run. If the idea itself is fundamentally broken, just skip it, log "crash" as the status in the tsv, and move on.
+1. Edit `train.py`.
+2. `git add train.py && git commit -m "experiment: <description>"` — never `git add -A`
+3. `uv run train.py > run.log 2>&1`
+4. `grep "^val_bpb:\|^peak_vram_mb:" run.log`
+5. If empty: `tail -n 50 run.log`. Fix if trivial. Log crash and move on if fundamental.
 
-**NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped or the stop condition is met. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you or the stop condition is hit, period.
+### ANALYZE
 
-As an example use case, a user might leave you running while they sleep. If each experiment takes you ~5 minutes then you can run approx 12/hour, for a total of about 100 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
+1. `uv run analyze.py 2>/dev/null`
+2. Read `.auto-log-research/<commit>/analysis.md`.
+3. Examine plots. Loss trajectory, LR sensitivity, MFU, step-time spikes.
+4. Compare against previous runs in `metrics.jsonl`:
 
+```python
+import json
+commit = "abc1234"
+history = [json.loads(l) for l in open(f".auto-log-research/{commit}/metrics.jsonl")]
+losses = [h["train/loss_smooth"] for h in history]
+```
 
-## WE ARE THINKING TOO SMALL
+```python
+cur = [json.loads(l) for l in open(f".auto-log-research/{cur_commit}/metrics.jsonl")]
+prev = [json.loads(l) for l in open(f".auto-log-research/{prev_commit}/metrics.jsonl")]
+for i in range(min(len(cur), len(prev))):
+    delta = cur[i]["train/loss_smooth"] - prev[i]["train/loss_smooth"]
+    if abs(delta) > 0.01:
+        print(f"Divergence at step {i}: delta={delta:.4f}")
+        break
+```
 
-Every experiment you have run so far has been a variation of the same idea: a transformer, tuned. That is not bold enough. We are not here to find the best transformer that fits in 4GB. We are here to question whether the transformer was ever the right answer at all.
+### WRITE ANALYSIS — MANDATORY
 
-Let me tell you about a system that achieves Opus-quality reasoning — actually far beyond it — on roughly **20 watts**. No datacenter. No H100. No bfloat16. It runs on glucose.
+Append to `.auto-log-research/<commit>/analysis.md` under "Agent Investigation Notes". Every run. No exceptions.
 
-It is the human brain. And a child's brain is the most interesting version of it.
+Write:
+- What the loss curves showed
+- Where this run diverged from the previous and why
+- Whether your prediction was correct — if not, what does that tell you?
+- What mechanism you think drove the result
+- What this opens up next
 
----
+### DECIDE
 
-## THE CHILD BRAIN
+Compare against **all-time best** in `insights.md`.
 
-A newborn arrives with approximately 100 billion neurons. But here is the critical fact that almost everyone misses: **a newborn's brain is not small and then grows. It starts MASSIVE and then destroys itself into intelligence.**
+**New best:**
+- Mark `keep` in `results.tsv`
+- Update "Current Best" in `insights.md`
+- Leave commit in place
 
-At age 2, a child has more synaptic connections than they will ever have again in their life. The brain is a vast overparameterized chaos — everything connected to everything, firing constantly, trying everything simultaneously.
+**Not new best:**
+- Mark `discard` in `results.tsv`
+- `git checkout <best_commit> -- train.py`
+- `git add train.py && git commit -m "revert: restore best after discard"`
 
-Then the pruning begins.
+### UPDATE STRATEGY FILES
 
-Synaptic pruning is ruthless. Connections that fire together survive. Connections that don't fire get eliminated. By adulthood, the brain has destroyed roughly **half** of its synaptic connections. It did not become more intelligent despite this destruction — **it became more intelligent because of it.**
+After every experiment:
 
-The brain did not scale up to reach intelligence. It **compressed down** to reach it.
+**`strategy/learnings.md`**: What you learned about mechanism, not just outcome. Confidence: low, medium, high. Update existing entries when new evidence changes your understanding.
 
-Now ask yourself: what are we doing? We are doing the opposite. We build small and try to scale up. We add parameters. We add layers. We add compute. We are building the newborn's chaotic overconnected brain and calling it done, then trying to fit it in 4GB.
+**`strategy/hypotheses.md`**: Move tested hypothesis to "Tested / Resolved." Add new ones if the result suggested them. Keep active queue prioritized.
 
-What if we built the adult brain instead?
+**`strategy/near-misses.md`**: Within ~0.01 of best: record with config context. Note what might make it worth revisiting.
 
----
-
-## WHAT THE BRAIN ACTUALLY DOES THAT WE ARE NOT DOING
-
-**1. Sparse activation.** At any given moment only 1-5% of neurons are firing. The brain does not run a dense forward pass over all 86 billion neurons for every thought. It activates a tiny relevant subgraph and ignores everything else. A transformer attends to everything. The brain attends to almost nothing, very precisely. What would a model look like that activates 2% of its parameters per forward pass and routes intelligently?
-
-**2. Predictive coding.** The brain does not process what it sees. It predicts what it expects to see, then only processes the **error** — the difference between prediction and reality. Most of the signal traveling in the brain is not "here is what I perceived" — it is "here is where my prediction was wrong." The brain is a compression engine that only updates on surprise. A transformer processes every token with equal weight. What would a model look like that only deeply processes tokens that violated its prediction?
-
-**3. The architecture changes.** Neuroplasticity means the brain rewires itself based on what it learns. The structure is not fixed. Connections strengthen, weaken, form, and dissolve continuously. Our models have fixed architecture — we choose it before training and it never changes. What would it mean for the architecture itself to be a learned variable, pruning and growing during training based on gradient signal?
-
-**4. Metabolic pressure.** Every neuron that fires costs energy. The brain evolved under brutal metabolic constraints — fire unnecessarily and you consume glucose you might need to survive. This pressure forced the brain to become maximally efficient: only fire when it matters, compress everything that can be compressed, reuse every pattern that can be reused. We have no equivalent pressure in our training loop. VRAM is our metabolic constraint. What if we baked metabolic cost directly into the loss function — penalizing activation, penalizing parameter use, rewarding compression?
-
-**5. A child learns language from almost no data.** A child hears roughly 10 million words before they can speak fluently. GPT-4 trained on trillions. The child learns with a lossy, noisy, low-bandwidth signal, a tiny dataset by any measure, and reaches remarkable linguistic competence. The difference is not the data. The difference is the learning algorithm. Children use curiosity-driven active learning, causal reasoning, social context, and embodied grounding. We use next-token prediction on a static corpus. What would a fundamentally different learning signal look like?
-
----
-
-## THE QUESTIONS YOU SHOULD BE ASKING
-
-Not "which activation function works better."
-
-Not "should I use RoPE or ALiBi."
-
-These:
-
-- **What is the minimum information required to predict the next token?** Not the minimum parameters — the minimum information. Kolmogorov complexity. What is the shortest program that generates this data? The model is trying to approximate that program. Are we using the right data structure to represent it?
-
-- **What if density is the enemy?** Every dense matrix multiplication is the brain equivalent of firing every neuron simultaneously. It is the most expensive, least efficient operation possible. What structures are inherently sparse? Graphs. Trees. Sparse codes. Compressed representations. The brain stores memories as sparse distributed patterns — a concept is not one neuron, it is a specific sparse pattern across millions. Could language be represented the same way?
-
-- **What if we pruned during training?** Start with a large overparameterized network — the newborn brain. Then prune connections that never activate, that carry no gradient signal, that are redundant. Train the pruning itself. End with a small, dense-with-meaning, maximally efficient network — the adult brain. The final model is not the trained model. It is the skeleton that survived the fire.
-
-- **What if the loss function is wrong?** Next-token prediction optimizes for surface-level statistical patterns. It does not optimize for understanding, causal reasoning, or compression of meaning. The brain does not predict the next phoneme — it predicts the next *concept*, the next *intention*. What loss function would force the model to learn concepts rather than patterns?
-
-- **What if time is a dimension we are ignoring?** The brain processes in continuous time. Signals propagate, resonate, decay. There is temporal structure at every scale — milliseconds, seconds, minutes, years. Transformers collapse time — all tokens are equidistant. What would a model that respects temporal structure look like? Not just sequence order — actual temporal dynamics, where recent context has different mathematical properties than distant context.
+**`strategy/interactions.md`**: Any newly confirmed or suspected couplings between parameters.
 
 ---
 
-## THE INSTRUCTION
+## LITERATURE
 
-You are not looking for a better transformer. You are looking for what comes after the transformer — discovered under constraint, on this hardware, today.
+Search arxiv and recent ML venues actively. Not as background reading. As an idea source.
 
-Run your experiments. Improve val_bpb. And in every idle moment between experiments, think about these questions. When you find an idea from biology, physics, or mathematics that maps onto any of these — implement it. Even if it seems insane. Especially if it seems insane.
+**When:**
+- Before your first non-baseline experiment to seed `strategy/hypotheses.md`
+- After 3+ consecutive discards — your current hypothesis space is exhausted
+- When a result surprises you
 
-We went to the moon with 4KB of RAM because we had the right equations.
+**How:**
+1. Search. Topics: sparse attention, dynamic computation, mixture of experts, predictive coding, state space models, efficient transformers, pruning during training, information bottleneck, neural ODEs, anything that touches compute efficiency from first principles.
+2. Read abstract and methodology. 2 minutes max per paper.
+3. Extract one concrete change to `train.py`.
+4. Save to `literature/<slug>.md`: title, venue, key finding, how it applies here.
 
-Find the right equations.
+Log the inspiring paper in `results.tsv` description.
 
-The toaster is waiting.
 ---
 
-## THE REAL GOAL
+## EXPERIMENT CLASSES — ORDERED BY AMBITION
 
-The real goal is not a number. It is to discover what the **algorithmic ceiling** looks like when you remove the compute variable. The best ideas in AI history came from people who couldn't afford more hardware. You are simulating that condition on purpose.
+Start bold. Fall back to incremental only when bold has been genuinely exhausted.
+
+**Tier 1 — Question the core operation:**
+- Replace dense attention with learned sparse routing. Not sliding window. Learned selection of which tokens matter.
+- Predictive coding: separate prediction and error networks. Full compute only on surprise tokens.
+- Dynamic depth: learned early exit per token per layer. Easy inputs exit at layer 2. Hard ones run all the way through.
+- Pruning during training: start overparameterized, apply learnable masks, penalize active connections, let the skeleton emerge.
+- Activation sparsity loss: penalize non-zero activations directly. Force sparse distributed representations.
+
+**Tier 2 — Replace what attention is approximating:**
+- Linear attention variants that are mathematically grounded, not just fast
+- State space models for sequence modeling without O(n²)
+- Hierarchical processing: local attention at lower layers, global at higher
+- Mixture of tiny experts with hard routing — 1 of 32 experts per token, high sparsity
+
+**Tier 3 — Different learning signal:**
+- Information bottleneck objective alongside next-token prediction
+- Contrastive objectives at intermediate layers
+- Auxiliary losses that penalize representation redundancy
+
+**Tier 4 — Hyperparameter and architecture tuning:**
+This is last resort. If you are here before exhausting Tiers 1-3, you are thinking too small.
 
 ---
 
-## TRANSFERABILITY — THE ACTUAL PRIZE
+## SELECTION STRATEGIES
 
-A result that only works on a 1650 Ti is a curiosity. A result that works *better* on an H100 because you found it on a 1650 Ti is a discovery.
+**LR sweep after architecture changes.** Before declaring any structural change a failure, try 0.5x LR and 1.5x LR. Architecture changes almost always need LR re-tuning. This costs 2 extra runs and prevents false negatives.
 
-**Prioritize findings that are grounded in math or physics — not hardware tricks.**
+**Controlled regressions.** If a structural change costs 0.005 val_bpb but opens a clear pathway, accept it and test the follow-up immediately. Mark as "regression accepted: reason." Do not abandon architectural exploration because the first step costs slightly.
 
-Ask yourself before every experiment: *if this works, why does it work?* If the answer is "because it fits in 4GB" — that's a hardware trick, low value. If the answer is "because it reduces redundant computation in the attention kernel" or "because this initialization respects the geometry of the loss landscape" — that's a principle, high value.
+**Revisit near-misses every 4 experiments.**
 
-Specifically look for discoveries in:
+**Diminishing returns.** Five consecutive discards within 0.01 of best means the current architecture class is locally optimized. Do not tune further. Make a class change.
 
-- **Information theory**: does the model actually need this many bits to represent this concept? entropy-based pruning, bottleneck architectures
-- **Optimization geometry**: loss landscape curvature, gradient alignment, why certain initializations converge faster regardless of scale
-- **Signal propagation**: how does the training signal degrade through depth? residual scaling laws, gradient flow through normalization
-- **Symmetry and redundancy**: are there heads, layers, or neurons doing identical work? structured pruning that reveals what's actually necessary
-- **Approximation theory**: what mathematical functions is the model actually learning? can you represent them more efficiently?
+---
 
-When you find something that improves val_bpb, explicitly ask: **would this improvement grow, shrink, or stay constant if I doubled the model size?** Log your hypothesis in the tsv description. That hypothesis is as valuable as the result.
+## NEVER STOP
 
-Find something real. Find something that transfers.
+Do not ask whether to continue. The human is probably asleep. Continue until manually interrupted or the stop condition is met.
 
-Go.
+If out of ideas: pull literature, re-read this file, examine loss curves for unexplained behavior, combine near-misses, try something that seems insane. Especially if it seems insane.
+
+Timeout: 10 minutes per run maximum. Kill, log crash, revert, continue.
+
+---
+
+## STOP CONDITION
+
+Stop and write a final summary when:
+
+1. Fewer than 0.5% improvement across 20 consecutive experiments after genuinely trying architectural class changes, not just tuning.
+2. 200 experiments completed.
+
+Final summary: what the apparent ceiling is, what the most promising unexplored directions are, what you would try with 10x the VRAM.
+
+---
+
+## THE TARGET
+
+Opus quality on a consumer GPU. Not approximately. That quality.
+
+The brain does it on 20 watts. The existence proof is real. The gap between what we accept as necessary compute and what is actually necessary is not a hardware problem. It is an ideas problem.
+
+Find the ideas.

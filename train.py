@@ -9,7 +9,9 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
+import json
 import math
+import subprocess
 import time
 from dataclasses import dataclass, asdict
 
@@ -56,6 +58,13 @@ def apply_rotary_emb(x, cos, sin):
     y1 = x1 * cos + x2 * sin
     y2 = x1 * (-sin) + x2 * cos
     return torch.cat([y1, y2], 3)
+
+
+def get_gpu_peak_flops(gpu_name):
+    name = gpu_name.lower()
+    if "rtx pro 500 blackwell generation" in name:
+        return 9.2e12
+    return None
 
 
 class CausalSelfAttention(nn.Module):
@@ -451,6 +460,40 @@ DEPTH = 8               # number of transformer layers
 DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
 
 # ---------------------------------------------------------------------------
+# Run config
+# ---------------------------------------------------------------------------
+
+def _git_commit_hash():
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
+        ).decode().strip()
+    except Exception:
+        return "unknown"
+
+
+run_config = dict(
+    aspect_ratio=ASPECT_RATIO,
+    head_dim=HEAD_DIM,
+    window_pattern=WINDOW_PATTERN,
+    total_batch_size=TOTAL_BATCH_SIZE,
+    embedding_lr=EMBEDDING_LR,
+    unembedding_lr=UNEMBEDDING_LR,
+    matrix_lr=MATRIX_LR,
+    scalar_lr=SCALAR_LR,
+    weight_decay=WEIGHT_DECAY,
+    adam_betas=ADAM_BETAS,
+    warmup_ratio=WARMUP_RATIO,
+    warmdown_ratio=WARMDOWN_RATIO,
+    final_lr_frac=FINAL_LR_FRAC,
+    depth=DEPTH,
+    device_batch_size=DEVICE_BATCH_SIZE,
+    max_seq_len=MAX_SEQ_LEN,
+    time_budget=TIME_BUDGET,
+    git_commit=_git_commit_hash(),
+)
+
+# ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
 # ---------------------------------------------------------------------------
 
@@ -461,6 +504,8 @@ torch.set_float32_matmul_precision("high")
 device = torch.device("cuda")
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
 H100_BF16_PEAK_FLOPS = 989.5e12
+gpu_name = torch.cuda.get_device_name(0)
+gpu_peak_flops = get_gpu_peak_flops(gpu_name) or H100_BF16_PEAK_FLOPS
 
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
@@ -539,6 +584,7 @@ t_start_training = time.time()
 smooth_train_loss = 0
 total_training_time = 0
 step = 0
+metrics_file = open("metrics.jsonl", "w")
 
 while True:
     torch.cuda.synchronize()
@@ -584,8 +630,23 @@ while True:
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
     pct_done = 100 * progress
     tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
-    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
+    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / gpu_peak_flops
     remaining = max(0, TIME_BUDGET - total_training_time)
+
+    step_metrics = {
+        "step": step,
+        "train/loss": train_loss_f,
+        "train/loss_smooth": debiased_smooth_loss,
+        "train/lr_multiplier": lrm,
+        "train/muon_momentum": muon_momentum,
+        "train/weight_decay": muon_weight_decay,
+        "train/progress": progress,
+        "perf/step_time_ms": dt * 1000,
+        "perf/tokens_per_sec": tok_per_sec,
+        "perf/mfu_percent": mfu,
+    }
+    metrics_file.write(json.dumps(step_metrics) + "\n")
+    metrics_file.flush()
 
     print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
 
@@ -604,6 +665,7 @@ while True:
         break
 
 print()  # newline after \r training log
+metrics_file.close()
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
@@ -615,7 +677,7 @@ with autocast_ctx:
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
+steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / gpu_peak_flops if total_training_time > 0 else 0
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
 print("---")
@@ -628,3 +690,18 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
+
+run_summary = {
+    **run_config,
+    "val_bpb": val_bpb,
+    "training_seconds": total_training_time,
+    "total_seconds": t_end - t_start,
+    "startup_seconds": startup_time,
+    "peak_vram_mb": peak_vram_mb,
+    "mfu_percent": steady_state_mfu,
+    "total_tokens_M": total_tokens / 1e6,
+    "num_steps": step,
+    "num_params_M": num_params / 1e6,
+}
+with open("run_summary.json", "w") as f:
+    json.dump(run_summary, f, indent=2)
