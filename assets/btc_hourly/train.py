@@ -303,7 +303,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # --- Train: two-model ensemble for diversity ---
     model_conservative = HistGradientBoostingRegressor(
-        max_iter=300,
+        max_iter=500,
         max_depth=4,
         min_samples_leaf=600,
         learning_rate=0.01,
@@ -329,7 +329,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
-    blend_weights = [0.7, 0.3]  # favor conservative model — more regularized, fewer features sampled
+    blend_weights = [0.5, 0.5]
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))

@@ -238,5 +238,10 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 ## 5d095e7 — target winsorization 4.0 sigma (from 5.0)
 **Hypothesis:** Moderate winsorization between catastrophic 3.0 and current 5.0.
 **Result:** Score -13.2975, sharpe_min -0.6122, max_dd -1.9%, 85 trades, 5/8 consistency, holdout CAUTION. Discard.
-**Observation:** Still kills trades (85). Winsor 5.0 confirmed. Next: blend weights 0.7/0.3 (favor conservative model).
+**Observation:** Still kills trades (85). Winsor 5.0 confirmed.
+
+## 0ba27f9 — blend weights 0.7/0.3 (favor conservative)
+**Hypothesis:** Conservative model may be better for epoch 6's evaluation landscape.
+**Result:** Score -4.9129, sharpe_min -0.8817, max_dd -2.6%, 127 trades, 7/8 consistency, holdout OK. Discard.
+**Observation:** Worse score but consistency improved to 7/8 and holdout OK. Conservative model alone isn't enough. Next: conservative max_iter 300→500 (match aggressive model's iteration budget).
 
