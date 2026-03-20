@@ -307,5 +307,10 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 ## d715fdd — l2_regularization 4.0 (from 3.0) at EMA 35, iter=1000
 **Hypothesis:** Stronger per-tree regularization may improve generalization at higher capacity. Address holdout WARN.
 **Result:** Score 0.3495, sharpe_min 0.5046, max_dd -7.6%, 525 trades, 7/8 consistency, holdout WARN. Discard.
-**Observation:** Slightly worse score (0.39→0.35) but more trades (489→525). Holdout WARN persists. l2=4.0 increases trades but hurts signal quality. Next: try min_samples_leaf=800 (different regularization axis for generalization).
+**Observation:** Slightly worse score (0.39→0.35) but more trades (489→525). Holdout WARN persists. l2=4.0 increases trades but hurts signal quality.
+
+## ba36955 — min_samples_leaf 800 (from 600) at EMA 35, iter=1000
+**Hypothesis:** Larger leaves prevent overfitting to regime-specific patterns. Address holdout WARN.
+**Result:** Score -1.0039, sharpe_min -0.3983, max_dd -12.4%, 477 trades, 4/8 consistency, holdout **CAUTION**. Discard.
+**Observation:** Scored performance collapsed BUT holdout improved WARN→CAUTION! Confirms model IS overfitting to scored windows. leaf=800 is too aggressive — need gentler approach. Next: try power transform 0.8 (from 0.7) — less amplification of weak signals reduces overconfident wrong-direction trades.
 
