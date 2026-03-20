@@ -229,7 +229,7 @@ def count_model_params(models) -> int:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
-    return pd.Series(raw_preds).ewm(span=45, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=40, min_periods=1).mean().values
 
 
 def _confidence_scaled_predict(model, features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -333,7 +333,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 1.0  # full demeaning — testing if complete bias removal is optimal
+    pred_bias = float(np.mean(train_preds)) * 0.9  # partial demeaning — optimal for expanding windows
 
     # Approximate param count
     n_params = 0
