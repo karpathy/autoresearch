@@ -220,3 +220,8 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 **Result:** Score -1.3709, sharpe_min -0.1790, max_dd -2.4%, 137 trades, 6/8 consistency, holdout CAUTION. Discard.
 **Observation:** Worse. L2=4.0 is too strong — over-regularizes the already-constrained model. Next: try min_samples_leaf=800 with leaves=15, l2=3.0.
 
+## 587af66 — min_samples_leaf 800 (from 600) with leaves=15
+**Hypothesis:** Higher min_samples_leaf prevents overfitting on larger expanding-window datasets.
+**Result:** Score -2.7214, sharpe_min -0.4795, max_dd -5.2%, 161 trades, 6/8 consistency, holdout WARN. Discard. **EPOCH CHANGED: 5→6.**
+**Observation:** Worse, but epoch rotated — not directly comparable. Reverting to best config (leaves=15, l2=3.0, min_samples_leaf=600) for epoch 6 baseline.
+
