@@ -233,5 +233,10 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 ## eed06e9 — aggressive max_features 0.6 (from 0.8)
 **Hypothesis:** More feature subsampling creates greater ensemble diversity.
 **Result:** Score -5.1050, sharpe_min -0.6666, max_dd -2.4%, 139 trades, 6/8 consistency, holdout CAUTION. Discard.
-**Observation:** Too much subsampling degrades signal quality. max_features=0.8 confirmed. Next: target winsorization 4.0 sigma (between 3.0 catastrophic and 5.0 current).
+**Observation:** Too much subsampling degrades signal quality. max_features=0.8 confirmed.
+
+## 5d095e7 — target winsorization 4.0 sigma (from 5.0)
+**Hypothesis:** Moderate winsorization between catastrophic 3.0 and current 5.0.
+**Result:** Score -13.2975, sharpe_min -0.6122, max_dd -1.9%, 85 trades, 5/8 consistency, holdout CAUTION. Discard.
+**Observation:** Still kills trades (85). Winsor 5.0 confirmed. Next: blend weights 0.7/0.3 (favor conservative model).
 

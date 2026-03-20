@@ -284,7 +284,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Vol-normalize targets first, then winsorize in sigma-space
     targets = targets / vol_train
-    targets = np.clip(targets, -4.0, 4.0)  # moderate winsorization — 3.0 was catastrophic, 5.0 current
+    targets = np.clip(targets, -5.0, 5.0)
 
     features = np.nan_to_num(features, nan=0.0)
 
@@ -329,7 +329,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
-    blend_weights = [0.5, 0.5]
+    blend_weights = [0.7, 0.3]  # favor conservative model — more regularized, fewer features sampled
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
