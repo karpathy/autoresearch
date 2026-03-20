@@ -541,7 +541,7 @@ WINDOW_PATTERN = "L"    # full attention (no sliding window on MPS)
 DROPOUT = 0.1           # dropout for regularization
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**15 # ~32K tokens per optimizer step (smaller for MPS)
+TOTAL_BATCH_SIZE = 2**13 # ~8K tokens per optimizer step
 EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
@@ -554,7 +554,7 @@ FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
 DEPTH = 12              # number of transformer layers
-DEVICE_BATCH_SIZE = 16   # per-device batch size
+DEVICE_BATCH_SIZE = 4    # per-device batch size
 SEQ_LEN = MAX_SEQ_LEN   # use prepare.py's sequence length
 
 # ---------------------------------------------------------------------------
