@@ -297,7 +297,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     mono_cst[3] = 1  # 48h vol-normalized return → monotonically increasing
     mono_cst[4] = 1  # 72h vol-normalized return → monotonically increasing
     mono_cst[5] = 1  # 168h vol-normalized return → monotonically increasing
-    # mono_cst[6] removed — VW return constraint may hurt in some regimes with expanding windows
+    mono_cst[6] = 1  # 24h VW cumulative return → monotonically increasing
     mono_cst[28] = 1  # 72h directional efficiency → monotonically increasing
     mono_cst[29] = 1  # 168h directional efficiency → monotonically increasing
 

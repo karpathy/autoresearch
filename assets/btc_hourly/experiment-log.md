@@ -317,5 +317,13 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 ## 6993540 — power transform 0.8 (from 0.7) at EMA 35, iter=1000
 **Hypothesis:** Less amplification of weak signals reduces overconfident wrong-direction trades.
 **Result:** Score 0.3825, sharpe_min 0.5640, max_dd -7.8%, 497 trades, 7/8 consistency, holdout WARN. Discard (marginal).
-**Observation:** Nearly identical to power 0.7 (0.38 vs 0.39). Holdout still WARN. Power transform is not the lever. Next: try removing VW cumulative return constraint (mono_cst[6]) — this was added later, may not be universally applicable across expanding-window regimes.
+**Observation:** Nearly identical to power 0.7 (0.38 vs 0.39). Holdout still WARN. Power transform is not the lever.
+
+## ae03b8c — remove VW cumulative return constraint (mono_cst[6])
+**Hypothesis:** Targeted constraint removal — VW constraint may not generalize across expanding-window regimes.
+**Result:** Score 0.3329, sharpe_min 0.4673, max_dd -7.7%, 469 trades, 7/8 consistency, holdout WARN. Discard.
+**Observation:** Worse — VW constraint helps signal quality (sharpe 0.47 vs 0.58). All 9 constraints confirmed. 5 consecutive failures since EMA 35 best. Invoking coach.
+
+---
+**Coach invoked (5 consecutive non-improvements)**
 
