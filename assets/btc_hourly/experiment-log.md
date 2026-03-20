@@ -435,3 +435,12 @@ This is the gentlest generalization improvement available. Unlike leaf=800 (whic
 **Result:** Score -3.5644, sharpe_min -1.6211, max_dd -9.9%, 406 trades, 5/8 consistency, **holdout OK**. Keep (epoch 7 baseline).
 **Observation:** Score collapsed as expected — the crash window that was WARN-ing is now scored and has sharpe_min -1.62. BUT holdout is now OK! The model generalizes to the remaining holdout window. This confirms: the crash window was the problem all along. Improvements from here will be honest — they must handle the crash regime. Need full recalibration: demeaning, blend, EMA.
 
+---
+
+**Epoch 7 recalibration (crash window now scored, half-life 5.0)**
+
+## f936194 — demeaning 1.0x (epoch 7)
+**Hypothesis:** Crash window needs more bias removal to reduce persistent long predictions.
+**Result:** Score -3.2476, sharpe_min -1.4977, max_dd -9.7%, 420 trades, 5/8 consistency, holdout OK. Keep (epoch 7 best).
+**Observation:** Modest improvement over baseline (-3.56→-3.25). Full demeaning helps the crash window (sharpe improved -1.62→-1.50). Next: bracket with 0.8x.
+
