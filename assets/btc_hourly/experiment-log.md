@@ -273,5 +273,10 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 ## c94e3d9 — clip ±1.5 with iter=1000
 **Hypothesis:** Tighter clip reduces extreme positions to improve generalization.
 **Result:** Score 0.2399, sharpe_min 0.3948, max_dd -6.2%, 389 trades, 7/8 consistency, holdout WARN. Discard.
-**Observation:** Slightly worse, holdout still WARN. Next: dampening 0.25 (lower position sizes for generalization).
+**Observation:** Slightly worse, holdout still WARN.
+
+## a9b9b58 — dampening 0.25 (from 0.3)
+**Hypothesis:** Lower dampening = smaller positions = better generalization.
+**Result:** Score -0.1950, sharpe_min -0.0728, max_dd -2.5%, 249 trades, 6/8 consistency, holdout WARN. Discard.
+**Observation:** Much worse — cuts too many trades (397→249). Dampening 0.3 confirmed. 5 consecutive experiments without improvement on epoch 6 best.
 
