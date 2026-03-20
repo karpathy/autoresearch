@@ -280,3 +280,12 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 **Result:** Score -0.1950, sharpe_min -0.0728, max_dd -2.5%, 249 trades, 6/8 consistency, holdout WARN. Discard.
 **Observation:** Much worse — cuts too many trades (397→249). Dampening 0.3 confirmed. 5 consecutive experiments without improvement on epoch 6 best.
 
+---
+
+**Recalibrating stale parameters at iter=1000 capacity:**
+
+## ac090a7 — max_leaf_nodes 20 (restore from 15) at iter=1000
+**Hypothesis:** Leaves=15 was tuned at old capacity. With 2.4x more trees, model may need more per-tree expressiveness.
+**Result:** Score 0.2407, sharpe_min 0.3836, max_dd -6.7%, 399 trades, 7/8 consistency, holdout WARN. Discard.
+**Observation:** Slightly worse than leaves=15 (0.26 vs 0.24). Param counts nearly identical (18916 vs 18830) — early stopping means trees don't fully use 20 leaves anyway. Leaves=15 constraint helps by forcing better split choices. **Leaves=15 confirmed at new capacity.** Next: re-test EMA 40.
+
