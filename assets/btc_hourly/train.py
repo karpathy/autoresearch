@@ -333,7 +333,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 0.8  # partial demeaning — testing higher with expanding windows
+    pred_bias = float(np.mean(train_preds)) * 0.9  # partial demeaning — narrowing upward
 
     # Approximate param count
     n_params = 0

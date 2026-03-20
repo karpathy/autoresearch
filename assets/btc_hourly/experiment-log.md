@@ -16,3 +16,8 @@
 **Result:** Score -8.3149, sharpe_min -0.7374, max_dd -2.8%, 137 trades, 5/8 consistency, holdout OK. Discard.
 **Observation:** Much worse than baseline (-1.93). Less demeaning = more residual bias = worse predictions. The expanding window bias needs MORE removal, not less. Next: test 0.8x.
 
+## 9b9e5b4 — partial demeaning 0.8x
+**Hypothesis:** Expanding windows have more bias needing removal. 0.8x should help.
+**Result:** Score -0.6283, sharpe_min -0.1128, max_dd -2.6%, 121 trades, 7/8 consistency, holdout CAUTION. Keep (best so far).
+**Observation:** Clear monotonic improvement: 0.5x→-8.31, 0.7x→-1.93, 0.8x→-0.63. Consistency improved to 7/8. Optimum is at or above 0.8x. Next: narrow with 0.9x.
+
