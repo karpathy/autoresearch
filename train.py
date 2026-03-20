@@ -715,7 +715,7 @@ with autocast_ctx:
 t_end = time.time()
 startup_time = t_start_training - t_start
 steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / M3_ULTRA_PEAK_FLOPS if total_training_time > 0 else 0
-peak_mem_mb = torch.mps.driver_allocated_size() / 1024 / 1024
+peak_mem_mb = torch.mps.driver_allocated_memory() / 1024 / 1024
 
 print("---")
 print(f"val_bpb:          {val_bpb:.6f}")
@@ -727,3 +727,39 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
+
+# ---------------------------------------------------------------------------
+# Generation: sample some tokens and save to file
+# ---------------------------------------------------------------------------
+
+@torch.no_grad()
+def generate(model, tokenizer, prompt="bwv", max_new_tokens=2048, temperature=0.8, top_k=50):
+    """Generate text from the model given a prompt string."""
+    tokens = tokenizer.encode([prompt])[0]
+    idx = torch.tensor([tokens], dtype=torch.long, device=device)
+    for _ in range(max_new_tokens):
+        # Crop to sequence length
+        idx_cond = idx if idx.size(1) <= config.sequence_len else idx[:, -config.sequence_len:]
+        with autocast_ctx:
+            logits = model(idx_cond)
+        logits = logits[:, -1, :] / temperature
+        # Top-k filtering
+        if top_k > 0:
+            v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+            logits[logits < v[:, [-1]]] = -float('Inf')
+        probs = F.softmax(logits, dim=-1)
+        idx_next = torch.multinomial(probs, num_samples=1)
+        idx = torch.cat([idx, idx_next], dim=1)
+    return tokenizer.decode(idx[0].tolist())
+
+# Generate samples
+sample_output_path = os.environ.get("SAMPLE_OUTPUT_PATH", None)
+if sample_output_path:
+    print(f"\nGenerating samples to {sample_output_path}...")
+    samples = []
+    for prompt in ["bwv9999 v1 Cmajor 4/4:\n", "bwv9999 v1 Dminor 4/4:\n", "bwv9999 v1 Gmajor 12/8:\n"]:
+        sample = generate(model, tokenizer, prompt=prompt, max_new_tokens=2048, temperature=0.8)
+        samples.append(sample)
+    with open(sample_output_path, "w") as f:
+        f.write("\n\n---\n\n".join(samples))
+    print(f"Saved {len(samples)} samples.")
