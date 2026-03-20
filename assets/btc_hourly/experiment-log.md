@@ -475,3 +475,70 @@ This is the gentlest generalization improvement available. Unlike leaf=800 (whic
 ---
 **Coach invoked (5 consecutive non-improvements)**
 
+**DIAGNOSIS:** The agent has spent 8 experiments at epoch 7 tuning post-prediction pipeline parameters (demeaning, blend, EMA, dampening, clip, power) without addressing the structural cause of the deeply negative sharpe_min. The crash window (2022, the BTC crash from ~47k to ~16k) is now in the scored set. The model has 9 monotonic constraints that lock in its behavior during crash regimes. ALL 8 epoch 7 experiments changed only post-prediction transforms. ZERO changed the model architecture, capacity, features, or constraints. The agent is trapped in a pipeline-tuning loop for the second time in this run.
+
+The previous removal of constraints (exp12 at epoch 5, exp47 at epoch 6) is NOT valid evidence against trying it at epoch 7. At those epochs the crash window was NOT scored -- the model only needed to work on non-crash windows where constraints help. At epoch 7 the crash window IS scored and is the sharpe_min driver. The calculus is fundamentally different.
+
+**BOTTLENECK:** sharpe_min = -1.4236. This is the binding constraint. Since sharpe_min is negative, the entire composite score is negative. Every other component is secondary. Consistency at 6/8 = 0.75 has headroom (could reach 7/8 = 0.875, a 17% multiplier improvement) but is moot while sharpe_min is deeply negative. max_dd at -4.3% is fine. Trades at 292 are adequate. The ONLY path to a meaningful score improvement is making sharpe_min substantially less negative.
+
+**NEAR-MISSES:** exp53 (demeaning 1.0x: -3.2476) and exp55 (blend 0.7/0.3: -3.2752) are essentially tied with the best (-3.2438). All pipeline variations converge to the same vicinity, confirming the pipeline is fully optimized.
+
+**PRESCRIPTION:** Remove all 9 monotonic constraints while keeping the current best pipeline (dampening 0.25, demeaning 1.0x, clip +-3.0, power 0.7, EMA 35, blend 0.6/0.4). One change: remove constraints.
+
+In `/Users/ipatterson/dev/autoresearch/assets/btc_hourly/train.py`, make these changes:
+
+1. Delete lines 291-302 (the monotonic constraint block) and replace with a comment:
+
+```python
+    # --- No monotonic constraints: allows regime-adaptive behavior for crash window ---
+```
+
+2. Remove `monotonic_cst=mono_cst.tolist(),` from both model instantiations (lines 312 and 325).
+
+The resulting model instantiations:
+
+```python
+    model_conservative = HistGradientBoostingRegressor(
+        max_iter=1000,
+        max_depth=4,
+        min_samples_leaf=600,
+        learning_rate=0.01,
+        max_leaf_nodes=15,
+        l2_regularization=3.0,
+        random_state=42,
+    )
+    model_conservative.fit(features, targets, sample_weight=sample_weight)
+
+    model_aggressive = HistGradientBoostingRegressor(
+        max_iter=1000,
+        max_depth=4,
+        min_samples_leaf=600,
+        learning_rate=0.01,
+        max_leaf_nodes=15,
+        max_features=0.8,
+        l2_regularization=3.0,
+        random_state=42,
+    )
+    model_aggressive.fit(features, targets, sample_weight=sample_weight)
+```
+
+**Why this is the right bet now:** At epoch 6 (crash window held out), removing constraints lost 0.22 sharpe on non-crash windows (0.58->0.24). At epoch 7, the crash window has sharpe -1.42 and is the sharpe_min driver. Even if non-crash windows lose 0.34 sharpe, they just need to stay above the crash window. If removing constraints improves the crash window from sharpe -1.42 to even -0.9, that is a 0.5 improvement on the bottleneck. Dampening 0.25 (already in best config) provides a safety net by keeping position sizes small.
+
+**IF THIS IMPROVES SCORE:** Try dampening 0.20 to further reduce crash-window damage.
+
+**IF SCORE IS SIMILAR (within 10%):** Try removing only the 6 return-based constraints (features 0-5) while keeping VW and efficiency constraints (features 6, 28, 29). Return features are most directly affected by crash regimes.
+
+**IF SCORE IS MUCH WORSE:** Constraints are critical even with crash window scored. Try dampening 0.20 WITH constraints -- accept the model is wrong during crashes and minimize damage through position sizing.
+
+**RATIONALE:** 8 experiments of pipeline tuning are exhausted. All 6 post-prediction parameters are at their optima. The only way to improve sharpe_min = -1.42 is to change what the model PREDICTS, not how predictions are post-processed. The monotonic constraints are the structural element that determines crash-regime predictions. Previous tests at epochs 5-6 are not applicable because the crash window was not scored then. This is the highest-leverage untested structural change for epoch 7.
+
+## 7c995b2 — remove all constraints (epoch 7)
+**Hypothesis:** Coach: constraints force momentum during crashes. Remove all 9.
+**Result:** Score -4.1591, sharpe_min -1.2938, max_dd -3.9%, 260 trades, 5/8 consistency, holdout OK. Discard.
+**Observation:** sharpe_min improved (-1.42→-1.29) — crash window DID benefit. But non-crash windows degraded (5/8 consistency). Net score worse. Coach fallback: dampening 0.20 with constraints.
+
+## 1298401 — dampening 0.20 with constraints ★ NEW EPOCH 7 BEST
+**Hypothesis:** Minimize crash damage through position sizing rather than fixing predictions.
+**Result:** Score -3.2048, sharpe_min -0.4108, max_dd -1.7%, 108 trades, 5/8 consistency, holdout OK. Keep.
+**Observation:** Massive sharpe_min improvement (-1.42→-0.41, 71% less negative). The model barely trades during crashes, protecting against wrong-direction exposure. But trade count collapsed (292→108). Score improvement marginal (-3.24→-3.20) because low trades offset sharpe gain. The path to positive score: sharpe_min is approaching zero but trade count must increase.
+
