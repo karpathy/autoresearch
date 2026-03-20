@@ -250,3 +250,8 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 **Result:** Score -0.5834, sharpe_min -0.1274, max_dd -3.3%, 203 trades, 6/8 consistency, holdout WARN. Keep (epoch 6 best).
 **Observation:** Huge improvement: -3.51→-0.58 on epoch 6. sharpe_min improved from -0.54 to -0.13. Trade count nearly doubled (149→203). Conservative model WAS undertrained with 300 iters on the larger expanding-window datasets. n_params increased from 7821→9647. Next: try max_iter=700 for more capacity.
 
+## 8ea0aa1 — max_iter 700 both models ★ EPOCH 6 BEST
+**Hypothesis:** More iterations continue improvement. Early stopping with leaf constraints prevents overfitting.
+**Result:** Score -0.2695, sharpe_min -0.1150, max_dd -4.4%, 297 trades, 6/8 consistency, holdout WARN. Keep (epoch 6 best).
+**Observation:** Continued improvement: 300/500→-3.51, 500/500→-0.58, **700/700→-0.27**. Trades nearly doubled again (203→297). Max_dd increased (-3.3→-4.4%) but well within threshold. Training time 35s, still safe. Next: try max_iter=1000.
+
