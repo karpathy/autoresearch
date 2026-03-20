@@ -309,6 +309,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         learning_rate=0.01,
         max_leaf_nodes=15,
         l2_regularization=3.0,
+        validation_fraction=0.15,
         monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
@@ -322,6 +323,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         max_leaf_nodes=15,
         max_features=0.8,
         l2_regularization=3.0,
+        validation_fraction=0.15,
         monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
