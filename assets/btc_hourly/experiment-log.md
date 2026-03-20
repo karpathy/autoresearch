@@ -304,3 +304,8 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 **Result:** Score 0.2009, sharpe_min 0.3305, max_dd -6.2%, 371 trades, 7/8 consistency, holdout WARN. Discard.
 **Observation:** Confirmed: EMA 35→0.39, 40→0.33, 45→0.26, 50→0.20. Clear monotonic trend — less smoothing is better at higher capacity. **EMA 35 locked.** Reverting. Recalibration complete. Next: focus on holdout WARN.
 
+## d715fdd — l2_regularization 4.0 (from 3.0) at EMA 35, iter=1000
+**Hypothesis:** Stronger per-tree regularization may improve generalization at higher capacity. Address holdout WARN.
+**Result:** Score 0.3495, sharpe_min 0.5046, max_dd -7.6%, 525 trades, 7/8 consistency, holdout WARN. Discard.
+**Observation:** Slightly worse score (0.39→0.35) but more trades (489→525). Holdout WARN persists. l2=4.0 increases trades but hurts signal quality. Next: try min_samples_leaf=800 (different regularization axis for generalization).
+
