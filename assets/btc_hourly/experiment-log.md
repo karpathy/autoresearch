@@ -401,5 +401,10 @@ This is the gentlest generalization improvement available. Unlike leaf=800 (whic
 ## 8b53ed6 — remove all constraints at iter=1000
 **Hypothesis:** At 18,830 params (2.4x old capacity), model may handle regime-adaptive behavior without constraints.
 **Result:** Score 0.1672, sharpe_min 0.2390, max_dd -8.7%, 485 trades, 7/8 consistency, holdout WARN. Discard.
-**Observation:** Better than old capacity removal (-1.95→+0.17) but still worse than constrained (0.39). **Constraints confirmed at BOTH capacities.** The model still learns reversal patterns that hurt worst window. Next: try n_iter_no_change=5 (stricter early stopping patience, targets holdout WARN).
+**Observation:** Better than old capacity removal (-1.95→+0.17) but still worse than constrained (0.39). **Constraints confirmed at BOTH capacities.** The model still learns reversal patterns that hurt worst window.
+
+## 9280f07 — n_iter_no_change=5 (from default 10)
+**Hypothesis:** Stricter early stopping patience makes model stop training sooner on overfit windows.
+**Result:** Score 0.3927, sharpe_min 0.5791, max_dd -7.7%, 489 trades, 7/8 consistency, holdout WARN. Discard (identical to best).
+**Observation:** Zero effect — every metric identical. Model uses all 1000 iterations without early stopping triggering. Early stopping is irrelevant at this capacity/data size. Next: try wider prediction clip ±3.0 (from ±2.0) — let high-capacity model express stronger signals when confident.
 
