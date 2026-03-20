@@ -444,3 +444,9 @@ This is the gentlest generalization improvement available. Unlike leaf=800 (whic
 **Result:** Score -3.2476, sharpe_min -1.4977, max_dd -9.7%, 420 trades, 5/8 consistency, holdout OK. Keep (epoch 7 best).
 **Observation:** Modest improvement over baseline (-3.56→-3.25). Full demeaning helps the crash window (sharpe improved -1.62→-1.50). Next: bracket with 0.8x.
 
+## 3d6e4c0 — demeaning 0.8x (epoch 7)
+**Hypothesis:** Bracket low to confirm direction.
+**Result:** Score -4.0711, sharpe_min -1.7667, max_dd -10.3%, 426 trades, 5/8 consistency, holdout OK. Discard.
+**Observation:** Worse than baseline (-4.07 vs -3.56). Demeaning bracket: 0.8x→-4.07, 0.9x→-3.56, **1.0x→-3.25**. More demeaning is better with crash window. Locking demeaning at 1.0x. Next: blend 0.7/0.3 with 1.0x demeaning.
+
+

@@ -329,11 +329,11 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
-    blend_weights = [0.6, 0.4]  # slight conservative tilt — re-test at iter=1000 capacity
+    blend_weights = [0.7, 0.3]  # stronger conservative tilt — crash regime favors more regularized model
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 0.8  # bracket low — test less demeaning at epoch 7
+    pred_bias = float(np.mean(train_preds)) * 1.0  # full demeaning — optimal for epoch 7 with crash window
 
     # Approximate param count
     n_params = 0
