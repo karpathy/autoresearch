@@ -406,5 +406,10 @@ This is the gentlest generalization improvement available. Unlike leaf=800 (whic
 ## 9280f07 — n_iter_no_change=5 (from default 10)
 **Hypothesis:** Stricter early stopping patience makes model stop training sooner on overfit windows.
 **Result:** Score 0.3927, sharpe_min 0.5791, max_dd -7.7%, 489 trades, 7/8 consistency, holdout WARN. Discard (identical to best).
-**Observation:** Zero effect — every metric identical. Model uses all 1000 iterations without early stopping triggering. Early stopping is irrelevant at this capacity/data size. Next: try wider prediction clip ±3.0 (from ±2.0) — let high-capacity model express stronger signals when confident.
+**Observation:** Zero effect — every metric identical. Model uses all 1000 iterations without early stopping triggering. Early stopping is irrelevant at this capacity/data size.
+
+## 633f9f4 — prediction clip ±3.0 (from ±2.0) ★★★ NEW BEST
+**Hypothesis:** High-capacity model may benefit from expressing stronger signals. Wider clip at iter=1000.
+**Result:** Score 0.4050, sharpe_min 0.5972, max_dd -7.8%, 489 trades, 7/8 consistency, holdout WARN. Keep (new best).
+**Observation:** Modest but clear improvement: 0.39→0.41. sharpe_min improved 0.58→0.60. Trade count unchanged. Another stale optimization validated — clip ±2.0 was tuned at old capacity. The higher-capacity model's predictions benefit from less clipping.
 
