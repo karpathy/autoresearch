@@ -18,6 +18,8 @@ AGENTS.md
 .claude/*
 !.claude/agents/
 !.claude/agents/*.md
+!.claude/hooks/
+!.claude/hooks/*.py
 !.claude/settings.local.json
 
 # Experimental code/artifacts
