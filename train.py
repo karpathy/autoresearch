@@ -23,7 +23,7 @@ from prepare import (
 # Feature Engineering
 # ---------------------------------------------------------------------------
 
-RETURN_LOOKBACKS = [1, 4, 12, 24, 48, 72, 168]
+RETURN_LOOKBACKS = [4, 12, 24, 48, 72, 168]  # 1h removed — noisiest with power transform
 VOLATILITY_WINDOWS = [24, 168]
 MAX_LOOKBACK = 168  # maximum lookback window (1 week)
 
@@ -67,16 +67,7 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         vw_cum = vw_series.rolling(lb, min_periods=lb).sum().values
         feature_cols.append(np.nan_to_num(vw_cum / vol_safe, nan=0.0))
 
-    # 1b. Momentum divergence: short-term vs long-term return agreement
-    #     Positive = both agree on direction, negative = divergence
-    ret_24 = np.full(len(close), np.nan)
-    ret_24[24:] = close[24:] / close[:-24] - 1.0
-    ret_168 = np.full(len(close), np.nan)
-    ret_168[168:] = close[168:] / close[:-168] - 1.0
-    # Product of vol-normalized returns: positive when aligned, negative when divergent
-    mom_div = (ret_24 / vol_safe) * (ret_168 / vol_safe)
-    feature_cols.append(np.nan_to_num(mom_div, nan=0.0))
-    feature_cols.append(np.nan_to_num(np.abs(mom_div), nan=0.0))  # magnitude of alignment
+    # 1b. [REMOVED] Momentum divergence — redundant with constrained returns + power transform
 
     # 2. Volatility (rolling std of hourly returns) — raw, not normalized
     for w in VOLATILITY_WINDOWS:
@@ -129,8 +120,8 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         bb_pos = (close - sma) / (2 * std_safe)
         feature_cols.append(bb_pos)
 
-    # 7b. Bollinger band width: 2*std/sma (narrow = consolidation, wide = trending)
-    for w in [24, 72, 168]:
+    # 7b. Bollinger band width: 2*std/sma (24h removed — noisy with power transform)
+    for w in [72, 168]:
         sma = close_series.rolling(w, min_periods=w).mean().values
         std = close_series.rolling(w, min_periods=w).std().values
         sma_safe = np.where(sma > 0, sma, 1.0)
@@ -165,7 +156,8 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     log_series = pd.Series(log_close)
     time_idx = pd.Series(np.arange(len(close), dtype=np.float64))
     for w in [168]:
-        r_sq = log_series.rolling(w, min_periods=w).corr(time_idx).values ** 2
+        corr = log_series.rolling(w, min_periods=w).corr(time_idx).values
+        r_sq = corr ** 2
         feature_cols.append(np.nan_to_num(r_sq, nan=0.0))
 
     # b) Directional efficiency: net move / total path length
@@ -288,6 +280,17 @@ def build_model(train_df: pd.DataFrame) -> callable:
 
     features = np.nan_to_num(features, nan=0.0)
 
+    # --- Monotonic constraints: longer-horizon returns must be increasing ---
+    # Prevents "strong momentum → predict reversal" pathology across multiple horizons
+    mono_cst = np.zeros(features.shape[1], dtype=int)
+    mono_cst[2] = 1  # 24h vol-normalized return → monotonically increasing
+    mono_cst[3] = 1  # 48h vol-normalized return → monotonically increasing
+    mono_cst[4] = 1  # 72h vol-normalized return → monotonically increasing
+    mono_cst[5] = 1  # 168h vol-normalized return → monotonically increasing
+    mono_cst[6] = 1  # 24h VW cumulative return → monotonically increasing
+    mono_cst[28] = 1  # 72h directional efficiency → monotonically increasing
+    mono_cst[29] = 1  # 168h directional efficiency → monotonically increasing
+
     # --- Train: two-model ensemble for diversity ---
     model_conservative = HistGradientBoostingRegressor(
         max_iter=300,
@@ -296,6 +299,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
         learning_rate=0.01,
         max_leaf_nodes=20,
         l2_regularization=3.0,
+        monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
     model_conservative.fit(features, targets)
@@ -308,6 +312,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
         max_leaf_nodes=20,
         max_features=0.8,
         l2_regularization=3.0,
+        monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
     model_aggressive.fit(features, targets)
@@ -341,6 +346,9 @@ def build_model(train_df: pd.DataFrame) -> callable:
 
         sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
         sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
+        # Power transform: amplify predictions away from zero to increase trade count
+        # 0.1→0.20, 0.3→0.41, 0.5→0.62, 1.0→1.0 (preserves sign and large signals)
+        sigma_preds = np.sign(sigma_preds) * np.abs(sigma_preds) ** 0.7
         sigma_preds = sigma_preds * 0.3  # further dampen to reduce position sizes
         sigma_smoothed = _smooth_predictions(sigma_preds)
         return sigma_smoothed, ts, vol
@@ -406,6 +414,7 @@ def main():
     print(f"total_trades:     {result['total_trades']}")
     print(f"consistency:      {result['consistency']}")
     print(f"holdout_health:   {result.get('holdout_health', 'N/A')}")
+    print(f"epoch:            {result.get('epoch', 'N/A')}")
     print(f"n_params:         {n_params}")
     print(f"training_seconds: {training_seconds:.1f}")
     print(f"total_seconds:    {total_seconds:.1f}")

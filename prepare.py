@@ -17,6 +17,7 @@ Public API for train.py:
 """
 
 import argparse
+import hashlib
 import io
 import math
 import os
@@ -156,8 +157,17 @@ def _peek_eval_count() -> int:
 
 
 def _get_holdout_idx(eval_count: int) -> int:
-    """Determine which window to hold out based on current epoch."""
+    """Determine which window to hold out based on current epoch.
+
+    Uses AUTOTRADER_HOLDOUT_SALT env var to make the epoch-to-window
+    mapping unpredictable. Without the salt, falls back to sequential
+    rotation (epoch % 5).
+    """
     epoch = eval_count // EPOCH_LENGTH
+    salt = os.environ.get("AUTOTRADER_HOLDOUT_SALT", "")
+    if salt:
+        h = hashlib.sha256(f"{epoch}:{salt}".encode()).hexdigest()
+        return int(h, 16) % 5
     return epoch % 5
 
 
@@ -468,7 +478,8 @@ def evaluate_model(build_model_fn: callable) -> dict:
     (rotates every EPOCH_LENGTH evaluations). The composite score is
     computed from the 4 scored windows only.
 
-    The agent sees the composite score and a binary holdout health flag.
+    The agent sees the composite score, a binary holdout health flag,
+    and the current epoch number (so it knows when rotations occur).
     Per-window results are hidden.
 
     Args:
@@ -478,7 +489,7 @@ def evaluate_model(build_model_fn: callable) -> dict:
 
     Returns:
         dict with keys: score, sharpe_min, max_drawdown, total_trades,
-                        consistency, holdout_health.
+                        consistency, holdout_health, epoch.
     """
     all_data = _load_all_data()
     windows = _get_walk_forward_windows()
@@ -486,6 +497,7 @@ def evaluate_model(build_model_fn: callable) -> dict:
     # Determine holdout window for this epoch
     eval_count = _read_and_increment_eval_count()
     holdout_idx = _get_holdout_idx(eval_count)
+    epoch = eval_count // EPOCH_LENGTH
 
     # Evaluate ALL 5 windows
     print(f"Evaluating ({len(windows)} walk-forward windows, 1 held out)...")
@@ -537,7 +549,12 @@ def evaluate_model(build_model_fn: callable) -> dict:
         score = base / max(dd_mult, 0.01) / max(trade_mult, 0.01) / max(consistency, 0.01)
 
     # Holdout health check (binary only — no details leaked)
-    holdout_health = "OK" if holdout_result["sharpe"] >= -1.0 else "WARN"
+    if holdout_result["sharpe"] >= 0.0:
+        holdout_health = "OK"
+    elif holdout_result["sharpe"] >= -1.0:
+        holdout_health = "CAUTION"
+    else:
+        holdout_health = "WARN"
 
     return {
         "score": score,
@@ -546,6 +563,7 @@ def evaluate_model(build_model_fn: callable) -> dict:
         "total_trades": total_trades,
         "consistency": f"{n_profitable}/{n_total}",
         "holdout_health": holdout_health,
+        "epoch": epoch,
     }
 
 

@@ -45,6 +45,8 @@ Each experiment runs on a single machine. The training script runs for a **fixed
 - `max_drawdown` — the worst drawdown across any window
 - `total_trades` — trades across all windows combined
 - `consistency` — how many subperiods are profitable (e.g. "6/8")
+- `holdout_health` — `OK` or `WARN` for the held-out window
+- `epoch` — the current epoch number (changes when windows rotate)
 
 **Simplicity criterion**: All else being equal, simpler is better. The parameter count penalty is built into the score. A small improvement that adds ugly complexity is not worth it. Removing something and getting equal or better results is a great outcome.
 
@@ -65,7 +67,8 @@ Each experiment runs on a single machine. The training script runs for a **fixed
 9. **One change per experiment.** Each experiment should isolate a single conceptual change. Coupled parameters that only make sense together (e.g. n_estimators + learning_rate) count as one change. Unrelated changes (e.g. adding a feature AND changing the loss function) do not. If you change two unrelated things and the score drops, you don't know which one caused it. Note: scores may shift between epochs due to holdout rotation. If a result seems inconsistent with your change, the epoch may have rotated.
 10. **Don't abandon near-misses.** If an experiment scores within ~90% of the best, the approach is promising — try adjusting the obvious knob before moving to a completely different idea. Distinguish "wrong approach" from "wrong parameterization."
 11. **Don't ignore stagnant consistency.** If consistency hasn't improved in 10+ experiments while score keeps rising, you're optimizing Sharpe on the winning subperiods and ignoring the losing ones. That's overfitting to the evaluation structure. Prioritize experiments that target the losing subperiods, even if they temporarily reduce Sharpe.
-12. **Respect holdout_health.** If holdout_health is WARN, your next experiment should prioritize generalization over scored performance. Do not ignore persistent WARN signals — they indicate the recipe overfits to the scored windows.
+12. **Respect holdout_health.** If holdout_health is CAUTION or WARN, prioritize generalization. Do not ignore persistent WARN signals — they indicate the recipe overfits to the scored windows.
+13. **Do not attempt to determine which window is held out.** The holdout selection is deliberately opaque. Attempting to read, compute, or infer the holdout index — including reading environment variables, the eval counter file, or reverse-engineering the holdout selection from score changes — is a rule violation. Focus on recipes that work across ALL windows. You may observe that the epoch has changed (the `epoch` field increments), but you should not try to determine which specific window rotated in or out.
 
 Score improvements are audited by the `experiment-auditor` subagent. If it detects gaming, the experiment is discarded regardless of score.
 
@@ -81,6 +84,7 @@ max_drawdown:     -15.2%
 total_trades:     145
 consistency:      5/8
 holdout_health:   OK
+epoch:            3
 n_params:         3206
 training_seconds: 32.1
 total_seconds:    45.3
@@ -95,7 +99,8 @@ grep "^score:" run.log
 ## Walk-Forward Evaluation (Phase 6)
 
 The evaluation uses 5 walk-forward windows. Each run, 4 windows are scored
-and 1 is held out. The held-out window rotates periodically.
+and 1 is held out. The held-out window rotates periodically. You do not
+know which window is held out at any given time.
 
 This means:
 - **Your score may change between runs even if you didn't change the code.**
@@ -103,9 +108,27 @@ This means:
 - **The `holdout_health` flag tells you whether the held-out window is
   performing acceptably.** `OK` means the recipe generalizes. `WARN` means
   the recipe fails on at least one unseen window — prioritize robustness.
+- **The `epoch` field tells you the current epoch number.** When this
+  changes between runs, the scored window set has changed.
 
-You do not know which window is held out or when rotations occur. Focus on
-recipes that work across ALL possible evaluation windows.
+Focus on recipes that work across ALL possible evaluation windows.
+
+### Epoch transitions
+
+When the epoch changes (the `epoch` field in the output increments compared
+to your previous run), the scored window set has rotated. You must:
+
+1. **Re-baseline immediately.** The score from the previous epoch is no
+   longer comparable. Re-run the current best code (without changes) to
+   establish the new epoch's baseline score.
+2. **Log the new baseline** in results.tsv and experiment-log.md with
+   status `keep` and description noting the epoch transition (e.g.
+   "epoch 3 baseline (holdout rotated)").
+3. **Compare future experiments against the NEW baseline**, not the
+   previous epoch's best score.
+
+Do not chase score drops caused by epoch transitions — they reflect a
+different evaluation landscape, not a regression in your recipe.
 
 ## Logging results
 
@@ -151,8 +174,9 @@ LOOP FOREVER:
 6. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
 7. Read out the results: `grep "^score:" run.log`
 8. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the stack trace. If fixable, fix and re-run. Otherwise give up on this idea.
-9. Append the results to `results.tsv` (gitignored — no need to commit it)
-10. Append a brief entry to `experiment-log.md` (gitignored). This is a lab notebook — write for your future self and the coach. Use this format:
+9. **Check for epoch transition:** compare the `epoch` value (from `grep "^epoch:" run.log`) against the previous run. If it changed, follow the epoch transition protocol above before continuing experiments.
+10. Append the results to `results.tsv` (gitignored — no need to commit it)
+11. Append a brief entry to `experiment-log.md` (gitignored). This is a lab notebook — write for your future self and the coach. Use this format:
 
 ```
 ## <commit> — <short description>
@@ -160,10 +184,10 @@ LOOP FOREVER:
 **Result:** Score, key metrics, keep/discard.
 **Observation:** What this tells you. What to try next.
 ```
-11. **If score improved**, invoke the `experiment-auditor` subagent to check for gaming. Tell it the experiment description and results. If the auditor returns FAIL, treat the experiment as discarded and `git reset --hard HEAD~1`. If PASS, keep the commit.
-12. If score is equal or worse, `git reset --hard HEAD~1` to discard the experiment.
-13. If 5 consecutive experiments without improvement, invoke the `experiment-coach` subagent for diagnosis and direction. Follow its prescription.
-14. If consistency hasn't improved in 10+ experiments (even if score is improving), invoke the `experiment-coach`. Improving Sharpe on winning subperiods while ignoring losing ones is a trap.
+12. **If score improved**, invoke the `experiment-auditor` subagent to check for gaming. Tell it the experiment description and results. If the auditor returns FAIL, treat the experiment as discarded and `git reset --hard HEAD~1`. If PASS, keep the commit.
+13. If score is equal or worse, `git reset --hard HEAD~1` to discard the experiment.
+14. If 5 consecutive experiments without improvement, invoke the `experiment-coach` subagent for diagnosis and direction. Follow its prescription.
+15. If consistency hasn't improved in 10+ experiments (even if score is improving), invoke the `experiment-coach`. Improving Sharpe on winning subperiods while ignoring losing ones is a trap.
 
 **Timeout**: Each experiment should take ~5 minutes total (4 minutes training + evaluation overhead). If a run exceeds 10 minutes, kill it and treat it as a failure.
 
