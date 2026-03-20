@@ -72,3 +72,54 @@ All scores remain negative. The pipeline parameters are recalibrated but the mod
 ---
 **Coach invoked (7 consecutive non-improvements)**
 
+**DIAGNOSIS:** The agent has spent 11 experiments tuning pipeline parameters (demeaning, EMA, dampening, power transform, early stopping) on an unchanged model architecture. All scores remain negative because sharpe_min < 0 in every experiment. The fundamental problem is structural: this model was designed and tuned for sliding 3-year windows. With expanding windows (4-7 years of training data + weight decay), the model's rigid monotonic constraints prevent it from learning regime-dependent behavior. Nine features are forced monotonically increasing -- meaning "higher past return always predicts higher future return." This pure momentum assumption fails in at least one evaluation window (likely a mean-reversion or crash period), producing negative sharpe_min and dragging the entire score negative. No amount of pipeline parameter tuning can fix a model that is structurally forced to predict momentum in a regime where momentum fails.
+
+**BOTTLENECK:** sharpe_min = -0.0720. Since sharpe_min is the base of the composite score, a negative base makes the entire score negative regardless of how good the other multipliers are. The dd_mult is fine (max_dd=-2.6% vs 25% hard penalty threshold). Trade count at 117 is adequate. Consistency at 6/8 means at least 2 subperiods are losing. The binding constraint is sharpe_min -- it must become positive (> 0) for any score improvement to matter. Currently 9 monotonic constraints lock the model into a momentum-only prediction mode across all regimes.
+
+**PRESCRIPTION:** Remove all monotonic constraints and increase regularization to compensate. In `/Users/ipatterson/dev/autoresearch/assets/btc_hourly/train.py`, make these specific changes:
+
+1. **Delete the monotonic constraint block** (lines 292-302). Replace the entire `mono_cst` section and the `monotonic_cst=mono_cst.tolist()` parameter in both models with nothing -- remove the parameter entirely.
+
+2. **Increase min_samples_leaf from 600 to 1000** in both models. With 60k+ training samples in later windows, the model needs stronger regularization to avoid fitting noise.
+
+3. **Increase l2_regularization from 3.0 to 5.0** in both models. Same reason.
+
+Concrete code: Replace the block from `# --- Monotonic constraints` through the two model `.fit()` calls with:
+
+```python
+    # --- Train: two-model ensemble for diversity ---
+    model_conservative = HistGradientBoostingRegressor(
+        max_iter=300,
+        max_depth=4,
+        min_samples_leaf=1000,
+        learning_rate=0.01,
+        max_leaf_nodes=20,
+        l2_regularization=5.0,
+        random_state=42,
+    )
+    model_conservative.fit(features, targets, sample_weight=sample_weight)
+
+    model_aggressive = HistGradientBoostingRegressor(
+        max_iter=500,
+        max_depth=4,
+        min_samples_leaf=1000,
+        learning_rate=0.01,
+        max_leaf_nodes=20,
+        max_features=0.8,
+        l2_regularization=5.0,
+        random_state=42,
+    )
+    model_aggressive.fit(features, targets, sample_weight=sample_weight)
+```
+
+This is a single conceptual change: "remove monotonic constraints and strengthen regularization to let the model learn regime-adaptive behavior." Test this as one experiment.
+
+If sharpe_min becomes positive with this change but score is still modest, the next step is feature reduction (drop the weakest features to reduce noise). If sharpe_min stays negative, the next step is to try a fundamentally simpler model -- a single HistGradientBoostingRegressor with max_depth=3 and very few features (just the 6 return lookbacks + 2 volatility windows).
+
+**RATIONALE:** Every experiment so far has kept the 9 monotonic constraints intact. These constraints were useful for sliding 3-year windows where each window saw a relatively homogeneous regime. But expanding windows mix bull markets, bear markets, and chop -- forcing "higher past return = higher predicted return" across all of these is the equivalent of forcing a momentum-only strategy. The model has regime features (vol ratio, directional efficiency, vol percentile, etc.) that could allow it to learn "momentum works in trending regimes, fade it in choppy/high-vol regimes" -- but the monotonic constraints prevent this. Removing them is the single highest-leverage structural change available. The increased regularization (min_samples_leaf 600->1000, l2 3.0->5.0) compensates for the additional model freedom to prevent overfitting on the larger training sets.
+
+## e98d63c — remove monotonic constraints + increase regularization
+**Hypothesis:** Coach: constraints force pure momentum which fails in mixed-regime expanding windows. Remove all 9 constraints, increase min_samples_leaf 600→1000, l2 3.0→5.0.
+**Result:** Score -1.9492, sharpe_min -0.4746, max_dd -2.6%, 152 trades, 7/8 consistency, holdout CAUTION. Discard.
+**Observation:** Worse than constrained (-1.95 vs -0.47). sharpe_min much worse (-0.47 vs -0.07). Constraints were PROTECTING signal quality, not limiting it. The model learns reversal patterns when unconstrained that hurt more than regime-adaptation helps. Trade count improved (152 vs 117) but at cost of signal quality. Constraints stay. Next: try tighter prediction clip ±1.0 (from ±2.0) — sharpe_min at -0.07 is barely negative, tighter clips may prevent the worst predictions from pushing it below zero.
+
