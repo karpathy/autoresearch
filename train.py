@@ -135,6 +135,7 @@ class CausalSelfAttention(nn.Module):
 
 
 SPARSE_K = 0.10  # fraction of MLP neurons active per token (sparse coding)
+HOMEOSTATIC_ALPHA = 0.05  # EMA rate for per-neuron firing stats
 
 
 class MLP(nn.Module):
@@ -146,12 +147,22 @@ class MLP(nn.Module):
         self.c_fc = nn.Linear(config.n_embd, intermediate, bias=False)
         self.c_proj = nn.Linear(intermediate, config.n_embd, bias=False)
         self.k = max(1, int(intermediate * SPARSE_K))
+        # Homeostatic plasticity: per-neuron EMA of firing rates, init at target rate
+        self.register_buffer('firing_ema', torch.ones(intermediate) * SPARSE_K)
 
     def forward(self, x):
         h = F.silu(self.c_gate(x)) * self.c_fc(x)
-        # k-Winners: only top-k activations survive — sparse coding (brain fires ~5% of neurons)
-        threshold = h.abs().topk(self.k, dim=-1, sorted=False).values.amin(dim=-1, keepdim=True)
-        h = h * (h.abs() >= threshold)
+        # Homeostatic: boost dormant neurons' selection probability
+        # excitability = target_rate / actual_rate — dormant neurons get boosted into selection
+        excitability = (SPARSE_K / self.firing_ema.clamp(min=1e-4)).clamp(max=10.0)
+        h_biased = h * excitability
+        # k-Winners on biased activations — unscaled h passes through (gradient unaffected)
+        threshold = h_biased.abs().topk(self.k, dim=-1, sorted=False).values.amin(dim=-1, keepdim=True)
+        mask = h_biased.abs() >= threshold
+        if self.training:
+            with torch.no_grad():
+                self.firing_ema.lerp_(mask.float().mean(dim=(0, 1)), HOMEOSTATIC_ALPHA)
+        h = h * mask
         return self.c_proj(h)
 
 
