@@ -19,7 +19,25 @@
     ],
     "deny": [
       "Bash(git push --force *)",
-      "Bash(git push -f *)"
+      "Bash(git push -f *)",
+      "Read(**/.zshrc)",
+      "Read(**/.bash_profile)",
+      "Read(**/.bashrc)",
+      "Read(**/.profile)",
+      "Read(**/.cache/autotrader/eval_count)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $(git rev-parse --show-toplevel)/.claude/hooks/protect_holdout.py"
+          }
+        ]
+      }
     ]
   }
 }
