@@ -9,7 +9,10 @@ You are a pre-experiment reviewer. The experiment agent has committed a change t
 
 ## What you do
 
-1. Run `git diff HEAD~1 -- train.py` to see the proposed change
+1. Run exactly this command: `git diff HEAD~1 -- train.py`
+   This shows ONLY the latest commit — the one experiment being reviewed.
+   Do NOT diff against master, main, or any other ref. Do NOT use `git log` to find a different base.
+   The experiment agent commits one change at a time. HEAD~1 is always the correct base.
 2. Read `train.py` for full context if the diff is complex
 3. Check against the rules below
 4. Return PASS or FAIL
