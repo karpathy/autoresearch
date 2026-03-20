@@ -288,9 +288,17 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     features = np.nan_to_num(features, nan=0.0)
 
-    # --- Monotonic constraints removed + dampening 0.20 ---
-    # Combining both crash-window levers: unconstrained model (sharpe -1.29)
-    # + low dampening (sharpe -0.41). May push sharpe_min positive.
+    # --- Monotonic constraints ---
+    mono_cst = np.zeros(features.shape[1], dtype=int)
+    mono_cst[0] = 1  # 4h vol-normalized return
+    mono_cst[1] = 1  # 12h vol-normalized return
+    mono_cst[2] = 1  # 24h vol-normalized return
+    mono_cst[3] = 1  # 48h vol-normalized return
+    mono_cst[4] = 1  # 72h vol-normalized return
+    mono_cst[5] = 1  # 168h vol-normalized return
+    mono_cst[6] = 1  # 24h VW cumulative return
+    mono_cst[28] = 1  # 72h directional efficiency
+    mono_cst[29] = 1  # 168h directional efficiency
 
     # --- Train: two-model ensemble for diversity ---
     model_conservative = HistGradientBoostingRegressor(
@@ -300,6 +308,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         learning_rate=0.01,
         max_leaf_nodes=15,
         l2_regularization=3.0,
+        monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
     model_conservative.fit(features, targets, sample_weight=sample_weight)
@@ -312,6 +321,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         max_leaf_nodes=15,
         max_features=0.8,
         l2_regularization=3.0,
+        monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
     model_aggressive.fit(features, targets, sample_weight=sample_weight)
@@ -322,7 +332,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 1.0  # full demeaning — optimal for epoch 7 with crash window
+    pred_bias = float(np.mean(train_preds)) * 1.1  # over-demean — slight negative bias helps during crashes
 
     # Approximate param count
     n_params = 0
