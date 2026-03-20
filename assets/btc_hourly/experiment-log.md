@@ -141,3 +141,57 @@ If sharpe_min becomes positive with this change but score is still modest, the n
 ---
 **Coach invoked (11 consecutive non-improvements)**
 
+**DIAGNOSIS:** The agent has run 15 experiments and every single one has kept the core model hyperparameters (max_depth=4, max_leaf_nodes=20, learning_rate=0.01, max_iter=300/500) completely untouched. All 15 experiments tuned only post-prediction pipeline parameters (demeaning, EMA, dampening, power, clip, winsor) or meta-settings (early stopping, monotonic constraints). The pipeline is now fully optimized at 0.9x demeaning, EMA 45, dampening 0.3, power 0.7 -- further tuning of these knobs is exhausted. The model itself, however, has never been adjusted for expanding windows. With expanding windows, later evaluation windows train on 50-60k+ samples spanning 4-7 years of mixed regimes. A model with max_depth=4 and max_leaf_nodes=20 has enough capacity to memorize regime-specific noise in this larger training set, which then hurts the worst evaluation window. The previous coach's prescription (remove constraints + increase regularization) conflated two changes and the constraint removal dominated -- it made things worse. The regularization increase alone was never tested with constraints intact.
+
+**BOTTLENECK:** sharpe_min = -0.0720. This is the binding constraint. Since sharpe_min is negative, the entire composite score is negative regardless of other components. The score is tantalizingly close to flipping positive -- sharpe_min just needs to cross zero. max_drawdown at -2.6% is nowhere near the penalty threshold. Trade count at 117 is adequate. Consistency at 6/8 is decent. The ONLY thing preventing a positive score is the worst evaluation window having slightly negative Sharpe. A small reduction in model complexity could prevent overfitting in that worst window without degrading the other windows.
+
+**NEAR-MISSES TO NOTE:**
+- Exp3 (0.8x demean): score=-0.63, sharpe_min=-0.11, consistency=**7/8** -- better consistency than best
+- Exp7 (EMA 50): score=-1.16, sharpe_min=-0.15 -- within range, different smoothing
+- Exp15 (0.95x demean): score=-1.11, sharpe_min=-0.14 -- confirmed 0.9x peak
+- None of these suggest a pipeline param adjustment would help. All pipeline params are at their optima.
+
+**PRESCRIPTION:** Reduce max_depth from 4 to 3 in both models. This is a pure model complexity reduction that has never been tested. In `/Users/ipatterson/dev/autoresearch/assets/btc_hourly/train.py`, change both HistGradientBoostingRegressor instantiations:
+
+```python
+    # Conservative model: change max_depth=4 to max_depth=3
+    model_conservative = HistGradientBoostingRegressor(
+        max_iter=300,
+        max_depth=3,          # was 4
+        min_samples_leaf=600,
+        learning_rate=0.01,
+        max_leaf_nodes=20,
+        l2_regularization=3.0,
+        monotonic_cst=mono_cst.tolist(),
+        random_state=42,
+    )
+
+    # Aggressive model: change max_depth=4 to max_depth=3
+    model_aggressive = HistGradientBoostingRegressor(
+        max_iter=500,
+        max_depth=3,          # was 4
+        min_samples_leaf=600,
+        learning_rate=0.01,
+        max_leaf_nodes=20,
+        max_features=0.8,
+        l2_regularization=3.0,
+        monotonic_cst=mono_cst.tolist(),
+        random_state=42,
+    )
+```
+
+Leave everything else unchanged -- same constraints, same regularization, same features, same pipeline. This is one change: "shallower trees."
+
+Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have up to 20 leaves with 4 levels of splits. At depth 3, trees can have at most 8 leaves (2^3). The max_leaf_nodes=20 parameter becomes non-binding but does no harm. This halves the effective tree complexity, reducing capacity to memorize regime-specific noise in the larger expanding-window training sets. Depth 3 still allows two-way feature interactions (e.g., "high vol AND positive momentum") which is sufficient for the constrained momentum signal.
+
+**IF THIS FAILS:** The next step is to increase learning_rate from 0.01 to 0.02 (also untested). With expanding windows having more samples, each gradient step contributes less per-sample. A higher learning rate compensates, letting the model learn a stronger signal within the 300/500 iteration budget. This is especially relevant for the earliest evaluation window which has the least training data and may be undertrained at lr=0.01.
+
+**IF BOTH FAIL:** Try replacing one of the two HGB models with an ExtraTreesRegressor to get genuine algorithmic diversity (bagging vs boosting). Use confidence-scaled predictions from the ETR via `_confidence_scaled_predict` (which was built for exactly this but never used). ETR naturally handles regime uncertainty through tree disagreement.
+
+**RATIONALE:** The agent has been trapped in a pipeline-tuning loop for 15 experiments. All 6 pipeline parameters have been swept to their optima. The model's core hyperparameters (max_depth, learning_rate, max_iter, max_leaf_nodes) have NEVER been varied despite being the primary controls for model complexity. With the infrastructure change from sliding to expanding windows, the training set roughly doubled in size for later windows. A model calibrated for 25k samples (3-year sliding window) is likely overcapacity for 50k+ samples spanning diverse regimes. Reducing max_depth is the simplest, most direct way to address this. The fact that sharpe_min=-0.07 (barely negative) means even a small robustness improvement could flip the score positive.
+
+## 8eb76b8 — max_depth 3 (from 4)
+**Hypothesis:** Coach: shallower trees reduce overfitting on larger expanding-window training sets.
+**Result:** Score -17.7069, sharpe_min -0.9599, max_dd -1.9%, 59 trades, 4/8 consistency, holdout WARN. Discard.
+**Observation:** Catastrophic. max_depth=3 is far too shallow — model can't capture useful patterns. Only 59 trades. n_params dropped from 7820 to 4950. Trying coach fallback: learning_rate 0.02.
+
