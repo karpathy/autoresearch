@@ -5,26 +5,26 @@ Usage: uv run train.py
 """
 
 import os
+
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
-import json
 import math
-import subprocess
 import time
 from dataclasses import dataclass, asdict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint as torch_checkpoint
+
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
 # ---------------------------------------------------------------------------
 # GPT Model
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class GPTConfig:
@@ -35,7 +35,6 @@ class GPTConfig:
     n_kv_head: int = 6
     n_embd: int = 768
     window_pattern: str = "SSSL"
-    use_activation_checkpointing: bool = False
 
 
 def norm(x):
@@ -56,11 +55,7 @@ def apply_rotary_emb(x, cos, sin):
     return torch.cat([y1, y2], 3)
 
 
-def get_gpu_peak_flops(gpu_name):
-    name = gpu_name.lower()
-    if "rtx pro 500 blackwell generation" in name:
-        return 9.2e12
-    return None
+HEBB_LR = 0.0  # disabled: test if Hebbian helps under SwiGLU
 
 
 class CausalSelfAttention(nn.Module):
@@ -77,22 +72,14 @@ class CausalSelfAttention(nn.Module):
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 32
-        self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
-        self._mask_cache = {}
-
-    def _get_sdpa_mask(self, seq_len, window_size, device):
-        window = window_size[0] if isinstance(window_size, tuple) else window_size
-        cache_key = (seq_len, int(window), device.type, device.index)
-        mask = self._mask_cache.get(cache_key)
-        if mask is not None:
-            return mask
-        row = torch.arange(seq_len, device=device).unsqueeze(1)
-        col = torch.arange(seq_len, device=device).unsqueeze(0)
-        mask = col <= row  # causal
-        if window is not None and window >= 0 and window < seq_len:
-            mask = mask & (col >= (row - window))
-        self._mask_cache[cache_key] = mask
-        return mask
+        self.ve_gate = (
+            nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False)
+            if has_ve(layer_idx, config.n_layer)
+            else None
+        )
+        # Hebbian accumulator: running sum of co-activation (pre * post)
+        self.hebb_accum = None
+        self.hebb_proj = None
 
     def forward(self, x, ve, cos_sin, window_size):
         B, T, C = x.size()
@@ -100,37 +87,72 @@ class CausalSelfAttention(nn.Module):
         k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
         v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
 
+        # Hebbian: accumulate co-activation of input x and value output v
+        # delta_W[i,j] += lr * x[...,i] * v[...,j]  (connections that fire together wire together)
+        with torch.no_grad():
+            x_flat = x.reshape(B * T, C)
+            v_flat = v.reshape(B * T, self.n_kv_head * self.head_dim)
+            # Mean outer product: (input_dim, output_dim)
+            hebb_delta = (x_flat.T @ v_flat) / (B * T)
+            if self.hebb_accum is None:
+                self.hebb_accum = hebb_delta
+            else:
+                self.hebb_accum += hebb_delta
+
         # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
         if ve is not None:
             ve = ve.view(B, T, self.n_kv_head, self.head_dim)
-            gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))
+            gate = 2 * torch.sigmoid(self.ve_gate(x[..., : self.ve_gate_channels]))
             v = v + gate.unsqueeze(-1) * ve
 
         cos, sin = cos_sin
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        q = q.transpose(1, 2)  # (B, H, T, D)
-        k = k.transpose(1, 2)  # (B, KVH, T, D)
-        v = v.transpose(1, 2)  # (B, KVH, T, D)
-        attn_mask = self._get_sdpa_mask(T, window_size, q.device)
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=False)
-        y = y.transpose(1, 2).contiguous().view(B, T, -1)
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        y = y.contiguous().view(B, T, -1)
+        # Hebbian for c_proj: co-activation of attention output and final output
+        with torch.no_grad():
+            y_flat = y.reshape(B * T, -1)
+            output_flat = self.c_proj(y).reshape(B * T, -1)
+            hebb_proj = (y_flat.T @ output_flat) / (B * T)
+            self.hebb_proj = (
+                self.hebb_proj + hebb_proj if self.hebb_proj is not None else hebb_proj
+            )
         y = self.c_proj(y)
         return y
+
+    @torch.no_grad()
+    def apply_hebbian(self, modulation=1.0):
+        """Apply accumulated Hebbian updates to c_v and c_proj weights."""
+        effective_lr = HEBB_LR * modulation
+        if self.hebb_accum is not None:
+            self.c_v.weight.add_(self.hebb_accum.T, alpha=effective_lr)
+            self.hebb_accum = None
+        if self.hebb_proj is not None:
+            self.c_proj.weight.add_(self.hebb_proj.T, alpha=effective_lr)
+            self.hebb_proj = None
+
+
+SPARSE_K = 0.10  # fraction of MLP neurons active per token (sparse coding)
 
 
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        # SwiGLU: 8/3x intermediate ≈ same params as 4x relu² FFN (3 matrices vs 2)
+        intermediate = int(config.n_embd * 8 / 3)
+        self.c_gate = nn.Linear(config.n_embd, intermediate, bias=False)
+        self.c_fc = nn.Linear(config.n_embd, intermediate, bias=False)
+        self.c_proj = nn.Linear(intermediate, config.n_embd, bias=False)
+        self.k = max(1, int(intermediate * SPARSE_K))
 
     def forward(self, x):
-        x = self.c_fc(x)
-        x = F.relu(x).square()
-        x = self.c_proj(x)
-        return x
+        h = F.silu(self.c_gate(x)) * self.c_fc(x)
+        # k-Winners: only top-k activations survive — sparse coding (brain fires ~5% of neurons)
+        threshold = h.abs().topk(self.k, dim=-1, sorted=False).values.amin(dim=-1, keepdim=True)
+        h = h * (h.abs() >= threshold)
+        return self.c_proj(h)
 
 
 class Block(nn.Module):
@@ -150,22 +172,27 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
         self.window_sizes = self._compute_window_sizes(config)
-        self.transformer = nn.ModuleDict({
-            "wte": nn.Embedding(config.vocab_size, config.n_embd),
-            "h": nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
-        })
+        self.transformer = nn.ModuleDict(
+            {
+                "wte": nn.Embedding(config.vocab_size, config.n_embd),
+                "h": nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
+            }
+        )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
         # Value embeddings
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
-        self.value_embeds = nn.ModuleDict({
-            str(i): nn.Embedding(config.vocab_size, kv_dim)
-            for i in range(config.n_layer) if has_ve(i, config.n_layer)
-        })
+        self.value_embeds = nn.ModuleDict(
+            {
+                str(i): nn.Embedding(config.vocab_size, kv_dim)
+                for i in range(config.n_layer)
+                if has_ve(i, config.n_layer)
+            }
+        )
         # Rotary embeddings
-        self.rotary_seq_len = config.sequence_len
+        self.rotary_seq_len = config.sequence_len * 10
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
@@ -183,6 +210,7 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight)
+            torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
         # Per-layer scalars
@@ -199,10 +227,10 @@ class GPT(nn.Module):
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
-        # Cast embeddings to bf16
-        self.transformer.wte.to(dtype=torch.bfloat16)
+        # Cast embeddings to float32 (bf16 not supported on Turing)
+        self.transformer.wte.to(dtype=torch.float32)
         for ve in self.value_embeds.values():
-            ve.to(dtype=torch.bfloat16)
+            ve.to(dtype=torch.float32)
 
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
         if device is None:
@@ -212,7 +240,7 @@ class GPT(nn.Module):
         t = torch.arange(seq_len, dtype=torch.float32, device=device)
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.bfloat16(), sin.bfloat16()
+        cos, sin = cos.float(), sin.float()
         cos, sin = cos[None, :, None, :], sin[None, :, None, :]
         return cos, sin
 
@@ -233,8 +261,12 @@ class GPT(nn.Module):
         """Estimated FLOPs per token (forward + backward)."""
         nparams = sum(p.numel() for p in self.parameters())
         value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
-        nparams_exclude = (self.transformer.wte.weight.numel() + value_embeds_numel +
-                          self.resid_lambdas.numel() + self.x0_lambdas.numel())
+        nparams_exclude = (
+            self.transformer.wte.weight.numel()
+            + value_embeds_numel
+            + self.resid_lambdas.numel()
+            + self.x0_lambdas.numel()
+        )
         h = self.config.n_head
         q = self.config.n_embd // self.config.n_head
         t = self.config.sequence_len
@@ -253,12 +285,23 @@ class GPT(nn.Module):
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
         total = wte + value_embeds + lm_head + transformer_matrices + scalars
         return {
-            'wte': wte, 'value_embeds': value_embeds, 'lm_head': lm_head,
-            'transformer_matrices': transformer_matrices, 'scalars': scalars, 'total': total,
+            "wte": wte,
+            "value_embeds": value_embeds,
+            "lm_head": lm_head,
+            "transformer_matrices": transformer_matrices,
+            "scalars": scalars,
+            "total": total,
         }
 
-    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02,
-                        weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5):
+    def setup_optimizer(
+        self,
+        unembedding_lr=0.004,
+        embedding_lr=0.2,
+        matrix_lr=0.02,
+        weight_decay=0.0,
+        adam_betas=(0.8, 0.95),
+        scalar_lr=0.5,
+    ):
         model_dim = self.config.n_embd
         matrix_params = list(self.transformer.h.parameters())
         value_embeds_params = list(self.value_embeds.parameters())
@@ -266,30 +309,78 @@ class GPT(nn.Module):
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
-        assert len(list(self.parameters())) == (len(matrix_params) + len(embedding_params) +
-            len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params))
+        assert len(list(self.parameters())) == (
+            len(matrix_params)
+            + len(embedding_params)
+            + len(lm_head_params)
+            + len(value_embeds_params)
+            + len(resid_params)
+            + len(x0_params)
+        )
         # Scale LR ∝ 1/√dmodel (tuned at 768 dim)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         print(f"Scaling AdamW LRs by 1/sqrt({model_dim}/768) = {dmodel_lr_scale:.6f}")
         param_groups = [
-            dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),
+            dict(
+                kind="adamw",
+                params=lm_head_params,
+                lr=unembedding_lr * dmodel_lr_scale,
+                betas=adam_betas,
+                eps=1e-10,
+                weight_decay=0.0,
+            ),
+            dict(
+                kind="adamw",
+                params=embedding_params,
+                lr=embedding_lr * dmodel_lr_scale,
+                betas=adam_betas,
+                eps=1e-10,
+                weight_decay=0.0,
+            ),
+            dict(
+                kind="adamw",
+                params=value_embeds_params,
+                lr=embedding_lr * dmodel_lr_scale,
+                betas=adam_betas,
+                eps=1e-10,
+                weight_decay=0.0,
+            ),
+            dict(
+                kind="adamw",
+                params=resid_params,
+                lr=scalar_lr * 0.01,
+                betas=adam_betas,
+                eps=1e-10,
+                weight_decay=0.0,
+            ),
+            dict(
+                kind="adamw",
+                params=x0_params,
+                lr=scalar_lr,
+                betas=(0.96, 0.95),
+                eps=1e-10,
+                weight_decay=0.0,
+            ),
         ]
         for shape in sorted({p.shape for p in matrix_params}):
             group_params = [p for p in matrix_params if p.shape == shape]
-            param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
-            ))
+            param_groups.append(
+                dict(
+                    kind="muon",
+                    params=group_params,
+                    lr=matrix_lr,
+                    momentum=0.95,
+                    ns_steps=5,
+                    beta2=0.95,
+                    weight_decay=weight_decay,
+                )
+            )
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
         return optimizer
 
-    def forward(self, idx, targets=None, reduction='mean'):
+    def forward(self, idx, targets=None, reduction="mean"):
         B, T = idx.size()
         assert T <= self.cos.size(1)
         cos_sin = self.cos[:, :T], self.sin[:, :T]
@@ -300,11 +391,7 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
-            window_size = self.window_sizes[i]
-            if self.config.use_activation_checkpointing:
-                x = torch_checkpoint(block, x, ve, cos_sin, window_size, use_reentrant=False)
-            else:
-                x = block(x, ve, cos_sin, window_size)
+            x = block(x, ve, cos_sin, self.window_sizes[i])
         x = norm(x)
 
         softcap = 15
@@ -313,10 +400,15 @@ class GPT(nn.Module):
         logits = softcap * torch.tanh(logits / softcap)
 
         if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1),
-                                   ignore_index=-1, reduction=reduction)
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                targets.view(-1),
+                ignore_index=-1,
+                reduction=reduction,
+            )
             return loss
         return logits
+
 
 # ---------------------------------------------------------------------------
 # Optimizer (MuonAdamW, single GPU only)
@@ -330,24 +422,40 @@ polar_express_coeffs = [
     (2.3465413258596377, -1.7097828382687081, 0.42323551169305323),
 ]
 
-def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t):
+
+@torch.compile(dynamic=False, fullgraph=True)
+def adamw_step_fused(
+    p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t
+):
     p.mul_(1 - lr_t * wd_t)
     exp_avg.lerp_(grad, 1 - beta1_t)
     exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
-    bias1 = 1 - beta1_t ** step_t
-    bias2 = 1 - beta2_t ** step_t
+    bias1 = 1 - beta1_t**step_t
+    bias2 = 1 - beta2_t**step_t
     denom = (exp_avg_sq / bias2).sqrt() + eps_t
     step_size = lr_t / bias1
     p.add_(exp_avg / denom, alpha=-step_size)
 
-def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momentum_buffer,
-                    momentum_t, lr_t, wd_t, beta2_t, ns_steps, red_dim):
+
+@torch.compile(dynamic=False, fullgraph=True)
+def muon_step_fused(
+    stacked_grads,
+    stacked_params,
+    momentum_buffer,
+    second_momentum_buffer,
+    momentum_t,
+    lr_t,
+    wd_t,
+    beta2_t,
+    ns_steps,
+    red_dim,
+):
     # Nesterov momentum
     momentum = momentum_t.to(stacked_grads.dtype)
     momentum_buffer.lerp_(stacked_grads, 1 - momentum)
     g = stacked_grads.lerp_(momentum_buffer, momentum)
     # Polar express orthogonalization
-    X = g.bfloat16()
+    X = g.float()
     X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.02 + 1e-6)
     if g.size(-2) > g.size(-1):
         for a, b, c in polar_express_coeffs[:ns_steps]:
@@ -366,7 +474,9 @@ def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momen
     red_dim_size = g.size(red_dim)
     v_norm_sq = v_mean.sum(dim=(-2, -1), keepdim=True) * red_dim_size
     v_norm = v_norm_sq.sqrt()
-    second_momentum_buffer.lerp_(v_mean.to(dtype=second_momentum_buffer.dtype), 1 - beta2)
+    second_momentum_buffer.lerp_(
+        v_mean.to(dtype=second_momentum_buffer.dtype), 1 - beta2
+    )
     step_size = second_momentum_buffer.clamp_min(1e-10).rsqrt()
     scaled_sq_sum = (v_mean * red_dim_size) * step_size.float().square()
     v_norm_new = scaled_sq_sum.sum(dim=(-2, -1), keepdim=True).sqrt()
@@ -397,28 +507,37 @@ class MuonAdamW(torch.optim.Optimizer):
         self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
 
     def _step_adamw(self, group):
-        for p in group['params']:
+        for p in group["params"]:
             if p.grad is None:
                 continue
             grad = p.grad
             state = self.state[p]
             if not state:
-                state['step'] = 0
-                state['exp_avg'] = torch.zeros_like(p)
-                state['exp_avg_sq'] = torch.zeros_like(p)
-            state['step'] += 1
-            self._adamw_step_t.fill_(state['step'])
-            self._adamw_lr_t.fill_(group['lr'])
-            self._adamw_beta1_t.fill_(group['betas'][0])
-            self._adamw_beta2_t.fill_(group['betas'][1])
-            self._adamw_eps_t.fill_(group['eps'])
-            self._adamw_wd_t.fill_(group['weight_decay'])
-            adamw_step_fused(p, grad, state['exp_avg'], state['exp_avg_sq'],
-                            self._adamw_step_t, self._adamw_lr_t, self._adamw_beta1_t,
-                            self._adamw_beta2_t, self._adamw_eps_t, self._adamw_wd_t)
+                state["step"] = 0
+                state["exp_avg"] = torch.zeros_like(p)
+                state["exp_avg_sq"] = torch.zeros_like(p)
+            state["step"] += 1
+            self._adamw_step_t.fill_(state["step"])
+            self._adamw_lr_t.fill_(group["lr"])
+            self._adamw_beta1_t.fill_(group["betas"][0])
+            self._adamw_beta2_t.fill_(group["betas"][1])
+            self._adamw_eps_t.fill_(group["eps"])
+            self._adamw_wd_t.fill_(group["weight_decay"])
+            adamw_step_fused(
+                p,
+                grad,
+                state["exp_avg"],
+                state["exp_avg_sq"],
+                self._adamw_step_t,
+                self._adamw_lr_t,
+                self._adamw_beta1_t,
+                self._adamw_beta2_t,
+                self._adamw_eps_t,
+                self._adamw_wd_t,
+            )
 
     def _step_muon(self, group):
-        params = group['params']
+        params = group["params"]
         if not params:
             return
         p = params[0]
@@ -426,92 +545,72 @@ class MuonAdamW(torch.optim.Optimizer):
         num_params = len(params)
         shape, device, dtype = p.shape, p.device, p.dtype
         if "momentum_buffer" not in state:
-            state["momentum_buffer"] = torch.zeros(num_params, *shape, dtype=dtype, device=device)
+            state["momentum_buffer"] = torch.zeros(
+                num_params, *shape, dtype=dtype, device=device
+            )
         if "second_momentum_buffer" not in state:
-            state_shape = (num_params, shape[-2], 1) if shape[-2] >= shape[-1] else (num_params, 1, shape[-1])
-            state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
+            state_shape = (
+                (num_params, shape[-2], 1)
+                if shape[-2] >= shape[-1]
+                else (num_params, 1, shape[-1])
+            )
+            state["second_momentum_buffer"] = torch.zeros(
+                state_shape, dtype=dtype, device=device
+            )
         red_dim = -1 if shape[-2] >= shape[-1] else -2
         stacked_grads = torch.stack([p.grad for p in params])
         stacked_params = torch.stack(params)
         self._muon_momentum_t.fill_(group["momentum"])
         self._muon_beta2_t.fill_(group["beta2"] if group["beta2"] is not None else 0.0)
-        self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1])**0.5)
+        self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1]) ** 0.5)
         self._muon_wd_t.fill_(group["weight_decay"])
-        muon_step_fused(stacked_grads, stacked_params,
-                        state["momentum_buffer"], state["second_momentum_buffer"],
-                        self._muon_momentum_t, self._muon_lr_t, self._muon_wd_t,
-                        self._muon_beta2_t, group["ns_steps"], red_dim)
+        muon_step_fused(
+            stacked_grads,
+            stacked_params,
+            state["momentum_buffer"],
+            state["second_momentum_buffer"],
+            self._muon_momentum_t,
+            self._muon_lr_t,
+            self._muon_wd_t,
+            self._muon_beta2_t,
+            group["ns_steps"],
+            red_dim,
+        )
         torch._foreach_copy_(params, list(stacked_params.unbind(0)))
 
     @torch.no_grad()
     def step(self):
         for group in self.param_groups:
-            if group['kind'] == 'adamw':
+            if group["kind"] == "adamw":
                 self._step_adamw(group)
-            elif group['kind'] == 'muon':
+            elif group["kind"] == "muon":
                 self._step_muon(group)
+
 
 # ---------------------------------------------------------------------------
 # Hyperparameters (edit these directly, no CLI flags needed)
 # ---------------------------------------------------------------------------
 
 # Model architecture
-ASPECT_RATIO = 64       # model_dim = depth * ASPECT_RATIO
-HEAD_DIM = 128          # target head dimension for attention
-WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
+ASPECT_RATIO = 64  # model_dim = depth * ASPECT_RATIO
+HEAD_DIM = 64  # target head dimension for attention
+WINDOW_PATTERN = "L"  # sliding window pattern: L=full, S=half context
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**19 # ~524K tokens per optimizer step
-EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
+TOTAL_BATCH_SIZE = 2**14  # ~16K tokens per optimizer step
+EMBEDDING_LR = 0.6  # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
-MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
-SCALAR_LR = 0.5         # learning rate for per-layer scalars (Adam)
-WEIGHT_DECAY = 0.2      # cautious weight decay for Muon
-ADAM_BETAS = (0.8, 0.95) # Adam beta1, beta2
-WARMUP_RATIO = 0.0      # fraction of time budget for LR warmup
-WARMDOWN_RATIO = 0.5    # fraction of time budget for LR warmdown
-FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
+MATRIX_LR = 0.03  # learning rate for matrix parameters (Muon)
+SCALAR_LR = 0.5  # learning rate for per-layer scalars (Adam)
+WEIGHT_DECAY = 0.2  # cautious weight decay for Muon
+ADAM_BETAS = (0.8, 0.95)  # Adam beta1, beta2
+WARMUP_RATIO = 0.0  # fraction of time budget for LR warmup
+WARMDOWN_RATIO = 0.8  # fraction of time budget for LR warmdown
+FINAL_LR_FRAC = 0.0  # final LR as fraction of initial
 
 # Model size
-DEPTH = 8               # number of transformer layers
-DEVICE_BATCH_SIZE = 4   # per-device batch size (small for 6GB VRAM)
-USE_ACTIVATION_CHECKPOINTING = True  # required for small VRAM GPUs
-
-
-# ---------------------------------------------------------------------------
-# Run config
-# ---------------------------------------------------------------------------
-
-def _git_commit_hash():
-    try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
-        ).decode().strip()
-    except Exception:
-        return "unknown"
-
-
-run_config = dict(
-    aspect_ratio=ASPECT_RATIO,
-    head_dim=HEAD_DIM,
-    window_pattern=WINDOW_PATTERN,
-    total_batch_size=TOTAL_BATCH_SIZE,
-    embedding_lr=EMBEDDING_LR,
-    unembedding_lr=UNEMBEDDING_LR,
-    matrix_lr=MATRIX_LR,
-    scalar_lr=SCALAR_LR,
-    weight_decay=WEIGHT_DECAY,
-    adam_betas=ADAM_BETAS,
-    warmup_ratio=WARMUP_RATIO,
-    warmdown_ratio=WARMDOWN_RATIO,
-    final_lr_frac=FINAL_LR_FRAC,
-    depth=DEPTH,
-    device_batch_size=DEVICE_BATCH_SIZE,
-    use_activation_checkpointing=USE_ACTIVATION_CHECKPOINTING,
-    max_seq_len=MAX_SEQ_LEN,
-    time_budget=TIME_BUDGET,
-    git_commit=_git_commit_hash(),
-)
+DEPTH = 3  # number of transformer layers (newborn brain: start bigger)
+DEVICE_BATCH_SIZE = 64  # per-device batch size (reduce if OOM)
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
@@ -522,25 +621,28 @@ torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 device = torch.device("cuda")
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.float32)
 H100_BF16_PEAK_FLOPS = 989.5e12
-gpu_name = torch.cuda.get_device_name(0)
-gpu_peak_flops = get_gpu_peak_flops(gpu_name) or H100_BF16_PEAK_FLOPS
 
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
 print(f"Vocab size: {vocab_size:,}")
+
 
 def build_model_config(depth):
     base_dim = depth * ASPECT_RATIO
     model_dim = ((base_dim + HEAD_DIM - 1) // HEAD_DIM) * HEAD_DIM
     num_heads = model_dim // HEAD_DIM
     return GPTConfig(
-        sequence_len=MAX_SEQ_LEN, vocab_size=vocab_size,
-        n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
+        sequence_len=MAX_SEQ_LEN,
+        vocab_size=vocab_size,
+        n_layer=depth,
+        n_head=num_heads,
+        n_kv_head=1,  # Multi-Query Attention: all query heads share 1 K,V head
+        n_embd=model_dim,
         window_pattern=WINDOW_PATTERN,
-        use_activation_checkpointing=USE_ACTIVATION_CHECKPOINTING,
     )
+
 
 config = build_model_config(DEPTH)
 print(f"Model config: {asdict(config)}")
@@ -554,7 +656,7 @@ param_counts = model.num_scaling_params()
 print("Parameter counts:")
 for key, value in param_counts.items():
     print(f"  {key:24s}: {value:,}")
-num_params = param_counts['total']
+num_params = param_counts["total"]
 num_flops_per_token = model.estimate_flops()
 print(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
@@ -571,7 +673,7 @@ optimizer = model.setup_optimizer(
     weight_decay=WEIGHT_DECAY,
 )
 
-# No torch.compile — eager mode for Blackwell consumer GPU compatibility
+model = torch.compile(model, dynamic=False)
 
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
 x, y, epoch = next(train_loader)  # prefetch first batch
@@ -580,6 +682,7 @@ print(f"Time budget: {TIME_BUDGET}s")
 print(f"Gradient accumulation steps: {grad_accum_steps}")
 
 # Schedules (all based on progress = training_time / TIME_BUDGET)
+
 
 def get_lr_multiplier(progress):
     if progress < WARMUP_RATIO:
@@ -590,12 +693,36 @@ def get_lr_multiplier(progress):
         cooldown = (1.0 - progress) / WARMDOWN_RATIO
         return cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
 
+
 def get_muon_momentum(step):
     frac = min(step / 300, 1)
-    return (1 - frac) * 0.85 + frac * 0.95
+    return (1 - frac) * 0.7 + frac * 0.95
+
 
 def get_weight_decay(progress):
     return WEIGHT_DECAY * (1 - progress)
+
+
+# Developmental pruning: newborn brain starts dense, adult brain prunes to sparse
+PRUNE_TARGET = 0.55  # fraction of transformer weights to prune by end of training
+
+
+@torch.no_grad()
+def apply_developmental_pruning(model, prune_frac):
+    """Zero out the weakest weights globally — synaptic pruning by magnitude."""
+    if prune_frac <= 0.0:
+        return
+    blocks = (model._orig_mod if hasattr(model, "_orig_mod") else model).transformer.h
+    all_vals = torch.cat([
+        p.data.abs().flatten()
+        for block in blocks for p in block.parameters() if p.ndim == 2
+    ])
+    threshold = all_vals.quantile(prune_frac)
+    for block in blocks:
+        for p in block.parameters():
+            if p.ndim == 2:
+                p.data *= (p.data.abs() >= threshold).to(p.dtype)
+
 
 # ---------------------------------------------------------------------------
 # Training loop
@@ -605,7 +732,6 @@ t_start_training = time.time()
 smooth_train_loss = 0
 total_training_time = 0
 step = 0
-metrics_file = open("metrics.jsonl", "w")
 
 while True:
     torch.cuda.synchronize()
@@ -625,10 +751,23 @@ while True:
     muon_weight_decay = get_weight_decay(progress)
     for group in optimizer.param_groups:
         group["lr"] = group["initial_lr"] * lrm
-        if group['kind'] == 'muon':
+        if group["kind"] == "muon":
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
     optimizer.step()
+    # Developmental pruning: ramp from 0% pruned (newborn) to PRUNE_TARGET% (adult)
+    prune_frac = PRUNE_TARGET * progress
+    if step % 20 == 0:
+        apply_developmental_pruning(model, prune_frac)
+    # Hebbian plasticity: strengthen connections that co-activated this step
+    # Developmental Hebbian: high plasticity early (childhood), consolidate later (adulthood)
+    hebb_decay = 0.9 ** (progress * 10)  # exponential decay from 1.0
+    for block in (
+        model._orig_mod.transformer.h
+        if hasattr(model, "_orig_mod")
+        else model.transformer.h
+    ):
+        block.attn.apply_hebbian(modulation=hebb_decay)
     model.zero_grad(set_to_none=True)
 
     train_loss_f = train_loss.item()
@@ -648,28 +787,17 @@ while True:
     # Logging
     ema_beta = 0.9
     smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f
-    debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
+    debiased_smooth_loss = smooth_train_loss / (1 - ema_beta ** (step + 1))
     pct_done = 100 * progress
     tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
-    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / gpu_peak_flops
+    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
     remaining = max(0, TIME_BUDGET - total_training_time)
 
-    step_metrics = {
-        "step": step,
-        "train/loss": train_loss_f,
-        "train/loss_smooth": debiased_smooth_loss,
-        "train/lr_multiplier": lrm,
-        "train/muon_momentum": muon_momentum,
-        "train/weight_decay": muon_weight_decay,
-        "train/progress": progress,
-        "perf/step_time_ms": dt * 1000,
-        "perf/tokens_per_sec": tok_per_sec,
-        "perf/mfu_percent": mfu,
-    }
-    metrics_file.write(json.dumps(step_metrics) + "\n")
-    metrics_file.flush()
-
-    print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
+    print(
+        f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ",
+        end="",
+        flush=True,
+    )
 
     # GC management (Python's GC causes ~500ms stalls)
     if step == 0:
@@ -686,7 +814,6 @@ while True:
         break
 
 print()  # newline after \r training log
-metrics_file.close()
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
@@ -698,7 +825,16 @@ with autocast_ctx:
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / gpu_peak_flops if total_training_time > 0 else 0
+steady_state_mfu = (
+    100
+    * num_flops_per_token
+    * TOTAL_BATCH_SIZE
+    * (step - 10)
+    / total_training_time
+    / H100_BF16_PEAK_FLOPS
+    if total_training_time > 0
+    else 0
+)
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
 print("---")
@@ -711,18 +847,3 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
-
-run_summary = {
-    **run_config,
-    "val_bpb": val_bpb,
-    "training_seconds": total_training_time,
-    "total_seconds": t_end - t_start,
-    "startup_seconds": startup_time,
-    "peak_vram_mb": peak_vram_mb,
-    "mfu_percent": steady_state_mfu,
-    "total_tokens_M": total_tokens / 1e6,
-    "num_steps": step,
-    "num_params_M": num_params / 1e6,
-}
-with open("run_summary.json", "w") as f:
-    json.dump(run_summary, f, indent=2)
