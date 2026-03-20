@@ -297,7 +297,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     mono_cst[3] = 1  # 48h vol-normalized return → monotonically increasing
     mono_cst[4] = 1  # 72h vol-normalized return → monotonically increasing
     mono_cst[5] = 1  # 168h vol-normalized return → monotonically increasing
-    mono_cst[6] = 1  # 24h VW cumulative return → monotonically increasing
+    # mono_cst[6] removed — VW return constraint may hurt in some regimes with expanding windows
     mono_cst[28] = 1  # 72h directional efficiency → monotonically increasing
     mono_cst[29] = 1  # 168h directional efficiency → monotonically increasing
 
@@ -358,7 +358,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
         # Power transform: amplify predictions away from zero to increase trade count
         # 0.1→0.20, 0.3→0.41, 0.5→0.62, 1.0→1.0 (preserves sign and large signals)
-        sigma_preds = np.sign(sigma_preds) * np.abs(sigma_preds) ** 0.8
+        sigma_preds = np.sign(sigma_preds) * np.abs(sigma_preds) ** 0.7
         sigma_preds = sigma_preds * 0.3  # dampening — confirmed optimal
         sigma_smoothed = _smooth_predictions(sigma_preds)
         return sigma_smoothed, ts, vol

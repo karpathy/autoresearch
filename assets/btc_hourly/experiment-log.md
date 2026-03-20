@@ -312,5 +312,10 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 ## ba36955 — min_samples_leaf 800 (from 600) at EMA 35, iter=1000
 **Hypothesis:** Larger leaves prevent overfitting to regime-specific patterns. Address holdout WARN.
 **Result:** Score -1.0039, sharpe_min -0.3983, max_dd -12.4%, 477 trades, 4/8 consistency, holdout **CAUTION**. Discard.
-**Observation:** Scored performance collapsed BUT holdout improved WARN→CAUTION! Confirms model IS overfitting to scored windows. leaf=800 is too aggressive — need gentler approach. Next: try power transform 0.8 (from 0.7) — less amplification of weak signals reduces overconfident wrong-direction trades.
+**Observation:** Scored performance collapsed BUT holdout improved WARN→CAUTION! Confirms model IS overfitting to scored windows. leaf=800 is too aggressive — need gentler approach.
+
+## 6993540 — power transform 0.8 (from 0.7) at EMA 35, iter=1000
+**Hypothesis:** Less amplification of weak signals reduces overconfident wrong-direction trades.
+**Result:** Score 0.3825, sharpe_min 0.5640, max_dd -7.8%, 497 trades, 7/8 consistency, holdout WARN. Discard (marginal).
+**Observation:** Nearly identical to power 0.7 (0.38 vs 0.39). Holdout still WARN. Power transform is not the lever. Next: try removing VW cumulative return constraint (mono_cst[6]) — this was added later, may not be universally applicable across expanding-window regimes.
 
