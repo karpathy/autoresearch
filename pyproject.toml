@@ -1,7 +1,7 @@
 [project]
 name = "autotrader"
-version = "0.1.0"
-description = "Autonomous trading research — predict BTC forward returns"
+version = "0.2.0"
+description = "Autonomous ML prediction research platform"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -13,3 +13,10 @@ dependencies = [
     "scikit-learn>=1.5.0",
     "torch>=2.5.0",
 ]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["core*"]
