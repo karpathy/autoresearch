@@ -135,7 +135,6 @@ class CausalSelfAttention(nn.Module):
 
 
 SPARSE_K = 0.10  # fraction of MLP neurons active per token (sparse coding)
-HOMEOSTATIC_ALPHA = 0.05  # EMA rate for per-neuron firing stats (exp80 used 0.005 — too slow)
 
 
 class MLP(nn.Module):
@@ -147,23 +146,12 @@ class MLP(nn.Module):
         self.c_fc = nn.Linear(config.n_embd, intermediate, bias=False)
         self.c_proj = nn.Linear(intermediate, config.n_embd, bias=False)
         self.k = max(1, int(intermediate * SPARSE_K))
-        # Homeostatic plasticity: per-neuron EMA of firing rates, init at target rate
-        self.register_buffer('firing_ema', torch.ones(intermediate) * SPARSE_K)
 
     def forward(self, x):
         h = F.silu(self.c_gate(x)) * self.c_fc(x)
-        # Homeostatic: boost dormant neurons' selection probability
-        # excitability = target_rate / actual_rate — dormant neurons get boosted
-        excitability = (SPARSE_K / self.firing_ema.clamp(min=1e-4)).clamp(max=10.0)
-        h_biased = h * excitability
-        # k-Winners on biased activations — but pass unscaled h through (gradient unaffected)
-        threshold = h_biased.abs().topk(self.k, dim=-1, sorted=False).values.amin(dim=-1, keepdim=True)
-        mask = h_biased.abs() >= threshold
-        # Update EMA with actual firing rates from this batch
-        if self.training:
-            with torch.no_grad():
-                self.firing_ema.lerp_(mask.float().mean(dim=(0, 1)), HOMEOSTATIC_ALPHA)
-        h = h * mask
+        # k-Winners: only top-k activations survive — sparse coding (brain fires ~5% of neurons)
+        threshold = h.abs().topk(self.k, dim=-1, sorted=False).values.amin(dim=-1, keepdim=True)
+        h = h * (h.abs() >= threshold)
         return self.c_proj(h)
 
 
@@ -622,7 +610,7 @@ FINAL_LR_FRAC = 0.0  # final LR as fraction of initial
 
 # Model size
 DEPTH = 3  # number of transformer layers (newborn brain: start bigger)
-DEVICE_BATCH_SIZE = 64  # per-device batch size (reduce if OOM)
+DEVICE_BATCH_SIZE = 4  # per-device batch size (MAX_SEQ_LEN=2048, 6GB VRAM)
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
