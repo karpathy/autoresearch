@@ -59,3 +59,8 @@ All scores remain negative. The pipeline parameters are recalibrated but the mod
 **Result:** Score -4.4577, sharpe_min -0.3953, max_dd -2.4%, 117 trades, 5/8 consistency, holdout OK. Discard.
 **Observation:** Much worse. Early stopping's validation split was helping prevent overfitting. The 10% held-out validation data is more valuable than extra iterations. Reverting. Next: try power transform exponent adjustment.
 
+## 740034e — power transform exponent 0.5 (from 0.7)
+**Hypothesis:** Lower exponent amplifies weak predictions, increasing trade count from 117.
+**Result:** Score -6.2818, sharpe_min -0.9985, max_dd -3.3%, 213 trades, 4/8 consistency, holdout OK. Discard.
+**Observation:** Trade count increased (213 vs 117) but sharpe collapsed. Amplifying noisy predictions destroys signal quality. Next: try no power transform (exponent 1.0 = linear).
+
