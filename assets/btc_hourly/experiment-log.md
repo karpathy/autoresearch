@@ -54,3 +54,8 @@ Best demeaning fraction is 0.9x. Reverting to 0.9x for EMA span sweep. Next: EMA
 
 All scores remain negative. The pipeline parameters are recalibrated but the model needs structural improvement to work with expanding windows. Moving to Phase 2.
 
+## 51a4784 — early_stopping=False
+**Hypothesis:** With expanding windows (26k+ samples), early stopping may truncate training. Disable to use all 300/500 iterations.
+**Result:** Score -4.4577, sharpe_min -0.3953, max_dd -2.4%, 117 trades, 5/8 consistency, holdout OK. Discard.
+**Observation:** Much worse. Early stopping's validation split was helping prevent overfitting. The 10% held-out validation data is more valuable than extra iterations. Reverting. Next: try power transform exponent adjustment.
+
