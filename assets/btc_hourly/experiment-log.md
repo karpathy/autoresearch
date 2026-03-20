@@ -33,3 +33,8 @@
 - 0.5x→-8.31, 0.7x→-1.93, 0.8x→-0.63, **0.9x→-0.47**, 1.0x→-2.38.
 Best demeaning fraction is 0.9x. Reverting to 0.9x for EMA span sweep. Next: EMA span 40 and 50.
 
+## 31f23ba — EMA span 40 (with 0.9x demeaning)
+**Hypothesis:** More training data may shift optimal smoothing window. Test EMA 40 (from 45).
+**Result:** Score -3.4790, sharpe_min -0.4460, max_dd -2.8%, 133 trades, 5/8 consistency, holdout CAUTION. Discard.
+**Observation:** Much worse than EMA 45 (-3.48 vs -0.47). Shorter EMA adds noise. Same pattern as mar20 (EMA 30→35→40 all worse than 45). Next: test EMA 50.
+
