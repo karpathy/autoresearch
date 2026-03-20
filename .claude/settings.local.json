@@ -4,18 +4,8 @@
       "Bash(git *)",
       "Bash(python *)",
       "Bash(uv run *)",
-      "Bash(git add:*)",
-      "Bash(printf *)",
-      "Bash(grep \"train=.*val_pass\" run.log | sort -t= -k2 -rn | head -20)",
-      "Bash(grep \"val_pass=True\" run.log | sort -t= -k2 -rn | head -10)",
-      "Bash(grep \"val_pass=True\" run.log | grep -v \"train=0.0000\\\\|train=-0\" | sort -t= -k2 -rn | head -15)",
-      "Bash(grep \"val_pass=True\" run.log | grep -v \"train=0.0000\\\\|train=-0\" | sort -t= -k2 -rn | head -5)",
-      "Bash(grep \"val_pass=True\" run.log | grep -v \"train=0.0000\\\\|train=-0\" | sort -t= -k2 -rn | head -10)",
-      "Bash(grep \"val_pass=True\" run.log | grep -E \"RULE|MRULE\" | sort -t= -k2 -rn | head -5)",
-      "Bash(grep \"val_pass=True\" run.log | grep \"SP \" | sort -t= -k2 -rn | head -10)",
-      "Bash(grep \"val_pass=True\" run.log | grep \"SPOK\" | sort -t= -k2 -rn | head -10)",
-      "Bash(grep -v \"^warning\\\\|^Loading\\\\|^Training\\\\|^  Training\\\\|^  Model\\\\|^Evaluating\\\\|^$\\\\|^---\\\\|^score\\\\|^sharpe\\\\|^max_\\\\|^total_\\\\|^consist\\\\|^n_param\\\\|^training\\\\|^total_sec\")",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Edit(~/.cache/autotrader/**)"
     ],
     "deny": [
       "Bash(git push --force *)",
@@ -24,8 +14,19 @@
       "Read(**/.bash_profile)",
       "Read(**/.bashrc)",
       "Read(**/.profile)",
-      "Read(**/.cache/autotrader/eval_count)"
-    ]
+      "Read(**/.cache/autotrader/eval_count)",
+      "Read(**/core/**)",
+      "Read(**/prepare.py)"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "allowUnsandboxedCommands": true,
+    "network": {
+      "allowLocalBinding": false
+    }
   },
   "hooks": {
     "PreToolUse": [
