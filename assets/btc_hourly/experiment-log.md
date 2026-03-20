@@ -265,3 +265,8 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 **Result:** Score 0.2587, sharpe_min 0.4063, max_dd -6.6%, 395 trades, 7/8 consistency, holdout WARN. Discard (marginal).
 **Observation:** Essentially identical to 0.9x (0.260 vs 0.259). Demeaning 0.9x confirmed. holdout WARN persists — may be overfitting to scored windows. Next: reduce max_leaf_nodes 15→10 with iter=1000 to improve generalization.
 
+## 682da91 — max_leaf_nodes 10 with iter=1000
+**Hypothesis:** Fewer leaves per tree + more trees = better generalization. Address holdout WARN.
+**Result:** Score 0.1928, sharpe_min 0.3172, max_dd -6.9%, 377 trades, 7/8 consistency, holdout WARN. Discard.
+**Observation:** Slightly worse. Holdout still WARN. Leaves=15 is the right balance. Next: try clip ±1.5 (from ±2.0) — reduce extreme positions, can afford it with 397 trades.
+
