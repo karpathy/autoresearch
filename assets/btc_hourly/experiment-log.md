@@ -121,5 +121,10 @@ If sharpe_min becomes positive with this change but score is still modest, the n
 ## e98d63c — remove monotonic constraints + increase regularization
 **Hypothesis:** Coach: constraints force pure momentum which fails in mixed-regime expanding windows. Remove all 9 constraints, increase min_samples_leaf 600→1000, l2 3.0→5.0.
 **Result:** Score -1.9492, sharpe_min -0.4746, max_dd -2.6%, 152 trades, 7/8 consistency, holdout CAUTION. Discard.
-**Observation:** Worse than constrained (-1.95 vs -0.47). sharpe_min much worse (-0.47 vs -0.07). Constraints were PROTECTING signal quality, not limiting it. The model learns reversal patterns when unconstrained that hurt more than regime-adaptation helps. Trade count improved (152 vs 117) but at cost of signal quality. Constraints stay. Next: try tighter prediction clip ±1.0 (from ±2.0) — sharpe_min at -0.07 is barely negative, tighter clips may prevent the worst predictions from pushing it below zero.
+**Observation:** Worse than constrained (-1.95 vs -0.47). sharpe_min much worse (-0.47 vs -0.07). Constraints were PROTECTING signal quality, not limiting it. The model learns reversal patterns when unconstrained that hurt more than regime-adaptation helps. Trade count improved (152 vs 117) but at cost of signal quality. Constraints stay.
+
+## 354cb9c — prediction clip ±1.0 (from ±2.0)
+**Hypothesis:** sharpe_min at -0.07 is barely negative. Tighter clips may prevent extreme wrong-direction predictions.
+**Result:** Score -2.4856, sharpe_min -0.2705, max_dd -2.0%, 125 trades, 5/8 consistency, holdout CAUTION. Discard.
+**Observation:** Too aggressive — removes signal. Max_dd improved but sharpe and consistency both worse. Next: try target winsorization 3.0 sigma (from 5.0). In mar20, this achieved 8/8 consistency. With expanding windows including more crash data, tighter winsorization may help.
 
