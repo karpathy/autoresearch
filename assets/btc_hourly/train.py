@@ -178,9 +178,16 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         abs_ret_norm = abs_ret / vol_safe  # normalize by vol
         feature_cols.append(np.nan_to_num(abs_ret_norm, nan=0.0))
 
-    # 11. Hour of day and day of week (cyclical) — REMOVED
-    # These temporal patterns don't generalize across 4-7 year expanding windows
-    # and are prime overfitting channels for the 1000-iteration model
+    # 11. Hour of day (cyclical)
+    dt = pd.to_datetime(ts)
+    hours = dt.hour
+    feature_cols.append(np.sin(2 * np.pi * hours / 24))
+    feature_cols.append(np.cos(2 * np.pi * hours / 24))
+
+    # 7. Day of week (cyclical)
+    dow = dt.dayofweek
+    feature_cols.append(np.sin(2 * np.pi * dow / 7))
+    feature_cols.append(np.cos(2 * np.pi * dow / 7))
 
     features = np.column_stack(feature_cols)
 

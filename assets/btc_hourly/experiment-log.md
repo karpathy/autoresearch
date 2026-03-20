@@ -386,5 +386,10 @@ This is the gentlest generalization improvement available. Unlike leaf=800 (whic
 ## 2c0855b — min_samples_leaf 700
 **Hypothesis:** Coach backup: interpolate between 600 (WARN) and 800 (CAUTION).
 **Result:** Score 0.0816, sharpe_min 0.1375, max_dd -8.9%, 473 trades, 6/8 consistency, holdout WARN. Discard.
-**Observation:** Much worse scored performance, holdout STILL WARN. The jump from 600→700 destroys signal without fixing generalization. leaf=600 is confirmed. Next: coach's structural backup — remove 4 cyclical time features (hour/day patterns don't generalize across 4-7 year expanding windows).
+**Observation:** Much worse scored performance, holdout STILL WARN. The jump from 600→700 destroys signal without fixing generalization. leaf=600 is confirmed.
+
+## 12bcae0 — remove 4 cyclical time features
+**Hypothesis:** Coach structural backup: temporal patterns (hour/day) don't generalize across expanding windows.
+**Result:** Score 0.0750, sharpe_min 0.1400, max_dd -12.7%, 501 trades, 6/8 consistency, holdout WARN. Discard.
+**Observation:** Much worse. Time features DO carry useful signal. Max_dd -12.7% near penalty threshold. Restoring. 8 consecutive failures since EMA 35 best. Holdout WARN appears structural for epoch 6 — no regularization approach fixes it without destroying scored performance. Accepting WARN and focusing on score improvement.
 
