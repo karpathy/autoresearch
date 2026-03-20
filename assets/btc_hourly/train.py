@@ -347,7 +347,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
 
         sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
-        sigma_preds = np.clip(sigma_preds, -1.5, 1.5)
+        sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
         # Power transform: amplify predictions away from zero to increase trade count
         # 0.1→0.20, 0.3→0.41, 0.5→0.62, 1.0→1.0 (preserves sign and large signals)
         sigma_preds = np.sign(sigma_preds) * np.abs(sigma_preds) ** 0.7
