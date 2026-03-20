@@ -418,3 +418,20 @@ This is the gentlest generalization improvement available. Unlike leaf=800 (whic
 **Result:** Score 0.4226, sharpe_min 0.6101, max_dd -8.0%, 509 trades, 7/8 consistency, holdout WARN. Keep (new best).
 **Observation:** Another stale optimization! Blend 0.6/0.4 improves score by +4% (0.41→0.42). sharpe_min now 0.61 (target was 0.60 from directive). Trades increased (489→509). The conservative model (no max_features sampling) is slightly more reliable, and tilting the blend rewards that.
 
+## 68e5195 — power 0.8 with clip+blend
+**Result:** Score 0.3964. Discard (marginal).
+
+---
+
+**Infrastructure change: sample weight decay half-life 3.0→5.0 years**
+
+## bb70f5f — half-life baseline (epoch 6, decay 5.0)
+**Hypothesis:** Isolate effect of half-life change on current best config.
+**Result:** Score 0.1023, sharpe_min 0.1874, max_dd -8.6%, 439 trades, 6/8 consistency, holdout WARN. Keep (baseline).
+**Observation:** Score dropped 0.42→0.10 from half-life change alone. More weight on older data shifts the prediction landscape significantly.
+
+## bb70f5f — epoch 7 baseline
+**Hypothesis:** Capture epoch rotation effect. Crash window enters scored set.
+**Result:** Score -3.5644, sharpe_min -1.6211, max_dd -9.9%, 406 trades, 5/8 consistency, **holdout OK**. Keep (epoch 7 baseline).
+**Observation:** Score collapsed as expected — the crash window that was WARN-ing is now scored and has sharpe_min -1.62. BUT holdout is now OK! The model generalizes to the remaining holdout window. This confirms: the crash window was the problem all along. Improvements from here will be honest — they must handle the crash regime. Need full recalibration: demeaning, blend, EMA.
+
