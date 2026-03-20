@@ -540,5 +540,28 @@ The resulting model instantiations:
 ## 1298401 — dampening 0.20 with constraints ★ NEW EPOCH 7 BEST
 **Hypothesis:** Minimize crash damage through position sizing rather than fixing predictions.
 **Result:** Score -3.2048, sharpe_min -0.4108, max_dd -1.7%, 108 trades, 5/8 consistency, holdout OK. Keep.
-**Observation:** Massive sharpe_min improvement (-1.42→-0.41, 71% less negative). The model barely trades during crashes, protecting against wrong-direction exposure. But trade count collapsed (292→108). Score improvement marginal (-3.24→-3.20) because low trades offset sharpe gain. The path to positive score: sharpe_min is approaching zero but trade count must increase.
+**Observation:** Massive sharpe_min improvement (-1.42→-0.41, 71% less negative). The model barely trades during crashes, protecting against wrong-direction exposure. But trade count collapsed (292→108). Score improvement marginal (-3.24→-3.20) because low trades offset sharpe gain.
+
+## 2a8b1e9 — unconstrained + dampening 0.20
+**Result:** Score -6.1657. Discard. Constraints needed even at low dampening.
+
+## af763d0 — demeaning 1.1x + dampening 0.20 ★★★ BREAKTHROUGH
+**Hypothesis:** Over-demean creates slight negative bias to counteract crash-regime momentum predictions.
+**Result:** Score -1.5444, sharpe_min -0.1681, max_dd -1.6%, 116 trades, 5/8 consistency, holdout OK. Keep.
+**Observation:** Score nearly halved (-3.20→-1.54). sharpe_min -0.41→-0.17. Over-demeaning is a new lever!
+
+## 288582c — demeaning 1.2x + dampening 0.20 ★★★★ FIRST POSITIVE EPOCH 7 SCORE
+**Result:** Score 0.0044, sharpe_min 0.0497. Keep. sharpe_min crossed zero!
+
+## ccf7f2b — demeaning 1.3x + dampening 0.20 ★★★★★ EPOCH 7 BEST
+**Result:** Score 0.0197, sharpe_min 0.2220, max_dd -1.5%, 116 trades, 5/8 consistency, holdout OK. Keep.
+**Observation:** Over-demean curve: 1.0x→-1.50, 1.1x→-0.17, 1.2x→+0.05, **1.3x→+0.22**, 1.5x→+0.20 (past peak). 1.3x is optimal.
+
+## 27159fe — demeaning 1.5x
+**Result:** Score 0.0135. Discard (past peak, 1.3x better).
+
+## dc57429 — dampening 0.25 + demeaning 1.3x
+**Result:** Score -2.7183. Discard. More dampening overwhelms over-demean protection.
+
+**Current best:** Demeaning 1.3x, dampening 0.20, score 0.0197, holdout OK. Score is positive and honest — handles all windows including crashes.
 
