@@ -299,3 +299,8 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 **Result:** Score 0.3927, sharpe_min 0.5791, max_dd -7.7%, 489 trades, 7/8 consistency, holdout WARN. Keep (new best).
 **Observation:** Continued improvement! EMA at new capacity: 35→0.39, 40→0.33, 45→0.26. sharpe_min improved 0.52→0.58. Trades 437→489. Max_dd -7.7% still safe. Holdout still WARN. Need to bracket with EMA 50 to confirm trend, then lock EMA.
 
+## affba0a — EMA 50 at iter=1000
+**Hypothesis:** Bracket above to confirm monotonic trend.
+**Result:** Score 0.2009, sharpe_min 0.3305, max_dd -6.2%, 371 trades, 7/8 consistency, holdout WARN. Discard.
+**Observation:** Confirmed: EMA 35→0.39, 40→0.33, 45→0.26, 50→0.20. Clear monotonic trend — less smoothing is better at higher capacity. **EMA 35 locked.** Reverting. Recalibration complete. Next: focus on holdout WARN.
+
