@@ -3,7 +3,7 @@ name = "autoresearch"
 version = "0.1.0"
 description = "Autonomous pretraining research swarm"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.12"
 dependencies = [
     "matplotlib>=3.10.8",
     "numpy>=2.2.6",
@@ -12,13 +12,25 @@ dependencies = [
     "requests>=2.32.0",
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
-    "torch==2.9.1",
+    "torch==2.10.0",
 ]
 
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu128" },
+    { index = "pytorch-xpu", marker = "sys_platform == 'win32'" },
+    { index = "pytorch-cu128", marker = "sys_platform != 'win32'" },
 ]
+triton-xpu = [
+    { index = "pytorch-xpu", marker = "sys_platform == 'win32'" },
+]
+pytorch-triton-xpu = [
+    { index = "pytorch-xpu", marker = "sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-xpu"
+url = "https://download.pytorch.org/whl/xpu"
+explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

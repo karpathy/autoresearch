@@ -2,7 +2,7 @@
 
 > Convert your gaming PC into an autonomous AI researcher.
 
-> This repository is a fork of [karpathy/autoresearch](https://github.com/karpathy/autoresearch). The purpose of this fork is native support for desktop consumer NVIDIA GPUs on Windows, with tiered VRAM floors by architecture.
+> This repository is a fork of [karpathy/autoresearch](https://github.com/karpathy/autoresearch). This working branch retargets the Windows path to native PyTorch Intel XPU support so it can run on Intel Arc GPUs such as the Arc B580.
 
 ![teaser](progress.png)
 
@@ -13,8 +13,8 @@ The idea: give an AI agent a small but real LLM training setup and let it experi
 ## Fork scope
 
 - Upstream source: [karpathy/autoresearch](https://github.com/karpathy/autoresearch)
-- Primary objective: run natively on Windows with desktop consumer NVIDIA GPUs (Turing with >=8 GB VRAM, Ampere/Ada/Blackwell with >=10 GB VRAM), without unofficial Triton-on-Windows stacks.
-- Scope of changes: compatibility and stability updates required for that target platform.
+- Primary objective: run natively on Windows 11 with Intel Arc GPUs through PyTorch `xpu`, with Arc B-series as the main target.
+- Scope of changes: compatibility and stability updates required for the Windows Intel GPU path while preserving a CUDA path when a CUDA wheel is installed.
 - The original Linux/H100-oriented path from upstream is removed in this fork and is not supported here.
 - If you need the upstream Linux/H100 path, use [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
 
@@ -30,10 +30,10 @@ By design, training runs for a **fixed 5-minute time budget** (wall clock, exclu
 
 ## Quick start (PowerShell)
 
-**Requirements:** A single NVIDIA GPU, Python 3.10+, [uv](https://docs.astral.sh/uv/).
+**Requirements:** Windows 11, a supported Intel Arc GPU, current Intel graphics drivers, Python 3.10-3.11, [uv](https://docs.astral.sh/uv/).
 
 - Single runtime path uses PyTorch SDPA attention and eager execution (no FA3/`torch.compile` fast path).
-- Native Windows support targets desktop consumer GPUs with a tiered VRAM policy (Turing >=8 GB, Ampere/Ada/Blackwell >=10 GB), official PyTorch CUDA wheels, and SDPA attention.
+- Native Windows support targets Intel Arc through official PyTorch `xpu` wheels and SDPA attention.
 - Default dataset is now TinyStories GPT-4 clean for practical consumer-GPU setup.
 
 ```powershell
@@ -41,24 +41,28 @@ By design, training runs for a **fixed 5-minute time budget** (wall clock, exclu
 # 1. Install uv project manager (if you don't already have it)
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
-# 2. Install dependencies
-uv sync
+# 2. Install the Intel Arc / XPU environment
+pwsh -ExecutionPolicy Bypass -File .\scripts\setup-intel-xpu.ps1
 
 # 3. Download data and train tokenizer (one-time)
 #    Default dataset: TinyStories GPT-4 clean
-uv run prepare.py
+.venv\Scripts\python.exe prepare.py
 
 # 4. Manually run a single training experiment (~5 min)
-uv run train.py
+.venv\Scripts\python.exe train.py
 ```
 
 Quick validation run (recommended after setup):
 
 ```powershell
-uv run train.py --smoke-test
+.venv\Scripts\python.exe train.py --smoke-test
 ```
 
 If the above commands all work ok, your setup is working and you can go into autonomous research mode.
+
+For this machine specifically, the detected target is `Intel(R) Arc(TM) B580 Graphics` on Windows 11 with driver `32.0.101.8531`.
+
+As of March 20, 2026, `uv sync` does not resolve the PyTorch XPU wheel set cleanly on this machine, so the setup script installs the official XPU wheel directly into `.venv` and then installs the remaining Python dependencies separately.
 
 ## Running the agent
 
@@ -87,22 +91,18 @@ pyproject.toml  — dependencies
 
 ## Platform support
 
-This fork's platform policy is explicit and tiered.
+This branch's Windows policy is explicit and tiered.
 
-| Architecture | Minimum VRAM floor | Supported desktop consumer GPUs |
+| Backend | Minimum VRAM floor | Supported Windows GPUs |
 | --- | --- | --- |
-| Turing | `>=8 GB` | `RTX 2060 12GB`, `RTX 2060 SUPER 8GB`, `RTX 2070 8GB`, `RTX 2070 SUPER 8GB`, `RTX 2080 8GB`, `RTX 2080 SUPER 8GB`, `RTX 2080 Ti 11GB` |
-| Ampere | `>=10 GB` | `RTX 3060 12GB`, `RTX 3080 10GB`, `RTX 3080 12GB`, `RTX 3080 Ti 12GB`, `RTX 3090 24GB`, `RTX 3090 Ti 24GB` |
-| Ada | `>=10 GB` | `RTX 4060 Ti 16GB`, `RTX 4070 12GB`, `RTX 4070 SUPER 12GB`, `RTX 4070 Ti 12GB`, `RTX 4070 Ti SUPER 16GB`, `RTX 4080 16GB`, `RTX 4080 SUPER 16GB`, `RTX 4090 24GB` |
-| Blackwell | `>=10 GB` | `RTX 5060 Ti 16GB`, `RTX 5070 12GB`, `RTX 5070 Ti 16GB`, `RTX 5080 16GB`, `RTX 5090 32GB` |
-- Desktop only: laptop GPUs are not officially supported due to wide power and thermal variance.
-- Floor policy: Turing desktop GPUs are supported at >=8 GB VRAM; Ampere/Ada/Blackwell desktop GPUs require >=10 GB VRAM.
-- `RTX 2060 6GB` remains out of matrix support due to VRAM floor.
-- Runtime path is intentionally unified across platforms: PyTorch SDPA attention + eager optimizer steps.
-- Runtime adaptation is profile-driven: compute capability, BF16/TF32 support, OS, and VRAM tier determine candidate batch sizes and checkpointing strategy.
+| Intel XPU | `>=10 GB` | `Intel Arc B580 12GB`, other Intel Arc desktop GPUs that expose `torch.xpu` on Windows |
+| CUDA | repo still supports `cuda` runtime detection if a CUDA wheel is installed | NVIDIA GPUs with a compatible local CUDA PyTorch install |
+- Desktop Intel Arc is the primary Windows target for this branch.
+- Floor policy for Intel Arc desktop GPUs is `>=10 GB` VRAM. The Arc B580 12GB is inside the intended support range.
+- Runtime adaptation is profile-driven: backend, BF16/TF32 support, OS, and VRAM tier determine candidate batch sizes and checkpointing strategy.
 - Supported consumer profiles run a short eager-mode autotune pass and cache the selected candidate per GPU/runtime fingerprint.
 - Autotune env controls: `AUTORESEARCH_DISABLE_AUTOTUNE=1` skips probing; `AUTORESEARCH_AUTOTUNE_REFRESH=1` refreshes the cached decision.
-- Tested hardware in this repo remains RTX 3080 10 GB on Windows. Other listed SKUs are matrix-supported but may be less field-tested here.
+- This branch is being adapted against an Intel Arc B580 on Windows 11. Other Intel Arc SKUs are expected to follow the same `xpu` path but may need retuning.
 - Non-goals for this fork include FA3/H100-specialized paths, unofficial Triton-for-Windows stacks, AMD/ROCm, Apple Metal, and multi-GPU training.
 - Default dataset is `karpathy/tinystories_gpt4_clean` for consumer-GPU practicality.
 

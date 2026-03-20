@@ -40,6 +40,7 @@ from prepare import (
 class RuntimeConfig:
     device: torch.device
     device_type: str
+    backend_name: str
     amp_dtype: torch.dtype
     use_compile: bool
     use_activation_checkpointing: bool
@@ -47,7 +48,7 @@ class RuntimeConfig:
     gpu_name: str
     gpu_vram_gb: float
     gpu_peak_flops: float | None
-    gpu_cc: tuple[int, int]
+    device_capability: str
     gpu_total_memory_bytes: int
     tf32_enabled: bool
     gpu_profile: "GpuProfile"
@@ -62,6 +63,7 @@ class GpuProfile:
     checkpoint_modes: tuple[bool, ...]
     default_checkpointing: bool
     eval_batch_cap: int = 16
+    sequence_len_cap: int = MAX_SEQ_LEN
 
 
 SUPPORTED_CONSUMER_CAPABILITIES = {
@@ -81,6 +83,156 @@ AUTOTUNE_WARMUP_STEPS = 2
 AUTOTUNE_MEASURE_STEPS = 3
 AUTOTUNE_MAX_MEMORY_FRACTION = 0.90
 AUTOTUNE_CACHE_VERSION = "gpu-profile-v2"
+
+
+def _get_accelerator_module(device_type):
+    return getattr(torch, device_type, None)
+
+
+def _has_available_backend(device_type):
+    module = _get_accelerator_module(device_type)
+    return bool(module is not None and getattr(module, "is_available", lambda: False)())
+
+
+def _get_total_memory_bytes(props):
+    for attr_name in ("total_memory", "total_global_mem", "global_mem_size"):
+        value = getattr(props, attr_name, None)
+        if value is not None:
+            return int(value)
+    raise RuntimeError("Could not determine accelerator total memory.")
+
+
+def _format_device_capability(capability):
+    if capability is None:
+        return "unknown"
+    if isinstance(capability, dict):
+        arch = capability.get("architecture")
+        driver = capability.get("driver_version")
+        if arch is not None and driver is not None:
+            return f"arch={arch}, driver={driver}"
+        return str(capability)
+    if isinstance(capability, tuple):
+        return ".".join(str(part) for part in capability)
+    return str(capability)
+
+
+def _get_device_name(module):
+    get_name = getattr(module, "get_device_name")
+    try:
+        return get_name()
+    except TypeError:
+        return get_name(0)
+
+
+def _get_device_capability(module):
+    get_capability = getattr(module, "get_device_capability", None)
+    if get_capability is None:
+        return None
+    try:
+        return get_capability()
+    except TypeError:
+        return get_capability(0)
+
+
+def _manual_seed_accelerator(runtime, seed):
+    module = _get_accelerator_module(runtime.device_type)
+    if module is None:
+        return
+    manual_seed_all = getattr(module, "manual_seed_all", None)
+    if manual_seed_all is not None:
+        manual_seed_all(seed)
+        return
+    manual_seed = getattr(module, "manual_seed", None)
+    if manual_seed is not None:
+        manual_seed(seed)
+
+
+def _is_device_lost_error(exc):
+    text = str(exc).lower()
+    return "device lost" in text or "ur_result_error_device_lost" in text
+
+
+def _is_out_of_resources_error(exc):
+    text = str(exc).lower()
+    return "out of resources" in text or "ur_result_error_out_of_resources" in text
+
+
+def _empty_cache(runtime):
+    module = _get_accelerator_module(runtime.device_type)
+    if module is not None and hasattr(module, "empty_cache"):
+        try:
+            module.empty_cache()
+        except RuntimeError as exc:
+            if not (_is_device_lost_error(exc) or _is_out_of_resources_error(exc)):
+                raise
+
+
+def _reset_peak_memory_stats(runtime):
+    module = _get_accelerator_module(runtime.device_type)
+    if module is not None and hasattr(module, "reset_peak_memory_stats"):
+        try:
+            module.reset_peak_memory_stats()
+        except RuntimeError as exc:
+            if not (_is_device_lost_error(exc) or _is_out_of_resources_error(exc)):
+                raise
+
+
+def _max_memory_allocated(runtime):
+    module = _get_accelerator_module(runtime.device_type)
+    if module is None or not hasattr(module, "max_memory_allocated"):
+        return 0
+    try:
+        return int(module.max_memory_allocated())
+    except RuntimeError as exc:
+        if _is_device_lost_error(exc) or _is_out_of_resources_error(exc):
+            return 0
+        raise
+
+
+def _synchronize(runtime):
+    module = _get_accelerator_module(runtime.device_type)
+    if module is not None and hasattr(module, "synchronize"):
+        try:
+            module.synchronize()
+        except RuntimeError as exc:
+            if not (_is_device_lost_error(exc) or _is_out_of_resources_error(exc)):
+                raise
+
+
+def _is_bf16_supported(device_type, including_emulation=False):
+    module = _get_accelerator_module(device_type)
+    if module is None:
+        return False
+    checker = getattr(module, "is_bf16_supported", None)
+    if checker is None:
+        return False
+    try:
+        return bool(checker(including_emulation=including_emulation))
+    except TypeError:
+        return bool(checker())
+
+
+def _is_tf32_supported(device_type):
+    module = _get_accelerator_module(device_type)
+    if module is None:
+        return False
+    checker = getattr(module, "is_tf32_supported", None)
+    if checker is None:
+        return False
+    return bool(checker())
+
+
+def _is_oom_exception(runtime, exc):
+    module = _get_accelerator_module(runtime.device_type)
+    oom_error = getattr(module, "OutOfMemoryError", None) if module is not None else None
+    if oom_error is not None and isinstance(exc, oom_error):
+        return True
+    text = str(exc).lower()
+    return (
+        "out of memory" in text
+        or _is_device_lost_error(exc)
+        or _is_out_of_resources_error(exc)
+    )
 
 
 def _get_gpu_peak_flops(gpu_name):
@@ -119,6 +271,43 @@ def _get_gpu_peak_flops(gpu_name):
         if key in name:
             return flops
     return None
+
+
+def _resolve_xpu_profile(gpu_name, gpu_vram_gb, is_windows):
+    name = gpu_name.lower()
+    is_arc = "arc" in name
+    if is_windows and is_arc and gpu_vram_gb >= (10.0 - VRAM_FLOOR_TOLERANCE_GB):
+        if gpu_vram_gb < 16.0:
+            return GpuProfile(
+                name="intel-arc-10-15gb",
+                is_supported_consumer=True,
+                is_compatibility_only=False,
+                train_batch_candidates=(2, 1),
+                checkpoint_modes=(True,),
+                default_checkpointing=True,
+                eval_batch_cap=1,
+                sequence_len_cap=1024,
+            )
+        return GpuProfile(
+            name="intel-arc-16gb-plus",
+            is_supported_consumer=True,
+            is_compatibility_only=False,
+            train_batch_candidates=(4, 2, 1),
+            checkpoint_modes=(True, False),
+            default_checkpointing=True,
+            eval_batch_cap=2,
+            sequence_len_cap=1536,
+        )
+
+    default_checkpointing = is_windows or gpu_vram_gb <= 16.0
+    return GpuProfile(
+        name="compatibility",
+        is_supported_consumer=False,
+        is_compatibility_only=True,
+        train_batch_candidates=(DEVICE_BATCH_SIZE, 16, 8, 4),
+        checkpoint_modes=(default_checkpointing,),
+        default_checkpointing=default_checkpointing,
+    )
 
 
 def _resolve_gpu_profile(gpu_name, capability, gpu_vram_gb, is_windows):
@@ -199,6 +388,15 @@ def _compatibility_warning(gpu_name, capability, gpu_vram_gb):
     return None
 
 
+def _xpu_compatibility_warning(gpu_name, gpu_vram_gb):
+    name = gpu_name.lower()
+    if "arc" not in name:
+        return "non-Arc Intel GPU detected; running compatibility runtime path"
+    if gpu_vram_gb < (10.0 - VRAM_FLOOR_TOLERANCE_GB):
+        return f"{gpu_vram_gb:.1f} GB VRAM is below the 10 GB Intel Arc floor"
+    return None
+
+
 def _get_autotune_cache_path():
     if platform.system().lower().startswith("win"):
         local_app_data = os.environ.get("LOCALAPPDATA")
@@ -234,46 +432,62 @@ def _save_autotune_entries(path, entries):
 
 
 def _make_autotune_cache_key(runtime):
-    cc = f"{runtime.gpu_cc[0]}.{runtime.gpu_cc[1]}"
     return "|".join(
         [
+            runtime.backend_name,
             runtime.gpu_name,
-            cc,
+            runtime.device_capability,
             str(runtime.gpu_total_memory_bytes),
             torch.__version__,
             platform.system(),
-            str(MAX_SEQ_LEN),
+            str(runtime.gpu_profile.sequence_len_cap),
         ]
     )
 
 
-def _select_amp_dtype(gpu_cc):
-    if gpu_cc >= (8, 0) and torch.cuda.is_bf16_supported(including_emulation=False):
+def _select_amp_dtype(device_type, capability):
+    if device_type == "cuda" and capability is not None and capability >= (8, 0) and _is_bf16_supported("cuda"):
+        return torch.bfloat16
+    if device_type == "xpu" and _is_bf16_supported("xpu"):
         return torch.bfloat16
     return torch.float16
 
 
 def detect_runtime():
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required. No CUDA device detected.")
-
     is_windows = platform.system().lower().startswith("win")
-    device = torch.device("cuda")
-    props = torch.cuda.get_device_properties(0)
-    gpu_name = torch.cuda.get_device_name()
-    gpu_total_memory_bytes = int(props.total_memory)
+    if is_windows and _has_available_backend("xpu"):
+        backend_name = "xpu"
+    elif _has_available_backend("cuda"):
+        backend_name = "cuda"
+    elif _has_available_backend("xpu"):
+        backend_name = "xpu"
+    else:
+        raise RuntimeError(
+            "No supported accelerator detected. Checked torch.xpu.is_available() and torch.cuda.is_available()."
+        )
+
+    module = _get_accelerator_module(backend_name)
+    device = torch.device(backend_name)
+    props = module.get_device_properties(0)
+    gpu_name = _get_device_name(module)
+    gpu_total_memory_bytes = _get_total_memory_bytes(props)
     gpu_vram_gb = gpu_total_memory_bytes / (1024 ** 3)
-    gpu_cc = torch.cuda.get_device_capability()
-    gpu_profile = _resolve_gpu_profile(gpu_name, gpu_cc, gpu_vram_gb, is_windows)
-    warning = _compatibility_warning(gpu_name, gpu_cc, gpu_vram_gb)
+    capability = _get_device_capability(module)
+    if backend_name == "cuda":
+        gpu_profile = _resolve_gpu_profile(gpu_name, capability, gpu_vram_gb, is_windows)
+        warning = _compatibility_warning(gpu_name, capability, gpu_vram_gb)
+    else:
+        gpu_profile = _resolve_xpu_profile(gpu_name, gpu_vram_gb, is_windows)
+        warning = _xpu_compatibility_warning(gpu_name, gpu_vram_gb)
     if warning is not None:
         print(f"Warning: {warning}; running compatibility runtime path.")
 
-    amp_dtype = _select_amp_dtype(gpu_cc)
-    tf32_enabled = bool(getattr(torch.cuda, "is_tf32_supported", lambda: False)())
-    torch.backends.cuda.matmul.allow_tf32 = tf32_enabled
-    if hasattr(torch.backends, "cudnn"):
-        torch.backends.cudnn.allow_tf32 = tf32_enabled
+    amp_dtype = _select_amp_dtype(backend_name, capability)
+    tf32_enabled = _is_tf32_supported(backend_name)
+    if backend_name == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = tf32_enabled
+        if hasattr(torch.backends, "cudnn"):
+            torch.backends.cudnn.allow_tf32 = tf32_enabled
 
     use_compile = False
     print("torch.compile disabled in this fork runtime path.")
@@ -290,6 +504,7 @@ def detect_runtime():
     return RuntimeConfig(
         device=device,
         device_type=device.type,
+        backend_name=backend_name,
         amp_dtype=amp_dtype,
         use_compile=use_compile,
         use_activation_checkpointing=use_activation_checkpointing,
@@ -297,7 +512,7 @@ def detect_runtime():
         gpu_name=gpu_name,
         gpu_vram_gb=gpu_vram_gb,
         gpu_peak_flops=_get_gpu_peak_flops(gpu_name),
-        gpu_cc=gpu_cc,
+        device_capability=_format_device_capability(capability),
         gpu_total_memory_bytes=gpu_total_memory_bytes,
         tf32_enabled=tf32_enabled,
         gpu_profile=gpu_profile,
@@ -818,6 +1033,14 @@ DEVICE_BATCH_SIZE = 16
 EVAL_BATCH_SIZE = 8
 
 
+def _get_total_batch_size(runtime):
+    if runtime.backend_name == "xpu":
+        if runtime.gpu_vram_gb < 16.0:
+            return 2 ** 16
+        return 2 ** 17
+    return TOTAL_BATCH_SIZE
+
+
 def build_model_config(depth, vocab_size, runtime, use_activation_checkpointing=None):
     if use_activation_checkpointing is None:
         use_activation_checkpointing = runtime.use_activation_checkpointing
@@ -825,7 +1048,7 @@ def build_model_config(depth, vocab_size, runtime, use_activation_checkpointing=
     model_dim = ((base_dim + HEAD_DIM - 1) // HEAD_DIM) * HEAD_DIM
     num_heads = model_dim // HEAD_DIM
     return GPTConfig(
-        sequence_len=MAX_SEQ_LEN,
+        sequence_len=min(MAX_SEQ_LEN, runtime.gpu_profile.sequence_len_cap),
         vocab_size=vocab_size,
         n_layer=depth,
         n_head=num_heads,
@@ -838,13 +1061,13 @@ def build_model_config(depth, vocab_size, runtime, use_activation_checkpointing=
     )
 
 
-def _filter_train_batch_sizes(candidates):
+def _filter_train_batch_sizes(candidates, sequence_len, total_batch_size):
     deduped = []
     for batch_size in list(candidates):
         if batch_size <= 0:
             continue
-        tokens_per_fwdbwd = batch_size * MAX_SEQ_LEN
-        if TOTAL_BATCH_SIZE % tokens_per_fwdbwd != 0:
+        tokens_per_fwdbwd = batch_size * sequence_len
+        if total_batch_size % tokens_per_fwdbwd != 0:
             continue
         if batch_size not in deduped:
             deduped.append(batch_size)
@@ -854,7 +1077,12 @@ def _filter_train_batch_sizes(candidates):
 
 
 def _build_train_candidates(runtime):
-    batch_sizes = _filter_train_batch_sizes(runtime.gpu_profile.train_batch_candidates)
+    total_batch_size = _get_total_batch_size(runtime)
+    batch_sizes = _filter_train_batch_sizes(
+        runtime.gpu_profile.train_batch_candidates,
+        runtime.gpu_profile.sequence_len_cap,
+        total_batch_size,
+    )
     candidates = []
     for checkpointing in runtime.gpu_profile.checkpoint_modes:
         for batch_size in batch_sizes:
@@ -882,8 +1110,9 @@ def _benchmark_train_candidate(runtime, tokenizer, vocab_size, train_batch_size,
         runtime,
         use_activation_checkpointing=use_checkpointing,
     )
-    tokens_per_fwdbwd = train_batch_size * MAX_SEQ_LEN
-    grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
+    total_batch_size = _get_total_batch_size(runtime)
+    tokens_per_fwdbwd = train_batch_size * config.sequence_len
+    grad_accum_steps = total_batch_size // tokens_per_fwdbwd
     autocast_ctx = torch.amp.autocast(device_type=runtime.device_type, dtype=runtime.amp_dtype)
 
     model = None
@@ -892,7 +1121,7 @@ def _benchmark_train_candidate(runtime, tokenizer, vocab_size, train_batch_size,
     x = y = None
     try:
         torch.manual_seed(42)
-        torch.cuda.manual_seed(42)
+        _manual_seed_accelerator(runtime, 42)
         with torch.device("meta"):
             model = GPT(config)
         model.to_empty(device=runtime.device)
@@ -908,19 +1137,19 @@ def _benchmark_train_candidate(runtime, tokenizer, vocab_size, train_batch_size,
         train_loader = make_dataloader(
             tokenizer,
             train_batch_size,
-            MAX_SEQ_LEN,
+            config.sequence_len,
             "train",
             device=runtime.device,
             dataset=tokenizer.dataset,
         )
         x, y, _ = next(train_loader)
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
+        _empty_cache(runtime)
+        _reset_peak_memory_stats(runtime)
 
         total_steps = AUTOTUNE_WARMUP_STEPS + AUTOTUNE_MEASURE_STEPS
         measured_time = 0.0
         for step_idx in range(total_steps):
-            torch.cuda.synchronize()
+            _synchronize(runtime)
             t0 = time.time()
             for _ in range(grad_accum_steps):
                 with autocast_ctx:
@@ -929,21 +1158,21 @@ def _benchmark_train_candidate(runtime, tokenizer, vocab_size, train_batch_size,
                 x, y, _ = next(train_loader)
             optimizer.step()
             model.zero_grad(set_to_none=True)
-            torch.cuda.synchronize()
+            _synchronize(runtime)
             dt = time.time() - t0
             if step_idx >= AUTOTUNE_WARMUP_STEPS:
                 measured_time += dt
 
-        peak_memory = torch.cuda.max_memory_allocated()
+        peak_memory = _max_memory_allocated(runtime)
         peak_limit = runtime.gpu_total_memory_bytes * AUTOTUNE_MAX_MEMORY_FRACTION
         if peak_memory > peak_limit:
             return None
-        tokens_measured = TOTAL_BATCH_SIZE * AUTOTUNE_MEASURE_STEPS
+        tokens_measured = total_batch_size * AUTOTUNE_MEASURE_STEPS
         tok_per_sec = tokens_measured / max(measured_time, 1e-6)
         return tok_per_sec, peak_memory
-    except torch.cuda.OutOfMemoryError:
-        return None
     except RuntimeError as exc:
+        if _is_oom_exception(runtime, exc):
+            return None
         print(
             "Autotune candidate rejected "
             f"(batch_size={train_batch_size}, checkpointing={'on' if use_checkpointing else 'off'}): {exc}"
@@ -951,12 +1180,15 @@ def _benchmark_train_candidate(runtime, tokenizer, vocab_size, train_batch_size,
         return None
     finally:
         del x, y, train_loader, optimizer, model
-        torch.cuda.empty_cache()
+        _empty_cache(runtime)
         _restore_gc_after_attempt()
 
 
 def _autotune_train_candidate(runtime, tokenizer, vocab_size, train_candidates):
     if not runtime.gpu_profile.is_supported_consumer:
+        return None
+    if runtime.backend_name == "xpu":
+        print("Autotune disabled on XPU; using conservative batch-size ordering.")
         return None
     if os.environ.get("AUTORESEARCH_DISABLE_AUTOTUNE", "0") == "1":
         print("Autotune disabled by AUTORESEARCH_DISABLE_AUTOTUNE=1.")
@@ -1038,7 +1270,7 @@ def _configure_step_kernels(runtime):
     if runtime.amp_dtype != torch.float16:
         MUON_COMPUTE_DTYPE = runtime.amp_dtype
         muon_reason = "matching AMP dtype"
-    elif torch.cuda.is_bf16_supported(including_emulation=True):
+    elif _is_bf16_supported(runtime.device_type, including_emulation=True):
         # Use bf16 for Muon orthogonalization when training runs in fp16 for better numeric headroom.
         MUON_COMPUTE_DTYPE = torch.bfloat16
         muon_reason = "fp16 AMP with bf16 support (native or emulated)"
@@ -1053,7 +1285,7 @@ def _configure_step_kernels(runtime):
 def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test):
     t_start = time.time()
     torch.manual_seed(42)
-    torch.cuda.manual_seed(42)
+    _manual_seed_accelerator(runtime, 42)
     torch.set_float32_matmul_precision("high")
 
     autocast_ctx = torch.amp.autocast(device_type=runtime.device_type, dtype=runtime.amp_dtype)
@@ -1072,8 +1304,9 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         print(f"  {key:24s}: {value:,}")
     print(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
-    tokens_per_fwdbwd = device_batch_size * MAX_SEQ_LEN
-    grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
+    total_batch_size = _get_total_batch_size(runtime)
+    tokens_per_fwdbwd = device_batch_size * config.sequence_len
+    grad_accum_steps = total_batch_size // tokens_per_fwdbwd
     optimizer = model.setup_optimizer(
         unembedding_lr=UNEMBEDDING_LR,
         embedding_lr=EMBEDDING_LR,
@@ -1087,7 +1320,7 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
     train_loader = make_dataloader(
         tokenizer,
         device_batch_size,
-        MAX_SEQ_LEN,
+        config.sequence_len,
         "train",
         device=runtime.device,
         dataset=tokenizer.dataset,
@@ -1120,7 +1353,7 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
     step = 0
 
     while True:
-        torch.cuda.synchronize()
+        _synchronize(runtime)
         t0 = time.time()
         for _ in range(grad_accum_steps):
             with autocast_ctx:
@@ -1146,7 +1379,7 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         if train_loss_f > 100:
             raise RuntimeError("FAIL: training loss exploded")
 
-        torch.cuda.synchronize()
+        _synchronize(runtime)
         t1 = time.time()
         dt = t1 - t0
         if step > 10:
@@ -1156,9 +1389,9 @@ def _run_training_once(runtime, tokenizer, config, device_batch_size, smoke_test
         smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f
         debiased_smooth_loss = smooth_train_loss / (1 - ema_beta ** (step + 1))
         pct_done = 100 * progress
-        tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
+        tok_per_sec = int(total_batch_size / dt)
         if runtime.gpu_peak_flops:
-            mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / runtime.gpu_peak_flops
+            mfu = 100 * num_flops_per_token * total_batch_size / dt / runtime.gpu_peak_flops
             mfu_text = f"{mfu:.1f}%"
         else:
             mfu_text = "n/a"
@@ -1221,13 +1454,16 @@ def main():
     args = parser.parse_args()
 
     runtime = detect_runtime()
+    total_batch_size = _get_total_batch_size(runtime)
+    print(f"Backend: {runtime.backend_name}")
     print(f"GPU: {runtime.gpu_name}")
     print(f"GPU VRAM: {runtime.gpu_vram_gb:.1f} GB")
-    print(f"GPU CC: {runtime.gpu_cc[0]}.{runtime.gpu_cc[1]}")
+    print(f"Device capability: {runtime.device_capability}")
     print(f"GPU profile: {runtime.gpu_profile.name}")
     print(f"Consumer matrix support: {'yes' if runtime.gpu_profile.is_supported_consumer else 'compatibility path'}")
     print(f"TF32: {'enabled' if runtime.tf32_enabled else 'disabled'}")
     print(f"AMP dtype: {runtime.amp_dtype}")
+    print(f"Total batch size target: {total_batch_size}")
 
     tokenizer = Tokenizer.from_directory(dataset=args.dataset)
     vocab_size = tokenizer.get_vocab_size()
@@ -1271,15 +1507,16 @@ def main():
             chosen_train_batch = train_batch_size
             chosen_checkpointing = use_checkpointing
             break
-        except torch.cuda.OutOfMemoryError:
-            print(
-                "Train OOM at "
-                f"batch_size={train_batch_size}, checkpointing={'on' if use_checkpointing else 'off'}; "
-                "trying next candidate."
-            )
-            torch.cuda.empty_cache()
-            _restore_gc_after_attempt()
         except RuntimeError as exc:
+            if _is_oom_exception(runtime, exc):
+                print(
+                    "Train OOM at "
+                    f"batch_size={train_batch_size}, checkpointing={'on' if use_checkpointing else 'off'}; "
+                    "trying next candidate."
+                )
+                _empty_cache(runtime)
+                _restore_gc_after_attempt()
+                continue
             _restore_gc_after_attempt()
             print(str(exc))
             return 1
@@ -1292,14 +1529,14 @@ def main():
     _save_pre_eval_checkpoint(model)
     model.eval()
 
-    eval_tokens = max(MAX_SEQ_LEN * chosen_train_batch * 2, 8192) if args.smoke_test else EVAL_TOKENS
+    eval_tokens = max(config.sequence_len * chosen_train_batch * 2, 8192) if args.smoke_test else EVAL_TOKENS
     val_bpb = None
     chosen_eval_batch = None
     initial_eval_batch = min(chosen_train_batch, runtime.gpu_profile.eval_batch_cap)
     eval_candidates = _build_eval_batch_candidates(chosen_train_batch, initial_eval_batch)
     for eval_batch_size in eval_candidates:
         try:
-            torch.cuda.empty_cache()
+            _empty_cache(runtime)
             with torch.amp.autocast(device_type=runtime.device_type, dtype=runtime.amp_dtype):
                 val_bpb = evaluate_bpb(
                     model,
@@ -1308,13 +1545,16 @@ def main():
                     device=runtime.device,
                     dataset=tokenizer.dataset,
                     eval_tokens=eval_tokens,
+                    sequence_len=config.sequence_len,
                 )
             chosen_eval_batch = eval_batch_size
             print(f"Eval completed with batch_size={eval_batch_size}")
             break
-        except torch.cuda.OutOfMemoryError:
+        except RuntimeError as exc:
+            if not _is_oom_exception(runtime, exc):
+                raise
             print(f"Eval OOM at batch_size={eval_batch_size}; trying smaller batch.")
-            torch.cuda.empty_cache()
+            _empty_cache(runtime)
 
     if val_bpb is None:
         print("FAIL: eval failed for all batch sizes.")
@@ -1330,15 +1570,15 @@ def main():
         steady_state_mfu = (
             100
             * num_flops_per_token
-            * TOTAL_BATCH_SIZE
+            * total_batch_size
             * steady_state_steps
             / total_training_time
             / runtime.gpu_peak_flops
         )
     else:
         steady_state_mfu = None
-    peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
-    total_tokens = step * TOTAL_BATCH_SIZE
+    peak_vram_mb = _max_memory_allocated(runtime) / 1024 / 1024
+    total_tokens = step * total_batch_size
 
     print("---")
     print(f"val_bpb:          {val_bpb:.6f}")

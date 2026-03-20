@@ -437,6 +437,7 @@ def make_dataloader(tokenizer, B, T, split, device="cuda", dataset=None, buffer_
     epoch = 1
     resolved_device = torch.device(device)
     use_cuda = resolved_device.type == "cuda"
+    use_accelerator_buffer = resolved_device.type in {"cuda", "xpu"}
 
     def refill_buffer():
         nonlocal epoch
@@ -449,12 +450,12 @@ def make_dataloader(tokenizer, B, T, split, device="cuda", dataset=None, buffer_
     cpu_inputs = cpu_buffer[:B * T].view(B, T)
     cpu_targets = cpu_buffer[B * T:].view(B, T)
 
-    if use_cuda:
-        gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=resolved_device)
-        inputs = gpu_buffer[:B * T].view(B, T)
-        targets = gpu_buffer[B * T:].view(B, T)
+    if use_accelerator_buffer:
+        device_buffer = torch.empty(2 * B * T, dtype=torch.long, device=resolved_device)
+        inputs = device_buffer[:B * T].view(B, T)
+        targets = device_buffer[B * T:].view(B, T)
     else:
-        gpu_buffer = None
+        device_buffer = None
         inputs = cpu_inputs
         targets = cpu_targets
 
@@ -487,8 +488,8 @@ def make_dataloader(tokenizer, B, T, split, device="cuda", dataset=None, buffer_
 
         cpu_inputs.copy_(row_buffer[:, :-1])
         cpu_targets.copy_(row_buffer[:, 1:])
-        if use_cuda:
-            gpu_buffer.copy_(cpu_buffer, non_blocking=True)
+        if use_accelerator_buffer:
+            device_buffer.copy_(cpu_buffer, non_blocking=use_cuda)
         yield inputs, targets, epoch
 
 
@@ -497,7 +498,7 @@ def make_dataloader(tokenizer, B, T, split, device="cuda", dataset=None, buffer_
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
-def evaluate_bpb(model, tokenizer, batch_size, device="cuda", dataset=None, eval_tokens=EVAL_TOKENS):
+def evaluate_bpb(model, tokenizer, batch_size, device="cuda", dataset=None, eval_tokens=EVAL_TOKENS, sequence_len=MAX_SEQ_LEN):
     """
     Bits per byte (BPB): vocab size-independent evaluation metric.
     Sums per-token cross-entropy (in nats), sums target byte lengths,
@@ -509,12 +510,12 @@ def evaluate_bpb(model, tokenizer, batch_size, device="cuda", dataset=None, eval
     val_loader = make_dataloader(
         tokenizer,
         batch_size,
-        MAX_SEQ_LEN,
+        sequence_len,
         "val",
         device=device,
         dataset=dataset_name,
     )
-    steps = max(1, eval_tokens // (batch_size * MAX_SEQ_LEN))
+    steps = max(1, eval_tokens // (batch_size * sequence_len))
     total_nats = 0.0
     total_bytes = 0
     for _ in range(steps):
