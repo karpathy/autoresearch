@@ -381,5 +381,10 @@ This is the gentlest generalization improvement available. Unlike leaf=800 (whic
 ## b907055 — validation_fraction 0.15 (from default 0.1)
 **Hypothesis:** Coach: larger validation set makes early stopping catch overfitting sooner.
 **Result:** Score -0.1315, sharpe_min -0.0937, max_dd -11.4%, 507 trades, 7/8 consistency, holdout WARN. Discard.
-**Observation:** Much worse — validation fraction 0.15 starves the model of training data, hurting predictions without fixing holdout. Next: try min_samples_leaf=700 (coach backup — interpolate between 600/WARN and 800/CAUTION).
+**Observation:** Much worse — validation fraction 0.15 starves the model of training data, hurting predictions without fixing holdout.
+
+## 2c0855b — min_samples_leaf 700
+**Hypothesis:** Coach backup: interpolate between 600 (WARN) and 800 (CAUTION).
+**Result:** Score 0.0816, sharpe_min 0.1375, max_dd -8.9%, 473 trades, 6/8 consistency, holdout WARN. Discard.
+**Observation:** Much worse scored performance, holdout STILL WARN. The jump from 600→700 destroys signal without fixing generalization. leaf=600 is confirmed. Next: coach's structural backup — remove 4 cyclical time features (hour/day patterns don't generalize across 4-7 year expanding windows).
 

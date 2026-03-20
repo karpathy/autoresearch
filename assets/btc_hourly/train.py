@@ -178,16 +178,9 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         abs_ret_norm = abs_ret / vol_safe  # normalize by vol
         feature_cols.append(np.nan_to_num(abs_ret_norm, nan=0.0))
 
-    # 11. Hour of day (cyclical)
-    dt = pd.to_datetime(ts)
-    hours = dt.hour
-    feature_cols.append(np.sin(2 * np.pi * hours / 24))
-    feature_cols.append(np.cos(2 * np.pi * hours / 24))
-
-    # 7. Day of week (cyclical)
-    dow = dt.dayofweek
-    feature_cols.append(np.sin(2 * np.pi * dow / 7))
-    feature_cols.append(np.cos(2 * np.pi * dow / 7))
+    # 11. Hour of day and day of week (cyclical) — REMOVED
+    # These temporal patterns don't generalize across 4-7 year expanding windows
+    # and are prime overfitting channels for the 1000-iteration model
 
     features = np.column_stack(feature_cols)
 
@@ -305,7 +298,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     model_conservative = HistGradientBoostingRegressor(
         max_iter=1000,
         max_depth=4,
-        min_samples_leaf=700,
+        min_samples_leaf=600,
         learning_rate=0.01,
         max_leaf_nodes=15,
         l2_regularization=3.0,
@@ -317,7 +310,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     model_aggressive = HistGradientBoostingRegressor(
         max_iter=1000,
         max_depth=4,
-        min_samples_leaf=700,
+        min_samples_leaf=600,
         learning_rate=0.01,
         max_leaf_nodes=15,
         max_features=0.8,
