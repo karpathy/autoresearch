@@ -229,7 +229,7 @@ def count_model_params(models) -> int:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
-    return pd.Series(raw_preds).ewm(span=30, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=35, min_periods=1).mean().values
 
 
 def _confidence_scaled_predict(model, features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -288,18 +288,10 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     features = np.nan_to_num(features, nan=0.0)
 
-    # --- Monotonic constraints: longer-horizon returns must be increasing ---
-    # Prevents "strong momentum → predict reversal" pathology across multiple horizons
-    mono_cst = np.zeros(features.shape[1], dtype=int)
-    mono_cst[0] = 1  # 4h vol-normalized return → monotonically increasing
-    mono_cst[1] = 1  # 12h vol-normalized return → monotonically increasing
-    mono_cst[2] = 1  # 24h vol-normalized return → monotonically increasing
-    mono_cst[3] = 1  # 48h vol-normalized return → monotonically increasing
-    mono_cst[4] = 1  # 72h vol-normalized return → monotonically increasing
-    mono_cst[5] = 1  # 168h vol-normalized return → monotonically increasing
-    mono_cst[6] = 1  # 24h VW cumulative return → monotonically increasing
-    mono_cst[28] = 1  # 72h directional efficiency → monotonically increasing
-    mono_cst[29] = 1  # 168h directional efficiency → monotonically increasing
+    # --- Monotonic constraints REMOVED for iter=1000 test ---
+    # At 7,820 params (exp12), removing constraints was catastrophic (-1.95).
+    # At 18,830 params, the higher-capacity model may handle regime-adaptive
+    # behavior without needing constraint training wheels.
 
     # --- Train: two-model ensemble for diversity ---
     model_conservative = HistGradientBoostingRegressor(
@@ -309,7 +301,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         learning_rate=0.01,
         max_leaf_nodes=15,
         l2_regularization=3.0,
-        monotonic_cst=mono_cst.tolist(),
+
         random_state=42,
     )
     model_conservative.fit(features, targets, sample_weight=sample_weight)
@@ -322,7 +314,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         max_leaf_nodes=15,
         max_features=0.8,
         l2_regularization=3.0,
-        monotonic_cst=mono_cst.tolist(),
+
         random_state=42,
     )
     model_aggressive.fit(features, targets, sample_weight=sample_weight)

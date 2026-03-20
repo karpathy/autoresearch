@@ -391,5 +391,10 @@ This is the gentlest generalization improvement available. Unlike leaf=800 (whic
 ## 12bcae0 — remove 4 cyclical time features
 **Hypothesis:** Coach structural backup: temporal patterns (hour/day) don't generalize across expanding windows.
 **Result:** Score 0.0750, sharpe_min 0.1400, max_dd -12.7%, 501 trades, 6/8 consistency, holdout WARN. Discard.
-**Observation:** Much worse. Time features DO carry useful signal. Max_dd -12.7% near penalty threshold. Restoring. 8 consecutive failures since EMA 35 best. Holdout WARN appears structural for epoch 6 — no regularization approach fixes it without destroying scored performance. Accepting WARN and focusing on score improvement.
+**Observation:** Much worse. Time features DO carry useful signal. Max_dd -12.7% near penalty threshold. Restoring.
+
+## 461bfa4 — EMA 30 at iter=1000
+**Hypothesis:** EMA trend at iter=1000 is monotonic (50→45→40→35 improving). Test 30.
+**Result:** Score 0.3908, sharpe_min 0.5535, max_dd -8.7%, 547 trades, 7/8 consistency, holdout WARN. Discard (plateau).
+**Observation:** Trend plateaued: EMA 35→0.39, 30→0.39. More trades (547 vs 489) but sharpe dropped (0.55 vs 0.58) and max_dd worse (-8.7 vs -7.7). **EMA 35 confirmed as peak** — it's the inflection point where additional responsiveness adds noise without improving signal. Next: re-test constraint removal at iter=1000 capacity.
 
