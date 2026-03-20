@@ -229,7 +229,7 @@ def count_model_params(models) -> int:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
-    return pd.Series(raw_preds).ewm(span=45, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=35, min_periods=1).mean().values
 
 
 def _confidence_scaled_predict(model, features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -288,26 +288,25 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     features = np.nan_to_num(features, nan=0.0)
 
-    # --- Monotonic constraints: longer-horizon returns must be increasing ---
-    # Prevents "strong momentum → predict reversal" pathology across multiple horizons
+    # --- Monotonic constraints ---
     mono_cst = np.zeros(features.shape[1], dtype=int)
-    mono_cst[0] = 1  # 4h vol-normalized return → monotonically increasing
-    mono_cst[1] = 1  # 12h vol-normalized return → monotonically increasing
-    mono_cst[2] = 1  # 24h vol-normalized return → monotonically increasing
-    mono_cst[3] = 1  # 48h vol-normalized return → monotonically increasing
-    mono_cst[4] = 1  # 72h vol-normalized return → monotonically increasing
-    mono_cst[5] = 1  # 168h vol-normalized return → monotonically increasing
-    mono_cst[6] = 1  # 24h VW cumulative return → monotonically increasing
-    mono_cst[28] = 1  # 72h directional efficiency → monotonically increasing
-    mono_cst[29] = 1  # 168h directional efficiency → monotonically increasing
+    mono_cst[0] = 1  # 4h vol-normalized return
+    mono_cst[1] = 1  # 12h vol-normalized return
+    mono_cst[2] = 1  # 24h vol-normalized return
+    mono_cst[3] = 1  # 48h vol-normalized return
+    mono_cst[4] = 1  # 72h vol-normalized return
+    mono_cst[5] = 1  # 168h vol-normalized return
+    mono_cst[6] = 1  # 24h VW cumulative return
+    mono_cst[28] = 1  # 72h directional efficiency
+    mono_cst[29] = 1  # 168h directional efficiency
 
     # --- Train: two-model ensemble for diversity ---
     model_conservative = HistGradientBoostingRegressor(
-        max_iter=300,
+        max_iter=1000,
         max_depth=4,
         min_samples_leaf=600,
         learning_rate=0.01,
-        max_leaf_nodes=20,
+        max_leaf_nodes=15,
         l2_regularization=3.0,
         monotonic_cst=mono_cst.tolist(),
         random_state=42,
@@ -315,11 +314,11 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     model_conservative.fit(features, targets, sample_weight=sample_weight)
 
     model_aggressive = HistGradientBoostingRegressor(
-        max_iter=500,
+        max_iter=1000,
         max_depth=4,
         min_samples_leaf=600,
         learning_rate=0.01,
-        max_leaf_nodes=20,
+        max_leaf_nodes=15,
         max_features=0.8,
         l2_regularization=3.0,
         monotonic_cst=mono_cst.tolist(),
@@ -329,11 +328,11 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
-    blend_weights = [0.5, 0.5]
+    blend_weights = [0.6, 0.4]  # confirmed at epoch 7
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 0.7  # partial demeaning — bracket lower
+    pred_bias = float(np.mean(train_preds)) * 1.3  # over-demean — peak for epoch 7
 
     # Approximate param count
     n_params = 0
@@ -355,11 +354,11 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
 
         sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
-        sigma_preds = np.clip(sigma_preds, -2.0, 2.0)
+        sigma_preds = np.clip(sigma_preds, -3.0, 3.0)
         # Power transform: amplify predictions away from zero to increase trade count
         # 0.1→0.20, 0.3→0.41, 0.5→0.62, 1.0→1.0 (preserves sign and large signals)
         sigma_preds = np.sign(sigma_preds) * np.abs(sigma_preds) ** 0.7
-        sigma_preds = sigma_preds * 0.3  # further dampen to reduce position sizes
+        sigma_preds = sigma_preds * 0.20  # dampening locked for epoch 7
         sigma_smoothed = _smooth_predictions(sigma_preds)
         return sigma_smoothed, ts, vol
 
