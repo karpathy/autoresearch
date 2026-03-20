@@ -329,7 +329,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
-    blend_weights = [0.5, 0.5]
+    blend_weights = [0.6, 0.4]  # slight conservative tilt — re-test at iter=1000 capacity
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
