@@ -284,7 +284,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Vol-normalize targets first, then winsorize in sigma-space
     targets = targets / vol_train
-    targets = np.clip(targets, -5.0, 5.0)
+    targets = np.clip(targets, -4.0, 4.0)  # moderate winsorization — 3.0 was catastrophic, 5.0 current
 
     features = np.nan_to_num(features, nan=0.0)
 
@@ -320,7 +320,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         min_samples_leaf=600,
         learning_rate=0.01,
         max_leaf_nodes=15,
-        max_features=0.6,
+        max_features=0.8,
         l2_regularization=3.0,
         monotonic_cst=mono_cst.tolist(),
         random_state=42,

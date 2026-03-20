@@ -228,5 +228,10 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 ## 8eec130 — epoch 6 baseline (best config: leaves=15, 0.9x demean)
 **Hypothesis:** Re-establish baseline on epoch 6 after holdout rotation.
 **Result:** Score -3.5146, sharpe_min -0.5406, max_dd -2.6%, 149 trades, 6/8 consistency, holdout CAUTION. Keep (epoch 6 baseline).
-**Observation:** Epoch 6 is significantly harder than epoch 5. Trade count increased (149 vs 121) but sharpe_min is much worse (-0.54 vs -0.06). Different holdout window exposed different weaknesses. Next: test aggressive model max_features=0.6 (from 0.8) for more ensemble diversity.
+**Observation:** Epoch 6 is significantly harder than epoch 5. Trade count increased (149 vs 121) but sharpe_min is much worse (-0.54 vs -0.06). Different holdout window exposed different weaknesses.
+
+## eed06e9 — aggressive max_features 0.6 (from 0.8)
+**Hypothesis:** More feature subsampling creates greater ensemble diversity.
+**Result:** Score -5.1050, sharpe_min -0.6666, max_dd -2.4%, 139 trades, 6/8 consistency, holdout CAUTION. Discard.
+**Observation:** Too much subsampling degrades signal quality. max_features=0.8 confirmed. Next: target winsorization 4.0 sigma (between 3.0 catastrophic and 5.0 current).
 
