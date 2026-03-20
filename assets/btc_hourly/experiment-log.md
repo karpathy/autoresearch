@@ -268,5 +268,10 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 ## 682da91 — max_leaf_nodes 10 with iter=1000
 **Hypothesis:** Fewer leaves per tree + more trees = better generalization. Address holdout WARN.
 **Result:** Score 0.1928, sharpe_min 0.3172, max_dd -6.9%, 377 trades, 7/8 consistency, holdout WARN. Discard.
-**Observation:** Slightly worse. Holdout still WARN. Leaves=15 is the right balance. Next: try clip ±1.5 (from ±2.0) — reduce extreme positions, can afford it with 397 trades.
+**Observation:** Slightly worse. Holdout still WARN. Leaves=15 is the right balance.
+
+## c94e3d9 — clip ±1.5 with iter=1000
+**Hypothesis:** Tighter clip reduces extreme positions to improve generalization.
+**Result:** Score 0.2399, sharpe_min 0.3948, max_dd -6.2%, 389 trades, 7/8 consistency, holdout WARN. Discard.
+**Observation:** Slightly worse, holdout still WARN. Next: dampening 0.25 (lower position sizes for generalization).
 
