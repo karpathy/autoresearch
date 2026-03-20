@@ -131,5 +131,13 @@ If sharpe_min becomes positive with this change but score is still modest, the n
 ## 609a341 — target winsorization 3.0 sigma (from 5.0)
 **Hypothesis:** Tighter winsorization reduces influence of crash/rally outliers. Helped in mar20.
 **Result:** Score -349.6484, sharpe_min -1.3112, max_dd -0.9%, 36 trades, 3/8 consistency, holdout OK. Discard.
-**Observation:** Catastrophic. Winsorization 3.0 compresses target distribution so much that model barely produces predictions above trading threshold. Only 36 trades. Next: fine-tune demeaning at 0.95x — right at the steep knee between 0.9x (-0.47) and 1.0x (-2.38).
+**Observation:** Catastrophic. Winsorization 3.0 compresses target distribution so much that model barely produces predictions above trading threshold. Only 36 trades.
+
+## c6e162f — demeaning 0.95x
+**Hypothesis:** Fine-tuning at the steep knee between 0.9x (-0.47) and 1.0x (-2.38).
+**Result:** Score -1.1088, sharpe_min -0.1448, max_dd -2.6%, 123 trades, 6/8 consistency, holdout CAUTION. Discard.
+**Observation:** Confirmed 0.9x is the peak: 0.8→-0.63, **0.9→-0.47**, 0.95→-1.11, 1.0→-2.38. 11 consecutive failures since best. Invoking coach.
+
+---
+**Coach invoked (11 consecutive non-improvements)**
 
