@@ -225,3 +225,8 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 **Result:** Score -2.7214, sharpe_min -0.4795, max_dd -5.2%, 161 trades, 6/8 consistency, holdout WARN. Discard. **EPOCH CHANGED: 5→6.**
 **Observation:** Worse, but epoch rotated — not directly comparable. Reverting to best config (leaves=15, l2=3.0, min_samples_leaf=600) for epoch 6 baseline.
 
+## 8eec130 — epoch 6 baseline (best config: leaves=15, 0.9x demean)
+**Hypothesis:** Re-establish baseline on epoch 6 after holdout rotation.
+**Result:** Score -3.5146, sharpe_min -0.5406, max_dd -2.6%, 149 trades, 6/8 consistency, holdout CAUTION. Keep (epoch 6 baseline).
+**Observation:** Epoch 6 is significantly harder than epoch 5. Trade count increased (149 vs 121) but sharpe_min is much worse (-0.54 vs -0.06). Different holdout window exposed different weaknesses. Next: test aggressive model max_features=0.6 (from 0.8) for more ensemble diversity.
+
