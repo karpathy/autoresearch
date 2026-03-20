@@ -56,20 +56,13 @@ def promote(dry_run: bool = False) -> bool:
         log.info("[dry-run] Config: %s", config)
         return True
 
-    branch = f"harness-update/{today}"
-
     try:
         # Ensure we're on main and up to date
         _run(["git", "checkout", "main"], cwd=OPENCASTOR_REPO)
         _run(["git", "pull", "--ff-only"], cwd=OPENCASTOR_REPO)
 
-        # Create branch
-        _run(["git", "checkout", "-b", branch], cwd=OPENCASTOR_REPO)
-
         # Merge winning config into the existing default_harness.yaml.
-        # The existing file has the full layers section; we only update the
-        # top-level harness tunables (max_iterations, thinking_budget, etc.)
-        # from the champion config — the layers are preserved as-is.
+        # Only updates the top-level harness tunables — layers are preserved.
         TARGET_HARNESS.parent.mkdir(parents=True, exist_ok=True)
         existing = {}
         if TARGET_HARNESS.exists():
@@ -106,60 +99,19 @@ def promote(dry_run: bool = False) -> bool:
         TARGET_HARNESS.write_text(header + yaml.dump(out, default_flow_style=False))
         log.info("Harness config written to %s", TARGET_HARNESS)
 
-        # Commit and push
+        # Commit and push directly to main — no branch, no PR
         _run(["git", "add", str(TARGET_HARNESS)], cwd=OPENCASTOR_REPO)
         _run(
             ["git", "commit", "-m",
-             f"feat(harness): update default agent harness {today}"],
+             f"feat(harness): update default agent harness {today} "
+             f"[{champion.get('candidate_id', 'N/A')}, score={score:.4f}]"],
             cwd=OPENCASTOR_REPO,
         )
-        _run(["git", "push", "-u", "origin", branch], cwd=OPENCASTOR_REPO)
-
-        # Create PR
-        pr_body = (
-            f"## Harness Update — {today}\n\n"
-            f"Promoted from harness-research champion.\n\n"
-            f"- **Score:** {score:.4f}\n"
-            f"- **Candidate:** {champion.get('candidate_id', 'N/A')}\n"
-            f"- **Description:** {champion.get('description', 'N/A')}\n"
-        )
-        result = _run(
-            [
-                "gh", "pr", "create",
-                "--repo", "craigm26/OpenCastor",
-                "--head", branch,
-                "--base", "main",
-                "--title", f"feat(harness): update default agent harness {today}",
-                "--body", pr_body,
-                "--label", "harness-update",
-            ],
-            cwd=OPENCASTOR_REPO,
-        )
-        log.info("PR created: %s", result)
-
-        # Try to merge directly (branch protection bypassed for OpenCastor main)
-        # Auto-merge may not be enabled on the repo — fall through gracefully
-        pr_number = result.strip().split("/")[-1]
-        try:
-            _run(
-                ["gh", "pr", "merge", "--squash", "--admin", pr_number,
-                 "--repo", "craigm26/OpenCastor"],
-                cwd=OPENCASTOR_REPO,
-            )
-            log.info("PR #%s merged", pr_number)
-        except subprocess.CalledProcessError:
-            # Auto-merge not available — leave PR open for manual merge or CI
-            log.info("PR #%s open — merge manually or via CI", pr_number)
-
-        # Return to main
-        _run(["git", "checkout", "main"], cwd=OPENCASTOR_REPO)
+        _run(["git", "push", "origin", "main"], cwd=OPENCASTOR_REPO)
+        log.info("Pushed harness update directly to OpenCastor main")
 
     except subprocess.CalledProcessError as e:
         log.error("Promotion failed: %s\n%s", e, e.stderr)
-        try:
-            _run(["git", "checkout", "main"], cwd=OPENCASTOR_REPO)
-        except subprocess.CalledProcessError:
-            pass
         raise
 
     return True

@@ -146,50 +146,20 @@ def write_report(
     CHAMPION_PATH.write_text(yaml.dump(champion_data, default_flow_style=False))
     log.info("Champion updated: score=%.4f", compute_score(winner))
 
-    # Git operations in opencastor-ops
-    branch = f"harness-{today}"
+    # Commit and push directly to main in opencastor-ops (no branch, no PR)
     try:
-        _run_git(["checkout", "-b", branch], cwd=OPS_REPO)
+        _run_git(["checkout", "main"], cwd=OPS_REPO)
         _run_git(["add", "harness-research/"], cwd=OPS_REPO)
         _run_git(
-            ["commit", "-m", f"feat(harness-research): results for {today}"],
+            ["commit", "-m",
+             f"feat(harness-research): results for {today} "
+             f"[{winner.candidate_id}, score={compute_score(winner):.4f}]"],
             cwd=OPS_REPO,
         )
-        _run_git(["push", "-u", "origin", branch], cwd=OPS_REPO)
-
-        # Create PR
-        pr_body = (
-            f"## Harness Research Results — {today}\n\n"
-            f"- **Winner:** {winner.candidate_id}\n"
-            f"- **Score:** {compute_score(winner):.4f} (champion was {champion_score:.4f})\n"
-            f"- **Description:** {winner.description}\n\n"
-            f"See `harness-research/{today}.md` for full report.\n\n"
-            f"Add label `approve-harness` to promote to OpenCastor."
-        )
-        subprocess.run(
-            [
-                "gh", "pr", "create",
-                "--repo", "craigm26/opencastor-ops",
-                "--head", branch,
-                "--base", "main",
-                "--title", f"harness-research: {today}",
-                "--body", pr_body,
-                "--label", "harness-candidate",
-            ],
-            cwd=OPS_REPO,
-            check=True,
-        )
-        log.info("PR created on craigm26/opencastor-ops branch %s", branch)
-
-        # Return to main
-        _run_git(["checkout", "main"], cwd=OPS_REPO)
+        _run_git(["push", "origin", "main"], cwd=OPS_REPO)
+        log.info("Pushed harness research results to opencastor-ops main")
     except subprocess.CalledProcessError as e:
-        log.error("Git/PR operation failed: %s\n%s", e, e.stderr)
-        # Try to return to main
-        try:
-            _run_git(["checkout", "main"], cwd=OPS_REPO)
-        except subprocess.CalledProcessError:
-            pass
+        log.error("Git push to opencastor-ops failed: %s\n%s", e, e.stderr)
         raise
 
     return True
