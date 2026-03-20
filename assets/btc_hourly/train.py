@@ -229,7 +229,7 @@ def count_model_params(models) -> int:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
-    return pd.Series(raw_preds).ewm(span=40, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=45, min_periods=1).mean().values
 
 
 def _confidence_scaled_predict(model, features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -283,6 +283,8 @@ def build_model(train_df: pd.DataFrame) -> callable:
     # --- Monotonic constraints: longer-horizon returns must be increasing ---
     # Prevents "strong momentum → predict reversal" pathology across multiple horizons
     mono_cst = np.zeros(features.shape[1], dtype=int)
+    mono_cst[0] = 1  # 4h vol-normalized return → monotonically increasing
+    mono_cst[1] = 1  # 12h vol-normalized return → monotonically increasing
     mono_cst[2] = 1  # 24h vol-normalized return → monotonically increasing
     mono_cst[3] = 1  # 48h vol-normalized return → monotonically increasing
     mono_cst[4] = 1  # 72h vol-normalized return → monotonically increasing
@@ -323,7 +325,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds))
+    pred_bias = float(np.mean(train_preds)) * 0.7  # partial demeaning — bracket lower
 
     # Approximate param count
     n_params = 0
