@@ -126,5 +126,10 @@ If sharpe_min becomes positive with this change but score is still modest, the n
 ## 354cb9c — prediction clip ±1.0 (from ±2.0)
 **Hypothesis:** sharpe_min at -0.07 is barely negative. Tighter clips may prevent extreme wrong-direction predictions.
 **Result:** Score -2.4856, sharpe_min -0.2705, max_dd -2.0%, 125 trades, 5/8 consistency, holdout CAUTION. Discard.
-**Observation:** Too aggressive — removes signal. Max_dd improved but sharpe and consistency both worse. Next: try target winsorization 3.0 sigma (from 5.0). In mar20, this achieved 8/8 consistency. With expanding windows including more crash data, tighter winsorization may help.
+**Observation:** Too aggressive — removes signal. Max_dd improved but sharpe and consistency both worse.
+
+## 609a341 — target winsorization 3.0 sigma (from 5.0)
+**Hypothesis:** Tighter winsorization reduces influence of crash/rally outliers. Helped in mar20.
+**Result:** Score -349.6484, sharpe_min -1.3112, max_dd -0.9%, 36 trades, 3/8 consistency, holdout OK. Discard.
+**Observation:** Catastrophic. Winsorization 3.0 compresses target distribution so much that model barely produces predictions above trading threshold. Only 36 trades. Next: fine-tune demeaning at 0.95x — right at the steep knee between 0.9x (-0.47) and 1.0x (-2.38).
 

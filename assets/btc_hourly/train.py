@@ -284,7 +284,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Vol-normalize targets first, then winsorize in sigma-space
     targets = targets / vol_train
-    targets = np.clip(targets, -3.0, 3.0)  # tighter winsorization — reduce extreme crash/rally outlier influence
+    targets = np.clip(targets, -5.0, 5.0)
 
     features = np.nan_to_num(features, nan=0.0)
 
@@ -333,7 +333,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 0.9  # partial demeaning — optimal for expanding windows
+    pred_bias = float(np.mean(train_preds)) * 0.95  # fine-tuning demeaning between 0.9 (-0.47) and 1.0 (-2.38)
 
     # Approximate param count
     n_params = 0
