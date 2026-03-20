@@ -7,9 +7,13 @@ import yaml
 
 from .evaluator import EvalResults
 
+import os
+
 log = logging.getLogger(__name__)
 
-CHAMPION_PATH = Path.home() / "opencastor-ops" / "harness-research" / "champion.yaml"
+# Allow CI to override the ops repo path via env var
+_OPS_DIR = Path(os.environ.get("OPENCASTOR_OPS_DIR", Path.home() / "opencastor-ops"))
+CHAMPION_PATH = _OPS_DIR / "harness-research" / "champion.yaml"
 
 IMPROVEMENT_THRESHOLD = 0.05  # 5% improvement required
 

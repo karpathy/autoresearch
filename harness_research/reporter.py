@@ -1,6 +1,7 @@
 """Generate reports and manage PR workflow for harness research results."""
 
 import logging
+import os
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -12,7 +13,8 @@ from .ranker import compute_score
 
 log = logging.getLogger(__name__)
 
-OPS_REPO = Path.home() / "opencastor-ops"
+# Allow CI to override the ops repo path via env var
+OPS_REPO = Path(os.environ.get("OPENCASTOR_OPS_DIR", Path.home() / "opencastor-ops"))
 HARNESS_DIR = OPS_REPO / "harness-research"
 CANDIDATES_DIR = HARNESS_DIR / "candidates"
 CHAMPION_PATH = HARNESS_DIR / "champion.yaml"

@@ -1,6 +1,7 @@
 """Promote winning harness config to OpenCastor after approval."""
 
 import logging
+import os
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -9,9 +10,10 @@ import yaml
 
 log = logging.getLogger(__name__)
 
-OPS_REPO = Path.home() / "opencastor-ops"
+# Allow CI to override paths via env vars
+OPS_REPO = Path(os.environ.get("OPENCASTOR_OPS_DIR", Path.home() / "opencastor-ops"))
 CHAMPION_PATH = OPS_REPO / "harness-research" / "champion.yaml"
-OPENCASTOR_REPO = Path.home() / "OpenCastor"
+OPENCASTOR_REPO = Path(os.environ.get("OPENCASTOR_REPO_DIR", Path.home() / "OpenCastor"))
 TARGET_HARNESS = OPENCASTOR_REPO / "castor" / "harness" / "default_harness.yaml"
 
 
