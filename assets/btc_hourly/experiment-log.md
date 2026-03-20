@@ -413,3 +413,8 @@ This is the gentlest generalization improvement available. Unlike leaf=800 (whic
 **Result:** Score 0.4050, sharpe_min 0.5972, max_dd -7.8%, 489 trades, 7/8 consistency, holdout WARN. Keep (new best).
 **Observation:** Modest but clear improvement: 0.39→0.41. sharpe_min improved 0.58→0.60. Trade count unchanged. Another stale optimization validated — clip ±2.0 was tuned at old capacity. The higher-capacity model's predictions benefit from less clipping.
 
+## d717344 — blend weights 0.6/0.4 ★★★★ NEW BEST
+**Hypothesis:** Re-test blend weights at iter=1000. Old capacity test (0.7/0.3) was too aggressive.
+**Result:** Score 0.4226, sharpe_min 0.6101, max_dd -8.0%, 509 trades, 7/8 consistency, holdout WARN. Keep (new best).
+**Observation:** Another stale optimization! Blend 0.6/0.4 improves score by +4% (0.41→0.42). sharpe_min now 0.61 (target was 0.60 from directive). Trades increased (489→509). The conservative model (no max_features sampling) is slightly more reliable, and tilting the blend rewards that.
+
