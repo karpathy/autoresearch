@@ -327,3 +327,59 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 ---
 **Coach invoked (5 consecutive non-improvements)**
 
+**DIAGNOSIS:** The model has had holdout WARN for 13 consecutive experiments (every single experiment since max_iter=1000 in exp30). This is the dominant problem. Rule 12 says to prioritize generalization when holdout is WARN, but the last 5 experiments all targeted scored performance (l2, leaf size, power, constraint removal) while holdout stayed WARN in every one. Exp39 (leaf=800) is the key data point: it destroyed scored performance but improved holdout from WARN to CAUTION, proving the model genuinely overfits to scored windows. The agent has been optimizing scored performance on a model that doesn't generalize -- any gains are fragile and will likely collapse on the next epoch rotation. The 5 failed experiments all tweaked existing hyperparameters by small amounts within already-explored ranges. No structural changes have been tried since the iter=1000 breakthrough.
+
+**BOTTLENECK:** The binding constraint is holdout WARN (generalization), not any single score component. The score decomposition shows trade_mult (~0.69-0.78) has the most numeric headroom, but improving trade_mult by increasing trades always degraded sharpe (Pareto frontier). The real bottleneck is that the 1000-iteration model memorizes window-specific patterns. With 18830 parameters trained on expanding windows of 30-60k samples, the model has enough capacity to fit patterns specific to the 4 scored windows that fail on the unseen holdout window. Fixing generalization is prerequisite to any sustainable score improvement.
+
+**PRESCRIPTION:** Increase `validation_fraction` from the default 0.1 to 0.15 in both models. This is completely untried and directly targets the overfitting mechanism.
+
+In `/Users/ipatterson/dev/autoresearch/assets/btc_hourly/train.py`, add `validation_fraction=0.15` to both model instantiations:
+
+```python
+    model_conservative = HistGradientBoostingRegressor(
+        max_iter=1000,
+        max_depth=4,
+        min_samples_leaf=600,
+        learning_rate=0.01,
+        max_leaf_nodes=15,
+        l2_regularization=3.0,
+        validation_fraction=0.15,          # <-- ADD THIS (default is 0.1)
+        monotonic_cst=mono_cst.tolist(),
+        random_state=42,
+    )
+
+    model_aggressive = HistGradientBoostingRegressor(
+        max_iter=1000,
+        max_depth=4,
+        min_samples_leaf=600,
+        learning_rate=0.01,
+        max_leaf_nodes=15,
+        max_features=0.8,
+        l2_regularization=3.0,
+        validation_fraction=0.15,          # <-- ADD THIS (default is 0.1)
+        monotonic_cst=mono_cst.tolist(),
+        random_state=42,
+    )
+```
+
+**Why this works:** HistGradientBoostingRegressor uses early stopping by default. With `validation_fraction=0.1` (default), it holds out 10% of training data to decide when to stop adding trees. At 0.15, it holds out 15%, which means:
+1. The validation set is 50% larger, making early stopping decisions more statistically reliable
+2. The training set is ~6% smaller, providing mild regularization
+3. The model will stop training earlier in windows where it starts to overfit, because a larger validation set catches overfitting sooner
+4. This directly targets the mechanism behind holdout WARN -- the model is training too many iterations on some windows
+
+This is the gentlest generalization improvement available. Unlike leaf=800 (which was a sledgehammer), this lets the model's own early stopping mechanism decide how much complexity is appropriate for each window.
+
+**IF THIS WORKS (holdout improves):** Try validation_fraction=0.2 to continue the trend.
+
+**IF THIS FAILS (holdout still WARN, scored drops):** Remove the 4 cyclical time features (hour sin/cos, day of week sin/cos -- lines 182-190 in train.py). These features are prime overfitting channels because they encode temporal patterns ("BTC rises on Tuesdays") that don't generalize across the 4-7 year expanding windows. This is 4 fewer noise channels for the 1000-iteration model to memorize. Also update the monotonic constraint array indices accordingly.
+
+**IF BOTH FAIL:** Try `min_samples_leaf=700` -- the obvious interpolation between 600 (overfits, WARN) and 800 (undergeneralizes, CAUTION). The exp39 signal was real (holdout improved) but the parameterization was too aggressive.
+
+**RATIONALE:** The last 13 experiments show a clear pattern: holdout WARN is structural at iter=1000, not fixable by post-prediction pipeline tuning. The agent has tried l2 regularization (exp39: l2=4.0), leaf regularization (exp40: leaf=800), power transform (exp41: power=0.8), and constraint modification (exp42: remove VW constraint). None improved holdout. The one experiment that DID improve holdout (leaf=800) was too aggressive. The validation_fraction parameter is the ONLY regularization lever that hasn't been touched -- it controls how the model decides to stop training, which is exactly the mechanism that determines whether the model overfits to a specific window's patterns. Increasing it from 0.1 to 0.15 is gentle enough to preserve scored performance while potentially flipping holdout from WARN to CAUTION or OK.
+
+## b907055 — validation_fraction 0.15 (from default 0.1)
+**Hypothesis:** Coach: larger validation set makes early stopping catch overfitting sooner.
+**Result:** Score -0.1315, sharpe_min -0.0937, max_dd -11.4%, 507 trades, 7/8 consistency, holdout WARN. Discard.
+**Observation:** Much worse — validation fraction 0.15 starves the model of training data, hurting predictions without fixing holdout. Next: try min_samples_leaf=700 (coach backup — interpolate between 600/WARN and 800/CAUTION).
+
