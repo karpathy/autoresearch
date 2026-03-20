@@ -332,7 +332,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 1.2  # stronger over-demean — push sharpe_min toward positive
+    pred_bias = float(np.mean(train_preds)) * 1.3  # continue over-demean trend — sharpe just crossed positive
 
     # Approximate param count
     n_params = 0
