@@ -43,3 +43,14 @@ Best demeaning fraction is 0.9x. Reverting to 0.9x for EMA span sweep. Next: EMA
 **Result:** Score -1.1587, sharpe_min -0.1513, max_dd -2.5%, 105 trades, 6/8 consistency, holdout CAUTION. Discard.
 **Observation:** Worse than EMA 45 (-1.16 vs -0.47). Too much smoothing kills trade count (105 vs 117). EMA sweep: 40→-3.48, **45→-0.47**, 50→-1.16. EMA 45 confirmed optimal. Next: test dampening 0.35.
 
+## f06f1ff — dampening 0.35 (with 0.9x demeaning, EMA 45)
+**Hypothesis:** Bear market data in every window should make model more robust. May handle slightly higher exposure.
+**Result:** Score -7.4658, sharpe_min -1.4627, max_dd -5.5%, 245 trades, 4/8 consistency, holdout OK. Discard.
+**Observation:** Catastrophic. Same as mar20 — 0.35 kills the worst window (sharpe -1.46). Dampening permanently confirmed at 0.3. Reverting.
+
+---
+
+**Phase 1 recalibration complete.** Best config: 0.9x demeaning, EMA 45, dampening 0.3. Best score: -0.4678.
+
+All scores remain negative. The pipeline parameters are recalibrated but the model needs structural improvement to work with expanding windows. Moving to Phase 2.
+
