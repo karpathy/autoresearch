@@ -307,8 +307,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         max_depth=4,
         min_samples_leaf=600,
         learning_rate=0.01,
-        max_leaf_nodes=18,
-        l2_regularization=3.0,
+        max_leaf_nodes=15,
+        l2_regularization=4.0,
         monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
@@ -319,9 +319,9 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         max_depth=4,
         min_samples_leaf=600,
         learning_rate=0.01,
-        max_leaf_nodes=18,
+        max_leaf_nodes=15,
         max_features=0.8,
-        l2_regularization=3.0,
+        l2_regularization=4.0,
         monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )

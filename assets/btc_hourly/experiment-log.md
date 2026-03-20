@@ -210,3 +210,9 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 **Result:** Score -2.6258, sharpe_min -0.2794, max_dd -2.5%, 109 trades, 6/8 consistency, holdout CAUTION. Discard.
 **Observation:** Too few leaves — model loses useful patterns. Leaf count: 12→-2.63, **15→-0.41**, 20→-0.47. Optimum near 15. Next: try 18 (other side of 15).
 
+## e905cc7 — max_leaf_nodes 18
+**Hypothesis:** Bracket 15 from above.
+**Result:** Score -0.4678, sharpe_min -0.0720, max_dd -2.6%, 117 trades, 6/8 consistency, holdout CAUTION. Discard (identical to leaves=20).
+**Observation:** Trees never use >18 leaves, so 18 and 20 give identical results. Leaf curve: 12→-2.63, **15→-0.41**, 18=20→-0.47. Leaves=15 confirmed optimal. Next: test l2_regularization 4.0 (from 3.0) with leaves=15 — coach 1 noted increased regularization was never tested with constraints intact.
+
+
