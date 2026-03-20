@@ -457,6 +457,10 @@ This is the gentlest generalization improvement available. Unlike leaf=800 (whic
 ## b0faa5a — EMA 40 + demeaning 1.0x (epoch 7)
 **Hypothesis:** Crash regimes have higher prediction noise — more smoothing may help.
 **Result:** Score -3.7059, sharpe_min -1.5811, max_dd -9.0%, 382 trades, 5/8 consistency, holdout OK. Discard.
-**Observation:** Worse. More smoothing kills trades (382 vs 420) without improving sharpe. EMA 35 confirmed. Next: dampening 0.25 — reduce crash-regime position sizes.
+**Observation:** Worse. More smoothing kills trades (382 vs 420) without improving sharpe. EMA 35 confirmed.
 
+## afa99c4 — dampening 0.25 + demeaning 1.0x (epoch 7) ★ MARGINAL NEW BEST
+**Hypothesis:** Lower dampening reduces crash-regime position sizes.
+**Result:** Score -3.2438, sharpe_min -1.4236, max_dd -4.3%, 292 trades, 6/8 consistency, holdout OK. Keep.
+**Observation:** Marginal improvement (-3.25→-3.24). Key tradeoffs: sharpe improved (-1.50→-1.42), max_dd halved (-9.7→-4.3%), consistency up (5/8→6/8), but trades dropped (420→292). Lower dampening helps crash window significantly. Next: tighter clip ±2.0 (from ±3.0) to further limit crash-regime exposure.
 
