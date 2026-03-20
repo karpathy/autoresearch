@@ -283,6 +283,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
     # --- Monotonic constraints: longer-horizon returns must be increasing ---
     # Prevents "strong momentum → predict reversal" pathology across multiple horizons
     mono_cst = np.zeros(features.shape[1], dtype=int)
+    mono_cst[1] = 1  # 12h vol-normalized return → monotonically increasing
     mono_cst[2] = 1  # 24h vol-normalized return → monotonically increasing
     mono_cst[3] = 1  # 48h vol-normalized return → monotonically increasing
     mono_cst[4] = 1  # 72h vol-normalized return → monotonically increasing
