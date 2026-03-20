@@ -398,3 +398,8 @@ This is the gentlest generalization improvement available. Unlike leaf=800 (whic
 **Result:** Score 0.3908, sharpe_min 0.5535, max_dd -8.7%, 547 trades, 7/8 consistency, holdout WARN. Discard (plateau).
 **Observation:** Trend plateaued: EMA 35→0.39, 30→0.39. More trades (547 vs 489) but sharpe dropped (0.55 vs 0.58) and max_dd worse (-8.7 vs -7.7). **EMA 35 confirmed as peak** — it's the inflection point where additional responsiveness adds noise without improving signal. Next: re-test constraint removal at iter=1000 capacity.
 
+## 8b53ed6 — remove all constraints at iter=1000
+**Hypothesis:** At 18,830 params (2.4x old capacity), model may handle regime-adaptive behavior without constraints.
+**Result:** Score 0.1672, sharpe_min 0.2390, max_dd -8.7%, 485 trades, 7/8 consistency, holdout WARN. Discard.
+**Observation:** Better than old capacity removal (-1.95→+0.17) but still worse than constrained (0.39). **Constraints confirmed at BOTH capacities.** The model still learns reversal patterns that hurt worst window. Next: try n_iter_no_change=5 (stricter early stopping patience, targets holdout WARN).
+
