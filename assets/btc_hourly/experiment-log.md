@@ -64,3 +64,11 @@ All scores remain negative. The pipeline parameters are recalibrated but the mod
 **Result:** Score -6.2818, sharpe_min -0.9985, max_dd -3.3%, 213 trades, 4/8 consistency, holdout OK. Discard.
 **Observation:** Trade count increased (213 vs 117) but sharpe collapsed. Amplifying noisy predictions destroys signal quality. Next: try no power transform (exponent 1.0 = linear).
 
+## ba417fb — power transform exponent 1.0 (linear)
+**Hypothesis:** Remove power transform entirely. With expanding windows, raw predictions may not need reshaping.
+**Result:** Score -2.7366, sharpe_min -0.4169, max_dd -2.4%, 103 trades, 7/8 consistency, holdout WARN. Discard.
+**Observation:** Better consistency (7/8) but much worse score. Too few trades (103) without amplification. Power exponent confirmed at 0.7. 7 consecutive experiments without improvement since best (0.9x demeaning, -0.47). Invoking coach.
+
+---
+**Coach invoked (7 consecutive non-improvements)**
+
