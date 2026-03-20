@@ -288,29 +288,17 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     features = np.nan_to_num(features, nan=0.0)
 
-    # --- Monotonic constraints: longer-horizon returns must be increasing ---
-    # Prevents "strong momentum → predict reversal" pathology across multiple horizons
-    mono_cst = np.zeros(features.shape[1], dtype=int)
-    mono_cst[0] = 1  # 4h vol-normalized return → monotonically increasing
-    mono_cst[1] = 1  # 12h vol-normalized return → monotonically increasing
-    mono_cst[2] = 1  # 24h vol-normalized return → monotonically increasing
-    mono_cst[3] = 1  # 48h vol-normalized return → monotonically increasing
-    mono_cst[4] = 1  # 72h vol-normalized return → monotonically increasing
-    mono_cst[5] = 1  # 168h vol-normalized return → monotonically increasing
-    mono_cst[6] = 1  # 24h VW cumulative return → monotonically increasing
-    mono_cst[28] = 1  # 72h directional efficiency → monotonically increasing
-    mono_cst[29] = 1  # 168h directional efficiency → monotonically increasing
-
     # --- Train: two-model ensemble for diversity ---
+    # Monotonic constraints removed — expanding windows mix regimes (bull/bear/chop)
+    # and the model needs freedom to learn regime-dependent behavior.
+    # Regularization increased to compensate for removed constraints.
     model_conservative = HistGradientBoostingRegressor(
         max_iter=300,
         max_depth=4,
-        min_samples_leaf=600,
+        min_samples_leaf=1000,
         learning_rate=0.01,
         max_leaf_nodes=20,
-        l2_regularization=3.0,
-
-        monotonic_cst=mono_cst.tolist(),
+        l2_regularization=5.0,
         random_state=42,
     )
     model_conservative.fit(features, targets, sample_weight=sample_weight)
@@ -318,13 +306,11 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     model_aggressive = HistGradientBoostingRegressor(
         max_iter=500,
         max_depth=4,
-        min_samples_leaf=600,
+        min_samples_leaf=1000,
         learning_rate=0.01,
         max_leaf_nodes=20,
         max_features=0.8,
-        l2_regularization=3.0,
-
-        monotonic_cst=mono_cst.tolist(),
+        l2_regularization=5.0,
         random_state=42,
     )
     model_aggressive.fit(features, targets, sample_weight=sample_weight)
