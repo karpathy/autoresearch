@@ -10,6 +10,7 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
+import json
 import math
 import time
 from dataclasses import dataclass, asdict
@@ -109,8 +110,12 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
+        # Transpose to [B, H, T, D] as required by SDPA (was missing — critical bug fix)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
-        y = y.contiguous().view(B, T, -1)
+        y = y.transpose(1, 2).contiguous().view(B, T, -1)
         # Hebbian for c_proj: co-activation of attention output and final output
         with torch.no_grad():
             y_flat = y.reshape(B * T, -1)
@@ -621,8 +626,14 @@ torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 device = torch.device("cuda")
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.float32)
-H100_BF16_PEAK_FLOPS = 989.5e12
+autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+
+def _get_gpu_peak_flops():
+    name = torch.cuda.get_device_name(0).lower()
+    if "rtx pro 500 blackwell" in name:
+        return 9.2e12
+    return 989.5e12  # fallback to H100 if unknown
+GPU_PEAK_FLOPS = _get_gpu_peak_flops()
 
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
@@ -790,7 +801,7 @@ while True:
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta ** (step + 1))
     pct_done = 100 * progress
     tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
-    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
+    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / GPU_PEAK_FLOPS
     remaining = max(0, TIME_BUDGET - total_training_time)
 
     print(
@@ -831,7 +842,7 @@ steady_state_mfu = (
     * TOTAL_BATCH_SIZE
     * (step - 10)
     / total_training_time
-    / H100_BF16_PEAK_FLOPS
+    / GPU_PEAK_FLOPS
     if total_training_time > 0
     else 0
 )
@@ -847,3 +858,21 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
+
+# Write run summary for analyze.py
+import subprocess as _sp
+_git_commit = _sp.check_output(["git", "rev-parse", "HEAD"], stderr=_sp.DEVNULL).decode().strip()
+_summary = {
+    "aspect_ratio": ASPECT_RATIO, "head_dim": HEAD_DIM, "window_pattern": WINDOW_PATTERN,
+    "total_batch_size": TOTAL_BATCH_SIZE, "embedding_lr": EMBEDDING_LR,
+    "unembedding_lr": UNEMBEDDING_LR, "matrix_lr": MATRIX_LR,
+    "warmdown_ratio": WARMDOWN_RATIO, "depth": DEPTH, "device_batch_size": DEVICE_BATCH_SIZE,
+    "max_seq_len": MAX_SEQ_LEN, "time_budget": TIME_BUDGET,
+    "git_commit": _git_commit, "val_bpb": val_bpb,
+    "training_seconds": total_training_time, "total_seconds": t_end - t_start,
+    "peak_vram_mb": peak_vram_mb, "mfu_percent": steady_state_mfu,
+    "total_tokens_M": total_tokens / 1e6, "num_steps": step, "num_params_M": num_params / 1e6,
+    "gpu_name": torch.cuda.get_device_name(0),
+}
+with open("run_summary.json", "w") as _f:
+    json.dump(_summary, _f, indent=2)
