@@ -126,6 +126,7 @@ class GPTConfig:
     n_kv_head: int = 6
     n_embd: int = 768
     window_pattern: str = "L"
+    dropout: float = 0.0
 
 
 def norm(x):
@@ -161,6 +162,7 @@ class CausalSelfAttention(nn.Module):
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 32
         self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+        self.resid_dropout = nn.Dropout(config.dropout)
 
     def forward(self, x, ve, cos_sin, window_size):
         B, T, C = x.size()
@@ -191,7 +193,7 @@ class CausalSelfAttention(nn.Module):
 
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         y = y.transpose(1, 2).contiguous().view(B, T, -1)
-        y = self.c_proj(y)
+        y = self.resid_dropout(self.c_proj(y))
         return y
 
 
@@ -200,11 +202,12 @@ class MLP(nn.Module):
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        self.resid_dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         x = self.c_fc(x)
         x = F.relu(x).square()
-        x = self.c_proj(x)
+        x = self.resid_dropout(self.c_proj(x))
         return x
 
 
@@ -535,6 +538,7 @@ class MuonAdamW(torch.optim.Optimizer):
 ASPECT_RATIO = 64       # model_dim = depth * ASPECT_RATIO
 HEAD_DIM = 64           # target head dimension for attention
 WINDOW_PATTERN = "L"    # full attention (no sliding window on MPS)
+DROPOUT = 0.1           # dropout for regularization
 
 # Optimization
 TOTAL_BATCH_SIZE = 2**15 # ~32K tokens per optimizer step (smaller for MPS)
@@ -549,7 +553,7 @@ WARMDOWN_RATIO = 0.5    # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
-DEPTH = 4               # number of transformer layers (smaller for MPS + small dataset)
+DEPTH = 8               # number of transformer layers
 DEVICE_BATCH_SIZE = 16   # per-device batch size
 SEQ_LEN = MAX_SEQ_LEN   # use prepare.py's sequence length
 
@@ -575,7 +579,7 @@ def build_model_config(depth):
     return GPTConfig(
         sequence_len=SEQ_LEN, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
-        window_pattern=WINDOW_PATTERN,
+        window_pattern=WINDOW_PATTERN, dropout=DROPOUT,
     )
 
 config = build_model_config(DEPTH)
