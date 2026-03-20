@@ -18,11 +18,36 @@ from core.epoch import get_holdout_idx, peek_eval_count, read_and_increment_eval
 
 
 # ---------------------------------------------------------------------------
+# Sample Weight Decay
+# ---------------------------------------------------------------------------
+
+def compute_decay_weights(timestamps, eval_start, half_life_years):
+    """Compute exponential decay weights based on sample age relative to eval start.
+
+    weight = 0.5 ^ (age_in_years / half_life)
+
+    Args:
+        timestamps: Array of pd.Timestamp for each training sample.
+        eval_start: pd.Timestamp of the evaluation period start.
+        half_life_years: Half-life in years. After this many years,
+            a sample's weight is 0.5x the most recent sample.
+
+    Returns:
+        np.ndarray of weights, same length as timestamps.
+    """
+    ts = pd.Series(timestamps)
+    age_hours = (eval_start - ts).dt.total_seconds() / 3600
+    age_years = age_hours / 8766  # average hours per year
+    weights = np.power(0.5, age_years / half_life_years)
+    return weights.values
+
+
+# ---------------------------------------------------------------------------
 # Internal: run build_model on a window and backtest
 # ---------------------------------------------------------------------------
 
 def _eval_window(build_model_fn, all_data, window, window_idx,
-                 backtest_config):
+                 backtest_config, decay_half_life_years=0.0):
     """Train a model on one window's training data and backtest on its eval period.
 
     Returns (backtest_result, train_seconds, eval_preds) where eval_preds is
@@ -32,8 +57,17 @@ def _eval_window(build_model_fn, all_data, window, window_idx,
                   (all_data["timestamp"] <= window["train_end"]))
     train_data = all_data[train_mask].reset_index(drop=True)
 
+    # Compute sample weights if decay is configured
+    sample_weight = None
+    if decay_half_life_years > 0:
+        sample_weight = compute_decay_weights(
+            train_data["timestamp"].values,
+            window["eval_start"],
+            decay_half_life_years,
+        )
+
     t0 = time.time()
-    predict_fn = build_model_fn(train_data)
+    predict_fn = build_model_fn(train_data, sample_weight=sample_weight)
     train_seconds = time.time() - t0
 
     print(f"  Window {window_idx}: trained in {train_seconds:.1f}s, ", end="", flush=True)
@@ -178,7 +212,8 @@ def evaluate_model(build_model_fn, load_data_fn, windows, config: AssetConfig) -
     all_results = []
     for i, w in enumerate(windows):
         bt, _, _ = _eval_window(build_model_fn, all_data, w, i + 1,
-                                config.backtest)
+                                config.backtest,
+                                decay_half_life_years=wf.decay_half_life_years)
         all_results.append(bt)
 
     # Split into scored and holdout
@@ -256,7 +291,8 @@ def run_diagnostic(build_model_fn, load_data_fn, windows, config: AssetConfig,
     window_train_times = []
     for i, w in enumerate(windows):
         bt, train_time, eval_preds = _eval_window(
-            build_model_fn, all_data, w, i + 1, config.backtest)
+            build_model_fn, all_data, w, i + 1, config.backtest,
+            decay_half_life_years=wf.decay_half_life_years)
         window_results.append(bt)
         window_preds.append(eval_preds)
         window_train_times.append(train_time)
@@ -288,6 +324,19 @@ def run_diagnostic(build_model_fn, load_data_fn, windows, config: AssetConfig,
         status = "[HOLDOUT]" if i == holdout_idx else "[SCORED]"
         print(f"\n--- Window {i}: Train {train_range}, "
               f"Eval {eval_range} {status} ---")
+        # Training sample count and weight stats
+        train_mask = ((all_data["timestamp"] >= w["train_start"]) &
+                      (all_data["timestamp"] <= w["train_end"]))
+        n_train = train_mask.sum()
+        if wf.decay_half_life_years > 0:
+            w_arr = compute_decay_weights(
+                all_data[train_mask]["timestamp"].values,
+                w["eval_start"], wf.decay_half_life_years)
+            print(f"  Training samples: {n_train:,} (weighted effective: ~{w_arr.sum():,.0f})")
+            print(f"  Weight range: {w_arr.min():.2f} - {w_arr.max():.2f} "
+                  f"(half-life: {wf.decay_half_life_years:.1f} years)")
+        else:
+            print(f"  Training samples: {n_train:,}")
         print(f"  Sharpe: {result['sharpe']:.4f}"
               f"{'  <-- MIN (scored)' if i != holdout_idx and result['sharpe'] == scores['sharpe_min'] else ''}")
         print(f"  Max drawdown: {result['max_drawdown']:.1%}")
@@ -322,7 +371,8 @@ def run_diagnostic(build_model_fn, load_data_fn, windows, config: AssetConfig,
     if extra_holdout_window is not None:
         w = extra_holdout_window
         bt_th, _, th_preds = _eval_window(
-            build_model_fn, all_data, w, "holdout", config.backtest)
+            build_model_fn, all_data, w, "holdout", config.backtest,
+            decay_half_life_years=wf.decay_half_life_years)
         print(f"\n--- True Holdout (UNSCORED) ---")
         print(f"  (Trained on {w['train_start'].date()}-{w['train_end'].date()}, "
               f"evaluated on {w['eval_start'].date()}-{w['eval_end'].date()})")

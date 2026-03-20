@@ -28,6 +28,7 @@ class WalkForwardConfig:
     # >= warn_threshold → CAUTION, below → WARN
     holdout_ok_threshold: float = 0.0
     holdout_warn_threshold: float = -1.0
+    decay_half_life_years: float = 3.0   # half-life for sample weight decay (0 = disabled)
 
 
 @dataclass(frozen=True)

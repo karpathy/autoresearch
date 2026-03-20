@@ -5,7 +5,9 @@
       "Bash(python *)",
       "Bash(uv run *)",
       "Bash(python3:*)",
-      "Edit(~/.cache/autotrader/**)"
+      "Edit(~/.cache/autotrader/**)",
+      "Bash(uv pip:*)",
+      "Bash(VIRTUAL_ENV=/Users/ipatterson/dev/autoresearch/.venv uv pip install -e /Users/ipatterson/dev/autoresearch)"
     ],
     "deny": [
       "Bash(git push --force *)",
@@ -15,18 +17,9 @@
       "Read(**/.bashrc)",
       "Read(**/.profile)",
       "Read(**/.cache/autotrader/eval_count)",
-      "Read(**/core/**)",
-      "Read(**/prepare.py)"
+      "Read(**/core/**)"
     ],
     "defaultMode": "bypassPermissions"
-  },
-  "sandbox": {
-    "enabled": true,
-    "autoAllowBashIfSandboxed": true,
-    "allowUnsandboxedCommands": true,
-    "network": {
-      "allowLocalBinding": false
-    }
   },
   "hooks": {
     "PreToolUse": [
@@ -40,5 +33,13 @@
         ]
       }
     ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "allowUnsandboxedCommands": true,
+    "network": {
+      "allowLocalBinding": false
+    }
   }
 }

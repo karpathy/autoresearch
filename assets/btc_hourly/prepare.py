@@ -66,19 +66,19 @@ TIME_BUDGET = _BTC_CONFIG.walk_forward.time_budget        # 240
 # ---------------------------------------------------------------------------
 
 def _get_walk_forward_windows():
-    """5 walk-forward windows: 3yr train, 1yr eval, non-overlapping eval periods.
+    """5 expanding walk-forward windows: train from data start, 1yr eval.
 
-    Each window trains on a different 3-year period and evaluates on the
-    following calendar year. The recipe (build_model) is retrained independently
-    for each window. One window is held out from scoring each epoch.
+    Each window trains on ALL available data from 2018-01-01 up to the year
+    before its eval period. Sample weight decay (configured in core) ensures
+    recent data dominates while older data provides regime diversity.
 
     | Window | Training          | Eval   |
     |--------|-------------------|--------|
     | 0      | 2018-01 – 2020-12 | 2021   |
-    | 1      | 2019-01 – 2021-12 | 2022   |
-    | 2      | 2020-01 – 2022-12 | 2023   |
-    | 3      | 2021-01 – 2023-12 | 2024   |
-    | 4      | 2022-01 – 2024-12 | 2025   |
+    | 1      | 2018-01 – 2021-12 | 2022   |
+    | 2      | 2018-01 – 2022-12 | 2023   |
+    | 3      | 2018-01 – 2023-12 | 2024   |
+    | 4      | 2018-01 – 2024-12 | 2025   |
     """
     T = pd.Timestamp
     return [
@@ -93,7 +93,7 @@ def _get_walk_forward_windows():
             ],
         },
         {
-            "train_start": T("2019-01-01"),
+            "train_start": T("2018-01-01"),
             "train_end": T("2021-12-31 23:00:00"),
             "eval_start": T("2022-01-01"),
             "eval_end": T("2022-12-31 23:00:00"),
@@ -103,7 +103,7 @@ def _get_walk_forward_windows():
             ],
         },
         {
-            "train_start": T("2020-01-01"),
+            "train_start": T("2018-01-01"),
             "train_end": T("2022-12-31 23:00:00"),
             "eval_start": T("2023-01-01"),
             "eval_end": T("2023-12-31 23:00:00"),
@@ -113,7 +113,7 @@ def _get_walk_forward_windows():
             ],
         },
         {
-            "train_start": T("2021-01-01"),
+            "train_start": T("2018-01-01"),
             "train_end": T("2023-12-31 23:00:00"),
             "eval_start": T("2024-01-01"),
             "eval_end": T("2024-12-31 23:00:00"),
@@ -123,7 +123,7 @@ def _get_walk_forward_windows():
             ],
         },
         {
-            "train_start": T("2022-01-01"),
+            "train_start": T("2018-01-01"),
             "train_end": T("2024-12-31 23:00:00"),
             "eval_start": T("2025-01-01"),
             "eval_end": T("2025-12-31 23:00:00"),
@@ -312,7 +312,7 @@ def _run_diagnostic():
     extra_holdout_window = None
     if len(th_eval_data) > 0:
         extra_holdout_window = {
-            "train_start": T("2023-01-01"),
+            "train_start": T("2018-01-01"),
             "train_end": T("2025-12-31 23:00:00"),
             "eval_start": T("2026-01-01"),
             "eval_end": th_eval_data["timestamp"].max(),
