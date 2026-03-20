@@ -332,7 +332,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 1.5  # jump to 1.5 to find peak faster
+    pred_bias = float(np.mean(train_preds)) * 1.3  # over-demean — peak for epoch 7
 
     # Approximate param count
     n_params = 0
@@ -358,7 +358,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         # Power transform: amplify predictions away from zero to increase trade count
         # 0.1→0.20, 0.3→0.41, 0.5→0.62, 1.0→1.0 (preserves sign and large signals)
         sigma_preds = np.sign(sigma_preds) * np.abs(sigma_preds) ** 0.7
-        sigma_preds = sigma_preds * 0.20  # further reduce crash-regime exposure
+        sigma_preds = sigma_preds * 0.25  # test higher dampening with 1.3x over-demean
         sigma_smoothed = _smooth_predictions(sigma_preds)
         return sigma_smoothed, ts, vol
 
