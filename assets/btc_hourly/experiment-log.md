@@ -26,3 +26,10 @@
 **Result:** Score -0.4678, sharpe_min -0.0720, max_dd -2.6%, 117 trades, 6/8 consistency, holdout CAUTION. Keep (best score).
 **Observation:** Better score than 0.8x (-0.47 vs -0.63) but consistency dropped (6/8 vs 7/8). Sharpe still negative but approaching zero. Trend: 0.5x→-8.31, 0.7x→-1.93, 0.8x→-0.63, 0.9x→-0.47. Still improving. Next: test 1.0x (full demeaning).
 
+## 6988541 — full demeaning 1.0x
+**Hypothesis:** Score still improving at 0.9x — full demeaning might be optimal for expanding windows.
+**Result:** Score -2.3782, sharpe_min -0.3105, max_dd -2.7%, 115 trades, 6/8 consistency, holdout CAUTION. Discard.
+**Observation:** Full demeaning overshoots. The curve peaks at ~0.9x:
+- 0.5x→-8.31, 0.7x→-1.93, 0.8x→-0.63, **0.9x→-0.47**, 1.0x→-2.38.
+Best demeaning fraction is 0.9x. Reverting to 0.9x for EMA span sweep. Next: EMA span 40 and 50.
+
