@@ -200,3 +200,8 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 **Result:** Score -4.7244, sharpe_min -1.9016, max_dd -6.1%, 345 trades, 5/8 consistency, holdout OK. Discard.
 **Observation:** Overfits badly. Model makes too-confident wrong predictions (345 trades, sharpe -1.9). LR 0.01 is correct. Next: try milder complexity reduction — max_leaf_nodes 20→15. This keeps depth 4 but reduces leaf count by 25%.
 
+## 5397cba — max_leaf_nodes 15 (from 20) ★ NEW BEST
+**Hypothesis:** Mild complexity reduction (25% fewer leaves) while keeping depth 4.
+**Result:** Score -0.4077, sharpe_min -0.0627, max_dd -2.6%, 121 trades, 6/8 consistency, holdout CAUTION. Keep (new best).
+**Observation:** First improvement in 14 experiments! sharpe_min improved from -0.072 to -0.063 (less negative, approaching zero). Trades increased slightly (117→121). The max_leaf_nodes reduction helped the worst window without hurting others. Next: try max_leaf_nodes=12 for further reduction.
+
