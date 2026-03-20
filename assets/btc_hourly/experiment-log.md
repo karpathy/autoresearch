@@ -195,3 +195,8 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 **Result:** Score -17.7069, sharpe_min -0.9599, max_dd -1.9%, 59 trades, 4/8 consistency, holdout WARN. Discard.
 **Observation:** Catastrophic. max_depth=3 is far too shallow — model can't capture useful patterns. Only 59 trades. n_params dropped from 7820 to 4950. Trying coach fallback: learning_rate 0.02.
 
+## a9b2ec5 — learning_rate 0.02 (from 0.01)
+**Hypothesis:** Coach fallback: higher LR compensates for larger training sets where each gradient step contributes less.
+**Result:** Score -4.7244, sharpe_min -1.9016, max_dd -6.1%, 345 trades, 5/8 consistency, holdout OK. Discard.
+**Observation:** Overfits badly. Model makes too-confident wrong predictions (345 trades, sharpe -1.9). LR 0.01 is correct. Next: try milder complexity reduction — max_leaf_nodes 20→15. This keeps depth 4 but reduces leaf count by 25%.
+
