@@ -245,3 +245,8 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 **Result:** Score -4.9129, sharpe_min -0.8817, max_dd -2.6%, 127 trades, 7/8 consistency, holdout OK. Discard.
 **Observation:** Worse score but consistency improved to 7/8 and holdout OK. Conservative model alone isn't enough. Next: conservative max_iter 300→500 (match aggressive model's iteration budget).
 
+## a9f9a94 — conservative max_iter 500 (from 300) ★ EPOCH 6 BEST
+**Hypothesis:** Conservative model was undertrained at 300 iterations. Match aggressive model's 500 iter budget.
+**Result:** Score -0.5834, sharpe_min -0.1274, max_dd -3.3%, 203 trades, 6/8 consistency, holdout WARN. Keep (epoch 6 best).
+**Observation:** Huge improvement: -3.51→-0.58 on epoch 6. sharpe_min improved from -0.54 to -0.13. Trade count nearly doubled (149→203). Conservative model WAS undertrained with 300 iters on the larger expanding-window datasets. n_params increased from 7821→9647. Next: try max_iter=700 for more capacity.
+
