@@ -304,7 +304,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     # --- Train: two-model ensemble for diversity ---
     model_conservative = HistGradientBoostingRegressor(
         max_iter=300,
-        max_depth=4,
+        max_depth=3,
         min_samples_leaf=600,
         learning_rate=0.01,
         max_leaf_nodes=20,
@@ -316,7 +316,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     model_aggressive = HistGradientBoostingRegressor(
         max_iter=500,
-        max_depth=4,
+        max_depth=3,
         min_samples_leaf=600,
         learning_rate=0.01,
         max_leaf_nodes=20,
