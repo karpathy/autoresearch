@@ -307,7 +307,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         max_depth=4,
         min_samples_leaf=600,
         learning_rate=0.01,
-        max_leaf_nodes=15,
+        max_leaf_nodes=10,
         l2_regularization=3.0,
         monotonic_cst=mono_cst.tolist(),
         random_state=42,
@@ -319,7 +319,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         max_depth=4,
         min_samples_leaf=600,
         learning_rate=0.01,
-        max_leaf_nodes=15,
+        max_leaf_nodes=10,
         max_features=0.8,
         l2_regularization=3.0,
         monotonic_cst=mono_cst.tolist(),
@@ -333,7 +333,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 0.8  # re-testing demeaning with max_iter=1000
+    pred_bias = float(np.mean(train_preds)) * 0.9  # partial demeaning — confirmed optimal
 
     # Approximate param count
     n_params = 0

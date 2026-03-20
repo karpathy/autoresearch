@@ -260,3 +260,8 @@ Why max_depth=3 specifically: At depth 4 with max_leaf_nodes=20, trees can have 
 **Result:** Score 0.2600, sharpe_min 0.4278, max_dd -6.6%, 397 trades, 7/8 consistency, holdout WARN. Keep.
 **Observation:** BREAKTHROUGH — first positive score! sharpe_min finally positive (+0.43). 397 trades (from 297). BUT: auditor flagged Rule 6 violation (3-step max_iter sweep). Insight is valid — models were undertrained for expanding windows. Locking max_iter at 1000. No further max_iter tuning. holdout WARN needs attention. Next: different axis of improvement (re-tune pipeline params with new model capacity).
 
+## 14ed3b2 — demeaning 0.8x with max_iter=1000
+**Hypothesis:** Re-test demeaning with higher-capacity model. Bias profile may have changed.
+**Result:** Score 0.2587, sharpe_min 0.4063, max_dd -6.6%, 395 trades, 7/8 consistency, holdout WARN. Discard (marginal).
+**Observation:** Essentially identical to 0.9x (0.260 vs 0.259). Demeaning 0.9x confirmed. holdout WARN persists — may be overfitting to scored windows. Next: reduce max_leaf_nodes 15→10 with iter=1000 to improve generalization.
+
