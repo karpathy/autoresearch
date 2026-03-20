@@ -447,6 +447,16 @@ This is the gentlest generalization improvement available. Unlike leaf=800 (whic
 ## 3d6e4c0 — demeaning 0.8x (epoch 7)
 **Hypothesis:** Bracket low to confirm direction.
 **Result:** Score -4.0711, sharpe_min -1.7667, max_dd -10.3%, 426 trades, 5/8 consistency, holdout OK. Discard.
-**Observation:** Worse than baseline (-4.07 vs -3.56). Demeaning bracket: 0.8x→-4.07, 0.9x→-3.56, **1.0x→-3.25**. More demeaning is better with crash window. Locking demeaning at 1.0x. Next: blend 0.7/0.3 with 1.0x demeaning.
+**Observation:** Worse than baseline (-4.07 vs -3.56). Demeaning bracket: 0.8x→-4.07, 0.9x→-3.56, **1.0x→-3.25**. More demeaning is better with crash window. Locking demeaning at 1.0x.
+
+## a2ab7c6 — blend 0.7/0.3 + demeaning 1.0x (epoch 7)
+**Hypothesis:** Stronger conservative tilt may help crash regime.
+**Result:** Score -3.2752, sharpe_min -1.5104, max_dd -9.6%, 410 trades, 5/8 consistency, holdout OK. Discard (neutral).
+**Observation:** Essentially same as 0.6/0.4 (-3.28 vs -3.25). Blend 0.6/0.4 confirmed.
+
+## b0faa5a — EMA 40 + demeaning 1.0x (epoch 7)
+**Hypothesis:** Crash regimes have higher prediction noise — more smoothing may help.
+**Result:** Score -3.7059, sharpe_min -1.5811, max_dd -9.0%, 382 trades, 5/8 consistency, holdout OK. Discard.
+**Observation:** Worse. More smoothing kills trades (382 vs 420) without improving sharpe. EMA 35 confirmed. Next: dampening 0.25 — reduce crash-regime position sizes.
 
 
