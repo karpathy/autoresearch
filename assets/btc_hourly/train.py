@@ -245,7 +245,7 @@ def _confidence_scaled_predict(model, features: np.ndarray) -> tuple[np.ndarray,
 # Build Model (recipe)
 # ---------------------------------------------------------------------------
 
-def build_model(train_df: pd.DataFrame) -> callable:
+def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     """Train a model on the provided data and return a prediction function.
 
     This is the recipe: features, architecture, hyperparameters, and prediction
@@ -255,6 +255,9 @@ def build_model(train_df: pd.DataFrame) -> callable:
     Args:
         train_df: OHLCV DataFrame for training. The date range varies —
                   the recipe must work regardless of which years are included.
+        sample_weight: Optional array of per-sample weights (same length as
+                  train_df). Passed by the evaluation infrastructure for
+                  exponential decay weighting of older samples.
 
     Returns:
         predict_fn: Callable that takes an OHLCV DataFrame and returns
@@ -273,6 +276,11 @@ def build_model(train_df: pd.DataFrame) -> callable:
     features = features[valid]
     targets = targets[valid]
     vol_train = vol_safe[valid]
+
+    # Align sample_weight with features/targets (same trimming)
+    if sample_weight is not None:
+        sample_weight = sample_weight[MAX_LOOKBACK:]
+        sample_weight = sample_weight[valid]
 
     # Vol-normalize targets first, then winsorize in sigma-space
     targets = targets / vol_train
@@ -304,7 +312,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
         monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
-    model_conservative.fit(features, targets)
+    model_conservative.fit(features, targets, sample_weight=sample_weight)
 
     model_aggressive = HistGradientBoostingRegressor(
         max_iter=500,
@@ -317,7 +325,7 @@ def build_model(train_df: pd.DataFrame) -> callable:
         monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
-    model_aggressive.fit(features, targets)
+    model_aggressive.fit(features, targets, sample_weight=sample_weight)
 
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
