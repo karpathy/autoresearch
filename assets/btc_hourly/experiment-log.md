@@ -21,3 +21,8 @@
 **Result:** Score -0.6283, sharpe_min -0.1128, max_dd -2.6%, 121 trades, 7/8 consistency, holdout CAUTION. Keep (best so far).
 **Observation:** Clear monotonic improvement: 0.5x→-8.31, 0.7x→-1.93, 0.8x→-0.63. Consistency improved to 7/8. Optimum is at or above 0.8x. Next: narrow with 0.9x.
 
+## a4d4d25 — partial demeaning 0.9x
+**Hypothesis:** Continuing upward sweep. 0.8x improved over 0.7x, so 0.9x may be even better.
+**Result:** Score -0.4678, sharpe_min -0.0720, max_dd -2.6%, 117 trades, 6/8 consistency, holdout CAUTION. Keep (best score).
+**Observation:** Better score than 0.8x (-0.47 vs -0.63) but consistency dropped (6/8 vs 7/8). Sharpe still negative but approaching zero. Trend: 0.5x→-8.31, 0.7x→-1.93, 0.8x→-0.63, 0.9x→-0.47. Still improving. Next: test 1.0x (full demeaning).
+
