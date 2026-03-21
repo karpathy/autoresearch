@@ -332,7 +332,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 1.3  # over-demean — peak for epoch 7
+    pred_bias = float(np.mean(train_preds)) * 1.4  # slightly more aggressive demeaning for epoch 9
 
     # Approximate param count
     n_params = 0
