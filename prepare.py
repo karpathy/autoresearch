@@ -273,11 +273,55 @@ def _document_batches(split, tokenizer_batch_size=128):
         epoch += 1
 
 
+def _span_length(span):
+    tokens, start = span
+    return len(tokens) - start
+
+
+def _pack_row(doc_buffer, row_capacity, refill_buffer, buffer_size):
+    """
+    Pack one fixed-length row from buffered token spans without dropping suffixes.
+    Fresh documents still begin with BOS, and overlong documents resume on later rows.
+    """
+    row = []
+    while len(row) < row_capacity:
+        while len(doc_buffer) < buffer_size:
+            refill_buffer()
+
+        remaining = row_capacity - len(row)
+
+        # Find largest span that fits entirely.
+        best_idx = -1
+        best_len = 0
+        for i, span in enumerate(doc_buffer):
+            span_len = _span_length(span)
+            if span_len <= remaining and span_len > best_len:
+                best_idx = i
+                best_len = span_len
+
+        if best_idx >= 0:
+            tokens, start = doc_buffer.pop(best_idx)
+            row.extend(tokens[start:])
+            continue
+
+        # No span fits: split the shortest span, but keep the suffix for later rows.
+        split_idx = min(range(len(doc_buffer)), key=lambda i: _span_length(doc_buffer[i]))
+        tokens, start = doc_buffer[split_idx]
+        split_at = start + remaining
+        row.extend(tokens[start:split_at])
+        if split_at == len(tokens):
+            doc_buffer.pop(split_idx)
+        else:
+            doc_buffer[split_idx] = (tokens, split_at)
+
+    return row
+
+
 def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
     """
-    BOS-aligned dataloader with best-fit packing.
-    Every row starts with BOS. Documents packed using best-fit to minimize cropping.
-    When no document fits remaining space, crops shortest doc to fill exactly.
+    Dataloader with best-fit packing and lossless continuation for long documents.
+    Fresh documents start with BOS. When no document fits the remaining space,
+    the shortest span is split and resumed on a later row instead of being dropped.
     100% utilization (no padding).
     """
     assert split in ["train", "val"]
@@ -291,7 +335,7 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
         nonlocal epoch
         doc_batch, epoch = next(batches)
         token_lists = tokenizer.encode(doc_batch, prepend=bos_token)
-        doc_buffer.extend(token_lists)
+        doc_buffer.extend((tokens, 0) for tokens in token_lists)
 
     # Pre-allocate buffers: [inputs (B*T) | targets (B*T)]
     row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
@@ -304,32 +348,8 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
 
     while True:
         for row_idx in range(B):
-            pos = 0
-            while pos < row_capacity:
-                while len(doc_buffer) < buffer_size:
-                    refill_buffer()
-
-                remaining = row_capacity - pos
-
-                # Find largest doc that fits entirely
-                best_idx = -1
-                best_len = 0
-                for i, doc in enumerate(doc_buffer):
-                    doc_len = len(doc)
-                    if doc_len <= remaining and doc_len > best_len:
-                        best_idx = i
-                        best_len = doc_len
-
-                if best_idx >= 0:
-                    doc = doc_buffer.pop(best_idx)
-                    row_buffer[row_idx, pos:pos + len(doc)] = torch.tensor(doc, dtype=torch.long)
-                    pos += len(doc)
-                else:
-                    # No doc fits — crop shortest to fill remaining
-                    shortest_idx = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
-                    doc = doc_buffer.pop(shortest_idx)
-                    row_buffer[row_idx, pos:pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
-                    pos += remaining
+            row = _pack_row(doc_buffer, row_capacity, refill_buffer, buffer_size)
+            row_buffer[row_idx].copy_(torch.tensor(row, dtype=torch.long))
 
         cpu_inputs.copy_(row_buffer[:, :-1])
         cpu_targets.copy_(row_buffer[:, 1:])
