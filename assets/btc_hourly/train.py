@@ -327,14 +327,14 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     features = np.nan_to_num(features, nan=0.0)
 
     # --- Monotonic constraints ---
+    # Short-term returns unconstrained to allow mean reversion after extreme moves.
+    # Only medium/long-term features keep positive monotonic (momentum).
     mono_cst = np.zeros(features.shape[1], dtype=int)
-    mono_cst[0] = 1  # 4h vol-normalized return
-    mono_cst[1] = 1  # 12h vol-normalized return
-    mono_cst[2] = 1  # 24h vol-normalized return
-    mono_cst[3] = 1  # 48h vol-normalized return
-    mono_cst[4] = 1  # 72h vol-normalized return
-    mono_cst[5] = 1  # 168h vol-normalized return
-    mono_cst[6] = 1  # 24h VW cumulative return
+    # indices 0-2: 4h, 12h, 24h returns — unconstrained (mean reversion)
+    # index 6: 24h VW cumulative return — unconstrained
+    mono_cst[3] = 1  # 48h vol-normalized return (momentum)
+    mono_cst[4] = 1  # 72h vol-normalized return (momentum)
+    mono_cst[5] = 1  # 168h vol-normalized return (momentum)
     mono_cst[28] = 1  # 72h directional efficiency
     mono_cst[29] = 1  # 168h directional efficiency
 
