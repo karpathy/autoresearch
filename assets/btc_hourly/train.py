@@ -427,7 +427,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         predict_fn.last_vol_ratio = vol_high_prob  # expose for diagnostics
         print(f"  Vol eval: mean={vol_high_prob.mean():.3f} std={vol_high_prob.std():.3f} "
               f"min={vol_high_prob.min():.3f} max={vol_high_prob.max():.3f} >0.5={100*(vol_high_prob>0.5).mean():.1f}%")
-        vol_adj = 1.0 - 0.5 * vol_high_prob  # scale down up to 50% when high vol likely
+        vol_adj = 1.05 - 0.55 * vol_high_prob  # bidirectional: amplify calm, reduce volatile
         sigma_preds = sigma_preds * vol_adj
 
         # Rest of pipeline unchanged
