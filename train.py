@@ -614,7 +614,7 @@ WARMDOWN_RATIO = 0.8  # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0  # final LR as fraction of initial
 
 # Model size
-DEPTH = 4  # use available VRAM: DEPTH=4 → n_embd=256, n_head=4, ~8.5M params
+DEPTH = 3  # number of transformer layers (newborn brain: start bigger)
 DEVICE_BATCH_SIZE = 4  # per-device batch size (MAX_SEQ_LEN=2048, 6GB VRAM)
 
 # ---------------------------------------------------------------------------
@@ -743,7 +743,6 @@ t_start_training = time.time()
 smooth_train_loss = 0
 total_training_time = 0
 step = 0
-_metrics_file = open("metrics.jsonl", "w")
 
 while True:
     torch.cuda.synchronize()
@@ -810,12 +809,6 @@ while True:
         end="",
         flush=True,
     )
-    _metrics_file.write(json.dumps({
-        "step": step, "train/loss": train_loss_f, "train/loss_smooth": debiased_smooth_loss,
-        "train/lr_multiplier": lrm, "train/muon_momentum": muon_momentum,
-        "train/weight_decay": muon_weight_decay, "train/progress": progress,
-        "perf/step_time_ms": dt * 1000, "perf/tokens_per_sec": tok_per_sec, "perf/mfu_percent": mfu,
-    }) + "\n")
 
     # GC management (Python's GC causes ~500ms stalls)
     if step == 0:
@@ -831,7 +824,6 @@ while True:
     if step > 10 and total_training_time >= TIME_BUDGET:
         break
 
-_metrics_file.close()
 print()  # newline after \r training log
 
 total_tokens = step * TOTAL_BATCH_SIZE
