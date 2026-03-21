@@ -142,6 +142,13 @@ class CausalSelfAttention(nn.Module):
 
 SPARSE_K = 0.10  # fraction of MLP neurons active per token (sparse coding)
 
+# Multi-scale future embedding prediction (sentence sketch, diffusion-inspired)
+# Predict embedding direction of token t+K at phrase and sentence scales.
+# Unlike MTP (failed): no cross-entropy, no exact token — cosine similarity on embeddings.
+# Coarser/further targets = softer objective = natural noise schedule (like diffusion).
+FUTURE_SCALES = [8, 32]
+FUTURE_PRED_WEIGHT = 0.05
+
 
 class MLP(nn.Module):
     def __init__(self, config):
@@ -210,6 +217,11 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
+        # Future embedding prediction heads (one per timescale)
+        self.future_heads = nn.ModuleList([
+            nn.Linear(config.n_embd, config.n_embd, bias=False)
+            for _ in FUTURE_SCALES
+        ])
 
     @torch.no_grad()
     def init_weights(self):
@@ -228,6 +240,9 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
             torch.nn.init.zeros_(block.predictor.weight)  # zero-init: neutral start
+        # Future heads: small random init (uniform like attention projections)
+        for head in self.future_heads:
+            torch.nn.init.uniform_(head.weight, -s, s)
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
@@ -318,7 +333,7 @@ class GPT(nn.Module):
         scalar_lr=0.5,
     ):
         model_dim = self.config.n_embd
-        matrix_params = list(self.transformer.h.parameters())
+        matrix_params = list(self.transformer.h.parameters()) + list(self.future_heads.parameters())
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
@@ -421,6 +436,18 @@ class GPT(nn.Module):
                 ignore_index=-1,
                 reduction=reduction,
             )
+            # Multi-scale future embedding prediction (sentence sketch).
+            # At each position t, predict the embedding direction of token at t+K.
+            # Cosine similarity loss — soft continuous target, not cross-entropy.
+            # targets[:, t+K-1] = token at position t+K (targets offset by 1).
+            for K, head in zip(FUTURE_SCALES, self.future_heads):
+                n_valid = T - K
+                pred_emb = head(x[:, :n_valid, :]).float()  # [B, n_valid, C]
+                future_tok = targets[:, K-1:K-1+n_valid].clamp(min=0)  # [B, n_valid]
+                tgt_emb = self.transformer.wte(future_tok).detach().float()  # [B, n_valid, C]
+                tgt_norm = F.normalize(tgt_emb, dim=-1)
+                pred_norm = F.normalize(pred_emb, dim=-1)
+                loss = loss + FUTURE_PRED_WEIGHT * (1 - (pred_norm * tgt_norm).sum(dim=-1).mean())
             return loss
         return logits
 
