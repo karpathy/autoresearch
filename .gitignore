@@ -19,5 +19,9 @@ AGENTS.md
 # Experimental code/artifacts
 dev/
 
+# Tool caches
+.ruff_cache/
+.pytest_cache/
+
 # Results file
 results.tsv
