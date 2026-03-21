@@ -189,6 +189,16 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     feature_cols.append(np.sin(2 * np.pi * dow / 7))
     feature_cols.append(np.cos(2 * np.pi * dow / 7))
 
+    # 12. Funding rate features (market positioning signal)
+    if "funding_rate" in df.columns:
+        fr = df["funding_rate"].values.astype(np.float64)
+        fr_series = pd.Series(fr)
+        feature_cols.append(fr * 1000)
+        fr_cum_24 = fr_series.rolling(24, min_periods=1).sum().values
+        feature_cols.append(fr_cum_24 * 100)
+        fr_cum_168 = fr_series.rolling(168, min_periods=1).sum().values
+        feature_cols.append(fr_cum_168 * 10)
+
     features = np.column_stack(feature_cols)
 
     # Trim to valid rows (after max lookback)
