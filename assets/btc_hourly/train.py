@@ -370,6 +370,12 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     vol_targets = vol_targets[valid]  # same valid mask as return targets
     vol_binary = (vol_targets > 1.3).astype(np.float64)  # 1 = vol expanding, 0 = normal
 
+    # Exclude low-importance features from vol model (guided by permutation importance)
+    # BB position (19-20): perm importance ~0.004, direction not vol
+    vol_exclude = {19, 20}
+    vol_feat_mask = [i for i in range(features.shape[1]) if i not in vol_exclude]
+    vol_features = features[:, vol_feat_mask]
+
     vol_model = HistGradientBoostingRegressor(
         max_iter=1000,
         max_depth=4,
@@ -383,12 +389,17 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     vol_sample_weight = np.where(vol_binary == 1, 3.0, 1.0)
     if sample_weight is not None:
         vol_sample_weight = vol_sample_weight * sample_weight
-    vol_model.fit(features, vol_binary, sample_weight=vol_sample_weight)
+    vol_model.fit(vol_features, vol_binary, sample_weight=vol_sample_weight)
 
-    print(f"  Vol target: {vol_binary.mean()*100:.1f}% positive")
-    vtp = np.clip(vol_model.predict(features), 0.0, 1.0)
+    print(f"  Vol target: {vol_binary.mean()*100:.1f}% positive ({len(vol_feat_mask)} features)")
+    vtp = np.clip(vol_model.predict(vol_features), 0.0, 1.0)
     print(f"  Vol train: mean={vtp.mean():.3f} std={vtp.std():.3f} "
           f"min={vtp.min():.3f} max={vtp.max():.3f} >0.5={100*(vtp>0.5).mean():.1f}%")
+    # Vol feature importance diagnostic
+    if hasattr(vol_model, 'feature_importances_'):
+        imp = vol_model.feature_importances_
+        top_idx = np.argsort(imp)[::-1][:10]
+        print(f"  Vol top features: {', '.join(f'{i}:{imp[i]:.3f}' for i in top_idx)}")
 
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
@@ -422,8 +433,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
         sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
 
-        # Vol prediction — reduce positions proportional to high-vol probability
-        vol_high_prob = np.clip(vol_model.predict(feats), 0.0, 1.0)
+        # Vol prediction — using vol feature subset
+        vol_high_prob = np.clip(vol_model.predict(feats[:, vol_feat_mask]), 0.0, 1.0)
         predict_fn.last_vol_ratio = vol_high_prob  # expose for diagnostics
         print(f"  Vol eval: mean={vol_high_prob.mean():.3f} std={vol_high_prob.std():.3f} "
               f"min={vol_high_prob.min():.3f} max={vol_high_prob.max():.3f} >0.5={100*(vol_high_prob>0.5).mean():.1f}%")
