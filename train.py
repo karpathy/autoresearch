@@ -577,7 +577,7 @@ class MuonAdamW(torch.optim.Optimizer):
 # ---------------------------------------------------------------------------
 
 # Model architecture
-ASPECT_RATIO = 128  # model_dim = depth * ASPECT_RATIO (128*4=512, n_head=8)
+ASPECT_RATIO = 96  # model_dim = depth * ASPECT_RATIO (96*4=384, n_head=6)
 HEAD_DIM = 64  # target head dimension for attention
 WINDOW_PATTERN = "L"  # all layers use full attention
 NUM_LOOPS = 2  # looped transformer: run blocks this many times (effective depth = DEPTH * NUM_LOOPS)
