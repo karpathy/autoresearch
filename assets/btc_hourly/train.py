@@ -354,11 +354,11 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     )
     model_aggressive.fit(features, targets, sample_weight=sample_weight)
 
-    # --- Vol model: predict forward volatility ratio ---
+    # --- Vol model: predict high-vol probability (binary classification target) ---
     vol_targets_raw = compute_vol_targets(train_df)
     vol_targets = vol_targets_raw[MAX_LOOKBACK:]
     vol_targets = vol_targets[valid]  # same valid mask as return targets
-    vol_targets = np.clip(vol_targets, 0.1, 5.0)  # clip extremes for stable training
+    vol_binary = (vol_targets > 1.3).astype(np.float64)  # 1 = vol expanding, 0 = normal
 
     vol_model = HistGradientBoostingRegressor(
         max_iter=500,
@@ -369,7 +369,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         l2_regularization=1.5,
         random_state=42,
     )
-    vol_model.fit(features, vol_targets, sample_weight=sample_weight)
+    vol_model.fit(features, vol_binary, sample_weight=sample_weight)
 
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
@@ -403,10 +403,10 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
         sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
 
-        # Vol prediction — asymmetric: only reduce when vol significantly expanding
-        vol_ratio_pred = vol_model.predict(feats)
-        predict_fn.last_vol_ratio = vol_ratio_pred  # expose for diagnostics
-        vol_adj = np.minimum(1.0, 1.2 / np.clip(vol_ratio_pred, 0.8, 3.0))
+        # Vol prediction — reduce positions proportional to high-vol probability
+        vol_high_prob = np.clip(vol_model.predict(feats), 0.0, 1.0)
+        predict_fn.last_vol_ratio = vol_high_prob  # expose for diagnostics
+        vol_adj = 1.0 - 0.5 * vol_high_prob  # scale down up to 50% when high vol likely
         sigma_preds = sigma_preds * vol_adj
 
         # Rest of pipeline unchanged
