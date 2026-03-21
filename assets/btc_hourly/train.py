@@ -379,7 +379,16 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         l2_regularization=1.5,
         random_state=42,
     )
-    vol_model.fit(features, vol_binary, sample_weight=sample_weight)
+    # Weight positive vol examples 3x to prevent base-rate prediction
+    vol_sample_weight = np.where(vol_binary == 1, 3.0, 1.0)
+    if sample_weight is not None:
+        vol_sample_weight = vol_sample_weight * sample_weight
+    vol_model.fit(features, vol_binary, sample_weight=vol_sample_weight)
+
+    print(f"  Vol target: {vol_binary.mean()*100:.1f}% positive")
+    vtp = np.clip(vol_model.predict(features), 0.0, 1.0)
+    print(f"  Vol train: mean={vtp.mean():.3f} std={vtp.std():.3f} "
+          f"min={vtp.min():.3f} max={vtp.max():.3f} >0.5={100*(vtp>0.5).mean():.1f}%")
 
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
@@ -416,6 +425,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         # Vol prediction — reduce positions proportional to high-vol probability
         vol_high_prob = np.clip(vol_model.predict(feats), 0.0, 1.0)
         predict_fn.last_vol_ratio = vol_high_prob  # expose for diagnostics
+        print(f"  Vol eval: mean={vol_high_prob.mean():.3f} std={vol_high_prob.std():.3f} "
+              f"min={vol_high_prob.min():.3f} max={vol_high_prob.max():.3f} >0.5={100*(vol_high_prob>0.5).mean():.1f}%")
         vol_adj = 1.0 - 0.5 * vol_high_prob  # scale down up to 50% when high vol likely
         sigma_preds = sigma_preds * vol_adj
 
