@@ -421,7 +421,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
         # Rest of pipeline unchanged
         sigma_preds = np.clip(sigma_preds, -3.0, 3.0)
-        sigma_preds = sigma_preds * 0.25
+        sigma_preds = sigma_preds * 0.26
         sigma_smoothed = _smooth_predictions(sigma_preds)
         return sigma_smoothed, ts, vol
 
