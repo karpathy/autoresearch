@@ -2,6 +2,18 @@
 
 ## Active Queue (prioritized)
 
+### H0: Scale wider — n_embd=384 or 512
+**Hypothesis:** n_embd=256 gave +0.058. We still have 3.3GB VRAM headroom. Width is the strongest lever found so far.
+**Mechanism:** More features per layer = richer representations. DEPTH=3 keeps step count high.
+**Expected:** Significant improvement if we can fit it. Risk: fewer steps if model is too large per step.
+**Tier:** 4 (but highest expected value — confirmed scaling direction)
+
+### H0b: Predictive coding + DEPTH=4 at n_embd=256
+**Hypothesis:** DEPTH=4 failed at small width. At n_embd=256 the model may have enough capacity to justify 4 layers.
+**Mechanism:** PC factorizes cheap vs. expensive computation per layer. Extra depth = more abstraction.
+**Expected:** Unknown. Might work now that width is sufficient. Will lose ~30% steps.
+**Tier:** 1
+
 ### H1: Homeostatic plasticity with faster alpha
 **Hypothesis:** EMA alpha=0.005 was too slow for 5min budget. Try alpha=0.05 or batch-level instantaneous firing stats.
 **Mechanism:** Keeps average activation near target, prevents dead neurons, better utilization of sparse coding.
