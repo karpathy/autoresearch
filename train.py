@@ -106,11 +106,15 @@ class CausalSelfAttention(nn.Module):
 SPARSE_K = 0.10  # fraction of MLP neurons active per token (sparse coding)
 
 
+NUM_EXPERTS = 4  # number of MLP experts per layer
+MOE_AUX_WEIGHT = 0.01  # load-balancing auxiliary loss weight
+
+
 class MLP(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, intermediate_override=None):
         super().__init__()
         # SwiGLU: 8/3x intermediate ≈ same params as 4x relu² FFN (3 matrices vs 2)
-        intermediate = int(config.n_embd * 8 / 3)
+        intermediate = intermediate_override or int(config.n_embd * 8 / 3)
         self.c_gate = nn.Linear(config.n_embd, intermediate, bias=False)
         self.c_fc = nn.Linear(config.n_embd, intermediate, bias=False)
         self.c_proj = nn.Linear(intermediate, config.n_embd, bias=False)
@@ -121,16 +125,51 @@ class MLP(nn.Module):
         return self.c_proj(h)
 
 
+class MoEMLP(nn.Module):
+    """Mixture of Experts: N small experts (each 1/N intermediate size) + soft top-1 routing.
+    Total params ≈ same as single MLP. Dense computation of all experts = same FLOPs.
+    Specialization through routing is the win."""
+    def __init__(self, config):
+        super().__init__()
+        self.num_experts = NUM_EXPERTS
+        self.n_embd = config.n_embd
+        # Router
+        self.router = nn.Linear(config.n_embd, NUM_EXPERTS, bias=False)
+        # Each expert has 1/N intermediate size
+        expert_intermediate = int(config.n_embd * 8 / 3 / NUM_EXPERTS)
+        self.experts = nn.ModuleList([MLP(config, intermediate_override=expert_intermediate) for _ in range(NUM_EXPERTS)])
+
+    def forward(self, x):
+        B, T, C = x.shape
+        # Router probabilities
+        router_logits = self.router(x)  # [B, T, num_experts]
+        router_probs = F.softmax(router_logits, dim=-1)  # [B, T, num_experts]
+        # Compute all experts (each is 1/N size, so total compute ≈ one big MLP)
+        out = torch.zeros_like(x)
+        for e_idx in range(self.num_experts):
+            expert_out = self.experts[e_idx](x)  # [B, T, C]
+            out = out + router_probs[:, :, e_idx:e_idx+1] * expert_out
+        # Load balancing: encourage uniform expert usage
+        # Use hard assignment for load tracking but soft weights for gradients
+        top1_idx = router_logits.argmax(dim=-1)  # [B, T]
+        one_hot = F.one_hot(top1_idx, self.num_experts).float()  # [B, T, E]
+        f = one_hot.mean(dim=(0, 1))  # fraction per expert
+        p = router_probs.mean(dim=(0, 1))  # mean prob per expert
+        aux_loss = MOE_AUX_WEIGHT * self.num_experts * (f * p).sum()
+        return out, aux_loss
+
+
 class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
-        self.mlp = MLP(config)
+        self.mlp = MoEMLP(config)
 
     def forward(self, x, ve, cos_sin, window_size):
         x = x + self.attn(norm(x), ve, cos_sin, window_size)
-        x = x + self.mlp(norm(x))
-        return x
+        mlp_out, aux_loss = self.mlp(norm(x))
+        x = x + mlp_out
+        return x, aux_loss
 
 
 class GPT(nn.Module):
@@ -176,9 +215,12 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight)
-            torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
-            torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
-            torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            # MoE: init router to small values (near-uniform routing initially)
+            torch.nn.init.normal_(block.mlp.router.weight, std=0.01)
+            for expert in block.mlp.experts:
+                torch.nn.init.uniform_(expert.c_gate.weight, -s, s)
+                torch.nn.init.uniform_(expert.c_fc.weight, -s, s)
+                torch.nn.init.zeros_(expert.c_proj.weight)
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
@@ -354,10 +396,12 @@ class GPT(nn.Module):
         x = self.transformer.wte(idx)
         x = norm(x)
         x0 = x
+        total_aux_loss = 0.0
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[i])
+            x, aux_loss = block(x, ve, cos_sin, self.window_sizes[i])
+            total_aux_loss = total_aux_loss + aux_loss
         x = norm(x)
 
         softcap = 15
@@ -372,6 +416,7 @@ class GPT(nn.Module):
                 ignore_index=-1,
                 reduction=reduction,
             )
+            loss = loss + total_aux_loss
             return loss
         return logits
 
