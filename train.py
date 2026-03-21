@@ -577,7 +577,7 @@ class MuonAdamW(torch.optim.Optimizer):
 # ---------------------------------------------------------------------------
 
 # Model architecture
-ASPECT_RATIO = 96  # model_dim = depth * ASPECT_RATIO (96*4=384, n_head=6)
+ASPECT_RATIO = 43  # model_dim = depth * ASPECT_RATIO (43*6=258→256, n_head=4)
 HEAD_DIM = 64  # target head dimension for attention
 WINDOW_PATTERN = "L"  # all layers use full attention
 NUM_LOOPS = 2  # looped transformer: run blocks this many times (effective depth = DEPTH * NUM_LOOPS)
@@ -595,7 +595,7 @@ WARMDOWN_RATIO = 0.8  # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0  # final LR as fraction of initial
 
 # Model size
-DEPTH = 4  # physical blocks (looped NUM_LOOPS times = 8 effective layers)
+DEPTH = 6  # physical blocks (looped NUM_LOOPS times = 12 effective layers)
 DEVICE_BATCH_SIZE = 8  # per-device batch size (MAX_SEQ_LEN=2048, 6GB VRAM — use it)
 
 # ---------------------------------------------------------------------------
