@@ -54,7 +54,7 @@ _genai_client = genai.Client(
 
 OPENCASTOR_REPO = Path(os.environ["OPENCASTOR_REPO_PATH"])
 TODAY_TRACK = os.environ.get("TODAY_TRACK", "A")
-REVIEWER_MODEL = "gemini-2.0-flash"
+REVIEWER_MODEL = "gemini-2.5-flash"
 # REVIEWER=rcan → route review to Alex via RCAN send_rcan_message
 # REVIEWER=gemini (default) → local Gemini ADC
 # REVIEWER_RRN → Alex's RRN (default RRN-000000000005)
