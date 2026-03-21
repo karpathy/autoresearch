@@ -137,9 +137,7 @@ class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.num_loops = NUM_LOOPS
-        self.effective_layers = config.n_layer * self.num_loops
-        self.window_sizes = self._compute_window_sizes_effective(config)
+        self.window_sizes = self._compute_window_sizes(config)
         self.transformer = nn.ModuleDict(
             {
                 "wte": nn.Embedding(config.vocab_size, config.n_embd),
@@ -147,17 +145,16 @@ class GPT(nn.Module):
             }
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        # Per-effective-layer scalars (not per-block)
-        self.resid_lambdas = nn.Parameter(torch.ones(self.effective_layers))
-        self.x0_lambdas = nn.Parameter(torch.zeros(self.effective_layers))
-        # Value embeddings per effective layer
+        self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
+        self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
+        # Value embeddings
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
         self.value_embeds = nn.ModuleDict(
             {
                 str(i): nn.Embedding(config.vocab_size, kv_dim)
-                for i in range(self.effective_layers)
-                if has_ve(i, self.effective_layers)
+                for i in range(config.n_layer)
+                if has_ve(i, config.n_layer)
             }
         )
         # Rotary embeddings
@@ -226,29 +223,16 @@ class GPT(nn.Module):
         window_sizes[-1] = (long_window, 0)
         return window_sizes
 
-    def _compute_window_sizes_effective(self, config):
-        """Window sizes for all effective layers (physical layers * num_loops)."""
-        pattern = config.window_pattern.upper()
-        assert all(c in "SL" for c in pattern)
-        long_window = config.sequence_len
-        short_window = long_window // 2
-        char_to_window = {"L": (long_window, 0), "S": (short_window, 0)}
-        effective = config.n_layer * NUM_LOOPS
-        window_sizes = []
-        for i in range(effective):
-            char = pattern[i % len(pattern)]
-            window_sizes.append(char_to_window[char])
-        window_sizes[-1] = (long_window, 0)
-        return window_sizes
-
     def estimate_flops(self):
-        """Estimated FLOPs per token (forward + backward). Accounts for looped computation."""
-        # Transformer block params are used NUM_LOOPS times
-        block_params = sum(p.numel() for p in self.transformer.h.parameters())
-        lm_head_params = sum(p.numel() for p in self.lm_head.parameters())
-        # Effective block compute = physical block params * NUM_LOOPS
-        effective_block_params = block_params * self.num_loops
-        nparams_compute = effective_block_params + lm_head_params
+        """Estimated FLOPs per token (forward + backward)."""
+        nparams = sum(p.numel() for p in self.parameters())
+        value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
+        nparams_exclude = (
+            self.transformer.wte.weight.numel()
+            + value_embeds_numel
+            + self.resid_lambdas.numel()
+            + self.x0_lambdas.numel()
+        )
         h = self.config.n_head
         q = self.config.n_embd // self.config.n_head
         t = self.config.sequence_len
@@ -257,7 +241,7 @@ class GPT(nn.Module):
             window = window_size[0]
             effective_seq = t if window < 0 else min(window, t)
             attn_flops += 12 * h * q * effective_seq
-        return 6 * nparams_compute + attn_flops
+        return 6 * (nparams - nparams_exclude) + attn_flops
 
     def num_scaling_params(self):
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
@@ -370,13 +354,10 @@ class GPT(nn.Module):
         x = self.transformer.wte(idx)
         x = norm(x)
         x0 = x
-        blocks = self.transformer.h
-        n_blocks = len(blocks)
-        for eff_i in range(self.effective_layers):
-            block = blocks[eff_i % n_blocks]
-            x = self.resid_lambdas[eff_i] * x + self.x0_lambdas[eff_i] * x0
-            ve = self.value_embeds[str(eff_i)](idx) if str(eff_i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[eff_i])
+        for i, block in enumerate(self.transformer.h):
+            x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
+            ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
+            x = block(x, ve, cos_sin, self.window_sizes[i])
         x = norm(x)
 
         softcap = 15
@@ -577,10 +558,9 @@ class MuonAdamW(torch.optim.Optimizer):
 # ---------------------------------------------------------------------------
 
 # Model architecture
-ASPECT_RATIO = 43  # model_dim = depth * ASPECT_RATIO (43*6=258→256, n_head=4)
+ASPECT_RATIO = 32  # model_dim = depth * ASPECT_RATIO (32*8=256, n_head=4)
 HEAD_DIM = 64  # target head dimension for attention
-WINDOW_PATTERN = "L"  # all layers use full attention
-NUM_LOOPS = 2  # looped transformer: run blocks this many times (effective depth = DEPTH * NUM_LOOPS)
+WINDOW_PATTERN = "L"  # all layers use full attention — test if D8 benefits from global context
 
 # Optimization
 TOTAL_BATCH_SIZE = 2**14  # ~16K tokens per optimizer step
@@ -595,7 +575,7 @@ WARMDOWN_RATIO = 0.8  # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0  # final LR as fraction of initial
 
 # Model size
-DEPTH = 6  # physical blocks (looped NUM_LOOPS times = 12 effective layers)
+DEPTH = 8  # try deeper with full MHA (low VRAM footprint)
 DEVICE_BATCH_SIZE = 8  # per-device batch size (MAX_SEQ_LEN=2048, 6GB VRAM — use it)
 
 # ---------------------------------------------------------------------------
