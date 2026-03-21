@@ -57,10 +57,7 @@ def apply_rotary_emb(x, cos, sin):
     return torch.cat([y1, y2], 3)
 
 
-# Hebbian learning: "neurons that fire together wire together" (Hebb 1949).
-# Accumulate co-activation outer product, apply as weight update periodically.
-# Research-backed: complements gradient descent with local learning rule.
-HEBB_LR = 0.0001  # Hebbian learning rate (scaled by modulation schedule)
+HEBB_LR = 0.0  # disabled: test if Hebbian helps under SwiGLU
 
 
 class CausalSelfAttention(nn.Module):
@@ -82,7 +79,7 @@ class CausalSelfAttention(nn.Module):
             if has_ve(layer_idx, config.n_layer)
             else None
         )
-        # Hebbian accumulators
+        # Hebbian accumulator: running sum of co-activation (pre * post)
         self.hebb_accum = None
         self.hebb_proj = None
 
@@ -93,15 +90,16 @@ class CausalSelfAttention(nn.Module):
         v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
 
         # Hebbian: accumulate co-activation of input x and value output v
-        if HEBB_LR > 0:
-            with torch.no_grad():
-                x_flat = x.reshape(B * T, C)
-                v_flat = v.reshape(B * T, self.n_kv_head * self.head_dim)
-                hebb_delta = (x_flat.T @ v_flat) / (B * T)
-                if self.hebb_accum is None:
-                    self.hebb_accum = hebb_delta
-                else:
-                    self.hebb_accum += hebb_delta
+        # delta_W[i,j] += lr * x[...,i] * v[...,j]  (connections that fire together wire together)
+        with torch.no_grad():
+            x_flat = x.reshape(B * T, C)
+            v_flat = v.reshape(B * T, self.n_kv_head * self.head_dim)
+            # Mean outer product: (input_dim, output_dim)
+            hebb_delta = (x_flat.T @ v_flat) / (B * T)
+            if self.hebb_accum is None:
+                self.hebb_accum = hebb_delta
+            else:
+                self.hebb_accum += hebb_delta
 
         # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
         if ve is not None:
@@ -119,16 +117,14 @@ class CausalSelfAttention(nn.Module):
         v = v.transpose(1, 2)
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         y = y.transpose(1, 2).contiguous().view(B, T, -1)
-
-        # Hebbian for c_proj
-        if HEBB_LR > 0:
-            with torch.no_grad():
-                y_flat = y.reshape(B * T, -1)
-                output_flat = self.c_proj(y).reshape(B * T, -1)
-                hebb_proj = (y_flat.T @ output_flat) / (B * T)
-                self.hebb_proj = (
-                    self.hebb_proj + hebb_proj if self.hebb_proj is not None else hebb_proj
-                )
+        # Hebbian for c_proj: co-activation of attention output and final output
+        with torch.no_grad():
+            y_flat = y.reshape(B * T, -1)
+            output_flat = self.c_proj(y).reshape(B * T, -1)
+            hebb_proj = (y_flat.T @ output_flat) / (B * T)
+            self.hebb_proj = (
+                self.hebb_proj + hebb_proj if self.hebb_proj is not None else hebb_proj
+            )
         y = self.c_proj(y)
         return y
 
@@ -145,12 +141,6 @@ class CausalSelfAttention(nn.Module):
 
 
 SPARSE_K = 0.10  # fraction of MLP neurons active per token (sparse coding)
-
-# Future sentence-sketch prediction (diffusion-inspired)
-# Predict MEAN embedding direction of next K tokens (not single token — that's too noisy).
-# Cosine similarity loss. Soft continuous target, not cross-entropy.
-FUTURE_K = 16  # predict average direction of next 16 tokens
-FUTURE_PRED_WEIGHT = 0.01  # whisper, not shout — don't fight the main CE loss
 
 
 class MLP(nn.Module):
@@ -220,8 +210,6 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
-        # Future sentence-sketch head (single linear projection)
-        self.future_head = nn.Linear(config.n_embd, config.n_embd, bias=False)
 
     @torch.no_grad()
     def init_weights(self):
@@ -240,8 +228,6 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
             torch.nn.init.zeros_(block.predictor.weight)  # zero-init: neutral start
-        # Future head: small random init
-        torch.nn.init.uniform_(self.future_head.weight, -s, s)
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
@@ -332,7 +318,7 @@ class GPT(nn.Module):
         scalar_lr=0.5,
     ):
         model_dim = self.config.n_embd
-        matrix_params = list(self.transformer.h.parameters()) + list(self.future_head.parameters())
+        matrix_params = list(self.transformer.h.parameters())
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
@@ -435,21 +421,6 @@ class GPT(nn.Module):
                 ignore_index=-1,
                 reduction=reduction,
             )
-            # Future sentence-sketch: predict mean embedding direction of next K tokens.
-            # Mean over K tokens = semantic direction, not a single noisy token.
-            K = FUTURE_K
-            n_valid = T - K
-            if n_valid > 0:
-                pred_emb = self.future_head(x[:, :n_valid, :]).float()  # [B, n_valid, C]
-                # Embed all targets once, then use cumsum for O(1) sliding window mean
-                all_emb = self.transformer.wte(targets.clamp(min=0)).detach().float()  # [B, T, C]
-                cs = torch.zeros(B, T + 1, all_emb.size(-1), device=all_emb.device, dtype=all_emb.dtype)
-                cs[:, 1:, :] = all_emb.cumsum(dim=1)
-                # For position t, mean of targets[t:t+K] = (cs[t+K] - cs[t]) / K
-                tgt_emb = (cs[:, K:K+n_valid, :] - cs[:, :n_valid, :]) / K
-                tgt_norm = F.normalize(tgt_emb, dim=-1)
-                pred_norm = F.normalize(pred_emb, dim=-1)
-                loss = loss + FUTURE_PRED_WEIGHT * (1 - (pred_norm * tgt_norm).sum(dim=-1).mean())
             return loss
         return logits
 
