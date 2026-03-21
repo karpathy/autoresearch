@@ -382,7 +382,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         max_depth=4,
         min_samples_leaf=400,
         learning_rate=0.02,
-        max_leaf_nodes=15,
+        max_leaf_nodes=20,
         l2_regularization=1.5,
         random_state=42,
     )
