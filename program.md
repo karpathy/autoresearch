@@ -55,6 +55,16 @@ Be bold. If an experiment seems insane, it is probably more worth running than t
 
 ---
 
+## HARDWARE NOTE
+
+This machine is using an NVIDIA RTX PRO 500 Blackwell class GPU with about 6 GB of VRAM. Treat it as a Blackwell target first, not as a generic CUDA device.
+
+Precision guidance:
+On Blackwell, BF16 is a standard Tensor Core path, and NVIDIA documents BF16 as having a wider exponent range than FP16, which usually makes it the safer default for training stability.
+- Do **not** describe Blackwell as "best supported by BF16." FP16 is also a first-class Blackwell Tensor Core mode.
+- The **newest Blackwell-native low-precision features** are FP8/MXFP8 and FP4/NVFP4. Those are where Blackwell adds new architecture-specific acceleration, but they typically require explicit library support and more careful validation.
+---
+
 ## SETUP
 
 1. Agree on a run tag based on today's date, e.g. `jul5`. The branch `autoresearch/<tag>` must not already exist.
