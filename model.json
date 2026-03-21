@@ -1,0 +1,27 @@
+{
+  "architecture": {
+    "depth": 8,
+    "aspect_ratio": 128,
+    "head_dim": 64,
+    "window_pattern": "SL"
+  },
+
+  "optimization": {
+    "total_batch_size_power": 17,
+    "device_batch_size": 16,
+    "embedding_lr": 0.1,
+    "unembedding_lr": 0.002,
+    "matrix_lr": 0.01,
+    "scalar_lr": 0.25,
+    "weight_decay": 0.01,
+    "adam_betas": [0.8, 0.95],
+    "warmup_ratio": 0.2,
+    "warmdown_ratio": 0.75,
+    "final_lr_frac": 0.1
+  },
+
+  "evaluation": {
+    "batch_size": 16,
+    "tokens": 3145728
+  }
+}

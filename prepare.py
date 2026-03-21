@@ -21,34 +21,153 @@ import requests
 import pyarrow.parquet as pq
 import rustbpe
 import tiktoken
+import json
 import torch
 
 # ---------------------------------------------------------------------------
-# Constants (fixed, do not modify)
+# Constants — loaded from ground.json (required); fail with clear message
 # ---------------------------------------------------------------------------
 
-MAX_SEQ_LEN = 2048       # context length
-TIME_BUDGET = 300        # training time budget in seconds (5 minutes)
-EVAL_TOKENS = 40 * 524288  # number of tokens for val eval
+_GROUND_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ground.json")
+try:
+    with open(_GROUND_PATH, "r", encoding="utf-8") as _f:
+        _ground = json.load(_f)
+except FileNotFoundError:
+    sys.exit(f"ERROR: ground.json not found at {_GROUND_PATH}. "
+             "This file is required — see README.md for setup instructions.")
+except json.JSONDecodeError as _e:
+    sys.exit(f"ERROR: ground.json is malformed: {_e}")
+
+_required_keys = ["training", "data", "tokenizer", "mode", "processor"]
+_missing = [k for k in _required_keys if k not in _ground]
+if _missing:
+    sys.exit(f"ERROR: ground.json missing required keys: {_missing}")
+
+_training = _ground["training"]
+_data = _ground["data"]
+_tok = _ground["tokenizer"]
+_mode = _ground["mode"]
+
+MAX_SEQ_LEN = _training["max_seq_len"]
+TIME_BUDGET = _training["time_budget_test"] if _mode == "test" else _training["time_budget_train"]
+EVAL_TOKENS = _training["eval_tokens_multiplier"] * _training["eval_tokens_unit"]
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "autoresearch")
+CACHE_DIR = os.path.expanduser(_data["cache_dir"])
 DATA_DIR = os.path.join(CACHE_DIR, "data")
 TOKENIZER_DIR = os.path.join(CACHE_DIR, "tokenizer")
-BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main"
-MAX_SHARD = 6542 # the last datashard is shard_06542.parquet
-VAL_SHARD = MAX_SHARD  # pinned validation shard (shard_06542)
+BASE_URL = _data["base_url"]
+MAX_SHARD = _data["max_shard"]
+VAL_SHARD = _data["val_shard"]
 VAL_FILENAME = f"shard_{VAL_SHARD:05d}.parquet"
-VOCAB_SIZE = 8192
+VOCAB_SIZE = _tok["vocab_size"]
 
-# BPE split pattern (GPT-4 style, with \p{N}{1,2} instead of {1,3})
-SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
+SPLIT_PATTERN = _tok["split_pattern"]
 
-SPECIAL_TOKENS = [f"<|reserved_{i}|>" for i in range(4)]
-BOS_TOKEN = "<|reserved_0|>"
+_n_special = _tok["special_tokens_count"]
+SPECIAL_TOKENS = [f"<|reserved_{i}|>" for i in range(_n_special)]
+BOS_TOKEN = _tok["bos_token"]
+
+# ---------------------------------------------------------------------------
+# Platform detection — auto-detect GPU, with ground.json processor overrides
+# Exports PLATFORM dict consumed by train.py alongside MAX_SEQ_LEN, TIME_BUDGET
+# ---------------------------------------------------------------------------
+
+_proc = _ground["processor"]
+
+# FP16/BF16 tensor-core ops per cycle per SM, by (major, minor) compute capability.
+# Used with SM count + boost clock to compute peak FLOPS at runtime.
+_GPU_OPS_PER_CYCLE_PER_SM = {
+    (7, 0): 128,   # Volta (V100)
+    (7, 5): 128,   # Turing (RTX 20xx, Quadro RTX, T4)
+    (8, 0): 512,   # Ampere GA100 (A100)
+    (8, 6): 256,   # Ampere GA10x (RTX 30xx, A40)
+    (8, 7): 256,   # Ampere GA10B (Jetson Orin)
+    (8, 9): 512,   # Ada Lovelace (RTX 40xx, L40)
+    (9, 0): 1024,  # Hopper (H100 SXM)
+    (10, 0): 1024, # Blackwell (B100/B200) — provisional
+}
+
+def _estimate_peak_flops(device_idx=0):
+    """Compute peak FP16/BF16 tensor TFLOPS from SM count and clock."""
+    import torch as _torch
+    props = _torch.cuda.get_device_properties(device_idx)
+    cc = (props.major, props.minor)
+    sm_count = props.multi_processor_count
+    clock_ghz = props.clock_rate / 1e6  # clock_rate is in kHz
+    ops_per_cycle = _GPU_OPS_PER_CYCLE_PER_SM.get(cc)
+    if ops_per_cycle is None:
+        major_fallbacks = {7: 128, 8: 256, 9: 1024, 10: 1024}
+        ops_per_cycle = major_fallbacks.get(cc[0], 128)
+        print(f"Warning: unknown GPU CC {cc}, using fallback ops/cycle={ops_per_cycle}")
+    peak = sm_count * ops_per_cycle * clock_ghz * 1e9 * 2  # *2 for FMA
+    print(f"GPU: {props.name} | CC {cc[0]}.{cc[1]} | {sm_count} SMs | "
+          f"{clock_ghz:.2f} GHz | peak {peak/1e12:.1f} TFLOPS")
+    return peak
+
+
+def _detect_platform():
+    import torch as _torch
+    p = {"device": "cpu", "dtype": "fp32", "use_grad_scaler": False,
+         "attention": "naive", "compile": False, "embedding_dtype": "fp32",
+         "fa3_repo": None, "peak_flops": 0.0}
+    if _torch.cuda.is_available():
+        p["device"] = "cuda"
+        cc = _torch.cuda.get_device_capability(0)
+        p["peak_flops"] = _estimate_peak_flops(0)
+        if cc[0] >= 9:
+            # Hopper+ — bf16, FA3, compile
+            p["dtype"] = "bf16"
+            p["embedding_dtype"] = "bf16"
+            p["fa3_repo"] = "varunneal/flash-attention-3"
+            p["attention"] = "flash"
+            try:
+                import triton  # noqa: F401
+                p["compile"] = sys.platform != "win32"
+            except ImportError:
+                print("Warning: triton not found — torch.compile disabled (Hopper)")
+        elif cc[0] >= 8:
+            # Ampere/Ada — bf16, FA3, compile
+            p["dtype"] = "bf16"
+            p["embedding_dtype"] = "bf16"
+            p["fa3_repo"] = "kernels-community/flash-attn3"
+            p["attention"] = "flash"
+            try:
+                import triton  # noqa: F401
+                p["compile"] = sys.platform != "win32"
+            except ImportError:
+                print("Warning: triton not found — torch.compile disabled (Ampere/Ada)")
+        else:
+            # Turing / older — fp16, SDPA, no compile
+            p["dtype"] = "fp16"
+            p["use_grad_scaler"] = True
+            p["attention"] = "sdpa"
+            p["embedding_dtype"] = "fp32"
+
+    # Apply ground.json processor overrides (non-"auto" values)
+    if _proc["dtype"] != "auto":
+        p["dtype"] = _proc["dtype"]
+        p["use_grad_scaler"] = p["dtype"] == "fp16"
+        p["embedding_dtype"] = "bf16" if p["dtype"] == "bf16" else "fp32"
+    if _proc["compile"] != "auto":
+        p["compile"] = bool(_proc["compile"])
+    if _proc["flash_attention"] != "auto":
+        fa = _proc["flash_attention"]
+        if fa is False or fa == "sdpa":
+            p["attention"] = "sdpa"
+            p["fa3_repo"] = None
+        elif isinstance(fa, str) and fa not in ("auto", "sdpa"):
+            p["attention"] = "flash"
+            p["fa3_repo"] = fa
+    pf = _proc.get("peak_flops", "auto")
+    if pf != "auto":
+        p["peak_flops"] = float(pf)
+    return p
+
+PLATFORM = _detect_platform()
 
 # ---------------------------------------------------------------------------
 # Data download
@@ -81,8 +200,8 @@ def download_single_shard(index):
                 if os.path.exists(path):
                     try:
                         os.remove(path)
-                    except OSError:
-                        pass
+                    except OSError as cleanup_err:
+                        print(f"  Warning: failed to clean up {path}: {cleanup_err}")
             if attempt < max_attempts:
                 time.sleep(2 ** attempt)
     return False
@@ -370,8 +489,8 @@ def evaluate_bpb(model, tokenizer, batch_size):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Prepare data and tokenizer for autoresearch")
-    parser.add_argument("--num-shards", type=int, default=10, help="Number of training shards to download (-1 = all). Val shard is always pinned.")
-    parser.add_argument("--download-workers", type=int, default=8, help="Number of parallel download workers")
+    parser.add_argument("--num-shards", type=int, default=_data["num_shards"], help="Number of training shards to download (-1 = all). Val shard is always pinned.")
+    parser.add_argument("--download-workers", type=int, default=_data["download_workers"], help="Number of parallel download workers")
     args = parser.parse_args()
 
     num_shards = MAX_SHARD if args.num_shards == -1 else args.num_shards

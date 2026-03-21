@@ -1,4 +1,4 @@
-# autoresearch — agent instructions
+# autoresearch — agent instructions for https://github.com/habanwer/autoresearch/tree/autoresearch/memory-in-the-loop
 
 ## 1. Orientation (do this first, every run)
 

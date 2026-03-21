@@ -17,13 +17,103 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+import json
+import sys
+import csv
+import traceback
+from datetime import datetime
 
-from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
+from prepare import MAX_SEQ_LEN, TIME_BUDGET, PLATFORM, Tokenizer, make_dataloader, evaluate_bpb, get_token_bytes
+
+# ---------------------------------------------------------------------------
+# Persistent experiment memory (hardened)
+# ---------------------------------------------------------------------------
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_RESULTS_PATH = os.path.join(_SCRIPT_DIR, "results.tsv")
+_MEMORY_PATH = os.path.join(_SCRIPT_DIR, "sessions", "memory.md")
+
+
+def update_research_memory(outcome_str: str) -> None:
+    """Write experiment memory summary to sessions/memory.md.
+
+    Reads results.tsv to find top historical runs and writes a Markdown
+    summary.  Never mutates program.md or any user-owned file.
+    """
+    if not os.path.exists(_RESULTS_PATH):
+        return
+
+    # 1. Parse active hyperparameters from model.json (already loaded)
+    try:
+        hparams = [
+            f"DEPTH={_model_cfg['architecture']['depth']}",
+            f"BS=2**{_model_cfg['optimization']['total_batch_size_power']}",
+            f"LR={_model_cfg['optimization']['matrix_lr']}",
+        ]
+        hparam_str = ", ".join(hparams)
+    except (KeyError, TypeError) as exc:
+        print(f"WARNING: could not read hyperparams for memory: {exc}")
+        hparam_str = "unknown"
+
+    # 2. Parse top historical runs from results.tsv
+    runs: list[dict] = []
+    try:
+        with open(_RESULTS_PATH, "r", encoding="utf-8") as f:
+            for row in csv.DictReader(f, delimiter="\t"):
+                try:
+                    v = float(row.get("val_bpb", "0"))
+                    if v > 0:
+                        runs.append({
+                            "run_id": row.get("run_id", "unknown")[:8],
+                            "val_bpb": v,
+                            "desc": row.get("description", "")[:60],
+                        })
+                except (ValueError, TypeError):
+                    continue  # skip rows with unparseable val_bpb
+    except OSError as exc:
+        print(f"WARNING: could not read results.tsv for memory: {exc}")
+        return
+
+    # 3. Build memory payload
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    lines = [f"## Experiment Memory (auto-generated {ts})\n"]
+    if runs:
+        runs.sort(key=lambda x: x["val_bpb"])
+        lines.append(f"**Best val_bpb ever:** {runs[0]['val_bpb']:.4f}\n")
+        lines.append("**Top runs:**\n")
+        for i, r in enumerate(runs[:5], 1):
+            lines.append(f"{i}. [{r['run_id']}] {r['desc']} -> {r['val_bpb']:.4f}")
+        lines.append("")
+    lines.append(f"**Last run context:**")
+    lines.append(f"- Hyperparams: `{hparam_str}`")
+    lines.append(f"- Outcome: {outcome_str}\n")
+
+    # 4. Write to sessions/memory.md (agent-owned, never program.md)
+    os.makedirs(os.path.dirname(_MEMORY_PATH), exist_ok=True)
+    try:
+        with open(_MEMORY_PATH, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+    except OSError as exc:
+        print(f"WARNING: could not write experiment memory: {exc}")
+
+
+def _crash_handler(exc_type, exc_val, exc_tb):
+    """On unhandled exception, record crash in experiment memory then re-raise."""
+    err = "".join(traceback.format_exception_only(exc_type, exc_val)).strip()
+    try:
+        update_research_memory(f"CRASHED: `{err}`")
+    except Exception:
+        pass  # crash handler must never itself crash
+    sys.__excepthook__(exc_type, exc_val, exc_tb)
+
+
+sys.excepthook = _crash_handler
+
+# ---------------------------------------------------------------------------
+# Load model configuration from model.json
+# ---------------------------------------------------------------------------
+_model_cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model.json")
+with open(_model_cfg_path, "r") as _f:
+    _model_cfg = json.load(_f)
 
 # ---------------------------------------------------------------------------
 # GPT Model
@@ -31,11 +121,11 @@ from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evalua
 
 @dataclass
 class GPTConfig:
-    sequence_len: int = 2048
-    vocab_size: int = 32768
-    n_layer: int = 12
-    n_head: int = 6
-    n_kv_head: int = 6
+    sequence_len: int = 1024
+    vocab_size: int = 16384
+    n_layer: int = 6
+    n_head: int = 2
+    n_kv_head: int = 2
     n_embd: int = 768
     window_pattern: str = "SSSL"
 
@@ -51,6 +141,7 @@ def has_ve(layer_idx, n_layer):
 
 def apply_rotary_emb(x, cos, sin):
     assert x.ndim == 4
+    cos, sin = cos.to(x.dtype), sin.to(x.dtype)
     d = x.shape[3] // 2
     x1, x2 = x[..., :d], x[..., d:]
     y1 = x1 * cos + x2 * sin
@@ -73,6 +164,9 @@ class CausalSelfAttention(nn.Module):
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 32
         self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+        # Sliding-window mask cache (constant for a given T × win; avoids re-creation every forward)
+        self._cached_mask = None
+        self._cached_mask_key = (0, 0)
 
     def forward(self, x, ve, cos_sin, window_size):
         B, T, C = x.size()
@@ -90,8 +184,27 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
-        y = y.contiguous().view(B, T, -1)
+        # Transpose to (B, H, T, D) for SDPA
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+
+        win = window_size[0]
+        if win >= T:
+            # Full context — use efficient is_causal path
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        else:
+            # Sliding window causal — use cached mask
+            key = (T, win)
+            if self._cached_mask_key != key:
+                rows = torch.arange(T, device=q.device).unsqueeze(1)
+                cols = torch.arange(T, device=q.device).unsqueeze(0)
+                # Causal + sliding window: True = allowed to attend (PyTorch SDPA convention)
+                self._cached_mask = (cols <= rows) & ((rows - cols) < win)
+                self._cached_mask_key = key
+            y = F.scaled_dot_product_attention(q, k, v, attn_mask=self._cached_mask)
+
+        y = y.transpose(1, 2).contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
 
@@ -175,10 +288,7 @@ class GPT(nn.Module):
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
-        # Cast embeddings to bf16
-        self.transformer.wte.to(dtype=torch.bfloat16)
-        for ve in self.value_embeds.values():
-            ve.to(dtype=torch.bfloat16)
+        # Embeddings stay in FP32; autocast handles FP16 during forward
 
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
         if device is None:
@@ -188,7 +298,6 @@ class GPT(nn.Module):
         t = torch.arange(seq_len, dtype=torch.float32, device=device)
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.bfloat16(), sin.bfloat16()
         cos, sin = cos[None, :, None, :], sin[None, :, None, :]
         return cos, sin
 
@@ -302,26 +411,25 @@ polar_express_coeffs = [
     (2.3465413258596377, -1.7097828382687081, 0.42323551169305323),
 ]
 
-@torch.compile(dynamic=False, fullgraph=True)
 def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t):
     p.mul_(1 - lr_t * wd_t)
-    exp_avg.lerp_(grad, 1 - beta1_t)
-    exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
+    g = grad.to(exp_avg.dtype)  # upcast fp16 grads to fp32 moment dtype
+    exp_avg.lerp_(g, 1 - beta1_t)
+    exp_avg_sq.lerp_(g.square(), 1 - beta2_t)
     bias1 = 1 - beta1_t ** step_t
     bias2 = 1 - beta2_t ** step_t
     denom = (exp_avg_sq / bias2).sqrt() + eps_t
     step_size = lr_t / bias1
-    p.add_(exp_avg / denom, alpha=-step_size)
+    p.add_((exp_avg / denom * (-step_size)).to(p.dtype))
 
-@torch.compile(dynamic=False, fullgraph=True)
 def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momentum_buffer,
                     momentum_t, lr_t, wd_t, beta2_t, ns_steps, red_dim):
     # Nesterov momentum
     momentum = momentum_t.to(stacked_grads.dtype)
     momentum_buffer.lerp_(stacked_grads, 1 - momentum)
     g = stacked_grads.lerp_(momentum_buffer, momentum)
-    # Polar express orthogonalization
-    X = g.bfloat16()
+    # Polar express orthogonalization — float32 on Turing (no hw bf16); bf16 on Ampere+
+    X = g.to(_MUON_ORTHO_DTYPE)
     X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.02 + 1e-6)
     if g.size(-2) > g.size(-1):
         for a, b, c in polar_express_coeffs[:ns_steps]:
@@ -353,6 +461,14 @@ def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momen
     stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
 
 
+# Muon orthogonalization dtype: bf16 on Ampere+ (hw support), float32 on Turing/older
+_MUON_ORTHO_DTYPE = (
+    torch.bfloat16
+    if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
+    else torch.float32
+)
+
+
 class MuonAdamW(torch.optim.Optimizer):
     """Combined optimizer: Muon for 2D matrix params, AdamW for others."""
 
@@ -378,8 +494,10 @@ class MuonAdamW(torch.optim.Optimizer):
             state = self.state[p]
             if not state:
                 state['step'] = 0
-                state['exp_avg'] = torch.zeros_like(p)
-                state['exp_avg_sq'] = torch.zeros_like(p)
+                # float32 moments for fp16 params — prevents grad² underflow
+                moment_dtype = torch.float32 if p.dtype == torch.float16 else p.dtype
+                state['exp_avg'] = torch.zeros(p.shape, dtype=moment_dtype, device=p.device)
+                state['exp_avg_sq'] = torch.zeros(p.shape, dtype=moment_dtype, device=p.device)
             state['step'] += 1
             self._adamw_step_t.fill_(state['step'])
             self._adamw_lr_t.fill_(group['lr'])
@@ -426,29 +544,27 @@ class MuonAdamW(torch.optim.Optimizer):
                 self._step_muon(group)
 
 # ---------------------------------------------------------------------------
-# Hyperparameters (edit these directly, no CLI flags needed)
+# Hyperparameters — loaded from model.json (single source of truth)
 # ---------------------------------------------------------------------------
 
 # Model architecture
-ASPECT_RATIO = 64       # model_dim = depth * ASPECT_RATIO
-HEAD_DIM = 128          # target head dimension for attention
-WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
+DEPTH = _model_cfg["architecture"]["depth"]
+ASPECT_RATIO = _model_cfg["architecture"]["aspect_ratio"]
+HEAD_DIM = _model_cfg["architecture"]["head_dim"]
+WINDOW_PATTERN = _model_cfg["architecture"]["window_pattern"]
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**19 # ~524K tokens per optimizer step
-EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
-UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
-MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
-SCALAR_LR = 0.5         # learning rate for per-layer scalars (Adam)
-WEIGHT_DECAY = 0.2      # cautious weight decay for Muon
-ADAM_BETAS = (0.8, 0.95) # Adam beta1, beta2
-WARMUP_RATIO = 0.0      # fraction of time budget for LR warmup
-WARMDOWN_RATIO = 0.5    # fraction of time budget for LR warmdown
-FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
-
-# Model size
-DEPTH = 8               # number of transformer layers
-DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
+TOTAL_BATCH_SIZE = 2 ** _model_cfg["optimization"]["total_batch_size_power"]
+DEVICE_BATCH_SIZE = _model_cfg["optimization"]["device_batch_size"]
+EMBEDDING_LR = _model_cfg["optimization"]["embedding_lr"]
+UNEMBEDDING_LR = _model_cfg["optimization"]["unembedding_lr"]
+MATRIX_LR = _model_cfg["optimization"]["matrix_lr"]
+SCALAR_LR = _model_cfg["optimization"]["scalar_lr"]
+WEIGHT_DECAY = _model_cfg["optimization"]["weight_decay"]
+ADAM_BETAS = tuple(_model_cfg["optimization"]["adam_betas"])
+WARMUP_RATIO = _model_cfg["optimization"]["warmup_ratio"]
+WARMDOWN_RATIO = _model_cfg["optimization"]["warmdown_ratio"]
+FINAL_LR_FRAC = _model_cfg["optimization"]["final_lr_frac"]
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
@@ -459,8 +575,9 @@ torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 device = torch.device("cuda")
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-H100_BF16_PEAK_FLOPS = 989.5e12
+_dtype_map = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
+autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=_dtype_map[PLATFORM["dtype"]])
+PEAK_FLOPS = PLATFORM["peak_flops"]
 
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
@@ -505,7 +622,10 @@ optimizer = model.setup_optimizer(
     weight_decay=WEIGHT_DECAY,
 )
 
-model = torch.compile(model, dynamic=False)
+if PLATFORM["compile"]:
+    model = torch.compile(model)
+
+scaler = torch.amp.GradScaler(enabled=PLATFORM["use_grad_scaler"])
 
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
 x, y, epoch = next(train_loader)  # prefetch first batch
@@ -548,7 +668,7 @@ while True:
             loss = model(x, y)
         train_loss = loss.detach()
         loss = loss / grad_accum_steps
-        loss.backward()
+        scaler.scale(loss).backward()
         x, y, epoch = next(train_loader)
 
     # Progress and schedules
@@ -561,7 +681,9 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
-    optimizer.step()
+    scaler.unscale_(optimizer)
+    scaler.step(optimizer)
+    scaler.update()
     model.zero_grad(set_to_none=True)
 
     train_loss_f = train_loss.item()
@@ -584,7 +706,7 @@ while True:
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
     pct_done = 100 * progress
     tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
-    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
+    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / PEAK_FLOPS
     remaining = max(0, TIME_BUDGET - total_training_time)
 
     print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
@@ -607,15 +729,31 @@ print()  # newline after \r training log
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
-# Final eval
+# Final eval — fast version: ~3M tokens instead of 20M to stay within time budget
+# (seq=2048 makes full 20M eval take ~420s; 3M ≈ 60s; same val shard so comparisons are valid)
+EVAL_BATCH_SIZE = _model_cfg["evaluation"]["batch_size"]
+FAST_EVAL_TOKENS = _model_cfg["evaluation"]["tokens"]
+eval_steps = max(1, FAST_EVAL_TOKENS // (EVAL_BATCH_SIZE * MAX_SEQ_LEN))
 model.eval()
-with autocast_ctx:
-    val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+_token_bytes = get_token_bytes(device="cuda")
+_val_loader = make_dataloader(tokenizer, EVAL_BATCH_SIZE, MAX_SEQ_LEN, "val")
+_total_nats = 0.0
+_total_bytes = 0
+with torch.no_grad(), autocast_ctx:
+    for _ in range(eval_steps):
+        _x, _y, _ = next(_val_loader)
+        _loss_flat = model(_x, _y, reduction='none').view(-1)
+        _y_flat = _y.view(-1)
+        _nbytes = _token_bytes[_y_flat]
+        _mask = _nbytes > 0
+        _total_nats += (_loss_flat * _mask).sum().item()
+        _total_bytes += _nbytes.sum().item()
+val_bpb = _total_nats / (math.log(2) * _total_bytes)
 
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
+steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / PEAK_FLOPS if total_training_time > 0 else 0
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
 print("---")
@@ -628,3 +766,5 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
+
+update_research_memory(f"val_bpb={val_bpb:.4f}, steps={step}, tokens={total_tokens/1e6:.1f}M")

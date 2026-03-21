@@ -1,0 +1,36 @@
+{
+  "codename": "mar15-2-rtx5000",
+  "mode": "test",
+
+  "data": {
+    "cache_dir": "~/.cache/autoresearch",
+    "base_url": "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main",
+    "max_shard": 6542,
+    "val_shard": 6542,
+    "num_shards": 10,
+    "download_workers": 8
+  },
+
+  "tokenizer": {
+    "vocab_size": 8192,
+    "split_pattern": "'(?i:[sdmt]|ll|ve|re)|[^\\r\\n\\p{L}\\p{N}]?+\\p{L}+|\\p{N}{1,2}| ?[^\\s\\p{L}\\p{N}]++[\\r\\n]*|\\s*[\\r\\n]|\\s+(?!\\S)|\\s+",
+    "special_tokens_count": 4,
+    "bos_token": "<|reserved_0|>"
+  },
+
+  "training": {
+    "max_seq_len": 2048,
+    "time_budget_test": 60,
+    "time_budget_train": 300,
+    "eval_tokens_multiplier": 40,
+    "eval_tokens_unit": 524288,
+    "max_run_wall_seconds": 30
+  },
+
+  "processor": {
+    "dtype": "auto",
+    "compile": "auto",
+    "flash_attention": "auto",
+    "peak_flops": "auto"
+  }
+}

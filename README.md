@@ -6,6 +6,30 @@
 
 The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069) and [this tweet](https://x.com/karpathy/status/2031135152349524125).
 
+---
+
+## [Karpathy](https://github.com/karpathy)'s [AutoResearch](https://github.com/karpathy/autoresearch) with Memory-in-the-Loop States
+
+*by [Shehab Anwer, MD](https://doi.org/10.1093/ehjimp/qyaf038) (GitHub: [habanwer](https://github.com/habanwer) · [The Adimension](https://github.com/the-adimension))*
+
+> *This fork applies the **DEITY Principles Framework** — **D**ata, **E**thics, **I**nformatics, **T**echnology, and **Y**ou — to implement human-machine interoperability & transparency in research protocols, especially when automation and autonomy are the scope. The framework is described in [The Adimension: bridging human ingenuity and machine intelligence through the DEITY principles framework](https://doi.org/10.1093/ehjimp/qyaf038) (European Heart Journal — Imaging Methods and Practice, 2025).*
+
+### What changed (relative to [karpathy/autoresearch](https://github.com/karpathy/autoresearch) in alignment with the [Adimension](https://theadimension.ch/Introduction.html)'s [DEITY Principles])
+
+**Data.** Hardcoded constants extracted into machine-readable JSON configs. Training platform, data paths, and time budgets live in `ground.json`; architecture and optimization hyperparameters live in `model.json`. Experiment results are logged in three formats: JSON (structured config), TSV (metrics), and Markdown (human/LLM-readable memory).
+
+**Ethics.** Explicit file ownership governance: `ground.json` and `program.md` are user-owned and read-only; `model.json` and `train.py` are agent-owned and editable through the automation experiment. The agent writes experiment memory to `sessions/memory.md` — pinned to the Git branch's ID. Results are append-only, and a crash handler persists state even on failure. Timestamped and SHA-verified outputs are logged.
+
+**Informatics.** `program.md` introduces a structured agent protocol with an orientation checklist, decision metrics table, execution sequence, and logging rules. Train output uses a parseable `---`-delimited key=value block so metrics flow directly into the experiment log. All data paths are configurable in `ground.json` for transparency and reproducibility to enable human review and auditing of the research process, and to allow for future integration with external data sources or experiment tracking tools and agents.
+
+**Technology.** Runtime GPU platform detection spanning Volta (SM 7.0) through Blackwell (SM 10.0). `prepare.py` auto-selects dtype, attention backend, `torch.compile`, and `GradScaler` per GPU generation, and computes peak TFLOPS from SM count and clock. Turing GPUs get fp16 with fp32 optimizer moments; Ampere+ get bf16. `ground.json` processor overrides allow manual tuning. Windows compile guards included.
+
+**You.** The human governs constraints (`ground.json`, `program.md`); the agent experiments autonomously within them (`model.json`, `train.py`). `update_research_memory()` closes the loop — experiment outcomes persist to `sessions/memory.md` so the agent's next hypothesis is informed by all prior runs without modifying user-owned files.
+
+**Upstream**: [karpathy/autoresearch](https://github.com/karpathy/autoresearch) — **Related fork**: [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows RTX adaptation referenced for platform support)
+
+---
+
 ## How it works
 
 The repo is deliberately kept small and only really has three files that matter:
