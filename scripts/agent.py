@@ -224,7 +224,10 @@ def git_commit(msg):
 
 
 def git_revert():
-    git("checkout", "HEAD~1", "--", "train.py")
+    # Revert to clean baseline, not HEAD~1 (which may also be corrupted)
+    import shutil
+    if os.path.exists(os.path.join(PROJECT_ROOT, ".train_clean.py")):
+        shutil.copy2(os.path.join(PROJECT_ROOT, ".train_clean.py"), os.path.join(PROJECT_ROOT, "train.py"))
     git("commit", "-m", "revert: discard failed experiment")
     return git("rev-parse", "--short", "HEAD")[0]
 
@@ -435,13 +438,13 @@ def get_results_history():
 # ---------------------------------------------------------------------------
 
 def _count_recent_failures(results_history):
-    """Count consecutive non-keep results from the end of history."""
+    """Count consecutive non-keep results from the end of history. Capped at 10."""
     count = 0
     for r in reversed(results_history):
         if r["status"] == "keep":
             break
         count += 1
-    return count
+    return min(count, 10)
 
 
 def _categorize_experiment(desc):
@@ -527,7 +530,8 @@ def build_prompt(train_py_source, results_history, best_bpb):
     # Adaptive strategy guidance
     fail_streak = _count_recent_failures(results_history) if results_history else 0
     streak_str = ""
-    if fail_streak >= 15:
+    fail_streak = min(fail_streak, 10)  # cap to prevent LLM panic
+    if fail_streak >= 10:
         streak_str = f"""
 ## CRITICAL: {fail_streak} consecutive failures!
 Everything tried so far has failed. Try something CREATIVE and UNCONVENTIONAL:
@@ -1045,14 +1049,12 @@ def main():
         """Call LLM with adaptive temperature — more creative after more failures."""
         if args.local:
             return _call_llm_base(prompt)
-        # Ramp temperature: 0 for first few, up to 0.8 after 15+ failures
+        # Ramp temperature: 0 for first few, cap at 0.5 (higher produces garbage)
         temp = None
-        if fail_streak >= 15:
-            temp = 0.8
-        elif fail_streak >= 10:
-            temp = 0.6
+        if fail_streak >= 10:
+            temp = 0.5
         elif fail_streak >= 5:
-            temp = 0.4
+            temp = 0.3
         return _call_llm_base(prompt, temperature=temp)
 
     # Setup branch
@@ -1154,7 +1156,7 @@ def main():
     # on click events (entering "mark mode" which pauses output)
     print("\033[?1000l\033[?1003l\033[?1006l", end="", flush=True)
 
-    with Live(build_dashboard(state), console=console, refresh_per_second=4, screen=True) as live:
+    with Live(build_dashboard(state), console=console, refresh_per_second=4) as live:
 
         def refresh():
             try:
