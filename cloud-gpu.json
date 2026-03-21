@@ -1,0 +1,12 @@
+{
+  "provider": "runpod",
+  "github_repo": "rstager/autoresearch",
+  "network_volume_id": "ay7m01er4v",
+  "network_volume_name": "autoresearch-working",
+  "network_volume_size_gb": 10,
+  "container_disk_gb": 40,
+  "data_persistent": false,
+  "data_center_id": "US-TX-3",
+  "gpu_type": "NVIDIA GeForce RTX 4090",
+  "image": "ghcr.io/rstager/autoresearch:latest"
+}
