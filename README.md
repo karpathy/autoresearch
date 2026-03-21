@@ -28,7 +28,7 @@ For overnight runs, keep your PC awake with `python scripts/keep_awake.py` in a 
 
 ## How it works
 
-1. Agent asks Claude Sonnet to propose a code change to `train.py`
+1. Agent asks Claude Sonnet 4.6 to propose a code change to `train.py`
 2. Applies the change, validates syntax, commits it, runs training for 5 minutes
 3. If val_bpb improves → keep and push. If not → revert.
 4. Repeat. All results logged to `agent_results.tsv`.
@@ -46,6 +46,7 @@ scripts/
   setup.sh             -  interactive one-command install script
   keep_awake.py        -  prevents Windows from sleeping during runs
   dashboard.py         -  standalone dashboard wrapper
+  run_forever.sh       -  auto-restart wrapper for overnight runs
 pyproject.toml         -  dependencies
 ```
 
@@ -62,6 +63,7 @@ pyproject.toml         -  dependencies
 - **Auto-push**  -  pushes kept improvements to GitHub automatically
 - **15-minute hard timeout**  -  kills hung training runs (e.g. from PC sleep)
 - **Sample text generation**  -  generates and logs 100-token samples after each experiment
+- **Result archiving**  -  previous results/logs are archived when starting a new experiment series with `--tag`
 
 ## Agent usage
 
@@ -72,6 +74,7 @@ uv run scripts/agent.py --max-runs 50    # cap total experiments
 uv run scripts/agent.py --dataset pubmed # train on PubMed medical abstracts
 uv run scripts/agent.py --no-dashboard   # text-only mode
 uv run scripts/agent.py --local          # use local LM Studio instead of Claude
+uv run scripts/agent.py --tag mar21      # start new experiment series (archives old results)
 ```
 
 ## Custom datasets
@@ -114,6 +117,22 @@ bash scripts/setup.sh --auto       # skip prompts, use defaults + env vars
 It handles: system deps, uv, Python packages, data download, git credentials, and persistent env vars.
 
 Flags for scripted/CI use: `--api-key`, `--dataset`, `--data-dir`, `--auto`.
+
+## Experiment results
+
+### Sonnet 4 vs Sonnet 4.6 comparison (RTX 5070 Ti, PubMed dataset)
+
+| Metric | Sonnet 4 | Sonnet 4.6 |
+|---|---|---|
+| Total experiments | 147 | 104 |
+| Kept improvements | 5 (5.2%) | **21 (22.1%)** |
+| Crash rate | 34.0% | **8.7%** |
+| Improvement from baseline | 1.25% | **23.24%** |
+| Best val_bpb | 0.936221 | 0.955865 |
+
+Sonnet 4.6 produced **4x more improvements** with **4x fewer crashes** in fewer total experiments. Key wins from 4.6: halved batch size for 2x more optimizer steps, RoPE base frequency tuning, per-group Adam epsilon/beta optimization, cosine gradient clip scheduling, and weight decay floor during warmdown.
+
+Note: different baselines (Sonnet 4 started from prior improvements at 0.948, Sonnet 4.6 started from clean master at 1.245), so absolute val_bpb is not directly comparable. The keep rate and crash rate are the meaningful metrics.
 
 ## Design choices
 
