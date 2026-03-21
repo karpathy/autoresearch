@@ -335,8 +335,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     mono_cst[3] = 1  # 48h vol-normalized return (momentum)
     mono_cst[4] = 1  # 72h vol-normalized return (momentum)
     mono_cst[5] = 1  # 168h vol-normalized return (momentum)
-    mono_cst[28] = 1  # 72h directional efficiency
-    mono_cst[29] = 1  # 168h directional efficiency
+    # indices 28-29: directional efficiency — unconstrained (high efficiency in downtrend = bearish)
 
     # --- Train: two-model ensemble for diversity ---
     model_conservative = HistGradientBoostingRegressor(
