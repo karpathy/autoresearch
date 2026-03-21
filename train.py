@@ -145,6 +145,9 @@ class GPT(nn.Module):
             }
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        # Auxiliary prediction head at intermediate layer
+        self.aux_layer = config.n_layer // 2  # layer 4 for D8
+        self.aux_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
         # Value embeddings
@@ -168,6 +171,7 @@ class GPT(nn.Module):
         # Embedding and unembedding
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
         torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
+        torch.nn.init.normal_(self.aux_head.weight, mean=0.0, std=0.001)
         # Transformer blocks
         n_embd = self.config.n_embd
         s = 3**0.5 * n_embd**-0.5
@@ -272,7 +276,7 @@ class GPT(nn.Module):
         matrix_params = list(self.transformer.h.parameters())
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
-        lm_head_params = list(self.lm_head.parameters())
+        lm_head_params = list(self.lm_head.parameters()) + list(self.aux_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
         assert len(list(self.parameters())) == (
@@ -354,10 +358,13 @@ class GPT(nn.Module):
         x = self.transformer.wte(idx)
         x = norm(x)
         x0 = x
+        aux_x = None
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i])
+            if i == self.aux_layer - 1:
+                aux_x = x
         x = norm(x)
 
         softcap = 15
@@ -372,6 +379,17 @@ class GPT(nn.Module):
                 ignore_index=-1,
                 reduction=reduction,
             )
+            # Auxiliary intermediate prediction loss (weight 0.1)
+            if aux_x is not None:
+                aux_logits = self.aux_head(norm(aux_x)).float()
+                aux_logits = softcap * torch.tanh(aux_logits / softcap)
+                aux_loss = F.cross_entropy(
+                    aux_logits.view(-1, aux_logits.size(-1)),
+                    targets.view(-1),
+                    ignore_index=-1,
+                    reduction=reduction,
+                )
+                loss = loss + 0.1 * aux_loss
             return loss
         return logits
 
