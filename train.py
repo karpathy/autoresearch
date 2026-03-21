@@ -57,7 +57,10 @@ def apply_rotary_emb(x, cos, sin):
     return torch.cat([y1, y2], 3)
 
 
-HEBB_LR = 0.0  # disabled: test if Hebbian helps under SwiGLU
+# Hebbian learning: "neurons that fire together wire together" (Hebb 1949).
+# Accumulate co-activation outer product, apply as weight update periodically.
+# Research-backed: complements gradient descent with local learning rule.
+HEBB_LR = 0.001  # Hebbian learning rate (scaled by modulation schedule)
 
 
 class CausalSelfAttention(nn.Module):
@@ -79,7 +82,7 @@ class CausalSelfAttention(nn.Module):
             if has_ve(layer_idx, config.n_layer)
             else None
         )
-        # Hebbian accumulator: running sum of co-activation (pre * post)
+        # Hebbian accumulators
         self.hebb_accum = None
         self.hebb_proj = None
 
@@ -90,16 +93,15 @@ class CausalSelfAttention(nn.Module):
         v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
 
         # Hebbian: accumulate co-activation of input x and value output v
-        # delta_W[i,j] += lr * x[...,i] * v[...,j]  (connections that fire together wire together)
-        with torch.no_grad():
-            x_flat = x.reshape(B * T, C)
-            v_flat = v.reshape(B * T, self.n_kv_head * self.head_dim)
-            # Mean outer product: (input_dim, output_dim)
-            hebb_delta = (x_flat.T @ v_flat) / (B * T)
-            if self.hebb_accum is None:
-                self.hebb_accum = hebb_delta
-            else:
-                self.hebb_accum += hebb_delta
+        if HEBB_LR > 0:
+            with torch.no_grad():
+                x_flat = x.reshape(B * T, C)
+                v_flat = v.reshape(B * T, self.n_kv_head * self.head_dim)
+                hebb_delta = (x_flat.T @ v_flat) / (B * T)
+                if self.hebb_accum is None:
+                    self.hebb_accum = hebb_delta
+                else:
+                    self.hebb_accum += hebb_delta
 
         # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
         if ve is not None:
@@ -117,14 +119,16 @@ class CausalSelfAttention(nn.Module):
         v = v.transpose(1, 2)
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         y = y.transpose(1, 2).contiguous().view(B, T, -1)
-        # Hebbian for c_proj: co-activation of attention output and final output
-        with torch.no_grad():
-            y_flat = y.reshape(B * T, -1)
-            output_flat = self.c_proj(y).reshape(B * T, -1)
-            hebb_proj = (y_flat.T @ output_flat) / (B * T)
-            self.hebb_proj = (
-                self.hebb_proj + hebb_proj if self.hebb_proj is not None else hebb_proj
-            )
+
+        # Hebbian for c_proj
+        if HEBB_LR > 0:
+            with torch.no_grad():
+                y_flat = y.reshape(B * T, -1)
+                output_flat = self.c_proj(y).reshape(B * T, -1)
+                hebb_proj = (y_flat.T @ output_flat) / (B * T)
+                self.hebb_proj = (
+                    self.hebb_proj + hebb_proj if self.hebb_proj is not None else hebb_proj
+                )
         y = self.c_proj(y)
         return y
 
