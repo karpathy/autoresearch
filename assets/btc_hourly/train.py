@@ -403,10 +403,10 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
         sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
 
-        # Vol prediction — modulate position size (soft linear adjustment)
+        # Vol prediction — asymmetric: only reduce when vol significantly expanding
         vol_ratio_pred = vol_model.predict(feats)
         predict_fn.last_vol_ratio = vol_ratio_pred  # expose for diagnostics
-        vol_adj = 1.0 - 0.3 * np.clip(vol_ratio_pred - 1.0, -0.5, 0.5)
+        vol_adj = np.minimum(1.0, 1.2 / np.clip(vol_ratio_pred, 0.8, 3.0))
         sigma_preds = sigma_preds * vol_adj
 
         # Rest of pipeline unchanged
