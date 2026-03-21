@@ -1,0 +1,13 @@
+{
+  "pools": [
+    {
+      "id": "dispatcher",
+      "command": "uv",
+      "args": [
+        "run",
+        "stdio_bus/dispatcher.py"
+      ],
+      "instances": 1
+    }
+  ]
+}
