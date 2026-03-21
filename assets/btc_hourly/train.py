@@ -199,6 +199,13 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         fr_cum_168 = fr_series.rolling(168, min_periods=1).sum().values
         feature_cols.append(fr_cum_168 * 10)
 
+        # 12b. Funding rate × price momentum interaction (168h)
+        # Crowded longs during rally = contrarian bearish
+        # Positioning against trend = squeeze potential
+        ret_168_raw = np.full(len(close), 0.0)
+        ret_168_raw[168:] = close[168:] / close[:-168] - 1.0
+        feature_cols.append(fr_cum_168 * 10 * ret_168_raw / vol_safe)
+
     features = np.column_stack(feature_cols)
 
     # Trim to valid rows (after max lookback)
