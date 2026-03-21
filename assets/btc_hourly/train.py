@@ -371,8 +371,9 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     vol_binary = (vol_targets > 1.3).astype(np.float64)  # 1 = vol expanding, 0 = normal
 
     # Exclude low-importance features from vol model (guided by permutation importance)
-    # BB position (19-20): perm imp ~0.004; Directional efficiency (28-29): perm imp ~0.003
-    vol_exclude = {19, 20, 28, 29}
+    # Remove direction features from vol model (guided by permutation importance)
+    # BB position (19-20): ~0.004; Efficiency (28-29): ~0.003; RSI (16-18): ~0.008
+    vol_exclude = {16, 17, 18, 19, 20, 28, 29}
     vol_feat_mask = [i for i in range(features.shape[1]) if i not in vol_exclude]
     vol_features = features[:, vol_feat_mask]
 
