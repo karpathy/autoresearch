@@ -355,10 +355,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
         sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
         sigma_preds = np.clip(sigma_preds, -3.0, 3.0)
-        # Power transform: amplify predictions away from zero to increase trade count
-        # 0.1→0.20, 0.3→0.41, 0.5→0.62, 1.0→1.0 (preserves sign and large signals)
-        sigma_preds = np.sign(sigma_preds) * np.abs(sigma_preds) ** 0.7
-        sigma_preds = sigma_preds * 0.20  # dampening locked for epoch 7
+        # Linear scaling (no power transform — let strong predictions bet bigger)
+        sigma_preds = sigma_preds * 0.20
         sigma_smoothed = _smooth_predictions(sigma_preds)
         return sigma_smoothed, ts, vol
 
