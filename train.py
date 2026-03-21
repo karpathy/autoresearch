@@ -372,10 +372,6 @@ class GPT(nn.Module):
                 ignore_index=-1,
                 reduction=reduction,
             )
-            # Z-loss (PaLM): gently penalize large log-sum-exp of logits
-            log_z = torch.logsumexp(logits, dim=-1)
-            z_loss = 1e-4 * (log_z ** 2).mean()
-            loss = loss + z_loss
             return loss
         return logits
 
