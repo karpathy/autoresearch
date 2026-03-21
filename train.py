@@ -624,7 +624,7 @@ WARMDOWN_RATIO = 0.8  # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0  # final LR as fraction of initial
 
 # Model size
-DEPTH = 4  # exp86: test if predictive coding fixes the DEPTH=4 step-count penalty
+DEPTH = 3  # number of transformer layers (newborn brain: start bigger)
 DEVICE_BATCH_SIZE = 4  # per-device batch size (MAX_SEQ_LEN=2048, 6GB VRAM)
 
 # ---------------------------------------------------------------------------
