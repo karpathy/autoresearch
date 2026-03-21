@@ -121,20 +121,14 @@ class MLP(nn.Module):
         return self.c_proj(h)
 
 
-ATTN_EVERY_N = 2  # attention every Nth layer (1=all, 2=every other, etc.)
-
-
 class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
-        self.has_attn = (layer_idx % ATTN_EVERY_N == 0)
-        if self.has_attn:
-            self.attn = CausalSelfAttention(config, layer_idx)
+        self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
     def forward(self, x, ve, cos_sin, window_size):
-        if self.has_attn:
-            x = x + self.attn(norm(x), ve, cos_sin, window_size)
+        x = x + self.attn(norm(x), ve, cos_sin, window_size)
         x = x + self.mlp(norm(x))
         return x
 
@@ -178,11 +172,10 @@ class GPT(nn.Module):
         n_embd = self.config.n_embd
         s = 3**0.5 * n_embd**-0.5
         for block in self.transformer.h:
-            if block.has_attn:
-                torch.nn.init.uniform_(block.attn.c_q.weight, -s, s)
-                torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
-                torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
-                torch.nn.init.zeros_(block.attn.c_proj.weight)
+            torch.nn.init.uniform_(block.attn.c_q.weight, -s, s)
+            torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
+            torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
+            torch.nn.init.zeros_(block.attn.c_proj.weight)
             torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
@@ -194,7 +187,7 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(ve.weight, -s, s)
         # Gate weights init to zero (sigmoid(0)=0.5, scaled by 2 -> 1.0 = neutral)
         for block in self.transformer.h:
-            if block.has_attn and block.attn.ve_gate is not None:
+            if block.attn.ve_gate is not None:
                 torch.nn.init.zeros_(block.attn.ve_gate.weight)
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
@@ -565,7 +558,7 @@ class MuonAdamW(torch.optim.Optimizer):
 # ---------------------------------------------------------------------------
 
 # Model architecture
-ASPECT_RATIO = 21  # model_dim = depth * ASPECT_RATIO (21*12=252→256, n_head=4)
+ASPECT_RATIO = 32  # model_dim = depth * ASPECT_RATIO (32*8=256, n_head=4)
 HEAD_DIM = 64  # target head dimension for attention
 WINDOW_PATTERN = "L"  # all layers use full attention — test if D8 benefits from global context
 
@@ -582,7 +575,7 @@ WARMDOWN_RATIO = 0.8  # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0  # final LR as fraction of initial
 
 # Model size
-DEPTH = 12  # deeper with attn every 2nd layer (6 attn + 6 MLP-only)
+DEPTH = 8  # try deeper with full MHA (low VRAM footprint)
 DEVICE_BATCH_SIZE = 8  # per-device batch size (MAX_SEQ_LEN=2048, 6GB VRAM — use it)
 
 # ---------------------------------------------------------------------------
