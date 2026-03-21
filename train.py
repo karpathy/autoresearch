@@ -60,7 +60,7 @@ def apply_rotary_emb(x, cos, sin):
 # Hebbian learning: "neurons that fire together wire together" (Hebb 1949).
 # Accumulate co-activation outer product, apply as weight update periodically.
 # Research-backed: complements gradient descent with local learning rule.
-HEBB_LR = 0.001  # Hebbian learning rate (scaled by modulation schedule)
+HEBB_LR = 0.0001  # Hebbian learning rate (scaled by modulation schedule)
 
 
 class CausalSelfAttention(nn.Module):
