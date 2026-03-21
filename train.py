@@ -147,13 +147,16 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
-        # Value embeddings — single shared table across all VE layers
+        # Value embeddings
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
-        self._ve_layers = [i for i in range(config.n_layer) if has_ve(i, config.n_layer)]
-        self.shared_ve = nn.Embedding(config.vocab_size, kv_dim)
-        # Keep value_embeds dict for compatibility with optimizer setup
-        self.value_embeds = nn.ModuleDict()
+        self.value_embeds = nn.ModuleDict(
+            {
+                str(i): nn.Embedding(config.vocab_size, kv_dim)
+                for i in range(config.n_layer)
+                if has_ve(i, config.n_layer)
+            }
+        )
         # Rotary embeddings
         self.rotary_seq_len = config.sequence_len * 10
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
@@ -179,8 +182,9 @@ class GPT(nn.Module):
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
-        # Shared value embedding
-        torch.nn.init.uniform_(self.shared_ve.weight, -s, s)
+        # Value embeddings
+        for ve in self.value_embeds.values():
+            torch.nn.init.uniform_(ve.weight, -s, s)
         # Gate weights init to zero (sigmoid(0)=0.5, scaled by 2 -> 1.0 = neutral)
         for block in self.transformer.h:
             if block.attn.ve_gate is not None:
@@ -191,7 +195,8 @@ class GPT(nn.Module):
         self.cos, self.sin = cos, sin
         # Cast embeddings to float32 (bf16 not supported on Turing)
         self.transformer.wte.to(dtype=torch.float32)
-        self.shared_ve.to(dtype=torch.float32)
+        for ve in self.value_embeds.values():
+            ve.to(dtype=torch.float32)
 
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
         if device is None:
@@ -221,7 +226,7 @@ class GPT(nn.Module):
     def estimate_flops(self):
         """Estimated FLOPs per token (forward + backward)."""
         nparams = sum(p.numel() for p in self.parameters())
-        value_embeds_numel = self.shared_ve.weight.numel()
+        value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
         nparams_exclude = (
             self.transformer.wte.weight.numel()
             + value_embeds_numel
@@ -240,7 +245,7 @@ class GPT(nn.Module):
 
     def num_scaling_params(self):
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
-        value_embeds = sum(p.numel() for p in self.shared_ve.parameters())
+        value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
@@ -265,7 +270,7 @@ class GPT(nn.Module):
     ):
         model_dim = self.config.n_embd
         matrix_params = list(self.transformer.h.parameters())
-        shared_ve_params = list(self.shared_ve.parameters())
+        value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
@@ -274,7 +279,7 @@ class GPT(nn.Module):
             len(matrix_params)
             + len(embedding_params)
             + len(lm_head_params)
-            + len(shared_ve_params)
+            + len(value_embeds_params)
             + len(resid_params)
             + len(x0_params)
         )
@@ -300,7 +305,7 @@ class GPT(nn.Module):
             ),
             dict(
                 kind="adamw",
-                params=shared_ve_params,
+                params=value_embeds_params,
                 lr=embedding_lr * dmodel_lr_scale,
                 betas=adam_betas,
                 eps=1e-10,
@@ -351,7 +356,7 @@ class GPT(nn.Module):
         x0 = x
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            ve = self.shared_ve(idx) if i in self._ve_layers else None
+            ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i])
         x = norm(x)
 
@@ -553,7 +558,7 @@ class MuonAdamW(torch.optim.Optimizer):
 # ---------------------------------------------------------------------------
 
 # Model architecture
-ASPECT_RATIO = 40  # model_dim = depth * ASPECT_RATIO (40*8=320, n_head=5)
+ASPECT_RATIO = 32  # model_dim = depth * ASPECT_RATIO (32*8=256, n_head=4)
 HEAD_DIM = 64  # target head dimension for attention
 WINDOW_PATTERN = "L"  # all layers use full attention — test if D8 benefits from global context
 
