@@ -19,6 +19,10 @@ dependencies = [
     "scipy>=1.12.0",
     "statsmodels>=0.14.0",
     "yfinance>=0.2.0",
+    # ML pipeline
+    "scikit-learn>=1.4.0",
+    "xgboost>=2.0.0",
+    "shap>=0.45.0",
 ]
 
 [tool.uv.sources]

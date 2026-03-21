@@ -44,10 +44,19 @@ Each index is classified as:
 - **Lagging** — follows the stock
 - **Cointegrated** — shares long-run equilibrium
 
-### Step 6: Report Generation
+### Step 6: ML Predictive Models (Stage 2)
+Using the significant indices identified in Stage 1 as features, the pipeline builds ML models:
+- **Feature engineering**: raw values, lagged values (1/2/3/5/10/20d), rolling mean/std (5/10/20/60d), momentum, rate of change
+- **Models**: Ridge, Lasso, ElasticNet, Random Forest, XGBoost
+- **Validation**: Walk-forward (expanding window) cross-validation — strictly out-of-sample
+- **Horizons**: 1-day, 5-day, 10-day, 20-day ahead prediction
+- **Metrics**: Directional accuracy (can we predict up/down?), binomial significance test, R², RMSE vs naive baseline, Information Coefficient
+- **Feature importance**: Permutation importance + SHAP values to identify which indices drive predictions
+
+### Step 7: Report Generation
 Two reports:
-1. **Technical Report** — full methodology, all test results, caveats. PhD-level rigor.
-2. **Executive Summary** — headline findings, top predictive indices, lead times, recommendations. Sales-oriented.
+1. **Technical Report** — full methodology, all test results (statistical + ML), feature importance rankings, model comparison tables, caveats. PhD-level rigor.
+2. **Executive Summary** — headline findings, top predictive indices, lead times, ML accuracy, recommendations. Sales-oriented.
 
 ## Agent Loop (Post-Pipeline)
 
@@ -60,6 +69,9 @@ After the pipeline runs, the agent should:
    - Adjust `--max-lag` for longer/shorter horizons
    - Run for specific sectors/industries
    - Write custom SQL via `db.run_query()` to explore index composition
+   - Run `--stats-only` or `--ml-only` to iterate on a specific stage
+   - Try `--ml-use-all-indices` to see if non-significant indices add ML value
+   - Adjust `--ml-horizons` for different prediction windows
 4. **Iterate on the report** — refine the narrative based on findings
 5. **Cross-validate** — run against related tickers (e.g., if PEP, also check KO, MDLZ)
 
@@ -84,5 +96,8 @@ If the schema differs, the agent should:
 3. The relationships are **statistically rigorous** (FDR-corrected, bootstrap CIs)
 4. The relationships are **stable over time** (rolling correlations)
 5. Some indices share **long-run equilibrium** with the stock (cointegration)
+6. ML models trained on RiskWise indices achieve **above-chance directional accuracy** on out-of-sample data
+7. Feature importance analysis identifies **which specific indices drive predictions** — justifying the subscription
+8. Walk-forward validation proves this isn't overfitting — it's **real predictive power**
 
 The executive summary should make a C-suite reader think: "We need this data."

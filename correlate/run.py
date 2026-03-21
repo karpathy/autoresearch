@@ -2,6 +2,10 @@
 """
 RiskWise Correlation Analysis Pipeline — Main Orchestrator
 
+Two-stage pipeline:
+  Stage 1: Statistical correlation analysis (Pearson, Granger, cointegration, etc.)
+  Stage 2: ML predictive modeling (Ridge, Lasso, RF, XGBoost with walk-forward CV)
+
 Usage:
     # With environment variables:
     export RISKWISE_DB_HOST=localhost
@@ -9,9 +13,14 @@ Usage:
     export RISKWISE_DB_USER=riskwise
     export RISKWISE_DB_PASSWORD=secret
 
+    # Full pipeline (stats + ML):
     uv run python -m correlate.run --ticker PEP --name "PepsiCo"
-    uv run python -m correlate.run --ticker KO --name "Coca-Cola"
-    uv run python -m correlate.run --ticker AAPL --name "Apple Inc."
+
+    # Stats only (skip ML):
+    uv run python -m correlate.run --ticker PEP --name "PepsiCo" --stats-only
+
+    # ML only (skip stats — still runs correlation to select features):
+    uv run python -m correlate.run --ticker PEP --name "PepsiCo" --ml-only
 """
 from __future__ import annotations
 
@@ -27,6 +36,7 @@ from .config import AnalysisConfig, DBConfig
 from .db import RiskWiseDB
 from .market_data import fetch_stock_data, align_series
 from .analysis import CorrelationAnalyzer
+from .ml import MLPredictor, MLConfig
 from .report import generate_reports
 
 logging.basicConfig(
@@ -49,6 +59,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="reports", help="Output directory")
     parser.add_argument("--use-levels", action="store_true",
                        help="Correlate with price levels instead of returns")
+
+    # Stage control
+    parser.add_argument("--stats-only", action="store_true",
+                       help="Run Stage 1 only (statistical correlations)")
+    parser.add_argument("--ml-only", action="store_true",
+                       help="Run Stage 2 only (ML models — still computes correlations for feature selection)")
+
+    # ML-specific
+    parser.add_argument("--ml-horizons", type=str, default="1,5,10,20",
+                       help="Comma-separated prediction horizons in days (default: 1,5,10,20)")
+    parser.add_argument("--ml-top-features", type=int, default=30,
+                       help="Max features to use in ML models (default: 30)")
+    parser.add_argument("--ml-min-train", type=int, default=252,
+                       help="Minimum training window in days (default: 252)")
+    parser.add_argument("--ml-use-all-indices", action="store_true",
+                       help="Use all indices as features, not just significant ones")
+
+    # Database
     parser.add_argument("--db-host", help="Override RISKWISE_DB_HOST")
     parser.add_argument("--db-name", help="Override RISKWISE_DB_NAME")
     parser.add_argument("--db-user", help="Override RISKWISE_DB_USER")
@@ -87,9 +115,22 @@ def main():
     if args.index_table:
         config.index_table_pattern = args.index_table
 
+    ml_config = MLConfig(
+        horizons=[int(h) for h in args.ml_horizons.split(",")],
+        top_n_features=args.ml_top_features,
+        min_train_days=args.ml_min_train,
+        use_significant_only=not args.ml_use_all_indices,
+    )
+
+    run_stats = not args.ml_only
+    run_ml = not args.stats_only
+
     t0 = time.time()
 
-    # ---- Step 1: Connect to DB and discover indices ----
+    # ==================================================================
+    # Data Loading (shared by both stages)
+    # ==================================================================
+
     logger.info("Connecting to RiskWise database at %s:%s/%s",
                 config.db.host, config.db.port, config.db.database)
     db = RiskWiseDB(config)
@@ -108,12 +149,11 @@ def main():
     if len(indices) > 10:
         logger.info("  ... and %d more", len(indices) - 10)
 
-    # ---- Step 2: Fetch market data ----
+    # Fetch market data
     logger.info("Fetching %s stock data for %s (%s)...",
                 config.market_data_period, config.target_name, config.target_ticker)
     market_df = fetch_stock_data(config)
 
-    # Choose target series based on config
     if config.use_returns:
         target_series = market_df["LogReturns"].dropna()
         logger.info("Using log returns as target variable")
@@ -121,60 +161,128 @@ def main():
         target_series = market_df["Close"]
         logger.info("Using price levels as target variable")
 
-    # ---- Step 3: Fetch all indices (wide format) ----
+    # Fetch all indices (wide format)
     logger.info("Fetching all index time series from database...")
     index_wide = db.get_all_indices_wide()
     logger.info("Index data shape: %s", index_wide.shape)
 
-    # Forward-fill to business days and align with market calendar
     index_wide.index = pd.to_datetime(index_wide.index)
     index_wide = index_wide.resample("B").ffill()
 
-    # ---- Step 4: Run analysis ----
-    logger.info("Running correlation analysis across %d indices...", len(index_wide.columns))
+    # ==================================================================
+    # Stage 1: Statistical Correlation Analysis
+    # ==================================================================
+
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("STAGE 1: Statistical Correlation Analysis")
+    logger.info("=" * 60)
+
     analyzer = CorrelationAnalyzer(config)
-    summary = analyzer.run_full_analysis(index_wide, target_series)
+    corr_summary = analyzer.run_full_analysis(index_wide, target_series)
 
-    elapsed = time.time() - t0
-    logger.info("Analysis complete in %.1f seconds", elapsed)
-    logger.info("  Tested: %d indices", summary.n_indices_tested)
-    logger.info("  Significant: %d", summary.n_significant)
-    logger.info("  Leading indicators: %d", len(summary.top_leading))
-    logger.info("  Contemporaneous: %d", len(summary.top_contemporaneous))
-    logger.info("  Lagging: %d", len(summary.top_lagging))
-    logger.info("  Cointegrated: %d", len(summary.cointegrated))
+    t_stats = time.time() - t0
+    logger.info("Stage 1 complete in %.1f seconds", t_stats)
+    logger.info("  Tested: %d indices", corr_summary.n_indices_tested)
+    logger.info("  Significant: %d", corr_summary.n_significant)
+    logger.info("  Leading indicators: %d", len(corr_summary.top_leading))
+    logger.info("  Contemporaneous: %d", len(corr_summary.top_contemporaneous))
+    logger.info("  Lagging: %d", len(corr_summary.top_lagging))
+    logger.info("  Cointegrated: %d", len(corr_summary.cointegrated))
 
-    # ---- Step 5: Generate reports ----
+    # ==================================================================
+    # Stage 2: Machine Learning Predictive Analysis
+    # ==================================================================
+
+    ml_summary = None
+    if run_ml:
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("STAGE 2: Machine Learning Predictive Analysis")
+        logger.info("=" * 60)
+
+        t_ml_start = time.time()
+        predictor = MLPredictor(config, ml_config)
+
+        try:
+            ml_summary = predictor.run(
+                index_wide, target_series, correlation_summary=corr_summary
+            )
+            t_ml = time.time() - t_ml_start
+            logger.info("Stage 2 complete in %.1f seconds", t_ml)
+            logger.info("  Features used: %d", ml_summary.n_features_used)
+            for h, best in ml_summary.best_model_per_horizon.items():
+                logger.info(
+                    "  %dd: best=%s, dir_acc=%.1f%%, R²=%.4f",
+                    h, best.model_name,
+                    best.directional_accuracy * 100, best.r2,
+                )
+        except Exception as e:
+            logger.error("Stage 2 failed: %s", e)
+            logger.info("Continuing with Stage 1 results only...")
+
+    # ==================================================================
+    # Report Generation
+    # ==================================================================
+
+    logger.info("")
     logger.info("Generating reports...")
-    paths = generate_reports(summary, config)
+    paths = generate_reports(corr_summary, config, ml_summary=ml_summary)
     logger.info("Technical report: %s", paths["technical_path"])
     logger.info("Executive summary: %s", paths["executive_path"])
 
-    # ---- Print summary to stdout ----
-    print("\n" + "=" * 70)
-    print(f"RISKWISE CORRELATION ANALYSIS: {summary.target_name} ({summary.target_ticker})")
-    print("=" * 70)
-    print(f"Indices tested:      {summary.n_indices_tested}")
-    print(f"Significant:         {summary.n_significant}")
-    print(f"Leading indicators:  {len(summary.top_leading)}")
-    print(f"Cointegrated:        {len(summary.cointegrated)}")
-    print(f"Granger causal:      {sum(1 for r in summary.results if r.granger_p_value and r.granger_p_value < config.significance_level)}")
-    print(f"Analysis time:       {elapsed:.1f}s")
-    print(f"Technical report:    {paths['technical_path']}")
-    print(f"Executive summary:   {paths['executive_path']}")
+    elapsed = time.time() - t0
 
-    if summary.top_leading:
-        print(f"\nTop leading indicator: {summary.top_leading[0].index_name}")
-        top = summary.top_leading[0]
+    # ==================================================================
+    # Summary to stdout
+    # ==================================================================
+
+    print("\n" + "=" * 70)
+    print(f"RISKWISE ANALYSIS: {corr_summary.target_name} ({corr_summary.target_ticker})")
+    print("=" * 70)
+
+    print("\n--- Stage 1: Statistical Correlations ---")
+    print(f"Indices tested:      {corr_summary.n_indices_tested}")
+    print(f"Significant:         {corr_summary.n_significant}")
+    print(f"Leading indicators:  {len(corr_summary.top_leading)}")
+    print(f"Cointegrated:        {len(corr_summary.cointegrated)}")
+    granger_n = sum(1 for r in corr_summary.results
+                    if r.granger_p_value and r.granger_p_value < config.significance_level)
+    print(f"Granger causal:      {granger_n}")
+
+    if corr_summary.top_leading:
+        top = corr_summary.top_leading[0]
+        print(f"\nTop leading indicator: {top.index_name}")
         print(f"  Lead time: {top.optimal_lag_days} days")
         print(f"  Correlation at lag: {top.lagged_correlation:+.4f}")
         if top.granger_p_value:
             print(f"  Granger p-value: {top.granger_p_value:.4f}")
 
+    if ml_summary:
+        print("\n--- Stage 2: ML Predictive Models ---")
+        print(f"Features used:       {ml_summary.n_features_used}")
+        for h in sorted(ml_summary.best_model_per_horizon.keys()):
+            best = ml_summary.best_model_per_horizon[h]
+            baseline = ml_summary.baseline_rmse.get(h, 0)
+            sig = "*" if best.directional_p_value < 0.05 else ""
+            beat = "✓" if baseline > 0 and best.rmse < baseline else ""
+            print(f"  {h:>2}d: {best.model_name:<15} "
+                  f"dir={best.directional_accuracy:.1%}{sig}  "
+                  f"R²={best.r2:+.4f}  "
+                  f"RMSE={best.rmse:.6f} {beat}")
+
+        if ml_summary.feature_importances:
+            print(f"\nTop 5 predictive features:")
+            for fi in ml_summary.feature_importances[:5]:
+                print(f"  {fi.feature_name}: {fi.importance_mean:.4f}")
+
+    print(f"\nTotal time:          {elapsed:.1f}s")
+    print(f"Technical report:    {paths['technical_path']}")
+    print(f"Executive summary:   {paths['executive_path']}")
     print("=" * 70)
 
     db.close()
-    return summary
+    return corr_summary, ml_summary
 
 
 if __name__ == "__main__":

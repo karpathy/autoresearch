@@ -12,16 +12,21 @@ from datetime import datetime
 
 from .analysis import AnalysisSummary, CorrelationResult
 from .config import AnalysisConfig
+from .ml import MLSummary
 
 
-def generate_reports(summary: AnalysisSummary, config: AnalysisConfig) -> dict[str, str]:
+def generate_reports(
+    summary: AnalysisSummary,
+    config: AnalysisConfig,
+    ml_summary: MLSummary | None = None,
+) -> dict[str, str]:
     """
     Generate both technical and executive reports.
     Returns dict with keys 'technical' and 'executive', values are markdown strings.
     Also writes files to config.output_dir.
     """
-    technical = _generate_technical_report(summary, config)
-    executive = _generate_executive_summary(summary, config)
+    technical = _generate_technical_report(summary, config, ml_summary)
+    executive = _generate_executive_summary(summary, config, ml_summary)
 
     os.makedirs(config.output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -43,7 +48,11 @@ def generate_reports(summary: AnalysisSummary, config: AnalysisConfig) -> dict[s
 # Technical Report
 # ======================================================================
 
-def _generate_technical_report(summary: AnalysisSummary, config: AnalysisConfig) -> str:
+def _generate_technical_report(
+    summary: AnalysisSummary,
+    config: AnalysisConfig,
+    ml_summary: MLSummary | None = None,
+) -> str:
     sections = []
 
     # Title
@@ -166,6 +175,10 @@ def _generate_technical_report(summary: AnalysisSummary, config: AnalysisConfig)
     sections.append("## Complete Results\n")
     sections.append(_full_results_table(summary.results))
 
+    # ML Results
+    if ml_summary:
+        sections.append(_generate_ml_technical_section(ml_summary))
+
     # Caveats
     sections.append("## Methodological Caveats\n")
     sections.append(
@@ -182,6 +195,16 @@ def _generate_technical_report(summary: AnalysisSummary, config: AnalysisConfig)
         "6. **Non-stationarity**: Correlations between non-stationary series can be "
         "spurious. We flag stationarity test results throughout.\n"
     )
+    if ml_summary:
+        sections.append(
+            "7. **ML Overfitting**: Walk-forward validation mitigates but does not "
+            "eliminate overfitting risk. Out-of-sample performance is the gold standard.\n"
+            "8. **Feature Engineering**: Lagged and rolling features introduce additional "
+            "autocorrelation. Directional accuracy is a more robust metric than R² for "
+            "financial time series.\n"
+            "9. **Transaction Costs**: Equity curves do not account for transaction costs, "
+            "slippage, or market impact. Real-world performance will be lower.\n"
+        )
 
     return "\n".join(sections)
 
@@ -190,7 +213,11 @@ def _generate_technical_report(summary: AnalysisSummary, config: AnalysisConfig)
 # Executive Summary
 # ======================================================================
 
-def _generate_executive_summary(summary: AnalysisSummary, config: AnalysisConfig) -> str:
+def _generate_executive_summary(
+    summary: AnalysisSummary,
+    config: AnalysisConfig,
+    ml_summary: MLSummary | None = None,
+) -> str:
     sections = []
 
     sections.append(f"# Executive Summary: RiskWise Indices × {summary.target_name}")
@@ -283,6 +310,10 @@ def _generate_executive_summary(summary: AnalysisSummary, config: AnalysisConfig
         f"reactive reporting into forward-looking intelligence.\n"
     )
 
+    # ML Results in Executive Summary
+    if ml_summary:
+        sections.append(_generate_ml_executive_section(ml_summary))
+
     # Recommendation
     sections.append("## Recommendation\n")
     sections.append(
@@ -309,10 +340,17 @@ def _generate_executive_summary(summary: AnalysisSummary, config: AnalysisConfig
 
     # Methodology Note
     sections.append("---\n")
-    sections.append("*Methodology: Pearson/Spearman/Kendall correlations, "
-                   "cross-correlation lead/lag analysis, Granger causality, "
-                   "Engle-Granger cointegration, Benjamini-Hochberg FDR correction. "
-                   f"Full technical report available upon request.*\n")
+    ml_note = ""
+    if ml_summary:
+        ml_note = ("Walk-forward ML validation (Ridge, Lasso, Random Forest, XGBoost), "
+                   "SHAP feature importance, directional accuracy testing. ")
+    sections.append(
+        f"*Methodology: Pearson/Spearman/Kendall correlations, "
+        f"cross-correlation lead/lag analysis, Granger causality, "
+        f"Engle-Granger cointegration, Benjamini-Hochberg FDR correction. "
+        f"{ml_note}"
+        f"Full technical report available upon request.*\n"
+    )
 
     return "\n".join(sections)
 
@@ -376,6 +414,148 @@ def _detailed_result(r: CorrelationResult, target_name: str) -> str:
                 f"(ADF p = {r.index_adf_p:.4f})")
     lines.append("")
     return "\n".join(lines)
+
+
+def _generate_ml_technical_section(ml: MLSummary) -> str:
+    """Generate the ML section for the technical report."""
+    sections = []
+
+    sections.append("## Machine Learning Predictive Analysis\n")
+    sections.append(
+        "To move beyond correlation and quantify *predictive power*, we trained "
+        "multiple ML models using walk-forward (expanding window) cross-validation. "
+        "This ensures all predictions are strictly out-of-sample — no future data "
+        "leaks into training.\n"
+    )
+
+    sections.append("### Methodology\n")
+    sections.append(
+        f"- **Features**: {ml.n_features_used} engineered features from RiskWise indices "
+        f"(raw values, lagged values at 1/2/3/5/10/20 days, rolling mean/std at "
+        f"5/10/20/60 day windows, momentum, rate of change)\n"
+        f"- **Models**: Ridge Regression, Lasso (L1), ElasticNet, Random Forest, "
+        f"XGBoost (gradient boosted trees)\n"
+        f"- **Validation**: Walk-forward expanding window — train on all history up to "
+        f"split point, predict the next segment. No look-ahead bias.\n"
+        f"- **Horizons**: {', '.join(str(h) + '-day' for h in sorted(ml.model_results.keys()))}\n"
+        f"- **Key Metrics**: Directional accuracy (can we predict up/down?), "
+        f"Information Coefficient (rank correlation of predictions vs actuals), "
+        f"RMSE vs naive baseline\n"
+    )
+
+    # Results per horizon
+    sections.append("### Model Performance by Horizon\n")
+
+    for horizon in sorted(ml.model_results.keys()):
+        results = ml.model_results[horizon]
+        baseline = ml.baseline_rmse.get(horizon)
+        best = ml.best_model_per_horizon.get(horizon)
+
+        sections.append(f"#### {horizon}-Day Ahead Prediction\n")
+        if baseline:
+            sections.append(f"Naive baseline RMSE: {baseline:.6f}\n")
+
+        sections.append("| Model | RMSE | MAE | R² | Dir. Accuracy | Dir. p-value | IC |\n")
+        sections.append("|-------|------|-----|----|--------------|--------------|----|")
+        for r in sorted(results, key=lambda x: x.directional_accuracy, reverse=True):
+            sig = " *" if r.directional_p_value < 0.05 else ""
+            sections.append(
+                f"| {r.model_name} | {r.rmse:.6f} | {r.mae:.6f} | "
+                f"{r.r2:.4f} | {r.directional_accuracy:.1%}{sig} | "
+                f"{r.directional_p_value:.4f} | {r.ic_mean:+.3f} |"
+            )
+        sections.append("")
+
+        if best:
+            beat_baseline = "Yes" if best.rmse < baseline else "No" if baseline else "N/A"
+            sig_dir = "Yes" if best.directional_p_value < 0.05 else "No"
+            sections.append(
+                f"**Best model**: {best.model_name} — directional accuracy "
+                f"{best.directional_accuracy:.1%} (statistically significant: {sig_dir}), "
+                f"beats naive baseline: {beat_baseline}\n"
+            )
+
+    # Feature importance
+    if ml.feature_importances:
+        sections.append("### Feature Importance Rankings\n")
+        sections.append(
+            "Features ranked by importance across all models and horizons. "
+            "This reveals which RiskWise indices and derived signals carry the "
+            "most predictive information.\n"
+        )
+        sections.append("| Rank | Feature | Importance | Std | SHAP | Direction |\n")
+        sections.append("|------|---------|------------|-----|------|-----------|\n")
+        for i, fi in enumerate(ml.feature_importances[:30], 1):
+            shap_str = f"{fi.shap_mean:.4f}" if fi.shap_mean is not None else "—"
+            dir_str = fi.direction if fi.direction else "—"
+            sections.append(
+                f"| {i} | {fi.feature_name} | {fi.importance_mean:.4f} | "
+                f"{fi.importance_std:.4f} | {shap_str} | {dir_str} |"
+            )
+        sections.append("")
+
+        # Summarize which base indices appear most
+        sections.append("### Most Predictive Base Indices\n")
+        sections.append(
+            "Aggregating feature importance back to the underlying RiskWise indices "
+            "(across all derived features like lags, rolling stats, momentum):\n"
+        )
+        base_importance: dict[str, float] = {}
+        for fi in ml.feature_importances:
+            # Extract base index name (before _lag, _ma, _std, _mom, _roc)
+            base = fi.feature_name
+            for suffix in ["_lag", "_ma", "_std", "_mom", "_roc"]:
+                if suffix in base:
+                    base = base[:base.index(suffix)]
+                    break
+            base_importance[base] = base_importance.get(base, 0) + fi.importance_mean
+
+        ranked_bases = sorted(base_importance.items(), key=lambda x: x[1], reverse=True)
+        for i, (name, imp) in enumerate(ranked_bases[:15], 1):
+            sections.append(f"{i}. **{name}**: aggregate importance = {imp:.4f}")
+        sections.append("")
+
+    return "\n".join(sections)
+
+
+def _generate_ml_executive_section(ml: MLSummary) -> str:
+    """Generate ML section for the executive summary."""
+    sections = []
+
+    sections.append(f"## Predictive Model Validation\n")
+    sections.append(
+        f"Beyond statistical correlation, we built machine learning models to "
+        f"validate that RiskWise indices can *actively predict* "
+        f"{ml.target_name}'s stock movements:\n"
+    )
+
+    for horizon in sorted(ml.best_model_per_horizon.keys()):
+        best = ml.best_model_per_horizon[horizon]
+        baseline = ml.baseline_rmse.get(horizon, 0)
+        sig = "statistically significant" if best.directional_p_value < 0.05 else "not significant"
+
+        improvement = ""
+        if baseline > 0 and best.rmse < baseline:
+            pct = (1 - best.rmse / baseline) * 100
+            improvement = f" ({pct:.0f}% improvement over naive baseline)"
+
+        sections.append(
+            f"- **{horizon}-day prediction**: {best.directional_accuracy:.0%} directional "
+            f"accuracy ({sig}), RMSE = {best.rmse:.6f}{improvement}"
+        )
+    sections.append("")
+
+    # Highlight top features in plain English
+    if ml.feature_importances:
+        top3 = ml.feature_importances[:3]
+        names = [fi.feature_name for fi in top3]
+        sections.append(
+            f"The most predictive signals are derived from: **{', '.join(names)}**. "
+            f"These features, when combined in a machine learning model, provide "
+            f"actionable predictive power validated on truly out-of-sample data.\n"
+        )
+
+    return "\n".join(sections)
 
 
 def _full_results_table(results: list[CorrelationResult]) -> str:
