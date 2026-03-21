@@ -677,7 +677,7 @@ def get_weight_decay(progress):
 
 
 # Developmental pruning: newborn brain starts dense, adult brain prunes to sparse
-PRUNE_TARGET = 0.1  # light pruning — remove weakest 10% weights by end
+PRUNE_TARGET = 0.0  # disabled: test if pruning is harmful for tiny model in 5min budget
 
 
 @torch.no_grad()
