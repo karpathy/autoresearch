@@ -128,9 +128,9 @@ class Block(nn.Module):
         self.mlp = MLP(config)
 
     def forward(self, x, ve, cos_sin, window_size):
-        # Peri-LN: pre-norm + post-norm on each sublayer
-        x = x + norm(self.attn(norm(x), ve, cos_sin, window_size))
-        x = x + norm(self.mlp(norm(x)))
+        # Post-norm only: normalize after sublayer output
+        x = norm(x + self.attn(x, ve, cos_sin, window_size))
+        x = norm(x + self.mlp(x))
         return x
 
 
