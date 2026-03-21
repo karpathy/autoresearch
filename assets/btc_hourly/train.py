@@ -371,7 +371,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     vol_binary = (vol_targets > 1.3).astype(np.float64)  # 1 = vol expanding, 0 = normal
 
     vol_model = HistGradientBoostingRegressor(
-        max_iter=500,
+        max_iter=1000,
         max_depth=4,
         min_samples_leaf=600,
         learning_rate=0.01,
