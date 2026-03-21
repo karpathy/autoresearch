@@ -57,9 +57,6 @@ def apply_rotary_emb(x, cos, sin):
     return torch.cat([y1, y2], 3)
 
 
-HEBB_LR = 0.0  # disabled: test if Hebbian helps under SwiGLU
-
-
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
@@ -79,27 +76,12 @@ class CausalSelfAttention(nn.Module):
             if has_ve(layer_idx, config.n_layer)
             else None
         )
-        # Hebbian accumulator: running sum of co-activation (pre * post)
-        self.hebb_accum = None
-        self.hebb_proj = None
 
     def forward(self, x, ve, cos_sin, window_size):
         B, T, C = x.size()
         q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
         k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
         v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
-
-        # Hebbian: accumulate co-activation of input x and value output v
-        # delta_W[i,j] += lr * x[...,i] * v[...,j]  (connections that fire together wire together)
-        with torch.no_grad():
-            x_flat = x.reshape(B * T, C)
-            v_flat = v.reshape(B * T, self.n_kv_head * self.head_dim)
-            # Mean outer product: (input_dim, output_dim)
-            hebb_delta = (x_flat.T @ v_flat) / (B * T)
-            if self.hebb_accum is None:
-                self.hebb_accum = hebb_delta
-            else:
-                self.hebb_accum += hebb_delta
 
         # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
         if ve is not None:
@@ -117,27 +99,8 @@ class CausalSelfAttention(nn.Module):
         v = v.transpose(1, 2)
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         y = y.transpose(1, 2).contiguous().view(B, T, -1)
-        # Hebbian for c_proj: co-activation of attention output and final output
-        with torch.no_grad():
-            y_flat = y.reshape(B * T, -1)
-            output_flat = self.c_proj(y).reshape(B * T, -1)
-            hebb_proj = (y_flat.T @ output_flat) / (B * T)
-            self.hebb_proj = (
-                self.hebb_proj + hebb_proj if self.hebb_proj is not None else hebb_proj
-            )
         y = self.c_proj(y)
         return y
-
-    @torch.no_grad()
-    def apply_hebbian(self, modulation=1.0):
-        """Apply accumulated Hebbian updates to c_v and c_proj weights."""
-        effective_lr = HEBB_LR * modulation
-        if self.hebb_accum is not None:
-            self.c_v.weight.add_(self.hebb_accum.T, alpha=effective_lr)
-            self.hebb_accum = None
-        if self.hebb_proj is not None:
-            self.c_proj.weight.add_(self.hebb_proj.T, alpha=effective_lr)
-            self.hebb_proj = None
 
 
 SPARSE_K = 0.10  # fraction of MLP neurons active per token (sparse coding)
@@ -615,7 +578,7 @@ WINDOW_PATTERN = "SSSL"  # sliding window: S=half context (1024 at seq_len=2048)
 TOTAL_BATCH_SIZE = 2**14  # ~16K tokens per optimizer step
 EMBEDDING_LR = 0.6  # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
-MATRIX_LR = 0.03  # learning rate for matrix parameters (Muon)
+MATRIX_LR = 0.04  # learning rate for matrix parameters (Muon) — match reference target
 SCALAR_LR = 0.5  # learning rate for per-layer scalars (Adam)
 WEIGHT_DECAY = 0.2  # cautious weight decay for Muon
 ADAM_BETAS = (0.8, 0.95)  # Adam beta1, beta2
@@ -781,15 +744,6 @@ while True:
     prune_frac = PRUNE_TARGET * progress
     if step % 20 == 0:
         apply_developmental_pruning(model, prune_frac)
-    # Hebbian plasticity: strengthen connections that co-activated this step
-    # Developmental Hebbian: high plasticity early (childhood), consolidate later (adulthood)
-    hebb_decay = 0.9 ** (progress * 10)  # exponential decay from 1.0
-    for block in (
-        model._orig_mod.transformer.h
-        if hasattr(model, "_orig_mod")
-        else model.transformer.h
-    ):
-        block.attn.apply_hebbian(modulation=hebb_decay)
     model.zero_grad(set_to_none=True)
 
     train_loss_f = train_loss.item()
