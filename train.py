@@ -558,15 +558,15 @@ class MuonAdamW(torch.optim.Optimizer):
 # ---------------------------------------------------------------------------
 
 # Model architecture
-ASPECT_RATIO = 32  # model_dim = depth * ASPECT_RATIO (32*8=256, n_head=4)
+ASPECT_RATIO = 26  # model_dim = depth * ASPECT_RATIO (26*10=260→256, n_head=2)
 HEAD_DIM = 128  # target head dimension — fewer but more powerful heads (n_head=2)
-WINDOW_PATTERN = "L"  # all layers use full attention — test if D8 benefits from global context
+WINDOW_PATTERN = "L"  # all layers use full attention
 
 # Optimization
 TOTAL_BATCH_SIZE = 2**14  # ~16K tokens per optimizer step
 EMBEDDING_LR = 0.6  # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
-MATRIX_LR = 0.02  # learning rate for matrix parameters (Muon) — test even lower
+MATRIX_LR = 0.02  # learning rate for matrix parameters (Muon)
 SCALAR_LR = 0.5  # learning rate for per-layer scalars (Adam)
 WEIGHT_DECAY = 0.2  # cautious weight decay for Muon
 ADAM_BETAS = (0.8, 0.95)  # Adam beta1, beta2
@@ -575,7 +575,7 @@ WARMDOWN_RATIO = 0.8  # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0  # final LR as fraction of initial
 
 # Model size
-DEPTH = 8  # try deeper with full MHA (low VRAM footprint)
+DEPTH = 10  # deeper with HEAD_DIM=128 (n_head=2, still 256 width)
 DEVICE_BATCH_SIZE = 8  # per-device batch size (MAX_SEQ_LEN=2048, 6GB VRAM — use it)
 
 # ---------------------------------------------------------------------------
