@@ -39,3 +39,4 @@ data/
 # Environment files
 .env
 *.env
+archives/

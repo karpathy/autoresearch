@@ -15,6 +15,7 @@ Requires ANTHROPIC_API_KEY env var for Claude, or --local for LM Studio.
 
 import os
 import sys
+import shutil
 import re
 import json
 import time
@@ -129,6 +130,27 @@ def _init_dataset_paths(dataset_name):
 
 # Default until arg parsing overrides
 _init_dataset_paths(os.environ.get("AUTORESEARCH_DATASET", "default"))
+
+def archive_previous_results(tag):
+    """Archive existing results/log/state files into an archives folder.
+    Files are moved to archives/<tag>/ with incrementing suffix if needed."""
+    archive_dir = os.path.join(PROJECT_ROOT, "archives")
+    os.makedirs(archive_dir, exist_ok=True)
+
+    for filepath in [RESULTS_TSV, LOG_FILE, STATE_FILE]:
+        if not filepath or not os.path.exists(filepath):
+            continue
+        fname = os.path.basename(filepath)
+        # Find next available slot: archives/fname, archives/fname.1, .2, ...
+        dest = os.path.join(archive_dir, fname)
+        counter = 1
+        while os.path.exists(dest):
+            dest = os.path.join(archive_dir, f"{fname}.{counter}")
+            counter += 1
+        shutil.move(filepath, dest)
+        log_to_file(f"Archived {fname} -> archives/{os.path.basename(dest)}")
+
+
 
 
 def read_file(path):
@@ -609,7 +631,7 @@ def call_claude(prompt, temperature=None):
         _init_agentguard()  # patch before first client creation
         client = anthropic.Anthropic(timeout=180.0)
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=4096,
             temperature=temperature if temperature else anthropic.NOT_GIVEN,
             messages=[{"role": "user", "content": prompt}],
@@ -1037,18 +1059,19 @@ def main():
     tag = args.tag or datetime.now().strftime("%b%d").lower()
     branch = f"autoresearch/{tag}"
 
-    if not args.resume:
-        existing, _ = git("branch", "--list", branch)
-        if existing:
-            print(f"  Branch {branch} exists. Use --resume or pick a different --tag.")
-            return
-        git("checkout", "-b", branch)
-        log_to_file(f"Created branch: {branch}")
-    else:
+    existing, _ = git("branch", "--list", branch)
+    if existing:
+        # Branch exists — just check it out (resume or crash recovery)
         current, _ = git("branch", "--show-current")
-        if not current.startswith("autoresearch/"):
+        if current.strip() != branch:
             git("checkout", branch)
         log_to_file(f"Resuming on branch: {branch}")
+    else:
+        # New branch — archive old results and start fresh
+        if args.tag:
+            archive_previous_results(args.tag)
+        git("checkout", "-b", branch)
+        log_to_file(f"Created branch: {branch}")
 
     init_results()
 

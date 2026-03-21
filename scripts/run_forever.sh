@@ -4,6 +4,10 @@
 # Usage: bash scripts/run_forever.sh --dataset pubmed
 
 set -o pipefail
+# Source environment (API keys, PATH)
+if [[ -f /etc/profile.d/autoresearch.sh ]]; then
+    source /etc/profile.d/autoresearch.sh
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -16,7 +20,7 @@ AGENT_ARGS="$@"
 rm -rf ~/.triton ~/.cache/triton ~/.cache/torch_extensions /tmp/torch* /tmp/triton* /tmp/torchinductor* 2>/dev/null
 
 CRASHES=0
-MAX_CRASHES=20
+MAX_CRASHES=999
 
 echo "=== autoresearch auto-restart wrapper ==="
 echo "Agent args: $AGENT_ARGS"
