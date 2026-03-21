@@ -371,6 +371,7 @@ class GPT(nn.Module):
                 targets.view(-1),
                 ignore_index=-1,
                 reduction=reduction,
+                label_smoothing=0.1,
             )
             return loss
         return logits
