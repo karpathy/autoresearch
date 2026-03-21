@@ -13,20 +13,22 @@ from datetime import datetime
 from .analysis import AnalysisSummary, CorrelationResult
 from .config import AnalysisConfig
 from .ml import MLSummary
+from .explainability import ExplainabilitySummary
 
 
 def generate_reports(
     summary: AnalysisSummary,
     config: AnalysisConfig,
     ml_summary: MLSummary | None = None,
+    explain_summary: ExplainabilitySummary | None = None,
 ) -> dict[str, str]:
     """
     Generate both technical and executive reports.
     Returns dict with keys 'technical' and 'executive', values are markdown strings.
     Also writes files to config.output_dir.
     """
-    technical = _generate_technical_report(summary, config, ml_summary)
-    executive = _generate_executive_summary(summary, config, ml_summary)
+    technical = _generate_technical_report(summary, config, ml_summary, explain_summary)
+    executive = _generate_executive_summary(summary, config, ml_summary, explain_summary)
 
     os.makedirs(config.output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -52,6 +54,7 @@ def _generate_technical_report(
     summary: AnalysisSummary,
     config: AnalysisConfig,
     ml_summary: MLSummary | None = None,
+    explain_summary: ExplainabilitySummary | None = None,
 ) -> str:
     sections = []
 
@@ -179,6 +182,10 @@ def _generate_technical_report(
     if ml_summary:
         sections.append(_generate_ml_technical_section(ml_summary))
 
+    # Explainability Results
+    if explain_summary:
+        sections.append(_generate_explainability_technical_section(explain_summary))
+
     # Caveats
     sections.append("## Methodological Caveats\n")
     sections.append(
@@ -217,6 +224,7 @@ def _generate_executive_summary(
     summary: AnalysisSummary,
     config: AnalysisConfig,
     ml_summary: MLSummary | None = None,
+    explain_summary: ExplainabilitySummary | None = None,
 ) -> str:
     sections = []
 
@@ -313,6 +321,10 @@ def _generate_executive_summary(
     # ML Results in Executive Summary
     if ml_summary:
         sections.append(_generate_ml_executive_section(ml_summary))
+
+    # Explainability in Executive Summary
+    if explain_summary:
+        sections.append(_generate_explainability_executive_section(explain_summary))
 
     # Recommendation
     sections.append("## Recommendation\n")
@@ -554,6 +566,204 @@ def _generate_ml_executive_section(ml: MLSummary) -> str:
             f"These features, when combined in a machine learning model, provide "
             f"actionable predictive power validated on truly out-of-sample data.\n"
         )
+
+    return "\n".join(sections)
+
+
+# ======================================================================
+# Explainability Report Sections
+# ======================================================================
+
+def _generate_explainability_technical_section(ex: ExplainabilitySummary) -> str:
+    """Generate the explainability section for the technical report."""
+    sections = []
+
+    sections.append("## SHAP Explainability Analysis\n")
+    sections.append(
+        f"Using SHAP (SHapley Additive exPlanations) on the {ex.model_name} model "
+        f"at the {ex.horizon_days}-day horizon, we decompose predictions into "
+        f"individual feature contributions. This reveals *why* the model makes "
+        f"each prediction and identifies the most impactful risk signals.\n"
+    )
+
+    # Global feature rankings
+    sections.append("### Global SHAP Feature Rankings\n")
+    sections.append(
+        "Features ranked by mean |SHAP value| — the average magnitude of each "
+        "feature's contribution to predictions across all samples.\n"
+    )
+    sections.append("| Rank | Feature | Mean |SHAP| | Median |SHAP| | P95 |SHAP| | Direction | Std |\n")
+    sections.append("|------|---------|-------------|--------------|-------------|-----------|-----|\n")
+    for i, fr in enumerate(ex.feature_rankings[:25], 1):
+        sections.append(
+            f"| {i} | {fr.feature_name} | {fr.mean_abs_shap:.6f} | "
+            f"{fr.median_abs_shap:.6f} | {fr.p95_abs_shap:.6f} | "
+            f"{fr.direction} | {fr.std_shap:.6f} |"
+        )
+    sections.append("")
+
+    # Base index aggregation
+    sections.append("### Aggregated Base Index Importance\n")
+    sections.append(
+        "SHAP importance aggregated back to the underlying RiskWise indices "
+        "(summing across all derived features — lags, rolling statistics, momentum).\n"
+    )
+    for i, (name, imp) in enumerate(ex.base_index_rankings[:15], 1):
+        sections.append(f"{i}. **{name}**: total SHAP importance = {imp:.6f}")
+    sections.append("")
+
+    # Interactions
+    if ex.top_interactions:
+        sections.append("### Feature Interactions\n")
+        sections.append(
+            "SHAP interaction values reveal which pairs of features have "
+            "synergistic or antagonistic effects — their combined impact exceeds "
+            "the sum of their individual contributions.\n"
+        )
+        sections.append("| Feature A | Feature B | Interaction | Type | Joint Effect |\n")
+        sections.append("|-----------|-----------|-------------|------|-------------|\n")
+        for ix in ex.top_interactions[:15]:
+            sections.append(
+                f"| {ix.feature_a} | {ix.feature_b} | "
+                f"{ix.interaction_strength:.6f} | {ix.interaction_direction} | "
+                f"{ix.joint_effect_sign} |"
+            )
+        sections.append("")
+
+        # Summarize cross-index interactions
+        cross_index = [ix for ix in ex.top_interactions
+                      if ix.base_index_a != ix.base_index_b]
+        if cross_index:
+            sections.append(
+                "**Cross-index interactions** (different base indices amplifying each other):\n"
+            )
+            for ix in cross_index[:5]:
+                sections.append(
+                    f"- **{ix.base_index_a}** × **{ix.base_index_b}**: "
+                    f"{ix.interaction_direction} interaction (strength = {ix.interaction_strength:.6f})"
+                )
+            sections.append("")
+
+    # Temporal dynamics
+    if ex.temporal_regimes:
+        sections.append("### Temporal SHAP Dynamics\n")
+        sections.append(
+            "How feature importance evolves over time — revealing whether "
+            "predictive signals are stable or regime-dependent.\n"
+        )
+        for regime in ex.temporal_regimes:
+            sections.append(
+                f"#### {regime.period_start} to {regime.period_end} "
+                f"({regime.regime_label.upper()}, return: {regime.regime_market_return:+.1%})\n"
+            )
+            for fname, shap_val in regime.top_features[:5]:
+                sections.append(f"- {fname}: SHAP = {shap_val:.6f}")
+            sections.append("")
+
+        # Stability summary
+        stable_features = sorted(
+            ex.importance_stability.items(), key=lambda x: x[1], reverse=True
+        )[:10]
+        sections.append("**Most stable features** (consistent importance across time):\n")
+        for fname, stab in stable_features:
+            sections.append(f"- {fname}: stability = {stab:.3f}")
+        sections.append("")
+
+    # Partial dependence
+    if ex.partial_dependences:
+        sections.append("### Partial Dependence Analysis\n")
+        sections.append(
+            "How individual features map to predictions, holding all other "
+            "features constant. Monotonic relationships are more interpretable "
+            "and trustworthy.\n"
+        )
+        for pd_result in ex.partial_dependences[:10]:
+            mono_str = f"monotonic ({pd_result.direction})" if pd_result.monotonic else "non-monotonic"
+            pred_range = max(pd_result.mean_predictions) - min(pd_result.mean_predictions)
+            sections.append(
+                f"- **{pd_result.feature_name}** ({pd_result.base_index_name}): "
+                f"{mono_str}, prediction range = {pred_range:.6f}"
+            )
+        sections.append("")
+
+    # SHAP-driven feature selection
+    if ex.selection_result:
+        sel = ex.selection_result
+        sections.append("### SHAP-Driven Feature Selection\n")
+        sections.append(
+            "Iterative elimination of low-SHAP features to find the minimal "
+            "predictive feature set.\n"
+        )
+        sections.append(f"- Original features: {sel.n_original_features}")
+        sections.append(f"- Selected features: {sel.n_selected_features}")
+        sections.append(f"- Full-set directional accuracy: {sel.full_directional_accuracy:.1%}")
+        sections.append(f"- Selected-set directional accuracy: {sel.selected_directional_accuracy:.1%}")
+        improvement_str = f"{sel.improvement:+.1%}"
+        sections.append(f"- Accuracy change: {improvement_str}")
+        sections.append("")
+
+        sections.append("**Essential RiskWise indices** (minimal set for prediction):\n")
+        for base_idx in sel.selected_base_indices[:10]:
+            sections.append(f"- {base_idx}")
+        sections.append("")
+
+    return "\n".join(sections)
+
+
+def _generate_explainability_executive_section(ex: ExplainabilitySummary) -> str:
+    """Generate explainability section for the executive summary."""
+    sections = []
+
+    sections.append("## Why These Indices Matter: Explainability Analysis\n")
+    sections.append(
+        "Using advanced explainability techniques (SHAP), we can show *exactly* "
+        f"how each RiskWise index contributes to predictions about {ex.target_name}:\n"
+    )
+
+    # Top base indices
+    if ex.base_index_rankings:
+        sections.append("**Most impactful RiskWise indices** (by SHAP importance):\n")
+        for i, (name, imp) in enumerate(ex.base_index_rankings[:5], 1):
+            sections.append(f"{i}. **{name}**")
+        sections.append("")
+
+    # Key interactions
+    cross_index = [ix for ix in ex.top_interactions
+                  if ix.base_index_a != ix.base_index_b]
+    if cross_index:
+        top_ix = cross_index[0]
+        sections.append(
+            f"**Key discovery**: **{top_ix.base_index_a}** and **{top_ix.base_index_b}** "
+            f"have a {top_ix.interaction_direction} interaction — when monitored together, "
+            f"their combined predictive power exceeds their individual contributions.\n"
+        )
+
+    # Feature selection result
+    if ex.selection_result:
+        sel = ex.selection_result
+        sections.append(
+            f"Through systematic analysis, we identified that just "
+            f"**{len(sel.selected_base_indices)} core RiskWise indices** "
+            f"(out of {sel.n_original_features} total signals) capture the essential "
+            f"predictive information — achieving {sel.selected_directional_accuracy:.0%} "
+            f"directional accuracy.\n"
+        )
+
+    # Regime analysis
+    regimes = ex.temporal_regimes
+    if regimes:
+        # Find if importance shifts across regimes
+        bear_regimes = [r for r in regimes if r.regime_label == "bear"]
+        bull_regimes = [r for r in regimes if r.regime_label == "bull"]
+        if bear_regimes and bull_regimes:
+            bear_top = bear_regimes[0].top_features[0][0] if bear_regimes[0].top_features else None
+            bull_top = bull_regimes[0].top_features[0][0] if bull_regimes[0].top_features else None
+            if bear_top and bull_top and bear_top != bull_top:
+                sections.append(
+                    f"**Regime-aware intelligence**: In bearish markets, **{bear_top}** "
+                    f"becomes the dominant signal, while in bullish periods, "
+                    f"**{bull_top}** takes precedence. RiskWise adapts to market conditions.\n"
+                )
 
     return "\n".join(sections)
 

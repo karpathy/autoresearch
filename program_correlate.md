@@ -53,10 +53,19 @@ Using the significant indices identified in Stage 1 as features, the pipeline bu
 - **Metrics**: Directional accuracy (can we predict up/down?), binomial significance test, R², RMSE vs naive baseline, Information Coefficient
 - **Feature importance**: Permutation importance + SHAP values to identify which indices drive predictions
 
-### Step 7: Report Generation
+### Step 7: SHAP Explainability Analysis (Stage 3)
+Deep SHAP-driven signal discovery using the best model from Stage 2:
+- **Global SHAP rankings**: Mean |SHAP| per feature with percentile statistics — which signals genuinely drive predictions vs noise
+- **SHAP interaction values**: TreeSHAP exact interactions reveal synergistic pairs of indices (e.g., supply chain volatility × maritime disruptions amplify each other's predictive power)
+- **Temporal SHAP dynamics**: How feature importance shifts across time windows and market regimes (bull/bear/volatile/calm) — detects regime-dependent signals
+- **Partial dependence curves**: Maps each index value to predicted outcome — identifies monotonic vs non-linear relationships
+- **SHAP-driven feature selection**: Iterative pruning to find the minimal set of indices that preserves predictive accuracy — answers "which specific indices should the client subscribe to?"
+- **Base index aggregation**: Rolls up all derived features (lags, rolling stats, momentum) back to the underlying RiskWise index names
+
+### Step 8: Report Generation
 Two reports:
-1. **Technical Report** — full methodology, all test results (statistical + ML), feature importance rankings, model comparison tables, caveats. PhD-level rigor.
-2. **Executive Summary** — headline findings, top predictive indices, lead times, ML accuracy, recommendations. Sales-oriented.
+1. **Technical Report** — full methodology, all test results (statistical + ML + SHAP), interaction tables, temporal regime analysis, partial dependence, feature selection. PhD-level rigor.
+2. **Executive Summary** — headline findings, top predictive indices, lead times, ML accuracy, SHAP-driven insights ("these 5 indices are all you need"), regime-aware intelligence. Sales-oriented.
 
 ## Agent Loop (Post-Pipeline)
 

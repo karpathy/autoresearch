@@ -2,9 +2,10 @@
 """
 RiskWise Correlation Analysis Pipeline — Main Orchestrator
 
-Two-stage pipeline:
+Three-stage pipeline:
   Stage 1: Statistical correlation analysis (Pearson, Granger, cointegration, etc.)
   Stage 2: ML predictive modeling (Ridge, Lasso, RF, XGBoost with walk-forward CV)
+  Stage 3: SHAP explainability (interactions, temporal dynamics, feature selection)
 
 Usage:
     # With environment variables:
@@ -13,14 +14,14 @@ Usage:
     export RISKWISE_DB_USER=riskwise
     export RISKWISE_DB_PASSWORD=secret
 
-    # Full pipeline (stats + ML):
+    # Full pipeline (all 3 stages):
     uv run python -m correlate.run --ticker PEP --name "PepsiCo"
 
-    # Stats only (skip ML):
+    # Stats only (skip ML + SHAP):
     uv run python -m correlate.run --ticker PEP --name "PepsiCo" --stats-only
 
-    # ML only (skip stats — still runs correlation to select features):
-    uv run python -m correlate.run --ticker PEP --name "PepsiCo" --ml-only
+    # Skip SHAP explainability:
+    uv run python -m correlate.run --ticker PEP --name "PepsiCo" --no-explain
 """
 from __future__ import annotations
 
@@ -37,6 +38,7 @@ from .db import RiskWiseDB
 from .market_data import fetch_stock_data, align_series
 from .analysis import CorrelationAnalyzer
 from .ml import MLPredictor, MLConfig
+from .explainability import ExplainabilityAnalyzer
 from .report import generate_reports
 
 logging.basicConfig(
@@ -65,6 +67,10 @@ def parse_args() -> argparse.Namespace:
                        help="Run Stage 1 only (statistical correlations)")
     parser.add_argument("--ml-only", action="store_true",
                        help="Run Stage 2 only (ML models — still computes correlations for feature selection)")
+    parser.add_argument("--no-explain", action="store_true",
+                       help="Skip Stage 3 (SHAP explainability)")
+    parser.add_argument("--explain-only", action="store_true",
+                       help="Run Stage 3 only (still runs Stage 1+2 for inputs)")
 
     # ML-specific
     parser.add_argument("--ml-horizons", type=str, default="1,5,10,20",
@@ -75,6 +81,12 @@ def parse_args() -> argparse.Namespace:
                        help="Minimum training window in days (default: 252)")
     parser.add_argument("--ml-use-all-indices", action="store_true",
                        help="Use all indices as features, not just significant ones")
+
+    # Explainability-specific
+    parser.add_argument("--explain-horizon", type=int, default=None,
+                       help="Which horizon to run SHAP analysis on (default: longest)")
+    parser.add_argument("--explain-model", type=str, default=None,
+                       help="Which model to explain (default: best from Stage 2)")
 
     # Database
     parser.add_argument("--db-host", help="Override RISKWISE_DB_HOST")
@@ -122,13 +134,14 @@ def main():
         use_significant_only=not args.ml_use_all_indices,
     )
 
-    run_stats = not args.ml_only
+    # Determine which stages to run
     run_ml = not args.stats_only
+    run_explain = run_ml and not args.no_explain and not args.stats_only
 
     t0 = time.time()
 
     # ==================================================================
-    # Data Loading (shared by both stages)
+    # Data Loading (shared by all stages)
     # ==================================================================
 
     logger.info("Connecting to RiskWise database at %s:%s/%s",
@@ -222,12 +235,54 @@ def main():
             logger.info("Continuing with Stage 1 results only...")
 
     # ==================================================================
+    # Stage 3: SHAP Explainability Analysis
+    # ==================================================================
+
+    explain_summary = None
+    if run_explain:
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("STAGE 3: SHAP Explainability Analysis")
+        logger.info("=" * 60)
+
+        t_explain_start = time.time()
+        explainer = ExplainabilityAnalyzer(config, ml_config)
+
+        try:
+            explain_summary = explainer.run(
+                index_wide, target_series,
+                ml_summary=ml_summary,
+                horizon=args.explain_horizon,
+                model_name=args.explain_model,
+            )
+            if explain_summary:
+                t_explain = time.time() - t_explain_start
+                logger.info("Stage 3 complete in %.1f seconds", t_explain)
+                logger.info("  Top base index: %s",
+                          explain_summary.base_index_rankings[0][0]
+                          if explain_summary.base_index_rankings else "N/A")
+                logger.info("  Interactions found: %d", len(explain_summary.top_interactions))
+                logger.info("  Temporal regimes: %d", len(explain_summary.temporal_regimes))
+                if explain_summary.selection_result:
+                    sel = explain_summary.selection_result
+                    logger.info("  SHAP feature selection: %d → %d features (acc: %.1f%%)",
+                              sel.n_original_features, sel.n_selected_features,
+                              sel.selected_directional_accuracy * 100)
+        except Exception as e:
+            logger.error("Stage 3 failed: %s", e)
+            logger.info("Continuing without explainability results...")
+
+    # ==================================================================
     # Report Generation
     # ==================================================================
 
     logger.info("")
     logger.info("Generating reports...")
-    paths = generate_reports(corr_summary, config, ml_summary=ml_summary)
+    paths = generate_reports(
+        corr_summary, config,
+        ml_summary=ml_summary,
+        explain_summary=explain_summary,
+    )
     logger.info("Technical report: %s", paths["technical_path"])
     logger.info("Executive summary: %s", paths["executive_path"])
 
@@ -276,13 +331,36 @@ def main():
             for fi in ml_summary.feature_importances[:5]:
                 print(f"  {fi.feature_name}: {fi.importance_mean:.4f}")
 
+    if explain_summary:
+        print("\n--- Stage 3: SHAP Explainability ---")
+        print(f"Model explained:     {explain_summary.model_name} ({explain_summary.horizon_days}d)")
+        if explain_summary.base_index_rankings:
+            print("Top 5 base indices by SHAP:")
+            for name, imp in explain_summary.base_index_rankings[:5]:
+                print(f"  {name}: {imp:.6f}")
+        if explain_summary.top_interactions:
+            cross = [ix for ix in explain_summary.top_interactions
+                    if ix.base_index_a != ix.base_index_b]
+            if cross:
+                print(f"Top cross-index interaction:")
+                ix = cross[0]
+                print(f"  {ix.base_index_a} × {ix.base_index_b}: "
+                      f"{ix.interaction_direction} ({ix.interaction_strength:.6f})")
+        if explain_summary.selection_result:
+            sel = explain_summary.selection_result
+            print(f"SHAP feature selection: {sel.n_original_features} → "
+                  f"{sel.n_selected_features} features")
+            print(f"  Accuracy: {sel.selected_directional_accuracy:.1%} "
+                  f"(change: {sel.improvement:+.1%})")
+            print(f"  Essential indices: {', '.join(sel.selected_base_indices[:5])}")
+
     print(f"\nTotal time:          {elapsed:.1f}s")
     print(f"Technical report:    {paths['technical_path']}")
     print(f"Executive summary:   {paths['executive_path']}")
     print("=" * 70)
 
     db.close()
-    return corr_summary, ml_summary
+    return corr_summary, ml_summary, explain_summary
 
 
 if __name__ == "__main__":
