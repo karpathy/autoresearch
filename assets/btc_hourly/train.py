@@ -212,6 +212,34 @@ def compute_targets(df: pd.DataFrame) -> np.ndarray:
     return targets
 
 
+def compute_vol_targets(df: pd.DataFrame) -> np.ndarray:
+    """Compute forward realized vol ratio: std(next 24h returns) / trailing 168h vol.
+
+    A ratio of 1.0 = vol stays the same. >1 = vol increasing. <1 = calming.
+    Returns array of same length as df. Last FORWARD_HOURS entries are NaN.
+    """
+    close = df["close"].values.astype(np.float64)
+    n = len(close)
+
+    # Hourly returns
+    hourly_ret = np.zeros(n)
+    hourly_ret[1:] = close[1:] / close[:-1] - 1.0
+
+    # Forward realized vol: std of hourly returns over next FORWARD_HOURS
+    hr_series = pd.Series(hourly_ret)
+    forward_vol = hr_series.rolling(FORWARD_HOURS, min_periods=FORWARD_HOURS).std().shift(-FORWARD_HOURS).values
+
+    # Trailing 168h vol (same as used in compute_features for vol_safe)
+    trailing_vol = hr_series.rolling(168, min_periods=168).std().values
+    trailing_vol_safe = np.where((trailing_vol > 0) & ~np.isnan(trailing_vol), trailing_vol, 1.0)
+
+    vol_targets = np.full(n, np.nan)
+    valid_mask = ~np.isnan(forward_vol)
+    vol_targets[valid_mask] = forward_vol[valid_mask] / trailing_vol_safe[valid_mask]
+
+    return vol_targets
+
+
 # ---------------------------------------------------------------------------
 # Model Helpers
 # ---------------------------------------------------------------------------
@@ -228,8 +256,8 @@ def count_model_params(models) -> int:
 
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
-    """Apply EMA smoothing — same effective width as 48h SMA but more responsive."""
-    return pd.Series(raw_preds).ewm(span=35, min_periods=1).mean().values
+    """Apply EMA smoothing — reduce noise on linear-scaled predictions."""
+    return pd.Series(raw_preds).ewm(span=45, min_periods=1).mean().values
 
 
 def _confidence_scaled_predict(model, features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -326,21 +354,42 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     )
     model_aggressive.fit(features, targets, sample_weight=sample_weight)
 
+    # --- Vol model: predict forward volatility ratio ---
+    vol_targets_raw = compute_vol_targets(train_df)
+    vol_targets = vol_targets_raw[MAX_LOOKBACK:]
+    vol_targets = vol_targets[valid]  # same valid mask as return targets
+    vol_targets = np.clip(vol_targets, 0.1, 5.0)  # clip extremes for stable training
+
+    vol_model = HistGradientBoostingRegressor(
+        max_iter=500,
+        max_depth=4,
+        min_samples_leaf=600,
+        learning_rate=0.01,
+        max_leaf_nodes=15,
+        l2_regularization=1.5,
+        random_state=42,
+    )
+    vol_model.fit(features, vol_targets, sample_weight=sample_weight)
+
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
-    blend_weights = [0.6, 0.4]  # confirmed at epoch 7
+    blend_weights = [0.5, 0.5]  # equal weight for more diversity
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 1.3  # over-demean — peak for epoch 7
+    pred_bias = float(np.mean(train_preds)) * 1.4  # slightly more aggressive demeaning for epoch 9
 
-    # Approximate param count
+    # Approximate param count (return models + vol model)
     n_params = 0
     for m in models:
         n_params += sum(
             m._predictors[j][0].get_n_leaf_nodes()
             for j in range(len(m._predictors))
         )
+    n_params += sum(
+        vol_model._predictors[j][0].get_n_leaf_nodes()
+        for j in range(len(vol_model._predictors))
+    )
 
     # --- Return prediction closure ---
     def predict_fn(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -349,16 +398,20 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         feats = np.nan_to_num(feats, nan=0.0)
         feats = feats[:, selected]
 
-        # Weighted blend prediction
+        # Return prediction (existing)
         preds = [m.predict(feats) for m in models]
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
-
         sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
+
+        # Vol prediction — modulate position size
+        vol_ratio_pred = vol_model.predict(feats)
+        vol_ratio_pred = np.clip(vol_ratio_pred, 0.5, 3.0)
+        predict_fn.last_vol_ratio = vol_ratio_pred  # expose for diagnostics
+        sigma_preds = sigma_preds / vol_ratio_pred
+
+        # Rest of pipeline unchanged
         sigma_preds = np.clip(sigma_preds, -3.0, 3.0)
-        # Power transform: amplify predictions away from zero to increase trade count
-        # 0.1→0.20, 0.3→0.41, 0.5→0.62, 1.0→1.0 (preserves sign and large signals)
-        sigma_preds = np.sign(sigma_preds) * np.abs(sigma_preds) ** 0.7
-        sigma_preds = sigma_preds * 0.20  # dampening locked for epoch 7
+        sigma_preds = sigma_preds * 0.22
         sigma_smoothed = _smooth_predictions(sigma_preds)
         return sigma_smoothed, ts, vol
 

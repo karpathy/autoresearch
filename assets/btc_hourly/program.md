@@ -20,7 +20,7 @@ ML experiment loop: train models that predict BTC/USD forward returns. **You run
 - **Do not** modify `prepare.py`, install packages, or access validation/holdout data.
 - **Time budget**: 240 seconds wall clock for training. Monitor `training_seconds`.
 - **One change per experiment.** Coupled parameters (e.g. n_estimators + learning_rate) count as one. Unrelated changes do not. If you change two things and score drops, you don't know which caused it.
-- **Simplicity criterion**: All else equal, simpler wins. The parameter count penalty is built into the score.
+- **Simplicity criterion**: All else equal, simpler wins.
 
 ## Available data
 

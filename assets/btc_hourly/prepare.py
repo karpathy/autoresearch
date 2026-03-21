@@ -26,6 +26,7 @@ import pandas as pd
 import requests
 
 from core.config import AssetConfig, BacktestConfig, WalkForwardConfig
+from core.evaluation import compute_decay_weights
 from core.evaluation import evaluate_model as _core_evaluate_model
 from core.evaluation import run_diagnostic as _core_run_diagnostic
 
@@ -598,7 +599,7 @@ def evaluate_model(build_model_fn: callable) -> dict:
 # ---------------------------------------------------------------------------
 
 def _run_diagnostic():
-    """Per-window diagnostic breakdown — BTC wrapper.
+    """Per-window diagnostic breakdown — BTC wrapper with vol model stats.
 
     Does NOT increment the eval counter.
     """
@@ -626,6 +627,58 @@ def _run_diagnostic():
         config=_BTC_CONFIG,
         extra_holdout_window=extra_holdout_window,
     )
+
+    # --- Vol model diagnostic pass ---
+    # Retrains each window to extract vol model predictions on eval periods.
+    # Adds ~50s for human-only diagnostic use.
+    windows = _get_walk_forward_windows()
+    wf = _BTC_CONFIG.walk_forward
+
+    # Get aligned timestamps from compute_features (same for all calls on all_data)
+    _, ts_all, _ = train_module.compute_features(all_data)
+
+    print("=" * 60)
+    print("=== VOL MODEL DIAGNOSTIC ===")
+    print("=" * 60)
+
+    for i, w in enumerate(windows):
+        train_mask = ((all_data["timestamp"] >= w["train_start"]) &
+                      (all_data["timestamp"] <= w["train_end"]))
+        train_data = all_data[train_mask].reset_index(drop=True)
+
+        sample_weight = None
+        if wf.decay_half_life_years > 0:
+            sample_weight = compute_decay_weights(
+                train_data["timestamp"].values,
+                w["eval_start"],
+                wf.decay_half_life_years,
+            )
+
+        predict_fn = train_module.build_model(train_data, sample_weight=sample_weight)
+        predict_fn(all_data)  # populates predict_fn.last_vol_ratio
+
+        vol_ratio = predict_fn.last_vol_ratio
+
+        # Align vol_ratio with eval period timestamps
+        eval_mask = ((pd.to_datetime(ts_all) >= w["eval_start"]) &
+                     (pd.to_datetime(ts_all) <= w["eval_end"]))
+        eval_vr = vol_ratio[eval_mask]
+
+        eval_range = f"{w['eval_start'].date()}\u2014{w['eval_end'].date()}"
+        print(f"\n  Window {i} ({eval_range}):")
+        if len(eval_vr) > 0:
+            print(f"    Vol ratio pred: mean={eval_vr.mean():.3f}, std={eval_vr.std():.3f}, "
+                  f"min={eval_vr.min():.3f}, max={eval_vr.max():.3f}")
+            print(f"    Low vol  (<0.8): {(eval_vr < 0.8).mean()*100:4.0f}% of hours "
+                  f"\u2192 positions amplified up to 2\u00d7")
+            print(f"    High vol (>1.5): {(eval_vr > 1.5).mean()*100:4.0f}% of hours "
+                  f"\u2192 positions reduced to \u226467%")
+            print(f"    Extreme  (>2.0): {(eval_vr > 2.0).mean()*100:4.0f}% of hours "
+                  f"\u2192 positions reduced to \u226450%")
+        else:
+            print("    (no eval data)")
+
+    print()
 
 
 # ---------------------------------------------------------------------------
