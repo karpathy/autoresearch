@@ -36,7 +36,14 @@ Each experiment runs on a single GPU. The training script runs for a **fixed tim
 
 **Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome — that's a simplification win. When evaluating whether to keep a change, weigh the complexity cost against the improvement magnitude. A 0.001 val_bpb improvement that adds 20 lines of hacky code? Probably not worth it. A 0.001 val_bpb improvement from deleting code? Definitely keep. An improvement of ~0 but much simpler code? Keep.
 
+**Novelty criterion**: All else being equal, avoid repeating the same type of edit in slightly different forms. If recent experiments explore the same dimension, switch to a different type of change.
+
 **The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
+
+Before proposing a new experiment, briefly inspect recent entries in `results.tsv` (if available) and consider:
+- which types of changes have already been tried
+- which areas are underexplored
+- whether progress has stalled
 
 ## Output format
 
@@ -94,14 +101,20 @@ The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autorese
 LOOP FOREVER:
 
 1. Look at the git state: the current branch/commit we're on
-2. Tune `train.py` with an experimental idea by directly hacking the code.
-3. git commit
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
-8. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
-9. If val_bpb is equal or worse, you git reset back to where you started
+2. Read recent results in `results.tsv` (if available)
+3. Decide whether this run is exploit (a small, local improvement) or explore (a different experiment dimension)
+4. Tune `train.py` with an experimental idea by directly hacking the code.
+5. git commit
+6. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
+7. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
+8. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
+9. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
+10. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
+11. If val_bpb is equal or worse, you git reset back to where you started
+
+Stagnation handling:
+- If 3 consecutive runs do not improve val_bpb, switch to a different type of experiment
+- Avoid repeating very similar changes across consecutive runs
 
 The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
 
