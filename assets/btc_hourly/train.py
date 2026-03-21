@@ -356,7 +356,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
         sigma_preds = np.clip(sigma_preds, -3.0, 3.0)
         # Linear scaling (no power transform — let strong predictions bet bigger)
-        sigma_preds = sigma_preds * 0.20
+        sigma_preds = sigma_preds * 0.22
         sigma_smoothed = _smooth_predictions(sigma_preds)
         return sigma_smoothed, ts, vol
 
