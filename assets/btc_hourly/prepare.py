@@ -36,6 +36,9 @@ from core.evaluation import run_diagnostic as _core_run_diagnostic
 
 CACHE_DIR = Path.home() / ".cache" / "autotrader"
 PARQUET_PATH = CACHE_DIR / "btcusdt_1h.parquet"
+_FUNDING_PARQUET = CACHE_DIR / "binance_funding_btcusdt.parquet"
+_FEAR_GREED_PARQUET = CACHE_DIR / "fear_greed_index.parquet"
+_BLOCKCHAIN_PARQUET = CACHE_DIR / "blockchain_metrics.parquet"
 TRAIN_START = pd.Timestamp("2018-01-01")
 
 _BTC_CONFIG = AssetConfig(
@@ -250,9 +253,306 @@ def download_data() -> pd.DataFrame:
     return df
 
 
+# ---------------------------------------------------------------------------
+# Supplementary Data Sources
+# ---------------------------------------------------------------------------
+
+_FUNDING_URL = (
+    "https://data.binance.vision/data/futures/um/monthly/fundingRate"
+    "/BTCUSDT/BTCUSDT-fundingRate-{year}-{month:02d}.zip"
+)
+
+
+def _download_funding_month(year: int, month: int, max_retries: int = 5) -> pd.DataFrame | None:
+    """Download a single month of funding rate data from Binance public data."""
+    url = _FUNDING_URL.format(year=year, month=month)
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url, timeout=30)
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                csv_name = zf.namelist()[0]
+                with zf.open(csv_name) as f:
+                    df = pd.read_csv(f)
+            return df
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait = 2 ** (attempt + 1)
+                print(f"  Retry {attempt + 1}/{max_retries} for funding {year}-{month:02d} "
+                      f"(waiting {wait}s): {e}")
+                time.sleep(wait)
+            else:
+                print(f"  FAILED to download funding {year}-{month:02d} after "
+                      f"{max_retries} attempts: {e}")
+                return None
+
+
+def _download_funding_rate(max_retries: int = 5) -> pd.DataFrame | None:
+    """Download Binance BTCUSDT perpetual funding rate history and cache.
+
+    Uses Binance public data (data.binance.vision) to avoid API geo-blocking.
+    Returns hourly DataFrame with columns [timestamp, funding_rate].
+    The 8-hour settlement rate is forward-filled to hourly resolution.
+    Returns None on failure (caller fills with defaults).
+    """
+    if _FUNDING_PARQUET.exists():
+        age_hours = (time.time() - _FUNDING_PARQUET.stat().st_mtime) / 3600
+        if age_hours < 24:
+            return pd.read_parquet(_FUNDING_PARQUET)
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    print("Downloading Binance BTCUSDT funding rate history...")
+
+    # BTCUSDT perpetual launched ~Sep 2019
+    now = pd.Timestamp.now()
+    frames = []
+    for year in range(2019, now.year + 1):
+        for month in range(1, 13):
+            if year == 2019 and month < 9:
+                continue
+            if year == now.year and month > now.month:
+                break
+            print(f"  Downloading funding {year}-{month:02d}...", end=" ", flush=True)
+            df = _download_funding_month(year, month, max_retries)
+            if df is not None:
+                print(f"{len(df)} records")
+                frames.append(df)
+            else:
+                print("skipped")
+
+    if not frames:
+        print("  WARNING: No funding rate data downloaded")
+        return None
+
+    raw = pd.concat(frames, ignore_index=True)
+
+    # Parse: the CSV has columns like 'calc_time' or 'fundingTime' and 'last_funding_rate' or 'fundingRate'
+    # Detect column names (Binance changed format over time)
+    if "calc_time" in raw.columns:
+        ts_col = "calc_time"
+    elif "fundingTime" in raw.columns:
+        ts_col = "fundingTime"
+    else:
+        # Try first column that looks like a timestamp
+        ts_col = raw.columns[0]
+
+    if "last_funding_rate" in raw.columns:
+        rate_col = "last_funding_rate"
+    elif "fundingRate" in raw.columns:
+        rate_col = "fundingRate"
+    else:
+        rate_col = raw.columns[1]
+
+    # Convert timestamps (may be ms or us, same logic as OHLCV)
+    timestamps = pd.to_numeric(raw[ts_col], errors="coerce").values.astype(np.float64)
+    is_microseconds = timestamps > 1e15
+    ts_seconds = np.where(is_microseconds, timestamps / 1e6, timestamps / 1e3)
+
+    df = pd.DataFrame({
+        "timestamp": pd.to_datetime(ts_seconds, unit="s", utc=True).tz_localize(None),
+        "funding_rate": pd.to_numeric(raw[rate_col], errors="coerce").astype(np.float64),
+    })
+    df = df.dropna(subset=["timestamp", "funding_rate"])
+    df = df.sort_values("timestamp").drop_duplicates(subset="timestamp").reset_index(drop=True)
+
+    # Resample 8h intervals to hourly via forward-fill
+    df = df.set_index("timestamp").resample("1h").ffill().reset_index()
+
+    print(f"  Funding rate: {len(df)} hourly records "
+          f"({df['timestamp'].min()} to {df['timestamp'].max()})")
+    df.to_parquet(_FUNDING_PARQUET, index=False)
+    return df
+
+
+def _download_fear_greed(max_retries: int = 5) -> pd.DataFrame | None:
+    """Download Alternative.me Crypto Fear & Greed Index and cache.
+
+    Returns hourly DataFrame with columns [timestamp, fear_greed].
+    Daily values are forward-filled to hourly resolution.
+    Returns None on failure (caller fills with defaults).
+    """
+    if _FEAR_GREED_PARQUET.exists():
+        age_hours = (time.time() - _FEAR_GREED_PARQUET.stat().st_mtime) / 3600
+        if age_hours < 24:
+            return pd.read_parquet(_FEAR_GREED_PARQUET)
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    print("Downloading Fear & Greed Index...")
+
+    url = "https://api.alternative.me/fng/?limit=0&format=json"
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()["data"]
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait = 2 ** (attempt + 1)
+                print(f"  Retry {attempt + 1}/{max_retries} for Fear & Greed "
+                      f"(waiting {wait}s): {e}")
+                time.sleep(wait)
+            else:
+                print(f"  WARNING: Failed to download Fear & Greed after "
+                      f"{max_retries} attempts: {e}")
+                return None
+
+    if not data:
+        print("  WARNING: No Fear & Greed data received")
+        return None
+
+    df = pd.DataFrame({
+        "timestamp": pd.to_datetime(
+            [int(r["timestamp"]) for r in data], unit="s", utc=True
+        ).tz_localize(None),
+        "fear_greed": [int(r["value"]) for r in data],
+    })
+    df = df.sort_values("timestamp").drop_duplicates(subset="timestamp").reset_index(drop=True)
+
+    # Resample daily to hourly via forward-fill
+    df = df.set_index("timestamp").resample("1h").ffill().reset_index()
+
+    print(f"  Fear & Greed: {len(df)} hourly records "
+          f"({df['timestamp'].min()} to {df['timestamp'].max()})")
+    df.to_parquet(_FEAR_GREED_PARQUET, index=False)
+    return df
+
+
+def _download_blockchain_metrics(max_retries: int = 5) -> pd.DataFrame | None:
+    """Download Bitcoin network metrics from Blockchain.com and cache.
+
+    Returns hourly DataFrame with columns [timestamp, hash_rate, tx_count, tx_volume_usd].
+    Daily values are forward-filled to hourly resolution.
+    Returns None on failure (caller fills with defaults).
+    """
+    if _BLOCKCHAIN_PARQUET.exists():
+        age_days = (time.time() - _BLOCKCHAIN_PARQUET.stat().st_mtime) / 86400
+        if age_days < 7:
+            return pd.read_parquet(_BLOCKCHAIN_PARQUET)
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    print("Downloading blockchain network metrics...")
+
+    metrics = {
+        "hash-rate": "hash_rate",
+        "n-transactions": "tx_count",
+        "estimated-transaction-volume-usd": "tx_volume_usd",
+    }
+
+    metric_dfs = []
+    for api_name, col_name in metrics.items():
+        url = f"https://api.blockchain.info/charts/{api_name}?timespan=all&format=json&cors=true"
+        success = False
+        for attempt in range(max_retries):
+            try:
+                resp = requests.get(url, timeout=60)
+                resp.raise_for_status()
+                values = resp.json()["values"]
+                success = True
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait = 2 ** (attempt + 1)
+                    print(f"  Retry {attempt + 1}/{max_retries} for {api_name} "
+                          f"(waiting {wait}s): {e}")
+                    time.sleep(wait)
+                else:
+                    print(f"  WARNING: Failed to download {api_name} after "
+                          f"{max_retries} attempts: {e}")
+
+        if not success:
+            continue
+
+        mdf = pd.DataFrame({
+            "timestamp": pd.to_datetime(
+                [v["x"] for v in values], unit="s", utc=True
+            ).tz_localize(None),
+            col_name: [float(v["y"]) for v in values],
+        })
+        mdf = mdf.sort_values("timestamp").drop_duplicates(subset="timestamp").reset_index(drop=True)
+        metric_dfs.append(mdf)
+        print(f"  {api_name}: {len(mdf)} daily records")
+
+    if not metric_dfs:
+        print("  WARNING: No blockchain metrics downloaded")
+        return None
+
+    # Merge all metrics on timestamp
+    merged = metric_dfs[0]
+    for mdf in metric_dfs[1:]:
+        merged = merged.merge(mdf, on="timestamp", how="outer")
+    merged = merged.sort_values("timestamp").reset_index(drop=True)
+
+    # Resample daily to hourly via forward-fill
+    merged = merged.set_index("timestamp").resample("1h").ffill().reset_index()
+
+    print(f"  Blockchain metrics: {len(merged)} hourly records "
+          f"({merged['timestamp'].min()} to {merged['timestamp'].max()})")
+    merged.to_parquet(_BLOCKCHAIN_PARQUET, index=False)
+    return merged
+
+
+def _merge_supplementary(
+    ohlcv_df: pd.DataFrame,
+    supplementary: list[tuple[pd.DataFrame | None, dict[str, float]]],
+) -> pd.DataFrame:
+    """Merge supplementary data sources onto the OHLCV hourly grid.
+
+    Args:
+        ohlcv_df: Authoritative OHLCV DataFrame with hourly timestamps.
+        supplementary: List of (dataframe_or_none, defaults_dict) tuples.
+            If dataframe is None, columns are filled with default values.
+
+    Returns:
+        Enriched DataFrame with all supplementary columns added.
+    """
+    result = ohlcv_df.copy()
+    supp_cols = []
+
+    for supp_df, defaults in supplementary:
+        if supp_df is None:
+            for col, default in defaults.items():
+                result[col] = default
+                supp_cols.append(col)
+        else:
+            result = result.merge(supp_df, on="timestamp", how="left")
+            supp_cols.extend(defaults.keys())
+
+    # Forward-fill gaps, then fill remaining NaN (pre-availability) with defaults
+    for supp_df, defaults in supplementary:
+        for col, default in defaults.items():
+            if col in result.columns:
+                result[col] = result[col].ffill().fillna(default)
+
+    # Verify no NaN in supplementary columns
+    for col in supp_cols:
+        n_null = result[col].isna().sum()
+        if n_null > 0:
+            print(f"  WARNING: {n_null} NaN values remain in {col}, filling with default")
+            default = next(d[col] for _, d in supplementary if col in d)
+            result[col] = result[col].fillna(default)
+
+    return result
+
+
 def _load_all_data() -> pd.DataFrame:
-    """Load the full dataset (all periods). Internal use only."""
-    return download_data()
+    """Load the full dataset with supplementary features. Internal use only."""
+    ohlcv_df = download_data()
+
+    # Download supplementary data sources (non-critical — failures fill with defaults)
+    funding_df = _download_funding_rate()
+    fear_greed_df = _download_fear_greed()
+    blockchain_df = _download_blockchain_metrics()
+
+    supplementary = [
+        (funding_df, {"funding_rate": 0.0001}),
+        (fear_greed_df, {"fear_greed": 50}),
+        (blockchain_df, {"hash_rate": 0.0, "tx_count": 0.0, "tx_volume_usd": 0.0}),
+    ]
+
+    return _merge_supplementary(ohlcv_df, supplementary)
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +642,13 @@ if __name__ == "__main__":
         _run_diagnostic()
     else:
         df = download_data()
+
+        # Refresh supplementary data caches
+        print("\nDownloading supplementary data sources...")
+        _download_funding_rate()
+        _download_fear_greed()
+        _download_blockchain_metrics()
+
         print(f"\nData summary:")
         print(f"  Rows: {len(df)}")
         print(f"  Range: {df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]}")
