@@ -142,12 +142,11 @@ class CausalSelfAttention(nn.Module):
 
 SPARSE_K = 0.10  # fraction of MLP neurons active per token (sparse coding)
 
-# Multi-scale future embedding prediction (sentence sketch, diffusion-inspired)
-# Predict embedding direction of token t+K at phrase and sentence scales.
-# Unlike MTP (failed): no cross-entropy, no exact token — cosine similarity on embeddings.
-# Coarser/further targets = softer objective = natural noise schedule (like diffusion).
-FUTURE_SCALES = [8, 32]
-FUTURE_PRED_WEIGHT = 0.05
+# Future sentence-sketch prediction (diffusion-inspired)
+# Predict MEAN embedding direction of next K tokens (not single token — that's too noisy).
+# Cosine similarity loss. Soft continuous target, not cross-entropy.
+FUTURE_K = 16  # predict average direction of next 16 tokens
+FUTURE_PRED_WEIGHT = 0.01  # whisper, not shout — don't fight the main CE loss
 
 
 class MLP(nn.Module):
@@ -217,11 +216,8 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
-        # Future embedding prediction heads (one per timescale)
-        self.future_heads = nn.ModuleList([
-            nn.Linear(config.n_embd, config.n_embd, bias=False)
-            for _ in FUTURE_SCALES
-        ])
+        # Future sentence-sketch head (single linear projection)
+        self.future_head = nn.Linear(config.n_embd, config.n_embd, bias=False)
 
     @torch.no_grad()
     def init_weights(self):
@@ -240,9 +236,8 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
             torch.nn.init.zeros_(block.predictor.weight)  # zero-init: neutral start
-        # Future heads: small random init (uniform like attention projections)
-        for head in self.future_heads:
-            torch.nn.init.uniform_(head.weight, -s, s)
+        # Future head: small random init
+        torch.nn.init.uniform_(self.future_head.weight, -s, s)
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
@@ -333,7 +328,7 @@ class GPT(nn.Module):
         scalar_lr=0.5,
     ):
         model_dim = self.config.n_embd
-        matrix_params = list(self.transformer.h.parameters()) + list(self.future_heads.parameters())
+        matrix_params = list(self.transformer.h.parameters()) + list(self.future_head.parameters())
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
@@ -436,15 +431,18 @@ class GPT(nn.Module):
                 ignore_index=-1,
                 reduction=reduction,
             )
-            # Multi-scale future embedding prediction (sentence sketch).
-            # At each position t, predict the embedding direction of token at t+K.
-            # Cosine similarity loss — soft continuous target, not cross-entropy.
-            # targets[:, t+K-1] = token at position t+K (targets offset by 1).
-            for K, head in zip(FUTURE_SCALES, self.future_heads):
-                n_valid = T - K
-                pred_emb = head(x[:, :n_valid, :]).float()  # [B, n_valid, C]
-                future_tok = targets[:, K-1:K-1+n_valid].clamp(min=0)  # [B, n_valid]
-                tgt_emb = self.transformer.wte(future_tok).detach().float()  # [B, n_valid, C]
+            # Future sentence-sketch: predict mean embedding direction of next K tokens.
+            # Mean over K tokens = semantic direction, not a single noisy token.
+            K = FUTURE_K
+            n_valid = T - K
+            if n_valid > 0:
+                pred_emb = self.future_head(x[:, :n_valid, :]).float()  # [B, n_valid, C]
+                # Embed all targets once, then use cumsum for O(1) sliding window mean
+                all_emb = self.transformer.wte(targets.clamp(min=0)).detach().float()  # [B, T, C]
+                cs = torch.zeros(B, T + 1, all_emb.size(-1), device=all_emb.device, dtype=all_emb.dtype)
+                cs[:, 1:, :] = all_emb.cumsum(dim=1)
+                # For position t, mean of targets[t:t+K] = (cs[t+K] - cs[t]) / K
+                tgt_emb = (cs[:, K:K+n_valid, :] - cs[:, :n_valid, :]) / K
                 tgt_norm = F.normalize(tgt_emb, dim=-1)
                 pred_norm = F.normalize(pred_emb, dim=-1)
                 loss = loss + FUTURE_PRED_WEIGHT * (1 - (pred_norm * tgt_norm).sum(dim=-1).mean())
