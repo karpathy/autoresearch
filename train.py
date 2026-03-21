@@ -588,7 +588,7 @@ FINAL_LR_FRAC = 0.0  # final LR as fraction of initial
 
 # Model size
 DEPTH = 6  # deep + narrow: 6 layers of PC at n_embd=192
-DEVICE_BATCH_SIZE = 8  # per-device batch size (MAX_SEQ_LEN=2048, 6GB VRAM — use it)
+DEVICE_BATCH_SIZE = 4  # per-device batch size (smaller for 2^13 total batch)
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
