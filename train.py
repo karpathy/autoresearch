@@ -495,6 +495,7 @@ print(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN
 assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0
 grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
+assert grad_accum_steps > 0, "TOTAL_BATCH_SIZE must be >= DEVICE_BATCH_SIZE * MAX_SEQ_LEN"
 
 optimizer = model.setup_optimizer(
     unembedding_lr=UNEMBEDDING_LR,
