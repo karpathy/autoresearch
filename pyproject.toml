@@ -14,6 +14,11 @@ dependencies = [
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
     "torch==2.9.1",
+    # RiskWise correlation analysis
+    "psycopg2-binary>=2.9.0",
+    "scipy>=1.12.0",
+    "statsmodels>=0.14.0",
+    "yfinance>=0.2.0",
 ]
 
 [tool.uv.sources]
