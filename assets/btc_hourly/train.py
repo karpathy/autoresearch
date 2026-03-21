@@ -63,7 +63,7 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     vol_weight = volume / vol_avg_safe  # relative volume (1.0 = average)
     vw_returns = hourly_returns * vol_weight
     vw_series = pd.Series(vw_returns)
-    for lb in [24, 72, 168]:
+    for lb in [12, 48, 168]:
         vw_cum = vw_series.rolling(lb, min_periods=lb).sum().values
         feature_cols.append(np.nan_to_num(vw_cum / vol_safe, nan=0.0))
 
