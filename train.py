@@ -109,8 +109,8 @@ SPARSE_K = 0.10  # fraction of MLP neurons active per token (sparse coding)
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        # SwiGLU: 8/3x intermediate ≈ same params as 4x relu² FFN (3 matrices vs 2)
-        intermediate = int(config.n_embd * 8 / 3)
+        # SwiGLU: 3x intermediate — slightly more MLP capacity
+        intermediate = int(config.n_embd * 3)
         self.c_gate = nn.Linear(config.n_embd, intermediate, bias=False)
         self.c_fc = nn.Linear(config.n_embd, intermediate, bias=False)
         self.c_proj = nn.Linear(intermediate, config.n_embd, bias=False)
