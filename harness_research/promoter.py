@@ -62,10 +62,22 @@ def _write_harness(config: dict, score: float, champion_date: str, candidate_id:
     log.info("Harness config written to %s", TARGET_HARNESS)
 
 
-def _update_firestore_robots(config: dict, hardware_tier: str | None = None, dry_run: bool = False):
+def _sanitize_model_id(model_id: str) -> str:
+    """Sanitize model_id for use in Firestore field names (replace / with _)."""
+    return model_id.replace("/", "_")
+
+
+def _update_firestore_robots(
+    config: dict,
+    hardware_tier: str | None = None,
+    model_id: str | None = None,
+    dry_run: bool = False,
+):
     """Update matching robots in Firestore with the winning harness config.
 
     If hardware_tier is specified, only updates robots with that tier.
+    If model_id is specified, only updates robots whose agent.model matches,
+    and writes to harness_tunables_{model_id_sanitized} instead of harness_tunables.
     Otherwise updates all robots (generic champion).
     """
     try:
@@ -88,17 +100,42 @@ def _update_firestore_robots(config: dict, hardware_tier: str | None = None, dry
             log.info("Querying all robots (generic champion)")
 
         robots = list(query.stream())
-        log.info("Found %d robot(s) to update", len(robots))
+
+        # Filter by model_id if provided (match agent.model or agent.provider/model)
+        if model_id:
+            filtered = []
+            for robot in robots:
+                data = robot.to_dict() or {}
+                agent = data.get("agent", {})
+                robot_model = agent.get("model", "")
+                robot_provider = agent.get("provider", "")
+                full_model = f"{robot_provider}/{robot_model}" if robot_provider else robot_model
+                if robot_model == model_id or full_model == model_id:
+                    filtered.append(robot)
+            log.info(
+                "Filtered to %d robot(s) with model_id=%s (from %d total)",
+                len(filtered), model_id, len(robots),
+            )
+            robots = filtered
+        else:
+            log.info("Found %d robot(s) to update", len(robots))
 
         if dry_run:
             for robot in robots:
-                log.info("[dry-run] Would update robot %s (%s)", robot.id, robot.get("hardware_tier", "unknown"))
+                data = robot.to_dict() or {}
+                log.info(
+                    "[dry-run] Would update robot %s (%s)",
+                    robot.id, data.get("hardware_tier", "unknown"),
+                )
             return
 
         harness_update = {k: v for k, v in config.items() if k in _TUNABLE_KEYS}
+        field_name = (
+            f"harness_tunables_{_sanitize_model_id(model_id)}" if model_id else "harness_tunables"
+        )
         for robot in robots:
-            robot.reference.update({"harness_tunables": harness_update})
-            log.info("Updated robot %s harness_tunables", robot.id)
+            robot.reference.update({field_name: harness_update})
+            log.info("Updated robot %s %s", robot.id, field_name)
 
     except Exception as e:
         log.warning("Firestore update skipped: %s", e)
@@ -118,17 +155,26 @@ def _load_service_account_credentials(path: str):
         return creds
 
 
-def promote(dry_run: bool = False, hardware_tier: str | None = None) -> bool:
+def promote(
+    dry_run: bool = False,
+    hardware_tier: str | None = None,
+    model_id: str | None = None,
+) -> bool:
     """Promote winning champion config to OpenCastor and Firestore.
 
     Args:
         dry_run: Skip git and Firestore operations.
         hardware_tier: If set, promote the profile champion for that tier.
             If None, promote the generic champion.yaml.
+        model_id: If set, promote from profiles/{tier}/{model_id_sanitized}.yaml
+            and only update robots whose agent.model matches model_id.
 
     Returns True if promotion was successful.
     """
-    if hardware_tier:
+    if hardware_tier and model_id:
+        champion_path = PROFILES_DIR / hardware_tier / f"{_sanitize_model_id(model_id)}.yaml"
+        log.info("Promoting profile champion for tier=%s model=%s", hardware_tier, model_id)
+    elif hardware_tier:
         champion_path = PROFILES_DIR / f"{hardware_tier}.yaml"
         log.info("Promoting profile champion for tier: %s", hardware_tier)
     else:
@@ -179,8 +225,8 @@ def promote(dry_run: bool = False, hardware_tier: str | None = None) -> bool:
                 log.error("Promotion to OpenCastor failed: %s\n%s", e, e.stderr)
                 raise
 
-    # Update Firestore (scoped by hardware_tier when set)
-    _update_firestore_robots(config, hardware_tier=hardware_tier, dry_run=dry_run)
+    # Update Firestore (scoped by hardware_tier and/or model_id when set)
+    _update_firestore_robots(config, hardware_tier=hardware_tier, model_id=model_id, dry_run=dry_run)
 
     return True
 

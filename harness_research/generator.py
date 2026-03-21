@@ -18,6 +18,14 @@ HARDWARE_TIERS = [
     "unitree-go2",
 ]
 
+RESEARCH_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "anthropic/claude-haiku-3-5",
+    "anthropic/claude-sonnet-4-5",
+    "ollama/llama3.2",  # local option
+]
+
 # Per-tier hints that steer the Gemini prompt toward hardware-aware candidates
 TIER_HINTS: dict[str, str] = {
     "pi5-hailo8l": (
@@ -256,6 +264,7 @@ def generate_candidates(
     n: int = 5,
     dry_run: bool = False,
     hardware_tier: str | None = None,
+    model_research: bool = False,
 ) -> list[dict]:
     """Generate N candidate harness variations.
 
@@ -264,9 +273,11 @@ def generate_candidates(
         dry_run: Use synthetic variations instead of Gemini.
         hardware_tier: Optional hardware profile key (e.g. "pi5-hailo8l").
             When set, the seed and Gemini prompt are tailored to that tier.
+        model_research: If True, produce variants of each candidate for each
+            model in RESEARCH_MODELS, adding a ``model_id`` field to each.
 
     Returns:
-        List of dicts with keys: id, config, description.
+        List of dicts with keys: id, config, description[, model_id].
     """
     seed = _load_seed(hardware_tier=hardware_tier)
     log.info("Seed harness (tier=%s): %s", hardware_tier or "generic", seed)
@@ -275,6 +286,9 @@ def generate_candidates(
         log.info("Dry-run mode: generating synthetic candidates for tier=%s", hardware_tier)
         candidates = _generate_synthetic(n, seed, hardware_tier=hardware_tier)
         log.info("Generated %d synthetic candidates", len(candidates))
+        if model_research:
+            candidates = _expand_model_variants(candidates)
+            log.info("Expanded to %d model-variant candidates", len(candidates))
         return candidates
 
     client = _get_genai_client()
@@ -291,7 +305,7 @@ def generate_candidates(
     )
 
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         contents=prompt,
     )
 
@@ -310,4 +324,19 @@ def generate_candidates(
         raise ValueError(f"Expected JSON array from Gemini, got {type(candidates)}")
 
     log.info("Generated %d candidate configs (tier=%s)", len(candidates), hardware_tier)
+    if model_research:
+        candidates = _expand_model_variants(candidates)
+        log.info("Expanded to %d model-variant candidates", len(candidates))
     return candidates
+
+
+def _expand_model_variants(candidates: list[dict]) -> list[dict]:
+    """For each candidate, produce one variant per model in RESEARCH_MODELS."""
+    variants = []
+    for candidate in candidates:
+        for model in RESEARCH_MODELS:
+            sanitized = model.replace("/", "_")
+            variant = {**candidate, "model_id": model}
+            variant["id"] = f"{candidate['id']}__{sanitized}"
+            variants.append(variant)
+    return variants

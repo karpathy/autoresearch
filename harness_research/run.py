@@ -15,6 +15,8 @@ Flags:
   --promote           Also run the promoter after a winning config is found
   --push-to-queue     Push generated candidates to Firestore queue for fleet eval (skips local eval)
   --max-evaluations N Max evaluations per candidate when pushing to queue (default 5)
+  --model-research    Expand each candidate with all RESEARCH_MODELS as a new dimension
+  --model-id MODEL    Scope results to a specific model (e.g. gemini-2.5-flash)
 """
 
 import argparse
@@ -38,6 +40,7 @@ def _push_candidates_to_queue_for_tier(args, hardware_tier: str | None) -> int:
         n=args.candidates,
         dry_run=args.dry_run,
         hardware_tier=hardware_tier,
+        model_research=args.model_research,
     )
     log.info("Generated %d candidates", len(candidates))
 
@@ -45,6 +48,7 @@ def _push_candidates_to_queue_for_tier(args, hardware_tier: str | None) -> int:
         candidates,
         hardware_tier=effective_tier,
         max_evaluations=args.max_evaluations,
+        model_id=args.model_id,
     )
 
     status = get_queue_status(hardware_tier=effective_tier)
@@ -82,6 +86,7 @@ def _run_for_tier(args, hardware_tier: str | None) -> bool:
         n=args.candidates,
         dry_run=args.dry_run,
         hardware_tier=hardware_tier,
+        model_research=args.model_research,
     )
     log.info("Generated %d candidates", len(candidates))
 
@@ -90,7 +95,7 @@ def _run_for_tier(args, hardware_tier: str | None) -> bool:
 
     log.info("Step 3: Ranking candidates...")
     ranked, winner, champion_score, best_score = find_winner(
-        results, hardware_tier=hardware_tier,
+        results, hardware_tier=hardware_tier, model_id=args.model_id,
     )
 
     for i, (r, score) in enumerate(ranked, 1):
@@ -101,6 +106,7 @@ def _run_for_tier(args, hardware_tier: str | None) -> bool:
         ranked, winner, champion_score,
         dry_run=args.dry_run,
         hardware_tier=hardware_tier,
+        model_id=args.model_id,
     )
 
     if had_winner:
@@ -108,7 +114,7 @@ def _run_for_tier(args, hardware_tier: str | None) -> bool:
         if args.promote:
             from .promoter import promote
             log.info("Step 5: Promoting winner to OpenCastor...")
-            promote(dry_run=args.dry_run, hardware_tier=hardware_tier)
+            promote(dry_run=args.dry_run, hardware_tier=hardware_tier, model_id=args.model_id)
     else:
         log.info("No improvement (best=%.4f, champion=%.4f)", best_score, champion_score)
 
@@ -159,6 +165,10 @@ def main() -> int:
                         help="Push generated candidates to Firestore queue for fleet eval (skips local eval)")
     parser.add_argument("--max-evaluations", type=int, default=5,
                         help="Max evaluations per candidate when pushing to queue (default: 5)")
+    parser.add_argument("--model-research", action="store_true",
+                        help="Expand each candidate with all RESEARCH_MODELS as a new dimension")
+    parser.add_argument("--model-id",
+                        help="Scope results to a specific model (e.g. gemini-2.5-flash)")
     parser.add_argument("--dashboard", action="store_true",
                         help="Show the harness research dashboard and exit")
     args = parser.parse_args()

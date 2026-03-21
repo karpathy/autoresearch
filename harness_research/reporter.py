@@ -33,10 +33,17 @@ def _run_git(args: list[str], cwd: Path) -> str:
     return result.stdout.strip()
 
 
-def _ensure_dirs(hardware_tier: str | None = None):
+def _sanitize_model_id(model_id: str) -> str:
+    """Sanitize model_id for use in file paths (replace / with _)."""
+    return model_id.replace("/", "_")
+
+
+def _ensure_dirs(hardware_tier: str | None = None, model_id: str | None = None):
     """Ensure the harness-research directory structure exists."""
     CANDIDATES_DIR.mkdir(parents=True, exist_ok=True)
-    if hardware_tier:
+    if hardware_tier and model_id:
+        (PROFILES_DIR / hardware_tier).mkdir(parents=True, exist_ok=True)
+    elif hardware_tier:
         PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -46,13 +53,16 @@ def _generate_report_md(
     champion_score: float,
     today: str,
     hardware_tier: str | None = None,
+    model_id: str | None = None,
 ) -> str:
     """Generate markdown report content."""
     tier_label = f" [{hardware_tier}]" if hardware_tier else " [generic]"
+    model_label = f" [{model_id}]" if model_id else ""
     lines = [
-        f"# Harness Research Report — {today}{tier_label}",
+        f"# Harness Research Report — {today}{tier_label}{model_label}",
         "",
         f"**Hardware tier:** {hardware_tier or 'generic'}",
+        *([f"**Model:** {model_id}"] if model_id else []),
         f"**Champion score:** {champion_score:.4f}",
         f"**Candidates evaluated:** {len(ranked)}",
         f"**Winner:** {'Yes — ' + winner.candidate_id if winner else 'No improvement found'}",
@@ -106,6 +116,7 @@ def write_report(
     champion_score: float,
     dry_run: bool = False,
     hardware_tier: str | None = None,
+    model_id: str | None = None,
 ) -> bool:
     """Write report and update champion/profile champion.
 
@@ -115,15 +126,19 @@ def write_report(
         champion_score: Current champion's score.
         dry_run: Skip all file and git operations.
         hardware_tier: If set, update profiles/<tier>.yaml instead of/alongside champion.yaml.
+        model_id: If set, write to profiles/{tier}/{model_id_sanitized}.yaml and
+            add _{model_id_sanitized} suffix to filenames.
 
     Returns True if a winner was found and committed.
     """
     today = date.today().isoformat()
-    _ensure_dirs(hardware_tier=hardware_tier)
+    model_sanitized = _sanitize_model_id(model_id) if model_id else None
+    _ensure_dirs(hardware_tier=hardware_tier, model_id=model_id)
 
-    report_md = _generate_report_md(ranked, winner, champion_score, today, hardware_tier)
+    report_md = _generate_report_md(ranked, winner, champion_score, today, hardware_tier, model_id)
     tier_suffix = f"-{hardware_tier}" if hardware_tier else ""
-    report_path = HARNESS_DIR / f"{today}{tier_suffix}.md"
+    model_suffix = f"_{model_sanitized}" if model_sanitized else ""
+    report_path = HARNESS_DIR / f"{today}{tier_suffix}{model_suffix}.md"
 
     if dry_run:
         log.info("[dry-run] Would write report to %s", report_path)
@@ -141,20 +156,34 @@ def write_report(
     winner_score = compute_score(winner)
 
     # Write winning config to candidates dir
-    winner_path = CANDIDATES_DIR / f"{today}{tier_suffix}-winner.yaml"
+    winner_path = CANDIDATES_DIR / f"{today}{tier_suffix}{model_suffix}-winner.yaml"
     winner_data = {
         "id": winner.candidate_id,
         "date": today,
         "score": winner_score,
         "hardware_tier": hardware_tier,
+        **({"model_id": model_id} if model_id else {}),
         "description": winner.description,
         "config": winner.config,
     }
     winner_path.write_text(yaml.dump(winner_data, default_flow_style=False))
     log.info("Winner config written to %s", winner_path)
 
-    # Update per-tier profile champion (always when hardware_tier is set)
-    if hardware_tier:
+    # Update per-tier + per-model profile champion
+    if hardware_tier and model_id:
+        profile_path = PROFILES_DIR / hardware_tier / f"{model_sanitized}.yaml"
+        profile_data = {
+            "hardware_tier": hardware_tier,
+            "model_id": model_id,
+            "score": winner_score,
+            "date": today,
+            "candidate_id": winner.candidate_id,
+            "description": winner.description,
+            "config": winner.config,
+        }
+        profile_path.write_text(yaml.dump(profile_data, default_flow_style=False))
+        log.info("Profile champion updated: %s/%s (score=%.4f)", hardware_tier, model_id, winner_score)
+    elif hardware_tier:
         profile_path = PROFILES_DIR / f"{hardware_tier}.yaml"
         profile_data = {
             "hardware_tier": hardware_tier,

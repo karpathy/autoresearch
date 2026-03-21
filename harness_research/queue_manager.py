@@ -48,12 +48,20 @@ def push_candidates_to_queue(
     candidates: list[dict],
     hardware_tier: str,
     max_evaluations: int = 5,
+    model_id: str | None = None,
 ) -> int:
     """Push candidates to Firestore harness_eval_queue/{tier}/candidates/.
 
     Each document:
-        {candidate_id, config, description, hardware_tier,
+        {candidate_id, config, description, hardware_tier, model_id,
          status="pending", created_at, max_evaluations, evaluation_count=0}
+
+    Args:
+        candidates: List of candidate dicts (each may carry a ``model_id`` field).
+        hardware_tier: Target hardware tier for the queue.
+        max_evaluations: Max evaluations per candidate.
+        model_id: Override model_id for all candidates. If None, uses each
+            candidate's own ``model_id`` field, falling back to "default".
 
     Returns:
         Number of candidates pushed.
@@ -72,11 +80,13 @@ def push_candidates_to_queue(
             log.warning("Skipping candidate with no id: %s", candidate)
             continue
 
+        effective_model_id = model_id or candidate.get("model_id") or "default"
         doc_data = {
             "candidate_id": candidate_id,
             "config": candidate.get("config", {}),
             "description": candidate.get("description", ""),
             "hardware_tier": hardware_tier,
+            "model_id": effective_model_id,
             "status": "pending",
             "created_at": int(time.time()),
             "max_evaluations": max_evaluations,

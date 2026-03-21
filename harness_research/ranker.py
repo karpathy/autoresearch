@@ -32,11 +32,32 @@ def compute_score(result: EvalResults) -> float:
     )
 
 
-def load_champion_score(hardware_tier: str | None = None) -> float:
+def _sanitize_model_id(model_id: str) -> str:
+    """Sanitize model_id for use in file paths (replace / with _)."""
+    return model_id.replace("/", "_")
+
+
+def load_champion_score(
+    hardware_tier: str | None = None,
+    model_id: str | None = None,
+) -> float:
     """Load the current champion score from opencastor-ops.
 
-    If hardware_tier is given, loads from profiles/<tier>.yaml; else generic champion.yaml.
+    If hardware_tier + model_id: loads from profiles/{tier}/{model_id_sanitized}.yaml.
+    If hardware_tier only: loads from profiles/{tier}.yaml (old format).
+    Otherwise: loads generic champion.yaml.
     """
+    if hardware_tier and model_id:
+        profile_path = (
+            _OPS_DIR / "harness-research" / "profiles"
+            / hardware_tier / f"{_sanitize_model_id(model_id)}.yaml"
+        )
+        if profile_path.exists():
+            data = yaml.safe_load(profile_path.read_text())
+            if data and isinstance(data, dict):
+                return float(data.get("score", 0.0))
+        return 0.0
+
     if hardware_tier:
         profile_path = _OPS_DIR / "harness-research" / "profiles" / f"{hardware_tier}.yaml"
         if profile_path.exists():
@@ -65,6 +86,7 @@ def rank_candidates(results: list[EvalResults]) -> list[tuple[EvalResults, float
 def find_winner(
     results: list[EvalResults],
     hardware_tier: str | None = None,
+    model_id: str | None = None,
 ) -> tuple[list[tuple[EvalResults, float]], EvalResults | None, float, float]:
     """Rank candidates and determine if any beats the champion.
 
@@ -74,7 +96,7 @@ def find_winner(
         champion_score: current champion score
         best_score: score of the top candidate
     """
-    champion_score = load_champion_score(hardware_tier=hardware_tier)
+    champion_score = load_champion_score(hardware_tier=hardware_tier, model_id=model_id)
     ranked = rank_candidates(results)
 
     if not ranked:
