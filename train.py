@@ -50,7 +50,12 @@ if IS_CUDA:
     except ImportError:
         print("kernels package not found, using SDPA fallback")
 
-from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
+# Reduce eval tokens on non-CUDA (MPS eval is 5x slower per step)
+if not IS_CUDA and "AUTORESEARCH_EVAL_TOKENS" not in os.environ:
+    os.environ["AUTORESEARCH_EVAL_TOKENS"] = str(8 * 524288)  # ~4.2M vs ~21M
+
+from prepare import MAX_SEQ_LEN, TIME_BUDGET, EVAL_TOKENS, Tokenizer, make_dataloader, evaluate_bpb
+print(f"Eval tokens: {EVAL_TOKENS:,}")
 
 def _maybe_compile(fn):
     """Apply torch.compile only on CUDA (MPS/CPU lack full graph support)."""
