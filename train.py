@@ -558,7 +558,7 @@ class MuonAdamW(torch.optim.Optimizer):
 # ---------------------------------------------------------------------------
 
 # Model architecture
-ASPECT_RATIO = 32  # model_dim = depth * ASPECT_RATIO (32*8=256, n_head=4)
+ASPECT_RATIO = 28  # model_dim = depth * ASPECT_RATIO (28*9=252→256, n_head=2)
 HEAD_DIM = 128  # target head dimension — fewer but more powerful heads (n_head=2)
 WINDOW_PATTERN = "L"  # all layers use full attention — test if D8 benefits from global context
 
@@ -575,7 +575,7 @@ WARMDOWN_RATIO = 0.9  # fraction of time budget for LR warmdown — push even mo
 FINAL_LR_FRAC = 0.0  # final LR as fraction of initial
 
 # Model size
-DEPTH = 8  # try deeper with full MHA (low VRAM footprint)
+DEPTH = 9  # one more layer than D8, still 256 width
 DEVICE_BATCH_SIZE = 16  # per-device batch size — use more VRAM for activations
 
 # ---------------------------------------------------------------------------
