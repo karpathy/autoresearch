@@ -166,11 +166,19 @@ class Block(nn.Module):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
+        # Predictive coding: cheap linear predictor routes predictable content for free.
+        # Attention + MLP only process the prediction error (surprise).
+        # Zero-init → identical to standard transformer at t=0, learns gradually.
+        # Grounded in Friston's Free Energy Principle / Rao & Ballard 1999.
+        self.predictor = nn.Linear(config.n_embd, config.n_embd, bias=False)
 
     def forward(self, x, ve, cos_sin, window_size):
-        x = x + self.attn(norm(x), ve, cos_sin, window_size)
-        x = x + self.mlp(norm(x))
-        return x
+        # Predictive coding: factor each layer into prediction + error correction
+        pred = self.predictor(x)        # cheap linear prediction (free)
+        error = x - pred                # only the surprise goes to attention+MLP
+        error = error + self.attn(norm(error), ve, cos_sin, window_size)
+        error = error + self.mlp(norm(error))
+        return pred + error             # reconstruct: prediction + correction
 
 
 class GPT(nn.Module):
@@ -219,6 +227,7 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            torch.nn.init.zeros_(block.predictor.weight)  # zero-init: neutral start
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
