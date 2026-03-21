@@ -563,7 +563,7 @@ HEAD_DIM = 128  # target head dimension — fewer but more powerful heads (n_hea
 WINDOW_PATTERN = "L"  # all layers use full attention — test if D8 benefits from global context
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**14  # ~16K tokens per optimizer step
+TOTAL_BATCH_SIZE = 2**15  # ~32K tokens per optimizer step — larger batch, no grad accum overhead
 EMBEDDING_LR = 0.4  # learning rate for token embeddings (Adam) — test lower
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.02  # learning rate for matrix parameters (Muon) — test even lower
@@ -576,7 +576,7 @@ FINAL_LR_FRAC = 0.0  # final LR as fraction of initial
 
 # Model size
 DEPTH = 8  # try deeper with full MHA (low VRAM footprint)
-DEVICE_BATCH_SIZE = 8  # per-device batch size (MAX_SEQ_LEN=2048, 6GB VRAM — use it)
+DEVICE_BATCH_SIZE = 16  # per-device batch size — use more VRAM for activations
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
