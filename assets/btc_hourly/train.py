@@ -199,15 +199,6 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         fr_cum_168 = fr_series.rolling(168, min_periods=1).sum().values
         feature_cols.append(fr_cum_168 * 10)
 
-        # 12b. Cycle-gated funding × price momentum interaction (168h)
-        # Gate by cycle position: contrarian signal only fires near highs (late cycle).
-        # During recovery (low cycle_position), interaction is dampened.
-        ret_168_raw = np.full(len(close), 0.0)
-        ret_168_raw[168:] = close[168:] / close[:-168] - 1.0
-        rolling_max_720 = pd.Series(close).rolling(720, min_periods=168).max().values
-        cycle_pos = close / np.where(rolling_max_720 > 0, rolling_max_720, close)
-        feature_cols.append(fr_cum_168 * 10 * ret_168_raw / vol_safe * cycle_pos)
-
     features = np.column_stack(feature_cols)
 
     # Trim to valid rows (after max lookback)
