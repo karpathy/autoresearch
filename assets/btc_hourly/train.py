@@ -407,7 +407,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 1.1  # recalibrate for shorter VW windows
+    pred_bias = float(np.mean(train_preds)) * 1.3  # stronger correction for bullish training bias
 
     # Approximate param count (return models + vol model)
     n_params = 0
