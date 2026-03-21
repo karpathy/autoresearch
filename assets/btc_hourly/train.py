@@ -63,7 +63,7 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     vol_weight = volume / vol_avg_safe  # relative volume (1.0 = average)
     vw_returns = hourly_returns * vol_weight
     vw_series = pd.Series(vw_returns)
-    for lb in [24, 72, 168]:
+    for lb in [12, 48, 168]:
         vw_cum = vw_series.rolling(lb, min_periods=lb).sum().values
         feature_cols.append(np.nan_to_num(vw_cum / vol_safe, nan=0.0))
 
@@ -189,6 +189,16 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     feature_cols.append(np.sin(2 * np.pi * dow / 7))
     feature_cols.append(np.cos(2 * np.pi * dow / 7))
 
+    # 12. Funding rate features (market positioning signal)
+    if "funding_rate" in df.columns:
+        fr = df["funding_rate"].values.astype(np.float64)
+        fr_series = pd.Series(fr)
+        feature_cols.append(fr * 1000)
+        fr_cum_24 = fr_series.rolling(24, min_periods=1).sum().values
+        feature_cols.append(fr_cum_24 * 100)
+        fr_cum_168 = fr_series.rolling(168, min_periods=1).sum().values
+        feature_cols.append(fr_cum_168 * 10)
+
     features = np.column_stack(feature_cols)
 
     # Trim to valid rows (after max lookback)
@@ -257,7 +267,7 @@ def count_model_params(models) -> int:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — reduce noise on linear-scaled predictions."""
-    return pd.Series(raw_preds).ewm(span=45, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=20, min_periods=1).mean().values
 
 
 def _confidence_scaled_predict(model, features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -317,14 +327,14 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     features = np.nan_to_num(features, nan=0.0)
 
     # --- Monotonic constraints ---
+    # Short-term returns unconstrained to allow mean reversion after extreme moves.
+    # Only medium/long-term features keep positive monotonic (momentum).
     mono_cst = np.zeros(features.shape[1], dtype=int)
-    mono_cst[0] = 1  # 4h vol-normalized return
-    mono_cst[1] = 1  # 12h vol-normalized return
-    mono_cst[2] = 1  # 24h vol-normalized return
-    mono_cst[3] = 1  # 48h vol-normalized return
-    mono_cst[4] = 1  # 72h vol-normalized return
-    mono_cst[5] = 1  # 168h vol-normalized return
-    mono_cst[6] = 1  # 24h VW cumulative return
+    # indices 0-2: 4h, 12h, 24h returns — unconstrained (mean reversion)
+    # index 6: 24h VW cumulative return — unconstrained
+    mono_cst[3] = 1  # 48h vol-normalized return (momentum)
+    mono_cst[4] = 1  # 72h vol-normalized return (momentum)
+    mono_cst[5] = 1  # 168h vol-normalized return (momentum)
     mono_cst[28] = 1  # 72h directional efficiency
     mono_cst[29] = 1  # 168h directional efficiency
 
@@ -354,14 +364,14 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     )
     model_aggressive.fit(features, targets, sample_weight=sample_weight)
 
-    # --- Vol model: predict forward volatility ratio ---
+    # --- Vol model: predict high-vol probability (binary classification target) ---
     vol_targets_raw = compute_vol_targets(train_df)
     vol_targets = vol_targets_raw[MAX_LOOKBACK:]
     vol_targets = vol_targets[valid]  # same valid mask as return targets
-    vol_targets = np.clip(vol_targets, 0.1, 5.0)  # clip extremes for stable training
+    vol_binary = (vol_targets > 1.3).astype(np.float64)  # 1 = vol expanding, 0 = normal
 
     vol_model = HistGradientBoostingRegressor(
-        max_iter=500,
+        max_iter=1000,
         max_depth=4,
         min_samples_leaf=600,
         learning_rate=0.01,
@@ -369,7 +379,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         l2_regularization=1.5,
         random_state=42,
     )
-    vol_model.fit(features, vol_targets, sample_weight=sample_weight)
+    vol_model.fit(features, vol_binary, sample_weight=sample_weight)
 
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
@@ -377,7 +387,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 1.4  # slightly more aggressive demeaning for epoch 9
+    pred_bias = float(np.mean(train_preds)) * 1.1  # recalibrate for shorter VW windows
 
     # Approximate param count (return models + vol model)
     n_params = 0
@@ -403,15 +413,15 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
         sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
 
-        # Vol prediction — modulate position size
-        vol_ratio_pred = vol_model.predict(feats)
-        vol_ratio_pred = np.clip(vol_ratio_pred, 0.5, 3.0)
-        predict_fn.last_vol_ratio = vol_ratio_pred  # expose for diagnostics
-        sigma_preds = sigma_preds / vol_ratio_pred
+        # Vol prediction — reduce positions proportional to high-vol probability
+        vol_high_prob = np.clip(vol_model.predict(feats), 0.0, 1.0)
+        predict_fn.last_vol_ratio = vol_high_prob  # expose for diagnostics
+        vol_adj = 1.0 - 0.5 * vol_high_prob  # scale down up to 50% when high vol likely
+        sigma_preds = sigma_preds * vol_adj
 
         # Rest of pipeline unchanged
         sigma_preds = np.clip(sigma_preds, -3.0, 3.0)
-        sigma_preds = sigma_preds * 0.22
+        sigma_preds = sigma_preds * 0.25
         sigma_smoothed = _smooth_predictions(sigma_preds)
         return sigma_smoothed, ts, vol
 

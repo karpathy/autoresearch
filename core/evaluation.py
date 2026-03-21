@@ -131,7 +131,7 @@ def _score_windows(scored_results, scored_windows, forward_hours):
     if dd <= 0.10:
         dd_mult = 1.0
     else:
-        dd_mult = 1.0 / (1.0 + ((dd - 0.10) / 0.15) ** 2)
+        dd_mult = 1.0 / (1.0 + ((dd - 0.10) / 0.05) ** 2)
 
     # Trade count: per-window exponential. Min across scored windows.
     window_trade_mults = []
