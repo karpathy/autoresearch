@@ -112,6 +112,64 @@ def _eval_window(build_model_fn, all_data, window, window_idx,
 
 
 # ---------------------------------------------------------------------------
+# Holdout Health Check
+# ---------------------------------------------------------------------------
+
+def _holdout_health(result, thresholds):
+    """Composite holdout health check across all score components.
+
+    Mirrors the scoring formula thresholds so the agent gets an early
+    warning before a degraded holdout window rotates into scoring.
+    Returns one of: "OK", "CAUTION", "WARN".
+
+    The agent sees only the label — no specific numbers — preserving
+    the black box while signaling risk.
+
+    Args:
+        result: Backtest result dict with sharpe, max_drawdown, n_trades,
+                subperiod_returns.
+        thresholds: WalkForwardConfig with holdout_ok_threshold and
+                    holdout_warn_threshold.
+    """
+    caution_flags = 0
+    warn_flags = 0
+
+    # Sharpe
+    if result["sharpe"] < thresholds.holdout_warn_threshold:
+        warn_flags += 1
+    elif result["sharpe"] < thresholds.holdout_ok_threshold:
+        caution_flags += 1
+
+    # Drawdown (matches DD scoring cliff at -10%)
+    dd = abs(result["max_drawdown"])
+    if dd > 0.15:
+        warn_flags += 1
+    elif dd > 0.10:
+        caution_flags += 1
+
+    # Trade count
+    if result["n_trades"] < 40:
+        warn_flags += 1
+    elif result["n_trades"] < 65:
+        caution_flags += 1
+
+    # Subperiod fragility (either half barely positive or negative)
+    for sp_ret in result["subperiod_returns"]:
+        if sp_ret < -0.01:
+            warn_flags += 1
+        elif sp_ret < 0.005:
+            caution_flags += 1
+
+    # Composite
+    if warn_flags > 0:
+        return "WARN"
+    elif caution_flags > 0:
+        return "CAUTION"
+    else:
+        return "OK"
+
+
+# ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
 
@@ -225,14 +283,8 @@ def evaluate_model(build_model_fn, load_data_fn, windows, config: AssetConfig) -
     # Composite score
     scores = _score_windows(scored_results, scored_windows, wf.forward_hours)
 
-    # Holdout health check
-    holdout_sharpe = holdout_result["sharpe"]
-    if holdout_sharpe >= wf.holdout_ok_threshold:
-        holdout_health = "OK"
-    elif holdout_sharpe >= wf.holdout_warn_threshold:
-        holdout_health = "CAUTION"
-    else:
-        holdout_health = "WARN"
+    # Holdout health check (composite: sharpe, DD, trades, subperiods)
+    holdout_health = _holdout_health(holdout_result, wf)
 
     return {
         "score": scores["score"],
@@ -360,9 +412,9 @@ def run_diagnostic(build_model_fn, load_data_fn, windows, config: AssetConfig,
         if len(preds) > 0:
             print(_pred_stats_line(preds))
 
-    # Holdout health
+    # Holdout health (composite check)
     holdout_result = window_results[holdout_idx]
-    holdout_health = "OK" if holdout_result["sharpe"] >= wf.holdout_warn_threshold else "WARN"
+    holdout_health = _holdout_health(holdout_result, wf)
     print(f"\nHoldout health: {holdout_health} "
           f"(Window {holdout_idx} Sharpe: {holdout_result['sharpe']:.4f})")
     print(f"Losing subperiods: {', '.join(losing_subperiods) if losing_subperiods else 'None'}")
