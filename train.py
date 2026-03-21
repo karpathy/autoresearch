@@ -57,6 +57,9 @@ def apply_rotary_emb(x, cos, sin):
     return torch.cat([y1, y2], 3)
 
 
+SHORT_CONV_K = 4  # causal conv kernel size (H3/Mamba-style local context injection)
+
+
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
@@ -70,6 +73,11 @@ class CausalSelfAttention(nn.Module):
         self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
+        # Short causal conv on Q and K (depthwise, groups=n_embd for Q, n_kv*hd for K)
+        q_dim = self.n_head * self.head_dim
+        k_dim = self.n_kv_head * self.head_dim
+        self.conv_q = nn.Conv1d(q_dim, q_dim, SHORT_CONV_K, padding=SHORT_CONV_K - 1, groups=q_dim, bias=False)
+        self.conv_k = nn.Conv1d(k_dim, k_dim, SHORT_CONV_K, padding=SHORT_CONV_K - 1, groups=k_dim, bias=False)
         self.ve_gate_channels = 32
         self.ve_gate = (
             nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False)
@@ -79,8 +87,13 @@ class CausalSelfAttention(nn.Module):
 
     def forward(self, x, ve, cos_sin, window_size):
         B, T, C = x.size()
-        q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
-        k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
+        q = self.c_q(x)
+        k = self.c_k(x)
+        # Short causal conv: local temporal mixing before attention
+        q = self.conv_q(q.transpose(1, 2))[:, :, :T].transpose(1, 2)  # causal: trim to T
+        k = self.conv_k(k.transpose(1, 2))[:, :, :T].transpose(1, 2)
+        q = q.view(B, T, self.n_head, self.head_dim)
+        k = k.view(B, T, self.n_kv_head, self.head_dim)
         v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
 
         # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
@@ -176,6 +189,11 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight)
+            # Conv init: identity-like (last element of kernel = 1, rest = 0)
+            nn.init.zeros_(block.attn.conv_q.weight)
+            block.attn.conv_q.weight.data[:, :, -1] = 1.0
+            nn.init.zeros_(block.attn.conv_k.weight)
+            block.attn.conv_k.weight.data[:, :, -1] = 1.0
             torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
@@ -269,7 +287,10 @@ class GPT(nn.Module):
         scalar_lr=0.5,
     ):
         model_dim = self.config.n_embd
-        matrix_params = list(self.transformer.h.parameters())
+        # Separate conv params (3D) from matrix params (2D) — conv goes to AdamW
+        all_h_params = list(self.transformer.h.parameters())
+        conv_params = [p for p in all_h_params if p.ndim == 3]
+        matrix_params = [p for p in all_h_params if p.ndim == 2]
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
@@ -277,6 +298,7 @@ class GPT(nn.Module):
         x0_params = [self.x0_lambdas]
         assert len(list(self.parameters())) == (
             len(matrix_params)
+            + len(conv_params)
             + len(embedding_params)
             + len(lm_head_params)
             + len(value_embeds_params)
@@ -328,6 +350,15 @@ class GPT(nn.Module):
                 weight_decay=0.0,
             ),
         ]
+        if conv_params:
+            param_groups.append(dict(
+                kind="adamw",
+                params=conv_params,
+                lr=matrix_lr * dmodel_lr_scale,
+                betas=adam_betas,
+                eps=1e-10,
+                weight_decay=0.0,
+            ))
         for shape in sorted({p.shape for p in matrix_params}):
             group_params = [p for p in matrix_params if p.shape == shape]
             param_groups.append(
