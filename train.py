@@ -58,18 +58,25 @@ def apply_rotary_emb(x, cos, sin):
 
 
 class CausalSelfAttention(nn.Module):
+    """Differential Attention (ICLR 2025): attn = softmax(Q1@K1^T) - lambda*softmax(Q2@K2^T).
+    Cancels noise, produces sparser attention. Uses two SDPA calls at half head dim."""
     def __init__(self, config, layer_idx):
         super().__init__()
         self.n_head = config.n_head
         self.n_kv_head = config.n_kv_head
         self.n_embd = config.n_embd
         self.head_dim = self.n_embd // self.n_head
+        self.half_dim = self.head_dim // 2
         assert self.n_embd % self.n_head == 0
+        assert self.head_dim % 2 == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
+        # Q/K project to same total dim but will be split into two halves
         self.c_q = nn.Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
         self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
+        # Per-head learnable lambda for differential subtraction
+        self.diff_lambda = nn.Parameter(torch.zeros(self.n_head))
         self.ve_gate_channels = 32
         self.ve_gate = (
             nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False)
@@ -83,7 +90,7 @@ class CausalSelfAttention(nn.Module):
         k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
         v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
 
-        # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
+        # Value residual (ResFormer)
         if ve is not None:
             ve = ve.view(B, T, self.n_kv_head, self.head_dim)
             gate = 2 * torch.sigmoid(self.ve_gate(x[..., : self.ve_gate_channels]))
@@ -93,11 +100,21 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        # Transpose to [B, H, T, D] as required by SDPA (was missing — critical bug fix)
-        q = q.transpose(1, 2)
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        # Split Q,K into two halves for differential attention
+        q1, q2 = q[..., :self.half_dim], q[..., self.half_dim:]  # [B, T, H, D/2]
+        k1, k2 = k[..., :self.half_dim], k[..., self.half_dim:]  # [B, T, KV_H, D/2]
+
+        # Transpose to [B, H, T, D] for SDPA
+        q1, q2 = q1.transpose(1, 2), q2.transpose(1, 2)
+        k1, k2 = k1.transpose(1, 2), k2.transpose(1, 2)
+        v_t = v.transpose(1, 2)
+
+        # Differential attention: y = SDPA(Q1,K1,V) - lambda * SDPA(Q2,K2,V)
+        y1 = F.scaled_dot_product_attention(q1, k1, v_t, is_causal=True)
+        y2 = F.scaled_dot_product_attention(q2, k2, v_t, is_causal=True)
+        lam = torch.sigmoid(self.diff_lambda).view(1, self.n_head, 1, 1)  # [1, H, 1, 1]
+        y = y1 - lam * y2
+
         y = y.transpose(1, 2).contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
@@ -269,7 +286,9 @@ class GPT(nn.Module):
         scalar_lr=0.5,
     ):
         model_dim = self.config.n_embd
-        matrix_params = list(self.transformer.h.parameters())
+        all_h_params = list(self.transformer.h.parameters())
+        matrix_params = [p for p in all_h_params if p.ndim == 2]
+        diff_lambda_params = [p for p in all_h_params if p.ndim == 1]
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
@@ -277,6 +296,7 @@ class GPT(nn.Module):
         x0_params = [self.x0_lambdas]
         assert len(list(self.parameters())) == (
             len(matrix_params)
+            + len(diff_lambda_params)
             + len(embedding_params)
             + len(lm_head_params)
             + len(value_embeds_params)
@@ -328,6 +348,15 @@ class GPT(nn.Module):
                 weight_decay=0.0,
             ),
         ]
+        if diff_lambda_params:
+            param_groups.append(dict(
+                kind="adamw",
+                params=diff_lambda_params,
+                lr=scalar_lr * 0.01,
+                betas=adam_betas,
+                eps=1e-10,
+                weight_decay=0.0,
+            ))
         for shape in sorted({p.shape for p in matrix_params}):
             group_params = [p for p in matrix_params if p.shape == shape]
             param_groups.append(
