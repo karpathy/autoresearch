@@ -175,9 +175,11 @@ Write your answers before touching `train.py`.
 
 ### ANALYZE
 
-1. `uv run analyze.py 2>/dev/null`
-2. Read `.auto-log-research/<commit>/analysis.md`.
-3. Examine plots. Loss trajectory, LR sensitivity, MFU, step-time spikes.
+**MANDATORY after every run, no exceptions:**
+
+1. `uv run analyze.py 2>/dev/null` — archives logs, generates plots, creates analysis.md
+2. Read the generated **plots** (loss_curve.png, gpu_perf.png, lr_and_schedule.png) using the Read tool — they are images and contain critical visual information about training dynamics
+3. Read `.auto-log-research/<commit>/analysis.md` and write your investigation notes
 4. Compare against previous runs in `metrics.jsonl`:
 
 ```python
