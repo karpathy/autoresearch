@@ -1,0 +1,77 @@
+<div class="space-y-5">
+  <p class="text-xs text-slate-500">Stored under <code class="rounded bg-slate-800 px-1 py-0.5">pdca_system/history/state/daemon_config.json</code>.</p>
+  <form
+    class="space-y-5"
+    hx-post="{{ request.url_for('save_daemon_settings') }}"
+    hx-swap="innerHTML"
+    hx-target="#daemon-settings-modal-body"
+    method="post"
+  >
+    <div>
+      <label class="mb-1.5 block text-xs font-medium text-slate-400" for="ralph_max_loop">Ralph max loop</label>
+      <input
+        class="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+        id="ralph_max_loop"
+        name="ralph_max_loop"
+        type="number"
+        min="0"
+        value="{{ daemon_config.get('ralph_max_loop', 0) }}"
+      />
+      <p class="mt-1 text-xs text-slate-500">Set to 0 or less for no limit (infinite loop).</p>
+    </div>
+    <div>
+      <span class="mb-1.5 block text-xs font-medium text-slate-400">Stage timeouts (seconds)</span>
+      <div class="grid grid-cols-3 gap-3">
+        <div>
+          <label class="mb-1 block text-xs text-slate-500" for="timeout_pd">Plan-Do</label>
+          <input
+            class="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+            id="timeout_pd"
+            name="timeout_pd"
+            type="number"
+            min="1"
+            value="{{ daemon_config.get('default_timeouts', {}).get('pd', 900) }}"
+          />
+        </div>
+        <div>
+          <label class="mb-1 block text-xs text-slate-500" for="timeout_ca">Check-Action</label>
+          <input
+            class="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+            id="timeout_ca"
+            name="timeout_ca"
+            type="number"
+            min="1"
+            value="{{ daemon_config.get('default_timeouts', {}).get('ca', 3600) }}"
+          />
+        </div>
+        <div>
+          <label class="mb-1 block text-xs text-slate-500" for="timeout_direct">Direct</label>
+          <input
+            class="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+            id="timeout_direct"
+            name="timeout_direct"
+            type="number"
+            min="1"
+            value="{{ daemon_config.get('default_timeouts', {}).get('direct', 3600) }}"
+          />
+        </div>
+      </div>
+    </div>
+    <div>
+      <label class="mb-1.5 block text-xs font-medium text-slate-400" for="stuck_check_timeout_seconds">Stuck check (seconds)</label>
+      <input
+        class="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none"
+        id="stuck_check_timeout_seconds"
+        name="stuck_check_timeout_seconds"
+        type="number"
+        min="1"
+        value="{{ daemon_config.get('stuck_check_timeout_seconds', 120) }}"
+      />
+    </div>
+    <div class="flex justify-end pt-1">
+      <button class="rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 focus:ring-offset-slate-900" type="submit">
+        Save
+      </button>
+    </div>
+  </form>
+</div>
