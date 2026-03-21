@@ -564,7 +564,7 @@ WINDOW_PATTERN = "L"  # all layers use full attention — test if D8 benefits fr
 
 # Optimization
 TOTAL_BATCH_SIZE = 2**14  # ~16K tokens per optimizer step
-EMBEDDING_LR = 0.7  # learning rate for token embeddings (Adam)
+EMBEDDING_LR = 0.6  # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.02  # learning rate for matrix parameters (Muon) — test even lower
 SCALAR_LR = 0.5  # learning rate for per-layer scalars (Adam)
