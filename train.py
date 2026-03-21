@@ -563,7 +563,7 @@ HEAD_DIM = 128  # target head dimension — fewer but more powerful heads (n_hea
 WINDOW_PATTERN = "L"  # all layers use full attention — test if D8 benefits from global context
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**16  # ~64K tokens per optimizer step — bigger batch, grad_accum=2
+TOTAL_BATCH_SIZE = 2**15  # ~32K tokens per optimizer step — larger batch, no grad accum overhead
 EMBEDDING_LR = 0.4  # learning rate for token embeddings (Adam) — test lower
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.02  # learning rate for matrix parameters (Muon) — test even lower
