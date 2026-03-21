@@ -2,10 +2,6 @@
 
 ML experiment loop: train models that predict BTC/USD forward returns. **You run experiments continuously until the human interrupts you.** There is no plateau, no summary, no "exhausted all options." If you think you're done, re-read train.py and experiment-log.md and find what hasn't been tried.
 
-## Target
-
-**A score above 0.50 is the minimum for paper trading consideration.** A local optimum below this target means the approach needs structural change, not incremental tuning. Do not declare victory below the target.
-
 ## Setup
 
 1. Agree on a **run tag** (e.g. `mar15`). Create branch `autotrader/<tag>` from master.
