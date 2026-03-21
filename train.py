@@ -10,6 +10,7 @@ os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
 import math
+import subprocess
 import time
 from dataclasses import dataclass, asdict
 
@@ -628,3 +629,28 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
+
+
+def _get_git_commit_short():
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        return "unknown"
+
+
+def _append_results_tsv(val_bpb, peak_vram_mb, status="keep", description="auto"):
+    """Append a results row to results.tsv in repository root."""
+    path = os.path.join(os.path.dirname(__file__), "results.tsv")
+    header = "commit\tval_bpb\tmemory_gb\tstatus\tdescription\n"
+    if not os.path.exists(path):
+        with open(path, "w") as f:
+            f.write(header)
+    commit = _get_git_commit_short()
+    memory_gb = peak_vram_mb / 1024.0
+    with open(path, "a") as f:
+        f.write(f"{commit}\t{val_bpb:.6f}\t{memory_gb:.1f}\t{status}\t{description}\n")
+
+
+# Log this run so that automated prompt/program refinement can use it.
+description = os.environ.get("EXPERIMENT_DESC", "auto")
+_append_results_tsv(val_bpb, peak_vram_mb, status="keep", description=description)
