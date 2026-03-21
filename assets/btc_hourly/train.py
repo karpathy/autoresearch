@@ -257,7 +257,7 @@ def count_model_params(models) -> int:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — reduce noise on linear-scaled predictions."""
-    return pd.Series(raw_preds).ewm(span=45, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=20, min_periods=1).mean().values
 
 
 def _confidence_scaled_predict(model, features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
