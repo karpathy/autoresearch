@@ -573,7 +573,7 @@ WEIGHT_DECAY = 0.1  # cautious weight decay for Muon — test less regularizatio
 ADAM_BETAS = (0.9, 0.98)  # Adam beta1, beta2 — slightly higher beta2
 WARMUP_RATIO = 0.0  # fraction of time budget for LR warmup
 WARMDOWN_RATIO = 0.9  # fraction of time budget for LR warmdown — push even more decay
-FINAL_LR_FRAC = 0.0  # final LR as fraction of initial
+FINAL_LR_FRAC = 0.05  # final LR as fraction of initial — keep learning at end
 
 # Model size
 DEPTH = 8  # try deeper with full MHA (low VRAM footprint)
