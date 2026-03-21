@@ -12,6 +12,7 @@ os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 import gc
 import json
 import math
+import subprocess
 import time
 from dataclasses import dataclass, asdict
 
@@ -743,6 +744,7 @@ t_start_training = time.time()
 smooth_train_loss = 0
 total_training_time = 0
 step = 0
+_metrics_file = open("metrics.jsonl", "w")
 
 while True:
     torch.cuda.synchronize()
@@ -809,6 +811,12 @@ while True:
         end="",
         flush=True,
     )
+    _metrics_file.write(json.dumps({
+        "step": step, "train/loss": train_loss_f, "train/loss_smooth": debiased_smooth_loss,
+        "train/lr_multiplier": lrm, "train/muon_momentum": muon_momentum,
+        "train/weight_decay": muon_weight_decay, "train/progress": progress,
+        "perf/step_time_ms": dt * 1000, "perf/tokens_per_sec": tok_per_sec, "perf/mfu_percent": mfu,
+    }) + "\n")
 
     # GC management (Python's GC causes ~500ms stalls)
     if step == 0:
@@ -824,6 +832,7 @@ while True:
     if step > 10 and total_training_time >= TIME_BUDGET:
         break
 
+_metrics_file.close()
 print()  # newline after \r training log
 
 total_tokens = step * TOTAL_BATCH_SIZE
@@ -860,8 +869,7 @@ print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
 
 # Write run summary for analyze.py
-import subprocess as _sp
-_git_commit = _sp.check_output(["git", "rev-parse", "HEAD"], stderr=_sp.DEVNULL).decode().strip()
+_git_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
 _summary = {
     "aspect_ratio": ASPECT_RATIO, "head_dim": HEAD_DIM, "window_pattern": WINDOW_PATTERN,
     "total_batch_size": TOTAL_BATCH_SIZE, "embedding_lr": EMBEDDING_LR,
