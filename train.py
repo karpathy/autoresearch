@@ -57,6 +57,9 @@ def apply_rotary_emb(x, cos, sin):
     return torch.cat([y1, y2], 3)
 
 
+DROPOUT = 0.1  # regularization: zero dropout hurts generalization at our small data/steps budget
+
+
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
@@ -70,6 +73,8 @@ class CausalSelfAttention(nn.Module):
         self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
+        self.attn_drop = nn.Dropout(DROPOUT)
+        self.resid_drop = nn.Dropout(DROPOUT)
         self.ve_gate_channels = 32
         self.ve_gate = (
             nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False)
@@ -97,9 +102,9 @@ class CausalSelfAttention(nn.Module):
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=DROPOUT if self.training else 0.0)
         y = y.transpose(1, 2).contiguous().view(B, T, -1)
-        y = self.c_proj(y)
+        y = self.resid_drop(self.c_proj(y))
         return y
 
 
@@ -115,10 +120,11 @@ class MLP(nn.Module):
         self.c_fc = nn.Linear(config.n_embd, intermediate, bias=False)
         self.c_proj = nn.Linear(intermediate, config.n_embd, bias=False)
         self.k = max(1, int(intermediate * SPARSE_K))
+        self.drop = nn.Dropout(DROPOUT)
 
     def forward(self, x):
         h = F.silu(self.c_gate(x)) * self.c_fc(x)
-        return self.c_proj(h)
+        return self.drop(self.c_proj(h))
 
 
 class Block(nn.Module):
