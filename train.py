@@ -568,7 +568,14 @@ while True:
 
     # Fast fail: abort if loss is exploding or NaN
     if math.isnan(train_loss_f) or train_loss_f > 100:
-        print("FAIL")
+        print(f"FAIL: Loss exploded at step {step} (loss={train_loss_f:.2f})")
+        # Save debug checkpoint for post-mortem analysis
+        raw_model = model._orig_mod if hasattr(model, '_orig_mod') else model
+        torch.save({
+            'step': step,
+            'loss': train_loss_f,
+            'model_state': raw_model.state_dict(),
+        }, f'exploded_step{step}.pt')
         exit(1)
 
     torch.cuda.synchronize()
