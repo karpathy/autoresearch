@@ -273,13 +273,15 @@ def _document_batches(split, tokenizer_batch_size=128):
         epoch += 1
 
 
-def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
+def make_dataloader(tokenizer, B, T, split, buffer_size=1000, device=None):
     """
     BOS-aligned dataloader with best-fit packing.
     Every row starts with BOS. Documents packed using best-fit to minimize cropping.
     When no document fits remaining space, crops shortest doc to fill exactly.
     100% utilization (no padding).
     """
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     assert split in ["train", "val"]
     row_capacity = T + 1
     batches = _document_batches(split)
@@ -294,9 +296,10 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
         doc_buffer.extend(token_lists)
 
     # Pre-allocate buffers: [inputs (B*T) | targets (B*T)]
+    use_pinned = (device.type == "cuda")
     row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
-    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=True)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device="cuda")
+    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_pinned)
+    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device)
     cpu_inputs = cpu_buffer[:B * T].view(B, T)
     cpu_targets = cpu_buffer[B * T:].view(B, T)
     inputs = gpu_buffer[:B * T].view(B, T)
@@ -341,7 +344,7 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
-def evaluate_bpb(model, tokenizer, batch_size):
+def evaluate_bpb(model, tokenizer, batch_size, device=None):
     """
     Bits per byte (BPB): vocab size-independent evaluation metric.
     Sums per-token cross-entropy (in nats), sums target byte lengths,
@@ -349,8 +352,10 @@ def evaluate_bpb(model, tokenizer, batch_size):
     are excluded from both sums.
     Uses fixed MAX_SEQ_LEN so results are comparable across configs.
     """
-    token_bytes = get_token_bytes(device="cuda")
-    val_loader = make_dataloader(tokenizer, batch_size, MAX_SEQ_LEN, "val")
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    token_bytes = get_token_bytes(device=device)
+    val_loader = make_dataloader(tokenizer, batch_size, MAX_SEQ_LEN, "val", device=device)
     steps = EVAL_TOKENS // (batch_size * MAX_SEQ_LEN)
     total_nats = 0.0
     total_bytes = 0

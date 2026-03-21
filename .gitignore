@@ -9,6 +9,7 @@ wheels/
 # Virtual environments
 .venv
 worktrees/
+.worktrees/
 results/
 queue/
 
