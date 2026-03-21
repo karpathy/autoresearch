@@ -31,6 +31,21 @@ from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evalua
 
 @dataclass
 class GPTConfig:
+    """Configuration for the GPT model.
+
+    Attributes:
+        sequence_len: Maximum sequence length for training.
+        vocab_size: Size of the vocabulary (determined by tokenizer).
+        n_layer: Number of transformer blocks.
+        n_head: Number of query attention heads.
+        n_kv_head: Number of KV heads (for Grouped-Query Attention).
+            Set equal to n_head for standard multi-head attention.
+        n_embd: Embedding dimension.
+        window_pattern: Sliding window attention pattern string.
+            'S' = sliding window (local), 'L' = full (global) attention.
+            Repeated cyclically across layers. Example: "SSSL" means
+            3 local layers followed by 1 global layer, repeating.
+    """
     sequence_len: int = 2048
     vocab_size: int = 32768
     n_layer: int = 12
@@ -41,6 +56,7 @@ class GPTConfig:
 
 
 def norm(x):
+    """Apply RMSNorm (Root Mean Square Layer Normalization)."""
     return F.rms_norm(x, (x.size(-1),))
 
 
@@ -122,6 +138,20 @@ class Block(nn.Module):
 
 
 class GPT(nn.Module):
+    """GPT language model with rotary embeddings and sliding window attention.
+
+    Architecture highlights:
+    - Rotary Position Embeddings (RoPE) for position encoding
+    - RMSNorm for layer normalization
+    - Grouped-Query Attention (GQA) when n_kv_head < n_head
+    - Value Embeddings on alternating layers (has_ve pattern)
+    - Sliding window attention with configurable pattern
+    - Residual connection lambdas (learnable per-layer scaling)
+
+    The model uses a custom MuonAdamW optimizer (see below) that applies
+    Muon to 2D matrix parameters and AdamW to all others.
+    """
+
     def __init__(self, config):
         super().__init__()
         self.config = config
@@ -354,7 +384,19 @@ def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momen
 
 
 class MuonAdamW(torch.optim.Optimizer):
-    """Combined optimizer: Muon for 2D matrix params, AdamW for others."""
+    """Combined optimizer: Muon for 2D matrix params, AdamW for others.
+
+    Muon (Momentum Orthogonalized updates with Newton-schulz) is designed
+    specifically for 2D weight matrices. It orthogonalizes the gradient
+    update via Newton-Schulz iteration, providing better conditioning for
+    large matrix parameters.
+
+    All non-2D parameters (biases, embeddings, 1D params) use standard
+    AdamW with fused kernel for efficiency.
+
+    The split is automatic: any param with ndim == 2 goes to Muon,
+    everything else goes to AdamW.
+    """
 
     def __init__(self, param_groups):
         super().__init__(param_groups, defaults={})
