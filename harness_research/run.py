@@ -159,7 +159,13 @@ def main() -> int:
                         help="Push generated candidates to Firestore queue for fleet eval (skips local eval)")
     parser.add_argument("--max-evaluations", type=int, default=5,
                         help="Max evaluations per candidate when pushing to queue (default: 5)")
+    parser.add_argument("--dashboard", action="store_true",
+                        help="Show the harness research dashboard and exit")
     args = parser.parse_args()
+
+    if args.dashboard:
+        from .dashboard import main as dashboard_main
+        return dashboard_main()
 
     logging.basicConfig(
         level=logging.INFO,
