@@ -251,30 +251,31 @@ def compute_vol_targets(df: pd.DataFrame) -> np.ndarray:
 
 
 def compute_regime_targets(df: pd.DataFrame) -> np.ndarray:
-    """Compute forward momentum persistence: does the current trend continue?
+    """Compute forward directional efficiency over next 168h.
 
-    Binary: 1 = the sign of the next 168h return matches the past 168h return.
-    This measures whether momentum signals are reliable right now.
+    Values near 1.0 = strong trend ahead, near 0 = chop/reversal.
+    Continuous regression target with more information than binary persistence.
 
     Returns array of same length as df. Edges are NaN.
     """
     close = df["close"].values.astype(np.float64)
     n = len(close)
 
-    # Past 168h return sign
-    past_sign = np.full(n, np.nan)
-    past_sign[168:] = np.sign(close[168:] / close[:-168] - 1.0)
+    # Forward 168h net move (vectorized)
+    net_move = np.full(n, np.nan)
+    net_move[:n-168] = np.abs(close[168:] - close[:n-168])
 
-    # Forward 168h return sign
-    fwd_sign = np.full(n, np.nan)
-    fwd_sign[:n-168] = np.sign(close[168:] / close[:n-168] - 1.0)
+    # Forward 168h path length: rolling sum of abs hourly changes, shifted forward
+    abs_changes = np.abs(np.diff(close))  # length n-1
+    path_rolling = pd.Series(abs_changes).rolling(168, min_periods=168).sum().values
+    # path_rolling[i+167] = sum of abs_changes[i:i+168] = path from close[i] to close[i+168]
+    path_length = np.full(n, np.nan)
+    path_length[:n-168] = path_rolling[167:]
 
-    # Persistence: 1 if signs match, 0 if they don't
-    persistence = np.full(n, np.nan)
-    valid = ~np.isnan(past_sign) & ~np.isnan(fwd_sign)
-    persistence[valid] = (past_sign[valid] == fwd_sign[valid]).astype(np.float64)
+    path_safe = np.where((path_length > 0) & ~np.isnan(path_length), path_length, np.nan)
+    targets = net_move / path_safe
 
-    return persistence
+    return targets
 
 
 def compute_regime_features(df: pd.DataFrame) -> np.ndarray:
@@ -485,7 +486,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     # Drop rows where regime target is NaN (edges)
     regime_valid = ~np.isnan(regime_targets)
 
-    regime_model = HistGradientBoostingClassifier(
+    regime_model = HistGradientBoostingRegressor(
         max_iter=500,
         max_depth=3,
         min_samples_leaf=200,
@@ -496,13 +497,13 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     )
     regime_model.fit(
         regime_features[regime_valid],
-        regime_targets[regime_valid].astype(int),
+        regime_targets[regime_valid],
         sample_weight=sample_weight[regime_valid] if sample_weight is not None else None,
     )
 
     # Diagnostic
-    rtp = regime_model.predict_proba(regime_features[regime_valid])[:, 1]
-    print(f"  Regime target: {regime_targets[regime_valid].mean()*100:.1f}% persistent")
+    rtp = regime_model.predict(regime_features[regime_valid])
+    print(f"  Regime target: mean={regime_targets[regime_valid].mean():.3f} std={regime_targets[regime_valid].std():.3f}")
     print(f"  Regime train: mean={rtp.mean():.3f} std={rtp.std():.3f}")
 
     selected = np.ones(features.shape[1], dtype=bool)
@@ -544,10 +545,11 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         # Regime prediction — slow-moving position multiplier
         regime_feats = compute_regime_features(df)
         regime_feats = np.nan_to_num(regime_feats, nan=0.0)
-        regime_prob = regime_model.predict_proba(regime_feats)[:, 1]
+        regime_pred = regime_model.predict(regime_feats)
+        regime_pred = np.clip(regime_pred, 0.0, 1.0)
         # Smooth heavily — regime changes weekly, not hourly
-        regime_smooth = pd.Series(regime_prob).ewm(span=168, min_periods=1).mean().values
-        # Map to adjustment: high persistence → full positions, low → reduced
+        regime_smooth = pd.Series(regime_pred).ewm(span=168, min_periods=1).mean().values
+        # Map to adjustment: high efficiency → full positions, low → reduced
         regime_adj = 0.5 + 0.5 * regime_smooth  # range [0.5, 1.0]
         sigma_preds = sigma_preds * regime_adj
 
