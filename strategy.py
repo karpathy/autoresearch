@@ -29,7 +29,7 @@ class Strategy:
         z_atr = ret_15 / atr_pct
 
         # Contrarian: large moves revert
-        mean_rev_signal = 0.5 - np.clip(z_atr * 0.08, -0.3, 0.3)
+        mean_rev_signal = 0.5 - np.clip(z_atr * 0.12, -0.35, 0.35)
 
         # --- Signal 2: Bollinger Band position ---
         bb_upper = latest["bbands_upper"]
