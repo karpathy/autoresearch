@@ -22,11 +22,11 @@ class Strategy:
         close_arr = window["close"].values
 
         # --- Signal 1: Mean reversion normalized by ATR ---
-        ret_10 = (close_arr[-1] - close_arr[-11]) / close_arr[-11]
+        ret_7 = (close_arr[-1] - close_arr[-8]) / close_arr[-8]
         atr = latest["atr_14"]
         price = close_arr[-1]
         atr_pct = atr / price + 1e-10
-        z_atr = ret_10 / atr_pct
+        z_atr = ret_7 / atr_pct
 
         # Contrarian: large moves revert
         mean_rev_signal = 0.5 - np.clip(z_atr * 0.12, -0.35, 0.35)
