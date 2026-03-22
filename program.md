@@ -1,6 +1,6 @@
-# autoresearch — BTC 15-minute prediction
+# autoresearch — BTC 15-minute prediction (Kalshi KXBTC15M)
 
-This is an autonomous research loop for discovering profitable BTC price prediction strategies for Kalshi binary up/down contracts.
+This is an autonomous research loop for discovering profitable BTC price prediction strategies for Kalshi KXBTC15M binary up/down contracts.
 
 ## Setup
 
@@ -10,8 +10,8 @@ To set up a new experiment, work with the user to:
 2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current branch.
 3. **Read the in-scope files**: The repo is small. Read these files for full context:
    - `README.md` — repository context.
-   - `prepare.py` — fixed constants, data loading, feature engineering, backtesting engine, evaluation. Do not modify.
-   - `strategy.py` — the file you modify. Signal logic, indicators, thresholds, ensemble methods.
+   - `prepare.py` — data loading, feature engineering, Kalshi-accurate backtesting engine, evaluation. Do not modify.
+   - `strategy.py` — the file you modify. Probability estimation, edge thresholds, entry timing logic.
    - `backtest.py` — entry point that runs strategy against validation data. Do not modify.
 4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains `btc_1m.csv` (real data) or run `uv run prepare.py` to generate synthetic data.
 5. **Initialize results.tsv**: Create `results.tsv` with just the header row. The baseline will be recorded after the first run.
@@ -19,11 +19,24 @@ To set up a new experiment, work with the user to:
 
 Once you get confirmation, kick off the experimentation.
 
+## How Kalshi KXBTC15M works
+
+The contract settles on BTC's price at expiration, calculated as the **1-minute VWAP** (average of ~60 per-second BRTI observations) in the final minute before expiry. Markets open at 15-minute intervals (:00, :15, :30, :45). You can enter at any minute 0-13 within a window (no trades at minute 14+).
+
+The backtest engine models this accurately:
+- **Window alignment**: Trades align to real clock boundaries (:00/:15/:30/:45)
+- **Settlement**: Mean of close prices in the final minute (not a point-in-time snapshot)
+- **Fair market price**: Estimated via binary option pricing (normal CDF based on displacement from window open, volatility, and time remaining)
+- **Entry**: Strategy is called at each minute 0-13; first triggered entry per window wins
+- **P&L**: Buy at fair market price. Correct = `+(1 - buy_price)`, wrong = `-buy_price`, minus fees
+
 ## The prediction task
 
-You are predicting whether BTC will be **up or down 15 minutes from now**, for use with Kalshi binary contracts. The strategy sees the last 60 one-minute OHLCV candles (with pre-computed technical indicators) and returns a direction signal and a confidence level.
+You are estimating the **probability** that BTC's settlement price will be above the window opening price. The strategy sees the last 60 one-minute OHLCV candles (with pre-computed indicators) plus a `context` dict with window-specific information.
 
-**Available features** in the window DataFrame:
+### Strategy API: `on_bar(window, context) → (probability, edge_threshold)`
+
+**`window`** — DataFrame of the last 60 bars with columns:
 - Base: `open`, `high`, `low`, `close`, `volume`
 - Returns: `returns`
 - Volatility: `volatility_20`
@@ -32,6 +45,18 @@ You are predicting whether BTC will be **up or down 15 minutes from now**, for u
 - MACD: `macd`, `macd_signal`, `macd_hist`
 - Bollinger Bands: `bbands_lower`, `bbands_mid`, `bbands_upper`, `bbands_bandwidth`
 - Other: `atr_14`, `volume_sma_20`
+
+**`context`** — dict with Kalshi window info:
+- `window_minute`: int (0-13), which minute within the 15-min window you're at
+- `window_open_price`: float, BTC price at minute 0 of this window
+- `minutes_remaining`: int, minutes until settlement
+- `fair_price`: float (0-1), binary option fair value P(up) given current displacement and volatility
+
+**Returns**: `(probability, edge_threshold)`
+- `probability`: float 0-1, your model's estimate of P(BTC up at settlement)
+- `edge_threshold`: float 0-1, minimum `|probability - fair_price|` required to trigger a trade
+
+The backtest engine trades when your `probability` diverges from `fair_price` by more than `edge_threshold`. If `probability > fair_price + edge_threshold`, it buys YES (bet up). If `probability < fair_price - edge_threshold`, it buys NO (bet down).
 
 **Scoring**: `score = sharpe × accuracy × trade_factor` where:
 - `sharpe` = annualized Sharpe ratio of daily P&L
@@ -45,12 +70,12 @@ You are predicting whether BTC will be **up or down 15 minutes from now**, for u
 Each experiment runs on CPU. The backtest runs for a **maximum of 120 seconds**. You launch it as: `uv run backtest.py`.
 
 **What you CAN do:**
-- Modify `strategy.py` — this is the only file you edit. Everything is fair game: signal logic, indicator combinations, thresholds, confidence calculation, ensemble methods, regime detection, adaptive parameters.
+- Modify `strategy.py` — this is the only file you edit. Everything is fair game: probability model, indicator combinations, edge thresholds, entry timing logic, ensemble methods, regime detection, adaptive parameters.
 
 **What you CANNOT do:**
-- Modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, feature engineering, and backtesting engine.
+- Modify `prepare.py`. It contains the fixed evaluation, data loading, feature engineering, and backtesting engine.
 - Modify `backtest.py`. It is the fixed entry point.
-- Install new packages or add dependencies. You can only use what's already in `pyproject.toml` (pandas, numpy, pandas-ta).
+- Install new packages or add dependencies. You can only use what's already in `pyproject.toml` (pandas, numpy, pandas-ta, scipy).
 - Modify the evaluation harness or scoring formula.
 
 **The goal is simple: get the highest score.** Since the time budget is fixed, you don't need to worry about execution time. Everything in `strategy.py` is fair game.
@@ -70,9 +95,12 @@ Here are productive directions for improving the strategy:
 - **Multi-signal ensembles**: Combine 3-5 signals with majority voting
 - **Momentum**: Rate of change, price velocity, acceleration
 - **Volume confirmation**: Volume spikes, volume-price divergence
-- **Adaptive thresholds**: Adjust RSI/confidence thresholds based on volatility regime
+- **Adaptive thresholds**: Adjust edge_threshold based on volatility regime
 - **Regime detection**: Use volatility or trend strength to switch between strategies
-- **Confidence calibration**: Use signal strength to set more accurate confidence levels
+- **Probability calibration**: Use signal strength to produce better-calibrated probabilities
+- **Entry timing**: Trade early in window (more uncertainty, bigger edge) vs late (more certainty, smaller edge)
+- **Displacement-aware**: Factor in how far price has moved from window open when estimating probability
+- **Fair price disagreement**: Look for situations where your probability model systematically disagrees with the fair price model
 - **Time-of-day patterns**: Different behavior during different market hours
 
 ## Output format
@@ -118,8 +146,8 @@ Example:
 
 ```
 commit	score	sharpe	accuracy	num_trades	status	description
-a1b2c3d	0.123456	1.560000	0.580000	142	keep	baseline RSI strategy
-b2c3d4e	0.156789	2.100000	0.610000	98	keep	add EMA crossover signal
+a1b2c3d	0.123456	1.560000	0.580000	142	keep	baseline RSI probability strategy
+b2c3d4e	0.156789	2.100000	0.610000	98	keep	add displacement-aware probability
 c3d4e5f	0.098000	1.200000	0.550000	156	discard	switch to MACD only
 d4e5f6g	-999.000000	0.000000	0.000000	0	crash	syntax error in ensemble logic
 ```

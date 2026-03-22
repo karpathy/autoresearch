@@ -1,13 +1,18 @@
 """
-Fixed data pipeline, backtesting engine, and evaluation for BTC autoresearch.
+Data pipeline, backtesting engine, and evaluation for BTC autoresearch.
 
-DO NOT MODIFY — this file is read-only. The agent only edits strategy.py.
+Backtesting engine models Kalshi KXBTC15M contract mechanics:
+- 15-minute windows aligned to clock boundaries (:00, :15, :30, :45)
+- Settlement = mean of close prices in the final minute (minute 14-15)
+- Entry allowed at any minute 0-13 within a window
+- Fair market price estimated via binary option pricing (normal CDF)
+- Strategy returns (probability, edge_threshold); trades when edge > threshold
+
+The agent only edits strategy.py.
 
 Usage:
     python prepare.py              # generate synthetic data (for testing)
     python prepare.py --check      # verify data exists and print stats
-
-Data is stored in ~/.cache/autoresearch/.
 """
 
 import os
@@ -16,9 +21,10 @@ import argparse
 
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
 
 # ---------------------------------------------------------------------------
-# Constants (fixed, do not modify)
+# Constants
 # ---------------------------------------------------------------------------
 
 # Configurable temporal split — change these dates to control train/val periods
@@ -27,17 +33,21 @@ VAL_PERIODS = [
     ("2025-01-01", "2025-03-22"),
 ]
 
-# Prediction task
-HORIZON_MINUTES = 15    # predict price direction this far ahead
-LOOKBACK_MINUTES = 60   # number of 1-min bars the strategy sees per call
+# Kalshi KXBTC15M contract structure
+WINDOW_MINUTES = 15         # each Kalshi contract spans 15 minutes
+ENTRY_CUTOFF = 14           # no entries at or after this minute (0-indexed)
+SETTLEMENT_MINUTES = 1      # settlement = avg of closes in last N minutes
+
+# Strategy parameters
+LOOKBACK_MINUTES = 60       # number of 1-min bars the strategy sees per call
 
 # Backtest parameters
-TIME_BUDGET = 120       # max seconds per experiment run
-FEE_BPS = 5             # round-trip fee in basis points (applied per trade)
-MIN_TRADES = 20         # minimum trades for full score (penalty below this)
-CONFIDENCE_THRESHOLD = 0.0  # minimum confidence to place a trade
-MIN_CONFIDENCE = 0.01       # floor for confidence clamp (risk at least $0.01)
-MAX_CONFIDENCE = 0.99       # ceiling for confidence clamp (risk at most $0.99)
+TIME_BUDGET = 120           # max seconds per experiment run
+FEE_BPS = 5                 # round-trip fee in basis points (applied per trade)
+MIN_TRADES = 20             # minimum trades for full score (penalty below this)
+MIN_EDGE_FLOOR = 0.001      # minimum edge threshold floor
+PROB_FLOOR = 0.01           # floor for probability clamp
+PROB_CEIL = 0.99            # ceiling for probability clamp
 INVALID_SCORE = -999.0      # sentinel for invalid/crashed strategies
 
 # Data paths
@@ -213,81 +223,182 @@ def get_val_data(df):
 
 
 # ---------------------------------------------------------------------------
-# Backtesting engine
+# Binary option fair price model
+# ---------------------------------------------------------------------------
+
+def estimate_fair_price(displacement_pct, volatility_per_min, minutes_remaining):
+    """
+    Estimate the fair price of a Kalshi binary 'up' contract using normal CDF.
+
+    This models what a rational market would price the contract at, given:
+    - How far BTC has moved from the window open (displacement)
+    - Recent per-minute volatility
+    - Time remaining until settlement
+
+    Args:
+        displacement_pct: (current_price - window_open) / window_open
+        volatility_per_min: recent per-minute price volatility (std of returns)
+        minutes_remaining: minutes until settlement (0 = settled)
+
+    Returns:
+        float: fair probability of UP outcome (0 to 1)
+    """
+    if minutes_remaining <= 0:
+        return 1.0 if displacement_pct > 0 else (0.5 if displacement_pct == 0 else 0.0)
+
+    if volatility_per_min <= 1e-10:
+        # Near-zero vol: outcome is essentially determined by current displacement
+        return 1.0 if displacement_pct > 0 else (0.5 if displacement_pct == 0 else 0.0)
+
+    sigma = volatility_per_min * math.sqrt(minutes_remaining)
+    z = displacement_pct / sigma
+    return float(norm.cdf(z))
+
+
+# ---------------------------------------------------------------------------
+# Backtesting engine — Kalshi KXBTC15M mechanics
 # ---------------------------------------------------------------------------
 
 def run_backtest(strategy_class, df):
     """
-    Run a backtest of the strategy against the given DataFrame.
+    Run a backtest simulating Kalshi KXBTC15M 15-minute binary contracts.
 
-    For each bar (after the lookback warm-up), calls strategy.on_bar(window)
-    where window is the last LOOKBACK_MINUTES bars with all features.
+    Contract mechanics:
+    - Windows align to clock boundaries (:00, :15, :30, :45)
+    - Settlement = mean of close prices during the last minute of the window
+    - Entry allowed at minutes 0-13 (not minute 14)
+    - Fair market price estimated via binary option model (normal CDF)
+    - Strategy returns (probability, edge_threshold)
+    - Trade placed when |strategy_prob - fair_price| > edge_threshold
+    - P&L: buy at fair_price, collect $1 if correct, lose purchase price if wrong
 
-    The strategy returns (signal, confidence):
-      signal:     1 = predict up, -1 = predict down, 0 = no trade
-      confidence: 0.0 to 1.0
-
-    Simulates Kalshi binary contract P&L:
-      - Buy at price = confidence (e.g., 0.6 means paying $0.60 for a $1 contract)
-      - If correct: profit = 1.0 - confidence
-      - If wrong:   loss = -confidence
-      - Fee deducted per trade
+    One trade per window (first triggered entry wins).
 
     Returns a list of trade dicts.
     """
     strategy = strategy_class()
     trades = []
     error_count = 0
-
     fee_per_trade = FEE_BPS / 10000.0
-    close_arr = df["close"].values
+
     ts_arr = df["timestamp"].values
+    close_arr = df["close"].values
 
-    # Precompute future close prices (shifted by HORIZON_MINUTES)
-    future_close_arr = np.empty(len(df), dtype=np.float64)
-    future_close_arr[:len(df) - HORIZON_MINUTES] = close_arr[HORIZON_MINUTES:]
-    future_close_arr[len(df) - HORIZON_MINUTES:] = np.nan
+    # Pre-compute per-minute volatility (rolling 20-bar std of returns)
+    returns = df["returns"].values
+    vol_series = pd.Series(returns).rolling(20, min_periods=1).std().values
 
-    max_idx = len(df) - HORIZON_MINUTES
-    start_idx = LOOKBACK_MINUTES
+    # Group bars into 15-minute windows aligned to clock boundaries
+    # Each window starts at :00, :15, :30, or :45
+    df_ts = pd.Series(ts_arr)
+    window_labels = df_ts.dt.floor(f"{WINDOW_MINUTES}min")
+    unique_windows = window_labels.unique()
 
-    for i in range(start_idx, max_idx):
-        window = df.iloc[i - LOOKBACK_MINUTES:i]
+    for window_start in unique_windows:
+        # Get all bars in this 15-minute window
+        window_mask = window_labels == window_start
+        window_indices = np.where(window_mask.values)[0]
 
-        try:
-            result = strategy.on_bar(window)
-            signal, confidence = int(result[0]), float(result[1])
-        except Exception as e:
-            error_count += 1
-            if error_count <= 3:
-                print(f"WARNING: strategy.on_bar() raised {type(e).__name__}: {e}")
-            continue
+        if len(window_indices) < WINDOW_MINUTES:
+            continue  # incomplete window, skip
 
-        if signal == 0 or confidence <= CONFIDENCE_THRESHOLD:
-            continue
+        # Window open price = close at minute 0
+        window_open_idx = window_indices[0]
+        window_open_price = close_arr[window_open_idx]
 
-        confidence = max(MIN_CONFIDENCE, min(MAX_CONFIDENCE, confidence))
+        # Settlement price = mean of close prices in the last SETTLEMENT_MINUTES
+        settlement_start = WINDOW_MINUTES - SETTLEMENT_MINUTES
+        settlement_indices = window_indices[settlement_start:WINDOW_MINUTES]
+        settlement_price = np.mean(close_arr[settlement_indices])
 
-        current_close = close_arr[i]
-        future_close = future_close_arr[i]
-        if np.isnan(future_close):
-            continue
-        actual_direction = 1 if future_close > current_close else -1
+        # Actual outcome: is settlement above window open?
+        actual_up = settlement_price > window_open_price
 
-        correct = (signal == actual_direction)
-        if correct:
-            pnl = (1.0 - confidence) - fee_per_trade
-        else:
-            pnl = -confidence - fee_per_trade
+        traded_this_window = False
 
-        trades.append({
-            "timestamp": ts_arr[i],
-            "signal": signal,
-            "confidence": confidence,
-            "actual_direction": actual_direction,
-            "correct": correct,
-            "pnl": pnl,
-        })
+        # Try each entry minute 0 through ENTRY_CUTOFF-1
+        for minute_in_window in range(min(ENTRY_CUTOFF, len(window_indices))):
+            if traded_this_window:
+                break
+
+            bar_idx = window_indices[minute_in_window]
+
+            # Need enough lookback history
+            if bar_idx < LOOKBACK_MINUTES:
+                continue
+
+            current_close = close_arr[bar_idx]
+            current_vol = vol_series[bar_idx]
+            minutes_remaining = WINDOW_MINUTES - minute_in_window
+
+            # Displacement from window open
+            displacement_pct = (current_close - window_open_price) / window_open_price
+
+            # Fair market price via binary option model
+            fair_price = estimate_fair_price(displacement_pct, current_vol, minutes_remaining)
+            fair_price = max(PROB_FLOOR, min(PROB_CEIL, fair_price))
+
+            # Build lookback window for strategy
+            window_data = df.iloc[bar_idx - LOOKBACK_MINUTES:bar_idx]
+
+            # Build context dict
+            context = {
+                "window_minute": minute_in_window,
+                "window_open_price": window_open_price,
+                "minutes_remaining": minutes_remaining,
+                "fair_price": fair_price,
+            }
+
+            # Call strategy
+            try:
+                result = strategy.on_bar(window_data, context)
+                probability = float(result[0])
+                edge_threshold = float(result[1])
+            except Exception as e:
+                error_count += 1
+                if error_count <= 3:
+                    print(f"WARNING: strategy.on_bar() raised {type(e).__name__}: {e}")
+                continue
+
+            # Clamp probability
+            probability = max(PROB_FLOOR, min(PROB_CEIL, probability))
+            edge_threshold = max(MIN_EDGE_FLOOR, edge_threshold)
+
+            # Determine trade direction and edge
+            # If probability > fair_price: strategy thinks UP is more likely → buy YES
+            # If probability < fair_price: strategy thinks DOWN is more likely → buy NO
+            edge_up = probability - fair_price
+            edge_down = (1 - probability) - (1 - fair_price)  # = fair_price - probability
+
+            if abs(edge_up) > edge_threshold:
+                if edge_up > 0:
+                    # Buy YES (bet UP) at fair_price
+                    buy_price = fair_price
+                    correct = actual_up
+                else:
+                    # Buy NO (bet DOWN) at (1 - fair_price)
+                    buy_price = 1.0 - fair_price
+                    correct = not actual_up
+
+                if correct:
+                    pnl = (1.0 - buy_price) - fee_per_trade
+                else:
+                    pnl = -buy_price - fee_per_trade
+
+                trades.append({
+                    "timestamp": ts_arr[bar_idx],
+                    "window_start": window_start,
+                    "window_minute": minute_in_window,
+                    "signal": 1 if edge_up > 0 else -1,
+                    "probability": probability,
+                    "fair_price": fair_price,
+                    "edge": abs(edge_up),
+                    "buy_price": buy_price,
+                    "correct": correct,
+                    "pnl": pnl,
+                })
+
+                traded_this_window = True
 
     if error_count > 0:
         print(f"WARNING: strategy.on_bar() raised {error_count} total errors")
@@ -296,7 +407,7 @@ def run_backtest(strategy_class, df):
 
 
 # ---------------------------------------------------------------------------
-# Evaluation (DO NOT CHANGE — this is the fixed metric)
+# Evaluation (fixed metric)
 # ---------------------------------------------------------------------------
 
 def compute_metrics(trades):
@@ -319,8 +430,7 @@ def compute_metrics(trades):
     accuracy = trades_df["correct"].mean()
     total_pnl = trades_df["pnl"].sum()
 
-    # Sharpe ratio: annualized from per-trade P&L
-    # Group by day for daily P&L
+    # Sharpe ratio: annualized from daily P&L
     trades_df["date"] = trades_df["timestamp"].dt.date
     daily_pnl = trades_df.groupby("date")["pnl"].sum()
 
@@ -360,7 +470,7 @@ def evaluate(strategy_class):
     1. Load data
     2. Compute features
     3. Extract validation data
-    4. Run backtest on validation data
+    4. Run backtest on validation data (Kalshi KXBTC15M mechanics)
     5. Compute and print metrics
 
     Returns metrics dict.
@@ -370,7 +480,7 @@ def evaluate(strategy_class):
     df = compute_features(df)
     val_df = get_val_data(df)
 
-    if len(val_df) < LOOKBACK_MINUTES + HORIZON_MINUTES + 1:
+    if len(val_df) < LOOKBACK_MINUTES + WINDOW_MINUTES + 1:
         print("ERROR: not enough validation data")
         return {"score": INVALID_SCORE}
 

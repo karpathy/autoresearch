@@ -11,4 +11,5 @@ dependencies = [
     "pandas-ta>=0.3.14b",
     "pyarrow>=21.0.0",
     "requests>=2.32.0",
+    "scipy>=1.14.0",
 ]
