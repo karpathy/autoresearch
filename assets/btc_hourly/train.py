@@ -251,39 +251,60 @@ def compute_vol_targets(df: pd.DataFrame) -> np.ndarray:
 
 
 def compute_regime_targets(df: pd.DataFrame) -> np.ndarray:
-    """Compute forward sign disagreement over next 168h.
+    """Compute forward return model directional accuracy over next 168h.
 
-    For each hour, measures the fraction of hours in the next 168h where
-    24h and 168h forward returns disagree in sign. High values indicate
-    choppy/reversing markets where momentum signals are unreliable.
+    Uses 3-fold time-series out-of-fold predictions to measure when the
+    return model tends to be right vs wrong. This captures model reliability
+    rather than market direction.
 
-    Target range [0, 1]: 1.0 = total disagreement, 0.0 = perfect agreement.
+    High accuracy → trust the model → full positions.
+    Low accuracy → model is failing → reduce positions.
 
-    Returns array of same length as df. Edges are NaN.
+    Returns array of same length as df. Edges and first fold are NaN.
     """
-    close = df["close"].values.astype(np.float64)
-    n = len(close)
+    n = len(df)
 
-    # Forward returns at each hour
-    ret_24 = np.full(n, np.nan)
-    ret_24[:n-24] = close[24:n] / close[:n-24] - 1.0
+    # Replicate the return model's feature/target pipeline
+    features, _, vol_safe = compute_features(df)
+    raw_targets = compute_targets(df)
+    raw_targets = raw_targets[MAX_LOOKBACK:]
 
-    ret_168 = np.full(n, np.nan)
-    ret_168[:n-168] = close[168:n] / close[:n-168] - 1.0
+    valid = ~np.isnan(raw_targets)
+    feat_v = np.nan_to_num(features[valid], nan=0.0)
+    tgt_v = np.clip(raw_targets[valid] / vol_safe[valid], -5.0, 5.0)
 
-    # Sign disagreement at each hour (1 = disagree, 0 = agree, NaN = missing)
-    both_valid = ~np.isnan(ret_24) & ~np.isnan(ret_168)
-    sign_disagree = np.full(n, np.nan)
-    sign_disagree[both_valid] = (
-        np.sign(ret_24[both_valid]) != np.sign(ret_168[both_valid])
+    # 3-fold time-series OOF predictions
+    from sklearn.model_selection import TimeSeriesSplit
+    tscv = TimeSeriesSplit(n_splits=3)
+    oof_preds = np.full(len(tgt_v), np.nan)
+
+    for train_idx, test_idx in tscv.split(feat_v):
+        m = HistGradientBoostingRegressor(
+            max_iter=500, max_depth=4, min_samples_leaf=600,
+            learning_rate=0.01, max_leaf_nodes=15,
+            l2_regularization=1.5, random_state=42,
+        )
+        m.fit(feat_v[train_idx], tgt_v[train_idx])
+        oof_preds[test_idx] = m.predict(feat_v[test_idx])
+
+    # Directional accuracy at each hour
+    has_pred = ~np.isnan(oof_preds)
+    correct = np.full(len(tgt_v), np.nan)
+    correct[has_pred] = (
+        np.sign(oof_preds[has_pred]) == np.sign(tgt_v[has_pred])
     ).astype(np.float64)
 
-    # Forward rolling 168h mean: reverse → trailing rolling → reverse back
-    disagree_rev = pd.Series(sign_disagree[::-1].copy())
-    rolling_mean = disagree_rev.rolling(168, min_periods=84).mean().values
-    targets = rolling_mean[::-1].copy()
+    # Forward 168h rolling accuracy (reverse → trailing rolling → reverse)
+    fwd_acc = pd.Series(correct[::-1].copy()).rolling(
+        168, min_periods=84
+    ).mean().values[::-1].copy()
 
-    return targets
+    # Map back to original df length
+    full_targets = np.full(n, np.nan)
+    valid_indices = np.arange(MAX_LOOKBACK, n)[valid]
+    full_targets[valid_indices[:len(fwd_acc)]] = fwd_acc
+
+    return full_targets
 
 
 def compute_regime_features(df: pd.DataFrame) -> np.ndarray:
@@ -564,8 +585,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
         regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
 
-        # High disagreement → reduce positions (inverted: high pred = less trust)
-        regime_adj = 1.0 - 0.15 * regime_norm  # range [0.85, 1.0]
+        # High accuracy → trust model, low accuracy → reduce positions
+        regime_adj = 0.85 + 0.15 * regime_norm  # range [0.85, 1.0]
         sigma_preds = sigma_preds * regime_adj
 
         # Vol prediction — classifier with vol feature subset
