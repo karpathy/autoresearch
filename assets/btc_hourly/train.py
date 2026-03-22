@@ -275,7 +275,7 @@ def compute_regime_targets(df: pd.DataFrame) -> np.ndarray:
 
     # 3-fold time-series OOF predictions
     from sklearn.model_selection import TimeSeriesSplit
-    tscv = TimeSeriesSplit(n_splits=5)
+    tscv = TimeSeriesSplit(n_splits=3)
     oof_preds = np.full(len(tgt_v), np.nan)
 
     for train_idx, test_idx in tscv.split(feat_v):
@@ -520,10 +520,10 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     regime_model = HistGradientBoostingClassifier(
         max_iter=500,
-        max_depth=3,
+        max_depth=4,
         min_samples_leaf=200,
         learning_rate=0.02,
-        max_leaf_nodes=10,
+        max_leaf_nodes=20,
         l2_regularization=2.0,
         random_state=42,
     )
