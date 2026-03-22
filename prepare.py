@@ -22,8 +22,6 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 
 # Configurable temporal split — change these dates to control train/val periods
-TRAIN_START = "2024-01-01"
-TRAIN_END = "2024-12-31"
 VAL_PERIODS = [
     ("2023-01-01", "2023-12-31"),
     ("2025-01-01", "2025-03-22"),
@@ -171,16 +169,10 @@ def compute_features(df):
 
     # Bollinger Bands
     bb_df = ta.bbands(df["close"], length=20, std=2)
-    if bb_df is not None:
-        df["bbands_lower"] = bb_df.iloc[:, 0]
-        df["bbands_mid"] = bb_df.iloc[:, 1]
-        df["bbands_upper"] = bb_df.iloc[:, 2]
-        df["bbands_bandwidth"] = bb_df.iloc[:, 3] if bb_df.shape[1] > 3 else 0.0
-    else:
-        df["bbands_lower"] = df["close"]
-        df["bbands_mid"] = df["close"]
-        df["bbands_upper"] = df["close"]
-        df["bbands_bandwidth"] = 0.0
+    df["bbands_lower"] = bb_df.iloc[:, 0]
+    df["bbands_mid"] = bb_df.iloc[:, 1]
+    df["bbands_upper"] = bb_df.iloc[:, 2]
+    df["bbands_bandwidth"] = bb_df.iloc[:, 3] if bb_df.shape[1] > 3 else 0.0
 
     # ATR
     df["atr_14"] = ta.atr(df["high"], df["low"], df["close"], length=14)
@@ -206,14 +198,15 @@ def get_val_data(df):
     ts = df["timestamp"]
 
     val_mask = pd.Series(False, index=df.index)
+    period_counts = []
     for vstart, vend in VAL_PERIODS:
         period_mask = (ts >= vstart) & (ts < pd.Timestamp(vend) + pd.Timedelta(days=1))
         val_mask = val_mask | period_mask
+        period_counts.append((vstart, vend, period_mask.sum()))
     val_df = df[val_mask].reset_index(drop=True)
 
-    for vstart, vend in VAL_PERIODS:
-        period_df = df[(ts >= vstart) & (ts < pd.Timestamp(vend) + pd.Timedelta(days=1))]
-        print(f"Val:   {len(period_df)} bars ({vstart} to {vend})")
+    for vstart, vend, count in period_counts:
+        print(f"Val:   {count} bars ({vstart} to {vend})")
     print(f"Val total: {len(val_df)} bars")
 
     return val_df
@@ -277,6 +270,8 @@ def run_backtest(strategy_class, df):
 
         current_close = close_arr[i]
         future_close = future_close_arr[i]
+        if np.isnan(future_close):
+            continue
         actual_direction = 1 if future_close > current_close else -1
 
         correct = (signal == actual_direction)
@@ -364,7 +359,7 @@ def evaluate(strategy_class):
     Full evaluation pipeline:
     1. Load data
     2. Compute features
-    3. Split into train/val
+    3. Extract validation data
     4. Run backtest on validation data
     5. Compute and print metrics
 
