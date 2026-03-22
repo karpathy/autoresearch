@@ -15,8 +15,8 @@ class Strategy:
         fair = context["fair_price"]
         mins_left = context["minutes_remaining"]
 
-        # Only trade at minutes 0-3
-        if minute > 3:
+        # Only trade at minutes 0-1 (maximum uncertainty)
+        if minute > 1:
             return (fair, 1.0)
 
         latest = window.iloc[-1]
