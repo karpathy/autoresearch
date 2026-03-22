@@ -13,6 +13,7 @@ class Strategy:
     def on_bar(self, window: pd.DataFrame, context: dict) -> tuple[float, float]:
         minute = context["window_minute"]
         fair = context["fair_price"]
+        mins_left = context["minutes_remaining"]
 
         # Only trade at minutes 0-3
         if minute > 3:
@@ -28,8 +29,9 @@ class Strategy:
         atr_pct = atr / price + 1e-10
         z_atr = ret_7 / atr_pct
 
-        # Contrarian: large moves revert
-        mean_rev_signal = 0.5 - np.clip(z_atr * 0.12, -0.35, 0.35)
+        # Scale sensitivity by time remaining: more time = stronger reversion expected
+        time_scale = np.sqrt(mins_left / 15.0)  # 1.0 at minute 0, decays
+        mean_rev_signal = 0.5 - np.clip(z_atr * 0.12 * time_scale, -0.35, 0.35)
 
         # --- Signal 2: Bollinger Band position ---
         bb_upper = latest["bbands_upper"]
