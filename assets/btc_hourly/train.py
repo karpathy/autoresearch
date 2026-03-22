@@ -251,29 +251,37 @@ def compute_vol_targets(df: pd.DataFrame) -> np.ndarray:
 
 
 def compute_regime_targets(df: pd.DataFrame) -> np.ndarray:
-    """Compute forward directional efficiency over next 168h.
+    """Compute forward sign disagreement over next 168h.
 
-    Values near 1.0 = strong trend ahead, near 0 = chop/reversal.
-    Continuous regression target with more information than binary persistence.
+    For each hour, measures the fraction of hours in the next 168h where
+    24h and 168h forward returns disagree in sign. High values indicate
+    choppy/reversing markets where momentum signals are unreliable.
+
+    Target range [0, 1]: 1.0 = total disagreement, 0.0 = perfect agreement.
 
     Returns array of same length as df. Edges are NaN.
     """
     close = df["close"].values.astype(np.float64)
     n = len(close)
 
-    # Forward 168h net move (vectorized)
-    net_move = np.full(n, np.nan)
-    net_move[:n-168] = np.abs(close[168:] - close[:n-168])
+    # Forward returns at each hour
+    ret_24 = np.full(n, np.nan)
+    ret_24[:n-24] = close[24:n] / close[:n-24] - 1.0
 
-    # Forward 168h path length: rolling sum of abs hourly changes, shifted forward
-    abs_changes = np.abs(np.diff(close))  # length n-1
-    path_rolling = pd.Series(abs_changes).rolling(168, min_periods=168).sum().values
-    # path_rolling[i+167] = sum of abs_changes[i:i+168] = path from close[i] to close[i+168]
-    path_length = np.full(n, np.nan)
-    path_length[:n-168] = path_rolling[167:]
+    ret_168 = np.full(n, np.nan)
+    ret_168[:n-168] = close[168:n] / close[:n-168] - 1.0
 
-    path_safe = np.where((path_length > 0) & ~np.isnan(path_length), path_length, np.nan)
-    targets = net_move / path_safe
+    # Sign disagreement at each hour (1 = disagree, 0 = agree, NaN = missing)
+    both_valid = ~np.isnan(ret_24) & ~np.isnan(ret_168)
+    sign_disagree = np.full(n, np.nan)
+    sign_disagree[both_valid] = (
+        np.sign(ret_24[both_valid]) != np.sign(ret_168[both_valid])
+    ).astype(np.float64)
+
+    # Forward rolling 168h mean: reverse → trailing rolling → reverse back
+    disagree_rev = pd.Series(sign_disagree[::-1].copy())
+    rolling_mean = disagree_rev.rolling(168, min_periods=84).mean().values
+    targets = rolling_mean[::-1].copy()
 
     return targets
 
@@ -544,9 +552,21 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
         sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
 
-        # Regime model disabled — no discriminative signal on either target
-        # (momentum persistence: coin flip; directional efficiency: pred std 0.028 vs target 0.072)
-        # Code kept for future experiments with better features/targets.
+        # Regime prediction — slow-moving position multiplier
+        regime_feats = compute_regime_features(df)
+        regime_feats = np.nan_to_num(regime_feats, nan=0.0)
+        regime_pred = regime_model.predict(regime_feats)
+
+        # Smooth heavily — regime changes weekly, not hourly
+        regime_smooth = pd.Series(regime_pred).ewm(span=168, min_periods=1).mean().values
+
+        # Normalize to model's actual range
+        regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
+        regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
+
+        # High disagreement → reduce positions (inverted: high pred = less trust)
+        regime_adj = 1.0 - 0.15 * regime_norm  # range [0.85, 1.0]
+        sigma_preds = sigma_preds * regime_adj
 
         # Vol prediction — classifier with vol feature subset
         vol_high_prob = vol_model.predict_proba(feats[:, vol_feat_mask])[:, 1]
