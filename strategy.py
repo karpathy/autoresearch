@@ -44,7 +44,6 @@ class Strategy:
         # RSI < 30 → oversold → higher P(up); RSI > 70 → overbought → lower P(up)
         rsi = latest["rsi_14"]
         probability = 0.5 + (50 - rsi) / 100 * 0.3
-        probability = max(0.01, min(0.99, probability))
 
         # Fixed edge threshold: require 5% edge over fair price to trade
         edge_threshold = 0.05

@@ -29,7 +29,6 @@ from scipy.stats import norm
 
 # Configurable temporal split — change these dates to control train/val periods
 VAL_PERIODS = [
-    ("2023-01-01", "2023-12-31"),
     ("2025-01-01", "2025-03-22"),
 ]
 
@@ -206,6 +205,9 @@ def get_val_data(df):
     Returns val_df (reset index for positional access in backtest).
     """
     ts = df["timestamp"]
+    # Strip timezone so string comparisons work regardless of tz-aware data
+    if ts.dt.tz is not None:
+        ts = ts.dt.tz_localize(None)
 
     val_mask = pd.Series(False, index=df.index)
     period_counts = []
@@ -243,11 +245,8 @@ def estimate_fair_price(displacement_pct, volatility_per_min, minutes_remaining)
     Returns:
         float: fair probability of UP outcome (0 to 1)
     """
-    if minutes_remaining <= 0:
-        return 1.0 if displacement_pct > 0 else (0.5 if displacement_pct == 0 else 0.0)
-
-    if volatility_per_min <= 1e-10:
-        # Near-zero vol: outcome is essentially determined by current displacement
+    if minutes_remaining <= 0 or volatility_per_min <= 1e-10:
+        # Outcome determined by current displacement (no time/vol left to change it)
         return 1.0 if displacement_pct > 0 else (0.5 if displacement_pct == 0 else 0.0)
 
     sigma = volatility_per_min * math.sqrt(minutes_remaining)
@@ -284,9 +283,8 @@ def run_backtest(strategy_class, df):
     ts_arr = df["timestamp"].values
     close_arr = df["close"].values
 
-    # Pre-compute per-minute volatility (rolling 20-bar std of returns)
-    returns = df["returns"].values
-    vol_series = pd.Series(returns).rolling(20, min_periods=1).std().values
+    # Reuse volatility already computed by compute_features()
+    vol_series = df["volatility_20"].values
 
     # Group bars into 15-minute windows aligned to clock boundaries
     # Each window starts at :00, :15, :30, or :45
@@ -364,7 +362,6 @@ def run_backtest(strategy_class, df):
             # If probability > fair_price: strategy thinks UP is more likely → buy YES
             # If probability < fair_price: strategy thinks DOWN is more likely → buy NO
             edge_up = probability - fair_price
-            edge_down = (1 - probability) - (1 - fair_price)  # = fair_price - probability
 
             if abs(edge_up) > edge_threshold:
                 if edge_up > 0:
@@ -393,8 +390,6 @@ def run_backtest(strategy_class, df):
                     "correct": correct,
                     "pnl": pnl,
                 })
-
-                traded_this_window = True
 
     if error_count > 0:
         print(f"WARNING: strategy.on_bar() raised {error_count} total errors")
