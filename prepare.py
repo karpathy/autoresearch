@@ -15,6 +15,7 @@ import time
 import math
 import argparse
 import pickle
+import hashlib
 from multiprocessing import Pool
 
 import requests
@@ -54,12 +55,59 @@ BOS_TOKEN = "<|reserved_0|>"
 # Data download
 # ---------------------------------------------------------------------------
 
+def _sha256_path(path):
+    return path + ".sha256"
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_sha256(path):
+    hash_path = _sha256_path(path)
+    temp_path = hash_path + ".tmp"
+    with open(temp_path, "w", encoding="ascii") as f:
+        f.write(_sha256_file(path) + "\n")
+    os.replace(temp_path, hash_path)
+
+
+def _verify_cached_shard(path):
+    hash_path = _sha256_path(path)
+    if not os.path.exists(path):
+        return False, "missing shard"
+    if not os.path.exists(hash_path):
+        return False, "missing hash"
+    with open(hash_path, "r", encoding="ascii") as f:
+        expected = f.read().strip()
+    if len(expected) != 64:
+        return False, "invalid hash"
+    if _sha256_file(path) != expected:
+        return False, "SHA-256 mismatch"
+    return True, None
+
+
+def _remove_cached_shard(path):
+    for candidate in [path, _sha256_path(path), path + ".tmp", _sha256_path(path) + ".tmp"]:
+        if os.path.exists(candidate):
+            try:
+                os.remove(candidate)
+            except OSError:
+                pass
+
 def download_single_shard(index):
     """Download one parquet shard with retries. Returns True on success."""
     filename = f"shard_{index:05d}.parquet"
     filepath = os.path.join(DATA_DIR, filename)
-    if os.path.exists(filepath):
+    ok, reason = _verify_cached_shard(filepath)
+    if ok:
         return True
+    if os.path.exists(filepath) or os.path.exists(_sha256_path(filepath)):
+        print(f"  Re-downloading {filename} ({reason})")
+        _remove_cached_shard(filepath)
 
     url = f"{BASE_URL}/{filename}"
     max_attempts = 5
@@ -72,17 +120,13 @@ def download_single_shard(index):
                 for chunk in response.iter_content(chunk_size=1024 * 1024):
                     if chunk:
                         f.write(chunk)
-            os.rename(temp_path, filepath)
+            os.replace(temp_path, filepath)
+            _write_sha256(filepath)
             print(f"  Downloaded {filename}")
             return True
         except (requests.RequestException, IOError) as e:
             print(f"  Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
-            for path in [filepath + ".tmp", filepath]:
-                if os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
+            _remove_cached_shard(filepath)
             if attempt < max_attempts:
                 time.sleep(2 ** attempt)
     return False
@@ -96,8 +140,8 @@ def download_data(num_shards, download_workers=8):
     if VAL_SHARD not in ids:
         ids.append(VAL_SHARD)
 
-    # Count what's already downloaded
-    existing = sum(1 for i in ids if os.path.exists(os.path.join(DATA_DIR, f"shard_{i:05d}.parquet")))
+    # Only verified shards are trusted for reuse.
+    existing = sum(1 for i in ids if _verify_cached_shard(os.path.join(DATA_DIR, f"shard_{i:05d}.parquet"))[0])
     if existing == len(ids):
         print(f"Data: all {len(ids)} shards already downloaded at {DATA_DIR}")
         return
