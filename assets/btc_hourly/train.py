@@ -280,7 +280,7 @@ def compute_regime_targets(df: pd.DataFrame) -> np.ndarray:
 
     for train_idx, test_idx in tscv.split(feat_v):
         m = HistGradientBoostingRegressor(
-            max_iter=500, max_depth=4, min_samples_leaf=600,
+            max_iter=300, max_depth=4, min_samples_leaf=600,
             learning_rate=0.01, max_leaf_nodes=15,
             l2_regularization=1.5, random_state=42,
         )
