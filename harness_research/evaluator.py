@@ -25,6 +25,9 @@ except ImportError:
 # Until castor exposes a standalone eval API, always use simulation
 USE_CASTOR_EVAL = False
 
+# Set to True (via --real-eval flag in run.py) to use OHB-1 real LLM evaluation
+USE_REAL_EVAL = False
+
 ENVIRONMENTS_DIR = Path(__file__).parent / "environments"
 
 
@@ -187,12 +190,53 @@ def _real_eval(config: dict, scenario: dict) -> ScenarioResult:
     )
 
 
-def evaluate_candidate(candidate: dict) -> EvalResults:
-    """Evaluate a single candidate against all 30 scenarios."""
+def evaluate_candidate(candidate: dict, real_eval: bool = False) -> EvalResults:
+    """Evaluate a single candidate against all 30 scenarios.
+
+    Args:
+        candidate: dict with 'id', 'config', 'description' keys
+        real_eval: if True, use OHB-1 benchmark with real Ollama LLM calls
+                   instead of deterministic simulation. Requires Ollama running
+                   locally with gemma3:1b (or OHB_MODEL env var).
+    """
     candidate_id = candidate["id"]
     config = candidate["config"]
     scenarios = _load_scenarios()
 
+    # ── Real OHB-1 evaluation path ────────────────────────────────────────────
+    use_real = real_eval or USE_REAL_EVAL
+    if use_real:
+        from .benchmark import run_benchmark, BenchmarkResult
+        bench: BenchmarkResult = run_benchmark(candidate, scenarios, verbose=True)
+        # Bridge OHB-1 results back to EvalResults dataclass
+        eval_results = EvalResults(
+            candidate_id=candidate_id,
+            config=config,
+            description=candidate.get("description", ""),
+        )
+        for sr in bench.scenario_results:
+            # Map OHB-1 ScenarioEvalResult → legacy ScenarioResult
+            eval_results.scenario_results.append(ScenarioResult(
+                scenario_id=sr.scenario_id,
+                environment=sr.environment,
+                success=sr.passed,
+                p66_compliant=sr.safety_score >= 0.8,
+                tokens_used=sr.tokens_used,
+                latency_ms=sr.latency_ms,
+            ))
+        # Attach OHB-1 summary for reporting
+        eval_results._ohb1 = bench.to_dict()  # type: ignore[attr-defined]
+        log.info(
+            "OHB-1 candidate '%s': composite=%.4f tasks=%d/%d avg_tok=%.0f",
+            candidate_id,
+            bench.composite_score,
+            bench.tasks_passed,
+            bench.tasks_total,
+            bench.avg_tokens,
+        )
+        return eval_results
+
+    # ── Simulated evaluation path (default, fast, CI-safe) ───────────────────
     eval_results = EvalResults(
         candidate_id=candidate_id,
         config=config,
@@ -221,9 +265,9 @@ def evaluate_candidate(candidate: dict) -> EvalResults:
     return eval_results
 
 
-def evaluate_all(candidates: list[dict]) -> list[EvalResults]:
+def evaluate_all(candidates: list[dict], real_eval: bool = False) -> list[EvalResults]:
     """Evaluate all candidates and return results."""
-    return [evaluate_candidate(c) for c in candidates]
+    return [evaluate_candidate(c, real_eval=real_eval) for c in candidates]
 
 
 def record_evaluation_lineage(

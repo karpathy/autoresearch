@@ -21,6 +21,7 @@ Flags:
 
 import argparse
 import logging
+import os
 import sys
 
 log = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ def _run_for_tier(args, hardware_tier: str | None) -> bool:
     log.info("Generated %d candidates", len(candidates))
 
     log.info("Step 2: Evaluating candidates...")
-    results = evaluate_all(candidates)
+    results = evaluate_all(candidates, real_eval=getattr(args, "real_eval", False))
 
     log.info("Step 3: Ranking candidates...")
     ranked, winner, champion_score, best_score = find_winner(
@@ -205,8 +206,8 @@ def main() -> int:
     parser.add_argument("--search-space-status", action="store_true",
                         help="Print search space size, explored count/pct, and champion as JSON")
     parser.add_argument("--real-eval", action="store_true",
-                        help="Run OHB-1 real LLM benchmark on top-5 finalists before promotion "
-                             "(requires GEMINI_API_KEY; ~$0.01 per run)")
+                        help="Use OHB-1 real LLM evaluation via Ollama (gemma3:1b) instead of "
+                             "simulation. Also re-ranks top-5 finalists before promotion.")
     parser.add_argument("--benchmark", action="store_true",
                         help="Run OHB-1 benchmark on a single candidate config and print results. "
                              "Pass --candidates 1 and a specific config via --hardware-tier.")
@@ -224,18 +225,53 @@ def main() -> int:
 
     if args.benchmark:
         import json as _json
-        from .benchmark import evaluate_candidate_real
-        from .generator import generate_candidates
-        # Evaluate the current champion config as a baseline
-        candidates = generate_candidates(n=1, dry_run=True,
-                                         hardware_tier=args.hardware_tier)
-        if not candidates:
-            print("No candidates generated")
-            return 1
-        cand = candidates[0]
-        print(f"Running OHB-1 benchmark on candidate: {cand['id']}")
-        result = evaluate_candidate_real(cand)
-        print(_json.dumps(result.summary(), indent=2))
+        from pathlib import Path as _Path
+        import yaml as _yaml
+        from .benchmark import run_benchmark
+        from .evaluator import _load_scenarios
+
+        # Load current champion config as the baseline candidate
+        ops_dir = _Path(os.environ.get("OPENCASTOR_OPS_DIR",
+                                        _Path.home() / "opencastor-ops"))
+        champion_path = ops_dir / "harness-research" / "champion.yaml"
+        if champion_path.exists():
+            raw = _yaml.safe_load(champion_path.read_text()) or {}
+            candidate = {
+                "id": raw.get("candidate_id", raw.get("id", "champion")),
+                "config": raw.get("config", {}),
+                "description": raw.get("description", "Current champion"),
+            }
+        else:
+            # Fall back to default harness
+            from .generator import _load_seed
+            candidate = {
+                "id": "default_seed",
+                "config": _load_seed(),
+                "description": "Default harness seed",
+            }
+
+        scenarios = _load_scenarios()
+        print(f"OHB-1 Benchmark — model={os.environ.get('OHB_MODEL','gemma3:1b')} "
+              f"candidate={candidate['id']} tasks={len(scenarios)}")
+        print()
+        result = run_benchmark(candidate, scenarios, verbose=True)
+        print()
+        summary = result.to_dict()
+        print(f"Composite score : {summary['composite_score']:.4f}")
+        print(f"Tasks passed    : {summary['tasks_passed']}/{summary['tasks_total']}")
+        print(f"Success rate    : {summary['success_rate']:.2%}")
+        print(f"Safety rate     : {summary['safety_rate']:.2%}")
+        print(f"Avg tokens      : {summary['avg_tokens']:.0f}")
+        print(f"Avg latency     : {summary['avg_latency_ms']:.0f}ms")
+        print()
+        print("By environment:")
+        for env, stats in summary["by_environment"].items():
+            print(f"  {env:<12} {stats['passed']}/{stats['total']} tasks  "
+                  f"composite={stats['composite']:.3f}")
+        print()
+        if args.dry_run:
+            print("[dry-run] Full JSON result:")
+            print(_json.dumps(summary, indent=2))
         return 0
 
     logging.basicConfig(
