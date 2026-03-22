@@ -31,7 +31,7 @@ class Strategy:
 
         # Scale sensitivity by time remaining: more time = stronger reversion expected
         time_scale = np.sqrt(mins_left / 15.0)  # 1.0 at minute 0, decays
-        mean_rev_signal = 0.5 - np.clip(z_atr * 0.12 * time_scale, -0.35, 0.35)
+        mean_rev_signal = 0.5 - np.clip(z_atr * 0.15 * time_scale, -0.40, 0.40)
 
         # --- Signal 2: Bollinger Band position ---
         bb_upper = latest["bbands_upper"]
