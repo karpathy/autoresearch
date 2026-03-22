@@ -14,26 +14,35 @@ class Strategy:
         minute = context["window_minute"]
         fair = context["fair_price"]
 
-        # Only trade at minutes 0-2: maximum uncertainty = maximum potential edge
-        if minute > 2:
-            return (fair, 1.0)  # match fair price with impossible threshold = no trade
+        # Only trade at minutes 0-3
+        if minute > 3:
+            return (fair, 1.0)
 
+        latest = window.iloc[-1]
         close_arr = window["close"].values
-        vol_20 = window["volatility_20"].values[-1]
 
-        # --- Signal: Recent price trend over last 15 bars (previous window) ---
-        # Autocorrelation: BTC tends to continue its trend over short horizons
-        ret_15 = (close_arr[-1] - close_arr[-16]) / close_arr[-16] if len(close_arr) >= 16 else 0.0
-
-        # Normalize by volatility to get a z-score-like measure
+        # --- Signal 1: Mean reversion (contrarian) ---
+        # If price overshot recently, expect reversion toward mean
+        ret_15 = (close_arr[-1] - close_arr[-16]) / close_arr[-16]
+        vol_20 = latest["volatility_20"]
         sigma = vol_20 * np.sqrt(15) + 1e-10
-        z = ret_15 / sigma
+        z_mom = ret_15 / sigma
 
-        # Convert z-score to probability with moderate sensitivity
-        # Positive z → price trending up → P(up) > 0.5
-        probability = 0.5 + np.clip(z * 0.08, -0.35, 0.35)
+        # FLIP: negative z (price dropped) → expect reversion UP
+        mean_rev_signal = 0.5 - np.clip(z_mom * 0.10, -0.3, 0.3)
 
-        # Require substantial edge to trade
-        edge_threshold = 0.15
+        # --- Signal 2: Bollinger Band position ---
+        bb_upper = latest["bbands_upper"]
+        bb_lower = latest["bbands_lower"]
+        bb_range = bb_upper - bb_lower + 1e-10
+        bb_pos = (close_arr[-1] - bb_lower) / bb_range  # 0 = at lower band, 1 = at upper
+
+        # Near lower band → expect bounce UP, near upper band → expect drop
+        bb_signal = 0.5 + (0.5 - bb_pos) * 0.25
+
+        # --- Ensemble ---
+        probability = 0.55 * mean_rev_signal + 0.45 * bb_signal
+
+        edge_threshold = 0.12
 
         return (probability, edge_threshold)
