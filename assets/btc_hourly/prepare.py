@@ -40,6 +40,7 @@ PARQUET_PATH = CACHE_DIR / "btcusdt_1h.parquet"
 _FUNDING_PARQUET = CACHE_DIR / "binance_funding_btcusdt.parquet"
 _FEAR_GREED_PARQUET = CACHE_DIR / "fear_greed_index.parquet"
 _BLOCKCHAIN_PARQUET = CACHE_DIR / "blockchain_metrics.parquet"
+_COT_PARQUET = CACHE_DIR / "cftc_cot_btc.parquet"
 TRAIN_START = pd.Timestamp("2018-01-01")
 
 _BTC_CONFIG = AssetConfig(
@@ -495,6 +496,120 @@ def _download_blockchain_metrics(max_retries: int = 5) -> pd.DataFrame | None:
     return merged
 
 
+def _download_cot_positioning() -> pd.DataFrame | None:
+    """Download CFTC COT positioning data for Bitcoin CME futures and cache.
+
+    Uses the cot_reports library to fetch the Traders in Financial Futures (TFF)
+    report (Futures Only). Extracts dealer, asset manager, and leveraged fund net
+    positions as a fraction of open interest.
+    Returns hourly DataFrame with columns [timestamp, cot_dealer_net,
+    cot_asset_mgr_net, cot_lev_fund_net].
+    Weekly data (Tuesday dates) is forward-filled to hourly resolution.
+    Returns None on failure (caller fills with defaults).
+    """
+    if _COT_PARQUET.exists():
+        age_days = (time.time() - _COT_PARQUET.stat().st_mtime) / 86400
+        if age_days < 7:
+            return pd.read_parquet(_COT_PARQUET)
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    print("Downloading CFTC COT positioning data for Bitcoin...")
+
+    try:
+        import os
+        import tempfile
+
+        from cot_reports import cot_all
+
+        # Run from temp dir to avoid polluting the working directory
+        # (cot_reports dumps .txt files in cwd)
+        orig_dir = os.getcwd()
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            os.chdir(tmp_dir)
+            raw = cot_all("traders_in_financial_futures_fut")
+        finally:
+            os.chdir(orig_dir)
+            # Clean up temp files
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+    except Exception as e:
+        print(f"  WARNING: Failed to download COT data: {e}")
+        return None
+
+    if raw is None or len(raw) == 0:
+        print("  WARNING: No COT data received")
+        return None
+
+    # Normalize column names for robustness across CFTC naming conventions
+    col_map = {c: c.lower().replace(" ", "_").replace("-", "_") for c in raw.columns}
+    raw = raw.rename(columns=col_map)
+
+    # Filter for Bitcoin CME futures (contract code 133741)
+    code_col = None
+    for candidate in ["cftc_contract_market_code", "cftc_contract_market_code_quotes"]:
+        if candidate in raw.columns:
+            code_col = candidate
+            break
+    if code_col is None:
+        print(f"  WARNING: Could not find CFTC contract code column")
+        print(f"  Available columns (first 10): {list(raw.columns)[:10]}")
+        return None
+
+    btc = raw[raw[code_col].astype(str).str.strip().str.strip("'\"") == "133741"].copy()
+    if len(btc) == 0:
+        print("  WARNING: No Bitcoin (133741) data found in COT report")
+        return None
+
+    # Parse date
+    date_col = None
+    for candidate in ["report_date_as_yyyy_mm_dd", "report_date_as_mm_dd_yyyy",
+                       "as_of_date_in_form_yyyy_mm_dd"]:
+        if candidate in btc.columns:
+            date_col = candidate
+            break
+    if date_col is None:
+        print(f"  WARNING: Could not find date column in COT data")
+        return None
+
+    btc["timestamp"] = pd.to_datetime(btc[date_col], errors="coerce")
+    btc["timestamp"] = btc["timestamp"].dt.tz_localize(None)
+    btc = btc.dropna(subset=["timestamp"])
+
+    # Compute net positioning as fraction of open interest
+    oi = pd.to_numeric(btc["open_interest_all"], errors="coerce").astype(float)
+    oi_safe = np.where(oi > 0, oi, 1.0)
+
+    position_specs = {
+        "cot_dealer_net": ("dealer_positions_long_all", "dealer_positions_short_all"),
+        "cot_asset_mgr_net": ("asset_mgr_positions_long_all", "asset_mgr_positions_short_all"),
+        "cot_lev_fund_net": ("lev_money_positions_long_all", "lev_money_positions_short_all"),
+    }
+
+    result = pd.DataFrame({"timestamp": btc["timestamp"].values})
+    for col_name, (long_col, short_col) in position_specs.items():
+        if long_col not in btc.columns or short_col not in btc.columns:
+            print(f"  WARNING: Missing COT columns: {long_col} or {short_col}")
+            pos_cols = [c for c in btc.columns
+                        if any(k in c for k in ["dealer", "asset", "lev", "open_interest"])]
+            print(f"  Available: {pos_cols}")
+            return None
+        long_pos = pd.to_numeric(btc[long_col], errors="coerce").astype(float)
+        short_pos = pd.to_numeric(btc[short_col], errors="coerce").astype(float)
+        result[col_name] = (long_pos.values - short_pos.values) / oi_safe
+
+    result = result.sort_values("timestamp").drop_duplicates(
+        subset="timestamp").reset_index(drop=True)
+
+    # Resample weekly to hourly via forward-fill
+    result = result.set_index("timestamp").resample("1h").ffill().reset_index()
+
+    print(f"  COT positioning: {len(btc)} weekly records, {len(result)} hourly "
+          f"({result['timestamp'].min()} to {result['timestamp'].max()})")
+    result.to_parquet(_COT_PARQUET, index=False)
+    return result
+
+
 def _merge_supplementary(
     ohlcv_df: pd.DataFrame,
     supplementary: list[tuple[pd.DataFrame | None, dict[str, float]]],
@@ -546,11 +661,13 @@ def _load_all_data() -> pd.DataFrame:
     funding_df = _download_funding_rate()
     fear_greed_df = _download_fear_greed()
     blockchain_df = _download_blockchain_metrics()
+    cot_df = _download_cot_positioning()
 
     supplementary = [
         (funding_df, {"funding_rate": 0.0001}),
         (fear_greed_df, {"fear_greed": 50}),
         (blockchain_df, {"hash_rate": 0.0, "tx_count": 0.0, "tx_volume_usd": 0.0}),
+        (cot_df, {"cot_dealer_net": 0.0, "cot_asset_mgr_net": 0.0, "cot_lev_fund_net": 0.0}),
     ]
 
     return _merge_supplementary(ohlcv_df, supplementary)
@@ -701,6 +818,7 @@ if __name__ == "__main__":
         _download_funding_rate()
         _download_fear_greed()
         _download_blockchain_metrics()
+        _download_cot_positioning()
 
         print(f"\nData summary:")
         print(f"  Rows: {len(df)}")
