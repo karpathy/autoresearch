@@ -21,13 +21,15 @@ class Strategy:
         latest = window.iloc[-1]
         close_arr = window["close"].values
 
-        # --- Signal 1: Mean reversion (contrarian) ---
+        # --- Signal 1: Mean reversion normalized by ATR ---
         ret_15 = (close_arr[-1] - close_arr[-16]) / close_arr[-16]
-        vol_20 = latest["volatility_20"]
-        sigma = vol_20 * np.sqrt(15) + 1e-10
-        z_mom = ret_15 / sigma
+        atr = latest["atr_14"]
+        price = close_arr[-1]
+        atr_pct = atr / price + 1e-10
+        z_atr = ret_15 / atr_pct
 
-        mean_rev_signal = 0.5 - np.clip(z_mom * 0.10, -0.3, 0.3)
+        # Contrarian: large moves revert
+        mean_rev_signal = 0.5 - np.clip(z_atr * 0.08, -0.3, 0.3)
 
         # --- Signal 2: Bollinger Band position ---
         bb_upper = latest["bbands_upper"]
@@ -54,11 +56,8 @@ class Strategy:
         # --- Ensemble ---
         probability = 0.55 * mean_rev_signal + 0.45 * bb_signal
 
-        # --- Adaptive edge threshold based on volatility regime ---
-        # Use Bollinger bandwidth as a vol proxy
+        # --- Adaptive edge threshold ---
         bb_bw = latest["bbands_bandwidth"]
-        # Low bandwidth (tight bands) = low vol → lower threshold (trade more)
-        # High bandwidth (wide bands) = high vol → higher threshold (be selective)
         edge_threshold = np.clip(0.10 + bb_bw * 2.0, 0.10, 0.22)
 
         return (probability, edge_threshold)
