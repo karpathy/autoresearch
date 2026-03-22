@@ -224,3 +224,37 @@ def evaluate_candidate(candidate: dict) -> EvalResults:
 def evaluate_all(candidates: list[dict]) -> list[EvalResults]:
     """Evaluate all candidates and return results."""
     return [evaluate_candidate(c) for c in candidates]
+
+
+def record_evaluation_lineage(
+    results: list[EvalResults],
+    evaluator_rrn: str | None,
+    firestore_client=None,
+) -> None:
+    """Write evaluation lineage to Firestore for contributor tracking.
+
+    Each evaluated candidate gets a record in harness_eval_results with:
+      - candidate_id, score, evaluator_rrn, evaluated_at
+      - is_champion (False at write time; promoter sets True on promotion)
+
+    Fails silently — lineage is best-effort, never blocks evaluation.
+    """
+    if firestore_client is None or not evaluator_rrn:
+        return
+    import datetime
+
+    for result in results:
+        try:
+            doc_id = f"{result.candidate_id}__{evaluator_rrn}"
+            firestore_client.collection("harness_eval_results").document(doc_id).set(
+                {
+                    "candidate_id": result.candidate_id,
+                    "score": result.composite_score,
+                    "evaluator_rrn": evaluator_rrn,
+                    "evaluated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "is_champion": False,
+                },
+                merge=True,
+            )
+        except Exception as exc:
+            log.warning("Lineage write failed for %s: %s", result.candidate_id, exc)

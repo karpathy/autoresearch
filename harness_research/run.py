@@ -171,11 +171,19 @@ def main() -> int:
                         help="Scope results to a specific model (e.g. gemini-2.5-flash)")
     parser.add_argument("--dashboard", action="store_true",
                         help="Show the harness research dashboard and exit")
+    parser.add_argument("--search-space-status", action="store_true",
+                        help="Print search space size, explored count/pct, and champion as JSON")
     args = parser.parse_args()
 
     if args.dashboard:
         from .dashboard import main as dashboard_main
         return dashboard_main()
+
+    if args.search_space_status:
+        import json as _json
+        from .search_space import status_dict
+        print(_json.dumps(status_dict(), indent=2))
+        return 0
 
     logging.basicConfig(
         level=logging.INFO,

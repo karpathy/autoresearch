@@ -171,6 +171,20 @@ def main() -> int:
         print("    (no winner reports found)")
     print()
 
+    # Search space progress
+    print("  Search Space Progress:")
+    try:
+        from .search_space import SEARCH_SPACE_SIZE, explored_count
+        count = explored_count()
+        pct = count / SEARCH_SPACE_SIZE * 100
+        bar_filled = int(pct / 2)  # 50-char bar = 100%
+        bar = "█" * bar_filled + "░" * (50 - bar_filled)
+        print(f"    Explored: {count:,} / {SEARCH_SPACE_SIZE:,} configs")
+        print(f"    [{bar}] {pct:.2f}%")
+    except Exception as exc:
+        print(f"    (search space unavailable: {exc})")
+    print()
+
     # Next scheduled run
     # Cron: 0 8 * * * UTC = 1 AM Pacific (PST) / midnight PDT
     now_utc = datetime.now(tz=timezone.utc)
