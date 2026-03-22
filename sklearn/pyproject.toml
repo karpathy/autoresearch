@@ -1,0 +1,12 @@
+[project]
+name = "autoresearch-sklearn"
+version = "0.1.0"
+description = "Autonomous sklearn research loop"
+requires-python = ">=3.10"
+dependencies = [
+    "scikit-learn>=1.5.0",
+    "numpy>=1.26.0",
+    "pandas>=2.0.0",
+    "lightgbm>=4.0.0",
+    "xgboost>=2.0.0",
+]
