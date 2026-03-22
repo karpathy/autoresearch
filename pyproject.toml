@@ -5,6 +5,7 @@ description = "Autonomous ML prediction research platform"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "cot-reports",
     "matplotlib>=3.10.0",
     "numpy>=2.0.0",
     "pandas>=2.2.0",
