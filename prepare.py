@@ -272,7 +272,7 @@ def run_backtest(strategy_class, df):
     - Trade placed when |strategy_prob - fair_price| > edge_threshold
     - P&L: buy at fair_price, collect $1 if correct, lose purchase price if wrong
 
-    One trade per window (first triggered entry wins).
+    Multiple trades per window are allowed (strategy can trade at any minute 0-13).
 
     Returns a list of trade dicts.
     """
@@ -314,12 +314,8 @@ def run_backtest(strategy_class, df):
         # Actual outcome: is settlement above window open?
         actual_up = settlement_price > window_open_price
 
-        traded_this_window = False
-
         # Try each entry minute 0 through ENTRY_CUTOFF-1
         for minute_in_window in range(min(ENTRY_CUTOFF, len(window_indices))):
-            if traded_this_window:
-                break
 
             bar_idx = window_indices[minute_in_window]
 

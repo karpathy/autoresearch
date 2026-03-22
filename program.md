@@ -27,7 +27,7 @@ The backtest engine models this accurately:
 - **Window alignment**: Trades align to real clock boundaries (:00/:15/:30/:45)
 - **Settlement**: Mean of close prices in the final minute (not a point-in-time snapshot)
 - **Fair market price**: Estimated via binary option pricing (normal CDF based on displacement from window open, volatility, and time remaining)
-- **Entry**: Strategy is called at each minute 0-13; first triggered entry per window wins
+- **Entry**: Strategy is called at each minute 0-13; multiple trades per window allowed
 - **P&L**: Buy at fair market price. Correct = `+(1 - buy_price)`, wrong = `-buy_price`, minus fees
 
 ## The prediction task
