@@ -10,7 +10,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import ExtraTreesRegressor, HistGradientBoostingClassifier, HistGradientBoostingRegressor
+from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 
 from prepare import (
     FORWARD_HOURS,
@@ -23,7 +23,7 @@ from prepare import (
 # Feature Engineering
 # ---------------------------------------------------------------------------
 
-RETURN_LOOKBACKS = [4, 12, 24, 48, 72, 168]  # 1h removed — noisiest with power transform
+RETURN_LOOKBACKS = [4, 12, 24, 48, 72, 168]  # 1h removed — noisiest
 VOLATILITY_WINDOWS = [24, 168]
 MAX_LOOKBACK = 168  # maximum lookback window (1 week)
 
@@ -120,7 +120,7 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         bb_pos = (close - sma) / (2 * std_safe)
         feature_cols.append(bb_pos)
 
-    # 7b. Bollinger band width: 2*std/sma (24h removed — noisy with power transform)
+    # 7b. Bollinger band width: 2*std/sma (24h removed — noisy)
     for w in [72, 168]:
         sma = close_series.rolling(w, min_periods=w).mean().values
         std = close_series.rolling(w, min_periods=w).std().values
@@ -184,7 +184,7 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     feature_cols.append(np.sin(2 * np.pi * hours / 24))
     feature_cols.append(np.cos(2 * np.pi * hours / 24))
 
-    # 7. Day of week (cyclical)
+    # 11b. Day of week (cyclical)
     dow = dt.dayofweek
     feature_cols.append(np.sin(2 * np.pi * dow / 7))
     feature_cols.append(np.cos(2 * np.pi * dow / 7))
@@ -250,33 +250,106 @@ def compute_vol_targets(df: pd.DataFrame) -> np.ndarray:
     return vol_targets
 
 
+def compute_regime_targets(df: pd.DataFrame) -> np.ndarray:
+    """Compute forward directional efficiency over next 168h.
+
+    Values near 1.0 = strong trend ahead, near 0 = chop/reversal.
+    Continuous regression target with more information than binary persistence.
+
+    Returns array of same length as df. Edges are NaN.
+    """
+    close = df["close"].values.astype(np.float64)
+    n = len(close)
+
+    # Forward 168h net move (vectorized)
+    net_move = np.full(n, np.nan)
+    net_move[:n-168] = np.abs(close[168:] - close[:n-168])
+
+    # Forward 168h path length: rolling sum of abs hourly changes, shifted forward
+    abs_changes = np.abs(np.diff(close))  # length n-1
+    path_rolling = pd.Series(abs_changes).rolling(168, min_periods=168).sum().values
+    # path_rolling[i+167] = sum of abs_changes[i:i+168] = path from close[i] to close[i+168]
+    path_length = np.full(n, np.nan)
+    path_length[:n-168] = path_rolling[167:]
+
+    path_safe = np.where((path_length > 0) & ~np.isnan(path_length), path_length, np.nan)
+    targets = net_move / path_safe
+
+    return targets
+
+
+def compute_regime_features(df: pd.DataFrame) -> np.ndarray:
+    """Compute weekly-scale features for regime classification.
+
+    These features capture slow-moving market structure that changes
+    over weeks, not hours. Designed for data sources that are toxic
+    to the hourly return model (weekly COT, daily sentiment).
+    """
+    close = df["close"].values.astype(np.float64)
+    volume = df["volume"].values.astype(np.float64)
+
+    hourly_returns = np.zeros(len(close))
+    hourly_returns[1:] = close[1:] / close[:-1] - 1.0
+    hr_series = pd.Series(hourly_returns)
+
+    feature_cols = []
+
+    # 1. Long-term trend (720h / 30-day return)
+    ret_720 = np.full(len(close), 0.0)
+    ret_720[720:] = close[720:] / close[:-720] - 1.0
+    feature_cols.append(ret_720)
+
+    # 2. 720h price range / price (cycle amplitude)
+    close_series = pd.Series(close)
+    roll_max_720 = close_series.rolling(720, min_periods=168).max().values
+    roll_min_720 = close_series.rolling(720, min_periods=168).min().values
+    range_720 = np.where(close > 0, (roll_max_720 - roll_min_720) / close, 0.0)
+    feature_cols.append(range_720)
+
+    # 3. 720h directional efficiency (trend quality at monthly scale)
+    net_move_720 = np.full(len(close), 0.0)
+    net_move_720[720:] = close[720:] - close[:-720]
+    path_720 = pd.Series(np.abs(np.diff(close, prepend=close[0]))).rolling(
+        720, min_periods=168).sum().values
+    path_safe = np.where(path_720 > 0, path_720, 1.0)
+    feature_cols.append(net_move_720 / path_safe)
+
+    # 4. Vol regime: 168h vol / 720h vol
+    vol_168 = hr_series.rolling(168, min_periods=168).std().values
+    vol_720 = hr_series.rolling(720, min_periods=168).std().values
+    vol_regime = np.where(vol_720 > 0, vol_168 / vol_720, 1.0)
+    feature_cols.append(np.nan_to_num(vol_regime, nan=1.0))
+
+    # 5. Cycle position: price relative to 720h rolling max
+    cycle_pos = np.where(roll_max_720 > 0, close / roll_max_720, 1.0)
+    feature_cols.append(np.nan_to_num(cycle_pos, nan=1.0))
+
+    # 6. COT features (weekly institutional positioning)
+    if "cot_dealer_net" in df.columns:
+        feature_cols.append(df["cot_dealer_net"].values.astype(np.float64))
+        feature_cols.append(df["cot_asset_mgr_net"].values.astype(np.float64))
+        feature_cols.append(df["cot_lev_fund_net"].values.astype(np.float64))
+
+    # 7. Funding rate long-term (720h cumulative — monthly positioning pressure)
+    if "funding_rate" in df.columns:
+        fr = df["funding_rate"].values.astype(np.float64)
+        fr_cum_720 = pd.Series(fr).rolling(720, min_periods=1).sum().values
+        feature_cols.append(fr_cum_720 * 10)
+
+    features = np.column_stack(feature_cols)
+
+    # Same trimming as other feature functions
+    valid_start = MAX_LOOKBACK
+    return features[valid_start:]
+
+
 # ---------------------------------------------------------------------------
 # Model Helpers
 # ---------------------------------------------------------------------------
 
-def count_model_params(models) -> int:
-    """Return approximate parameter count for an ensemble."""
-    if not models:
-        return 0
-    n_params = 0
-    for model in models:
-        for tree in model.estimators_:
-            n_params += tree.tree_.node_count
-    return n_params
-
-
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — reduce noise on linear-scaled predictions."""
     return pd.Series(raw_preds).ewm(span=20, min_periods=1).mean().values
-
-
-def _confidence_scaled_predict(model, features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Produce confidence-scaled predictions and confidence weights from a single model."""
-    all_tree_preds = np.array([tree.predict(features) for tree in model.estimators_])
-    preds = all_tree_preds.mean(axis=0)
-    pred_std = all_tree_preds.std(axis=0)
-    confidence = 1.0 / (1.0 + 2.0 * pred_std)
-    return preds * confidence, confidence
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +474,40 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         top_idx = np.argsort(imp)[::-1][:10]
         print(f"  Vol top features: {', '.join(f'{i}:{imp[i]:.3f}' for i in top_idx)}")
 
+    # --- Regime model: predict momentum persistence (binary classifier) ---
+    regime_targets = compute_regime_targets(train_df)
+    regime_targets = regime_targets[MAX_LOOKBACK:]
+    regime_targets = regime_targets[valid]  # same valid mask as return targets
+
+    regime_features = compute_regime_features(train_df)
+    regime_features = regime_features[valid]
+    regime_features = np.nan_to_num(regime_features, nan=0.0)
+
+    # Drop rows where regime target is NaN (edges)
+    regime_valid = ~np.isnan(regime_targets)
+
+    regime_model = HistGradientBoostingRegressor(
+        max_iter=500,
+        max_depth=3,
+        min_samples_leaf=200,
+        learning_rate=0.02,
+        max_leaf_nodes=10,
+        l2_regularization=2.0,
+        random_state=42,
+    )
+    regime_model.fit(
+        regime_features[regime_valid],
+        regime_targets[regime_valid],
+        sample_weight=sample_weight[regime_valid] if sample_weight is not None else None,
+    )
+
+    # Diagnostic and normalization stats
+    rtp = regime_model.predict(regime_features[regime_valid])
+    regime_train_p5 = float(np.percentile(rtp, 5))
+    regime_train_p95 = float(np.percentile(rtp, 95))
+    print(f"  Regime target: mean={regime_targets[regime_valid].mean():.3f} std={regime_targets[regime_valid].std():.3f}")
+    print(f"  Regime train: mean={rtp.mean():.3f} std={rtp.std():.3f} p5={regime_train_p5:.3f} p95={regime_train_p95:.3f}")
+
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
     blend_weights = [0.5, 0.5]  # equal weight for more diversity
@@ -409,7 +516,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
     pred_bias = float(np.mean(train_preds)) * 1.3  # stronger correction for bullish training bias
 
-    # Approximate param count (return models + vol model)
+    # Approximate param count (return models + vol model + regime model)
     n_params = 0
     for m in models:
         n_params += sum(
@@ -419,6 +526,10 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     n_params += sum(
         vol_model._predictors[j][0].get_n_leaf_nodes()
         for j in range(len(vol_model._predictors))
+    )
+    n_params += sum(
+        regime_model._predictors[j][0].get_n_leaf_nodes()
+        for j in range(len(regime_model._predictors))
     )
 
     # --- Return prediction closure ---
@@ -432,6 +543,10 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         preds = [m.predict(feats) for m in models]
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
         sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
+
+        # Regime model disabled — no discriminative signal on either target
+        # (momentum persistence: coin flip; directional efficiency: pred std 0.028 vs target 0.072)
+        # Code kept for future experiments with better features/targets.
 
         # Vol prediction — classifier with vol feature subset
         vol_high_prob = vol_model.predict_proba(feats[:, vol_feat_mask])[:, 1]
