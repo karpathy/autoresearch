@@ -337,7 +337,7 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000, device=None):
 
         cpu_inputs.copy_(row_buffer[:, :-1])
         cpu_targets.copy_(row_buffer[:, 1:])
-        gpu_buffer.copy_(cpu_buffer, non_blocking=True)
+        gpu_buffer.copy_(cpu_buffer, non_blocking=use_pinned)
         yield inputs, targets, epoch
 
 # ---------------------------------------------------------------------------

@@ -163,6 +163,14 @@ class CausalSelfAttention(nn.Module):
                 k = k.repeat_interleave(n_rep, dim=1)
                 v = v.repeat_interleave(n_rep, dim=1)
             y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+            # SDPA does not support sliding window - verify full attention
+            if window_size[0] < q.size(2):  # window < seq_len means sliding
+                import warnings
+                warnings.warn(
+                    f"SDPA fallback ignores sliding window (window_size={window_size[0]}, "
+                    f"seq_len={q.size(2)}). Using full causal attention.",
+                    stacklevel=2,
+                )
             y = y.transpose(1, 2)  # back to (B, T, H, D)
 
         y = y.contiguous().view(B, T, -1)
