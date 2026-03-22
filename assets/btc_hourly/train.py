@@ -521,7 +521,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     regime_model = HistGradientBoostingClassifier(
         max_iter=500,
         max_depth=3,
-        min_samples_leaf=400,
+        min_samples_leaf=200,
         learning_rate=0.02,
         max_leaf_nodes=10,
         l2_regularization=2.0,
@@ -592,8 +592,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         regime_feats = np.nan_to_num(regime_feats, nan=0.0)
         regime_pred = regime_model.predict_proba(regime_feats)[:, 1]
 
-        # Smooth heavily — regime changes weekly, not hourly
-        regime_smooth = pd.Series(regime_pred).ewm(span=168, min_periods=1).mean().values
+        # Smooth heavily — regime changes over weeks, not hours
+        regime_smooth = pd.Series(regime_pred).ewm(span=336, min_periods=1).mean().values
 
         # Normalize to model's actual range
         regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
