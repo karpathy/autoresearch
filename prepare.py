@@ -1,389 +1,527 @@
 """
-One-time data preparation for autoresearch experiments.
-Downloads data shards and trains a BPE tokenizer.
+Data pipeline, backtesting engine, and evaluation for BTC autoresearch.
+
+Backtesting engine models Kalshi KXBTC15M contract mechanics:
+- 15-minute windows aligned to clock boundaries (:00, :15, :30, :45)
+- Settlement = mean of close prices in the final minute (minute 14-15)
+- Entry allowed at any minute 0-13 within a window
+- Fair market price estimated via binary option pricing (normal CDF)
+- Strategy returns (probability, edge_threshold); trades when edge > threshold
+
+The agent only edits strategy.py.
 
 Usage:
-    python prepare.py                  # full prep (download + tokenizer)
-    python prepare.py --num-shards 8   # download only 8 shards (for testing)
-
-Data and tokenizer are stored in ~/.cache/autoresearch/.
+    python prepare.py              # generate synthetic data (for testing)
+    python prepare.py --check      # verify data exists and print stats
 """
 
 import os
-import sys
-import time
 import math
 import argparse
-import pickle
-from multiprocessing import Pool
 
-import requests
-import pyarrow.parquet as pq
-import rustbpe
-import tiktoken
-import torch
+import numpy as np
+import pandas as pd
+from scipy.stats import norm
 
 # ---------------------------------------------------------------------------
-# Constants (fixed, do not modify)
+# Constants
 # ---------------------------------------------------------------------------
 
-MAX_SEQ_LEN = 2048       # context length
-TIME_BUDGET = 300        # training time budget in seconds (5 minutes)
-EVAL_TOKENS = 40 * 524288  # number of tokens for val eval
+# Configurable temporal split — change these dates to control train/val periods
+VAL_PERIODS = [
+    ("2025-01-01", "2025-03-22"),
+]
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
+# Kalshi KXBTC15M contract structure
+WINDOW_MINUTES = 15         # each Kalshi contract spans 15 minutes
+ENTRY_CUTOFF = 14           # no entries at or after this minute (0-indexed)
+SETTLEMENT_MINUTES = 1      # settlement = avg of closes in last N minutes
 
+# Strategy parameters
+LOOKBACK_MINUTES = 60       # number of 1-min bars the strategy sees per call
+
+# Backtest parameters
+TIME_BUDGET = 120           # max seconds per experiment run
+FEE_BPS = 5                 # round-trip fee in basis points (applied per trade)
+MIN_TRADES = 20             # minimum trades for full score (penalty below this)
+MIN_EDGE_FLOOR = 0.001      # minimum edge threshold floor
+PROB_FLOOR = 0.01           # floor for probability clamp
+PROB_CEIL = 0.99            # ceiling for probability clamp
+INVALID_SCORE = -999.0      # sentinel for invalid/crashed strategies
+
+# Data paths
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "autoresearch")
-DATA_DIR = os.path.join(CACHE_DIR, "data")
-TOKENIZER_DIR = os.path.join(CACHE_DIR, "tokenizer")
-BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main"
-MAX_SHARD = 6542 # the last datashard is shard_06542.parquet
-VAL_SHARD = MAX_SHARD  # pinned validation shard (shard_06542)
-VAL_FILENAME = f"shard_{VAL_SHARD:05d}.parquet"
-VOCAB_SIZE = 8192
-
-# BPE split pattern (GPT-4 style, with \p{N}{1,2} instead of {1,3})
-SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
-
-SPECIAL_TOKENS = [f"<|reserved_{i}|>" for i in range(4)]
-BOS_TOKEN = "<|reserved_0|>"
+DATA_FILE = os.path.join(CACHE_DIR, "btc_1m.csv")
 
 # ---------------------------------------------------------------------------
-# Data download
+# Data loading
 # ---------------------------------------------------------------------------
 
-def download_single_shard(index):
-    """Download one parquet shard with retries. Returns True on success."""
-    filename = f"shard_{index:05d}.parquet"
-    filepath = os.path.join(DATA_DIR, filename)
-    if os.path.exists(filepath):
-        return True
-
-    url = f"{BASE_URL}/{filename}"
-    max_attempts = 5
-    for attempt in range(1, max_attempts + 1):
-        try:
-            response = requests.get(url, stream=True, timeout=30)
-            response.raise_for_status()
-            temp_path = filepath + ".tmp"
-            with open(temp_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
-            os.rename(temp_path, filepath)
-            print(f"  Downloaded {filename}")
-            return True
-        except (requests.RequestException, IOError) as e:
-            print(f"  Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
-            for path in [filepath + ".tmp", filepath]:
-                if os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
-            if attempt < max_attempts:
-                time.sleep(2 ** attempt)
-    return False
-
-
-def download_data(num_shards, download_workers=8):
-    """Download training shards + pinned validation shard."""
-    os.makedirs(DATA_DIR, exist_ok=True)
-    num_train = min(num_shards, MAX_SHARD)
-    ids = list(range(num_train))
-    if VAL_SHARD not in ids:
-        ids.append(VAL_SHARD)
-
-    # Count what's already downloaded
-    existing = sum(1 for i in ids if os.path.exists(os.path.join(DATA_DIR, f"shard_{i:05d}.parquet")))
-    if existing == len(ids):
-        print(f"Data: all {len(ids)} shards already downloaded at {DATA_DIR}")
-        return
-
-    needed = len(ids) - existing
-    print(f"Data: downloading {needed} shards ({existing} already exist)...")
-
-    workers = max(1, min(download_workers, needed))
-    with Pool(processes=workers) as pool:
-        results = pool.map(download_single_shard, ids)
-
-    ok = sum(1 for r in results if r)
-    print(f"Data: {ok}/{len(ids)} shards ready at {DATA_DIR}")
-
-# ---------------------------------------------------------------------------
-# Tokenizer training
-# ---------------------------------------------------------------------------
-
-def list_parquet_files():
-    """Return sorted list of parquet file paths in the data directory."""
-    files = sorted(f for f in os.listdir(DATA_DIR) if f.endswith(".parquet") and not f.endswith(".tmp"))
-    return [os.path.join(DATA_DIR, f) for f in files]
-
-
-def text_iterator(max_chars=1_000_000_000, doc_cap=10_000):
-    """Yield documents from training split (all shards except pinned val shard)."""
-    parquet_paths = [p for p in list_parquet_files() if not p.endswith(VAL_FILENAME)]
-    nchars = 0
-    for filepath in parquet_paths:
-        pf = pq.ParquetFile(filepath)
-        for rg_idx in range(pf.num_row_groups):
-            rg = pf.read_row_group(rg_idx)
-            for text in rg.column("text").to_pylist():
-                doc = text[:doc_cap] if len(text) > doc_cap else text
-                nchars += len(doc)
-                yield doc
-                if nchars >= max_chars:
-                    return
-
-
-def train_tokenizer():
-    """Train BPE tokenizer using rustbpe, save as tiktoken pickle."""
-    tokenizer_pkl = os.path.join(TOKENIZER_DIR, "tokenizer.pkl")
-    token_bytes_path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
-
-    if os.path.exists(tokenizer_pkl) and os.path.exists(token_bytes_path):
-        print(f"Tokenizer: already trained at {TOKENIZER_DIR}")
-        return
-
-    os.makedirs(TOKENIZER_DIR, exist_ok=True)
-
-    parquet_files = list_parquet_files()
-    if len(parquet_files) < 2:
-        print("Tokenizer: need at least 2 data shards (1 train + 1 val). Download more data first.")
-        sys.exit(1)
-
-    # --- Train with rustbpe ---
-    print("Tokenizer: training BPE tokenizer...")
-    t0 = time.time()
-
-    tokenizer = rustbpe.Tokenizer()
-    vocab_size_no_special = VOCAB_SIZE - len(SPECIAL_TOKENS)
-    tokenizer.train_from_iterator(text_iterator(), vocab_size_no_special, pattern=SPLIT_PATTERN)
-
-    # Build tiktoken encoding from trained merges
-    pattern = tokenizer.get_pattern()
-    mergeable_ranks = {bytes(k): v for k, v in tokenizer.get_mergeable_ranks()}
-    tokens_offset = len(mergeable_ranks)
-    special_tokens = {name: tokens_offset + i for i, name in enumerate(SPECIAL_TOKENS)}
-    enc = tiktoken.Encoding(
-        name="rustbpe",
-        pat_str=pattern,
-        mergeable_ranks=mergeable_ranks,
-        special_tokens=special_tokens,
-    )
-
-    # Save tokenizer
-    with open(tokenizer_pkl, "wb") as f:
-        pickle.dump(enc, f)
-
-    t1 = time.time()
-    print(f"Tokenizer: trained in {t1 - t0:.1f}s, saved to {tokenizer_pkl}")
-
-    # --- Build token_bytes lookup for BPB evaluation ---
-    print("Tokenizer: building token_bytes lookup...")
-    special_set = set(SPECIAL_TOKENS)
-    token_bytes_list = []
-    for token_id in range(enc.n_vocab):
-        token_str = enc.decode([token_id])
-        if token_str in special_set:
-            token_bytes_list.append(0)
-        else:
-            token_bytes_list.append(len(token_str.encode("utf-8")))
-    token_bytes_tensor = torch.tensor(token_bytes_list, dtype=torch.int32)
-    torch.save(token_bytes_tensor, token_bytes_path)
-    print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
-
-    # Sanity check
-    test = "Hello world! Numbers: 123. Unicode: 你好"
-    encoded = enc.encode_ordinary(test)
-    decoded = enc.decode(encoded)
-    assert decoded == test, f"Tokenizer roundtrip failed: {test!r} -> {decoded!r}"
-    print(f"Tokenizer: sanity check passed (vocab_size={enc.n_vocab})")
-
-# ---------------------------------------------------------------------------
-# Runtime utilities (imported by train.py)
-# ---------------------------------------------------------------------------
-
-class Tokenizer:
-    """Minimal tokenizer wrapper. Training is handled above."""
-
-    def __init__(self, enc):
-        self.enc = enc
-        self.bos_token_id = enc.encode_single_token(BOS_TOKEN)
-
-    @classmethod
-    def from_directory(cls, tokenizer_dir=TOKENIZER_DIR):
-        with open(os.path.join(tokenizer_dir, "tokenizer.pkl"), "rb") as f:
-            enc = pickle.load(f)
-        return cls(enc)
-
-    def get_vocab_size(self):
-        return self.enc.n_vocab
-
-    def get_bos_token_id(self):
-        return self.bos_token_id
-
-    def encode(self, text, prepend=None, num_threads=8):
-        if prepend is not None:
-            prepend_id = prepend if isinstance(prepend, int) else self.enc.encode_single_token(prepend)
-        if isinstance(text, str):
-            ids = self.enc.encode_ordinary(text)
-            if prepend is not None:
-                ids.insert(0, prepend_id)
-        elif isinstance(text, list):
-            ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
-            if prepend is not None:
-                for row in ids:
-                    row.insert(0, prepend_id)
-        else:
-            raise ValueError(f"Invalid input type: {type(text)}")
-        return ids
-
-    def decode(self, ids):
-        return self.enc.decode(ids)
-
-
-def get_token_bytes(device="cpu"):
-    path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
-    with open(path, "rb") as f:
-        return torch.load(f, map_location=device)
-
-
-def _document_batches(split, tokenizer_batch_size=128):
-    """Infinite iterator over document batches from parquet files."""
-    parquet_paths = list_parquet_files()
-    assert len(parquet_paths) > 0, "No parquet files found. Run prepare.py first."
-    val_path = os.path.join(DATA_DIR, VAL_FILENAME)
-    if split == "train":
-        parquet_paths = [p for p in parquet_paths if p != val_path]
-        assert len(parquet_paths) > 0, "No training shards found."
+def load_data():
+    """
+    Load BTC 1-minute OHLCV data from CSV.
+    Expected columns: timestamp, open, high, low, close, volume
+    Falls back to synthetic data if the CSV doesn't exist.
+    """
+    if os.path.exists(DATA_FILE):
+        print(f"Loading data from {DATA_FILE}")
+        df = pd.read_csv(DATA_FILE, parse_dates=["timestamp"])
     else:
-        parquet_paths = [val_path]
-    epoch = 1
-    while True:
-        for filepath in parquet_paths:
-            pf = pq.ParquetFile(filepath)
-            for rg_idx in range(pf.num_row_groups):
-                rg = pf.read_row_group(rg_idx)
-                batch = rg.column('text').to_pylist()
-                for i in range(0, len(batch), tokenizer_batch_size):
-                    yield batch[i:i+tokenizer_batch_size], epoch
-        epoch += 1
+        print(f"Data file not found at {DATA_FILE}")
+        print("Generating synthetic data for testing...")
+        df = generate_synthetic_data()
+
+    df = df.sort_values("timestamp").reset_index(drop=True)
+
+    # Validate required columns
+    required = {"timestamp", "open", "high", "low", "close", "volume"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing columns in data: {missing}")
+
+    print(f"Data loaded: {len(df)} rows, {df['timestamp'].min()} to {df['timestamp'].max()}")
+    return df
 
 
-def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
+def generate_synthetic_data(
+    start="2022-06-01",
+    end="2025-03-22",
+    seed=42,
+):
     """
-    BOS-aligned dataloader with best-fit packing.
-    Every row starts with BOS. Documents packed using best-fit to minimize cropping.
-    When no document fits remaining space, crops shortest doc to fill exactly.
-    100% utilization (no padding).
+    Generate realistic synthetic 1-minute BTC OHLCV data using geometric
+    Brownian motion. Used for testing when real data is unavailable.
     """
-    assert split in ["train", "val"]
-    row_capacity = T + 1
-    batches = _document_batches(split)
-    bos_token = tokenizer.get_bos_token_id()
-    doc_buffer = []
-    epoch = 1
+    rng = np.random.default_rng(seed)
 
-    def refill_buffer():
-        nonlocal epoch
-        doc_batch, epoch = next(batches)
-        token_lists = tokenizer.encode(doc_batch, prepend=bos_token)
-        doc_buffer.extend(token_lists)
+    timestamps = pd.date_range(start=start, end=end, freq="1min")
+    n = len(timestamps)
 
-    # Pre-allocate buffers: [inputs (B*T) | targets (B*T)]
-    row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
-    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=True)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device="cuda")
-    cpu_inputs = cpu_buffer[:B * T].view(B, T)
-    cpu_targets = cpu_buffer[B * T:].view(B, T)
-    inputs = gpu_buffer[:B * T].view(B, T)
-    targets = gpu_buffer[B * T:].view(B, T)
+    # GBM parameters calibrated to BTC (~60% annual vol)
+    dt = 1 / (365.25 * 24 * 60)  # 1 minute in years
+    mu = 0.0       # no drift (neutral)
+    sigma = 0.60   # 60% annualized volatility
 
-    while True:
-        for row_idx in range(B):
-            pos = 0
-            while pos < row_capacity:
-                while len(doc_buffer) < buffer_size:
-                    refill_buffer()
+    # Generate log returns
+    log_returns = (mu - 0.5 * sigma**2) * dt + sigma * math.sqrt(dt) * rng.standard_normal(n)
+    log_returns[0] = 0.0
 
-                remaining = row_capacity - pos
+    # Price series starting at ~30,000
+    close = 30000.0 * np.exp(np.cumsum(log_returns))
 
-                # Find largest doc that fits entirely
-                best_idx = -1
-                best_len = 0
-                for i, doc in enumerate(doc_buffer):
-                    doc_len = len(doc)
-                    if doc_len <= remaining and doc_len > best_len:
-                        best_idx = i
-                        best_len = doc_len
+    # Generate OHLV from close
+    noise = rng.uniform(0.0001, 0.002, size=n)
+    high = close * (1 + noise)
+    low = close * (1 - noise)
+    open_ = np.roll(close, 1)
+    open_[0] = close[0]
 
-                if best_idx >= 0:
-                    doc = doc_buffer.pop(best_idx)
-                    row_buffer[row_idx, pos:pos + len(doc)] = torch.tensor(doc, dtype=torch.long)
-                    pos += len(doc)
+    # Ensure high >= max(open, close) and low <= min(open, close)
+    high = np.maximum(high, np.maximum(open_, close))
+    low = np.minimum(low, np.minimum(open_, close))
+
+    # Volume: log-normal with some autocorrelation
+    base_vol = rng.lognormal(mean=10, sigma=1.5, size=n)
+    volume = pd.Series(base_vol).rolling(10, min_periods=1).mean().values
+
+    df = pd.DataFrame({
+        "timestamp": timestamps,
+        "open": open_,
+        "high": high,
+        "low": low,
+        "close": close,
+        "volume": volume,
+    })
+
+    # Save for reproducibility
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    synth_path = os.path.join(CACHE_DIR, "btc_1m_synthetic.csv")
+    df.to_csv(synth_path, index=False)
+    print(f"Synthetic data saved to {synth_path} ({len(df)} rows)")
+
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Feature engineering
+# ---------------------------------------------------------------------------
+
+def compute_features(df):
+    """
+    Add technical indicator columns to the OHLCV DataFrame.
+    Uses pandas-ta for indicator computation.
+    The strategy can use any of these columns.
+    """
+    import pandas_ta as ta
+
+    df = df.copy()
+
+    # Basic returns
+    df["returns"] = df["close"].pct_change()
+
+    # Volatility (20-bar rolling std of returns)
+    df["volatility_20"] = df["returns"].rolling(20, min_periods=1).std()
+
+    # Moving averages
+    df["sma_20"] = ta.sma(df["close"], length=20)
+    df["sma_50"] = ta.sma(df["close"], length=50)
+    df["ema_12"] = ta.ema(df["close"], length=12)
+    df["ema_26"] = ta.ema(df["close"], length=26)
+
+    # RSI
+    df["rsi_14"] = ta.rsi(df["close"], length=14)
+
+    # MACD (derived from already-computed EMAs to avoid redundant passes)
+    df["macd"] = df["ema_12"] - df["ema_26"]
+    df["macd_signal"] = ta.ema(df["macd"], length=9)
+    df["macd_hist"] = df["macd"] - df["macd_signal"]
+
+    # Bollinger Bands
+    bb_df = ta.bbands(df["close"], length=20, std=2)
+    df["bbands_lower"] = bb_df.iloc[:, 0]
+    df["bbands_mid"] = bb_df.iloc[:, 1]
+    df["bbands_upper"] = bb_df.iloc[:, 2]
+    df["bbands_bandwidth"] = bb_df.iloc[:, 3] if bb_df.shape[1] > 3 else 0.0
+
+    # ATR
+    df["atr_14"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+
+    # Volume SMA
+    df["volume_sma_20"] = ta.sma(df["volume"], length=20)
+
+    # Fill NaN from indicator warm-up periods
+    df = df.ffill().bfill()
+
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Temporal split
+# ---------------------------------------------------------------------------
+
+def get_val_data(df):
+    """
+    Extract validation data based on configured date periods.
+    Returns val_df (reset index for positional access in backtest).
+    """
+    ts = df["timestamp"]
+    # Strip timezone so string comparisons work regardless of tz-aware data
+    if ts.dt.tz is not None:
+        ts = ts.dt.tz_localize(None)
+
+    val_mask = pd.Series(False, index=df.index)
+    period_counts = []
+    for vstart, vend in VAL_PERIODS:
+        period_mask = (ts >= vstart) & (ts < pd.Timestamp(vend) + pd.Timedelta(days=1))
+        val_mask = val_mask | period_mask
+        period_counts.append((vstart, vend, period_mask.sum()))
+    val_df = df[val_mask].reset_index(drop=True)
+
+    for vstart, vend, count in period_counts:
+        print(f"Val:   {count} bars ({vstart} to {vend})")
+    print(f"Val total: {len(val_df)} bars")
+
+    return val_df
+
+
+# ---------------------------------------------------------------------------
+# Binary option fair price model
+# ---------------------------------------------------------------------------
+
+def estimate_fair_price(displacement_pct, volatility_per_min, minutes_remaining):
+    """
+    Estimate the fair price of a Kalshi binary 'up' contract using normal CDF.
+
+    This models what a rational market would price the contract at, given:
+    - How far BTC has moved from the window open (displacement)
+    - Recent per-minute volatility
+    - Time remaining until settlement
+
+    Args:
+        displacement_pct: (current_price - window_open) / window_open
+        volatility_per_min: recent per-minute price volatility (std of returns)
+        minutes_remaining: minutes until settlement (0 = settled)
+
+    Returns:
+        float: fair probability of UP outcome (0 to 1)
+    """
+    if minutes_remaining <= 0 or volatility_per_min <= 1e-10:
+        # Outcome determined by current displacement (no time/vol left to change it)
+        return 1.0 if displacement_pct > 0 else (0.5 if displacement_pct == 0 else 0.0)
+
+    sigma = volatility_per_min * math.sqrt(minutes_remaining)
+    z = displacement_pct / sigma
+    return float(norm.cdf(z))
+
+
+# ---------------------------------------------------------------------------
+# Backtesting engine — Kalshi KXBTC15M mechanics
+# ---------------------------------------------------------------------------
+
+def run_backtest(strategy_class, df):
+    """
+    Run a backtest simulating Kalshi KXBTC15M 15-minute binary contracts.
+
+    Contract mechanics:
+    - Windows align to clock boundaries (:00, :15, :30, :45)
+    - Settlement = mean of close prices during the last minute of the window
+    - Entry allowed at minutes 0-13 (not minute 14)
+    - Fair market price estimated via binary option model (normal CDF)
+    - Strategy returns (probability, edge_threshold)
+    - Trade placed when |strategy_prob - fair_price| > edge_threshold
+    - P&L: buy at fair_price, collect $1 if correct, lose purchase price if wrong
+
+    Multiple trades per window are allowed (strategy can trade at any minute 0-13).
+
+    Returns a list of trade dicts.
+    """
+    strategy = strategy_class()
+    trades = []
+    error_count = 0
+    fee_per_trade = FEE_BPS / 10000.0
+
+    ts_arr = df["timestamp"].values
+    close_arr = df["close"].values
+
+    # Reuse volatility already computed by compute_features()
+    vol_series = df["volatility_20"].values
+
+    # Group bars into 15-minute windows aligned to clock boundaries
+    # Each window starts at :00, :15, :30, or :45
+    df_ts = pd.Series(ts_arr)
+    window_labels = df_ts.dt.floor(f"{WINDOW_MINUTES}min")
+    unique_windows = window_labels.unique()
+
+    for window_start in unique_windows:
+        # Get all bars in this 15-minute window
+        window_mask = window_labels == window_start
+        window_indices = np.where(window_mask.values)[0]
+
+        if len(window_indices) < WINDOW_MINUTES:
+            continue  # incomplete window, skip
+
+        # Window open price = close at minute 0
+        window_open_idx = window_indices[0]
+        window_open_price = close_arr[window_open_idx]
+
+        # Settlement price = mean of close prices in the last SETTLEMENT_MINUTES
+        settlement_start = WINDOW_MINUTES - SETTLEMENT_MINUTES
+        settlement_indices = window_indices[settlement_start:WINDOW_MINUTES]
+        settlement_price = np.mean(close_arr[settlement_indices])
+
+        # Actual outcome: is settlement above window open?
+        actual_up = settlement_price > window_open_price
+
+        # Try each entry minute 0 through ENTRY_CUTOFF-1
+        for minute_in_window in range(min(ENTRY_CUTOFF, len(window_indices))):
+
+            bar_idx = window_indices[minute_in_window]
+
+            # Need enough lookback history
+            if bar_idx < LOOKBACK_MINUTES:
+                continue
+
+            current_close = close_arr[bar_idx]
+            current_vol = vol_series[bar_idx]
+            minutes_remaining = WINDOW_MINUTES - minute_in_window
+
+            # Displacement from window open
+            displacement_pct = (current_close - window_open_price) / window_open_price
+
+            # Fair market price via binary option model
+            fair_price = estimate_fair_price(displacement_pct, current_vol, minutes_remaining)
+            fair_price = max(PROB_FLOOR, min(PROB_CEIL, fair_price))
+
+            # Build lookback window for strategy
+            window_data = df.iloc[bar_idx - LOOKBACK_MINUTES:bar_idx]
+
+            # Build context dict
+            context = {
+                "window_minute": minute_in_window,
+                "window_open_price": window_open_price,
+                "minutes_remaining": minutes_remaining,
+                "fair_price": fair_price,
+            }
+
+            # Call strategy
+            try:
+                result = strategy.on_bar(window_data, context)
+                probability = float(result[0])
+                edge_threshold = float(result[1])
+            except Exception as e:
+                error_count += 1
+                if error_count <= 3:
+                    print(f"WARNING: strategy.on_bar() raised {type(e).__name__}: {e}")
+                continue
+
+            # Clamp probability
+            probability = max(PROB_FLOOR, min(PROB_CEIL, probability))
+            edge_threshold = max(MIN_EDGE_FLOOR, edge_threshold)
+
+            # Determine trade direction and edge
+            # If probability > fair_price: strategy thinks UP is more likely → buy YES
+            # If probability < fair_price: strategy thinks DOWN is more likely → buy NO
+            edge_up = probability - fair_price
+
+            if abs(edge_up) > edge_threshold:
+                if edge_up > 0:
+                    # Buy YES (bet UP) at fair_price
+                    buy_price = fair_price
+                    correct = actual_up
                 else:
-                    # No doc fits — crop shortest to fill remaining
-                    shortest_idx = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
-                    doc = doc_buffer.pop(shortest_idx)
-                    row_buffer[row_idx, pos:pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
-                    pos += remaining
+                    # Buy NO (bet DOWN) at (1 - fair_price)
+                    buy_price = 1.0 - fair_price
+                    correct = not actual_up
 
-        cpu_inputs.copy_(row_buffer[:, :-1])
-        cpu_targets.copy_(row_buffer[:, 1:])
-        gpu_buffer.copy_(cpu_buffer, non_blocking=True)
-        yield inputs, targets, epoch
+                if correct:
+                    pnl = (1.0 - buy_price) - fee_per_trade
+                else:
+                    pnl = -buy_price - fee_per_trade
+
+                trades.append({
+                    "timestamp": ts_arr[bar_idx],
+                    "window_start": window_start,
+                    "window_minute": minute_in_window,
+                    "signal": 1 if edge_up > 0 else -1,
+                    "probability": probability,
+                    "fair_price": fair_price,
+                    "edge": abs(edge_up),
+                    "buy_price": buy_price,
+                    "correct": correct,
+                    "pnl": pnl,
+                })
+
+    if error_count > 0:
+        print(f"WARNING: strategy.on_bar() raised {error_count} total errors")
+
+    return trades
+
 
 # ---------------------------------------------------------------------------
-# Evaluation (DO NOT CHANGE — this is the fixed metric)
+# Evaluation (fixed metric)
 # ---------------------------------------------------------------------------
 
-@torch.no_grad()
-def evaluate_bpb(model, tokenizer, batch_size):
+def compute_metrics(trades):
     """
-    Bits per byte (BPB): vocab size-independent evaluation metric.
-    Sums per-token cross-entropy (in nats), sums target byte lengths,
-    then converts nats/byte to bits/byte. Special tokens (byte length 0)
-    are excluded from both sums.
-    Uses fixed MAX_SEQ_LEN so results are comparable across configs.
+    Compute performance metrics from a list of trades.
+    Returns a dict of metrics.
     """
-    token_bytes = get_token_bytes(device="cuda")
-    val_loader = make_dataloader(tokenizer, batch_size, MAX_SEQ_LEN, "val")
-    steps = EVAL_TOKENS // (batch_size * MAX_SEQ_LEN)
-    total_nats = 0.0
-    total_bytes = 0
-    for _ in range(steps):
-        x, y, _ = next(val_loader)
-        loss_flat = model(x, y, reduction='none').view(-1)
-        y_flat = y.view(-1)
-        nbytes = token_bytes[y_flat]
-        mask = nbytes > 0
-        total_nats += (loss_flat * mask).sum().item()
-        total_bytes += nbytes.sum().item()
-    return total_nats / (math.log(2) * total_bytes)
+    if not trades or len(trades) < 2:
+        return {
+            "score": INVALID_SCORE,
+            "sharpe": 0.0,
+            "accuracy": 0.0,
+            "num_trades": len(trades) if trades else 0,
+            "max_drawdown": 0.0,
+            "total_pnl": 0.0,
+        }
+
+    trades_df = pd.DataFrame(trades)
+    num_trades = len(trades_df)
+    accuracy = trades_df["correct"].mean()
+    total_pnl = trades_df["pnl"].sum()
+
+    # Sharpe ratio: annualized from daily P&L
+    trades_df["date"] = trades_df["timestamp"].dt.date
+    daily_pnl = trades_df.groupby("date")["pnl"].sum()
+
+    if len(daily_pnl) < 2 or daily_pnl.std() == 0:
+        sharpe = 0.0
+    else:
+        sharpe = daily_pnl.mean() / daily_pnl.std() * math.sqrt(365)
+
+    # Max drawdown from cumulative P&L
+    cum_pnl = trades_df["pnl"].cumsum()
+    running_max = cum_pnl.cummax()
+    drawdown = running_max - cum_pnl
+    max_drawdown = drawdown.max() if len(drawdown) > 0 else 0.0
+
+    # Trade count penalty: sqrt(min(num_trades / MIN_TRADES, 1.0))
+    trade_factor = math.sqrt(min(num_trades / MIN_TRADES, 1.0))
+
+    # Composite score
+    if num_trades < 5 or math.isnan(accuracy):
+        score = INVALID_SCORE
+    else:
+        score = sharpe * accuracy * trade_factor
+
+    return {
+        "score": score,
+        "sharpe": sharpe,
+        "accuracy": accuracy,
+        "num_trades": num_trades,
+        "max_drawdown": max_drawdown,
+        "total_pnl": total_pnl,
+    }
+
+
+def evaluate(strategy_class):
+    """
+    Full evaluation pipeline:
+    1. Load data
+    2. Compute features
+    3. Extract validation data
+    4. Run backtest on validation data (Kalshi KXBTC15M mechanics)
+    5. Compute and print metrics
+
+    Returns metrics dict.
+    """
+    # Load and prepare data
+    df = load_data()
+    df = compute_features(df)
+    val_df = get_val_data(df)
+
+    if len(val_df) < LOOKBACK_MINUTES + WINDOW_MINUTES + 1:
+        print("ERROR: not enough validation data")
+        return {"score": INVALID_SCORE}
+
+    # Run backtest on validation set
+    print(f"\nRunning backtest on {len(val_df)} validation bars...")
+    trades = run_backtest(strategy_class, val_df)
+
+    # Compute metrics
+    metrics = compute_metrics(trades)
+
+    # Print in grep-able format
+    print("\n---")
+    print(f"score:      {metrics['score']:.6f}")
+    print(f"sharpe:     {metrics['sharpe']:.6f}")
+    print(f"accuracy:   {metrics['accuracy']:.6f}")
+    print(f"num_trades: {metrics['num_trades']}")
+    print(f"max_dd:     {metrics['max_drawdown']:.6f}")
+    print(f"total_pnl:  {metrics['total_pnl']:.4f}")
+
+    return metrics
+
 
 # ---------------------------------------------------------------------------
-# Main
+# Main — data preparation
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Prepare data and tokenizer for autoresearch")
-    parser.add_argument("--num-shards", type=int, default=10, help="Number of training shards to download (-1 = all). Val shard is always pinned.")
-    parser.add_argument("--download-workers", type=int, default=8, help="Number of parallel download workers")
+    parser = argparse.ArgumentParser(description="Prepare data for BTC autoresearch")
+    parser.add_argument("--check", action="store_true", help="Check if data exists and print stats")
+    parser.add_argument("--synthetic", action="store_true", help="Generate synthetic data for testing")
     args = parser.parse_args()
 
-    num_shards = MAX_SHARD if args.num_shards == -1 else args.num_shards
-
-    print(f"Cache directory: {CACHE_DIR}")
-    print()
-
-    # Step 1: Download data
-    download_data(num_shards, download_workers=args.download_workers)
-    print()
-
-    # Step 2: Train tokenizer
-    train_tokenizer()
-    print()
-    print("Done! Ready to train.")
+    if args.check:
+        if os.path.exists(DATA_FILE):
+            df = pd.read_csv(DATA_FILE, parse_dates=["timestamp"])
+            print(f"Data file: {DATA_FILE}")
+            print(f"Rows: {len(df)}")
+            print(f"Range: {df['timestamp'].min()} to {df['timestamp'].max()}")
+            print(f"Columns: {list(df.columns)}")
+        else:
+            print(f"No data file found at {DATA_FILE}")
+            print(f"Place your BTC 1-minute OHLCV CSV there, or run: python prepare.py --synthetic")
+    elif args.synthetic:
+        generate_synthetic_data()
+        print("\nDone! Synthetic data ready for testing.")
+    else:
+        # Default: generate synthetic if no real data exists
+        if not os.path.exists(DATA_FILE):
+            print("No real data found. Generating synthetic data...")
+            generate_synthetic_data()
+        else:
+            print(f"Data already exists at {DATA_FILE}")
+        print("\nDone! Ready to run: uv run backtest.py")
