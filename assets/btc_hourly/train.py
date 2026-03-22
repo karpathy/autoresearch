@@ -599,8 +599,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
         regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
 
-        # Bidirectional: amplify accurate periods, reduce inaccurate ones
-        regime_adj = 1.0 + 0.08 * (2.0 * regime_norm - 1.0)  # range [0.92, 1.08]
+        # High accuracy → trust model, low accuracy → reduce positions
+        regime_adj = 0.90 + 0.10 * regime_norm  # range [0.90, 1.0]
         sigma_preds = sigma_preds * regime_adj
 
         # Vol prediction — classifier with vol feature subset
