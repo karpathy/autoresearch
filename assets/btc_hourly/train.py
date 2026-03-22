@@ -544,17 +544,9 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
         sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
 
-        # Regime prediction — slow-moving position multiplier
-        regime_feats = compute_regime_features(df)
-        regime_feats = np.nan_to_num(regime_feats, nan=0.0)
-        regime_pred = regime_model.predict(regime_feats)
-        # Smooth heavily — regime changes weekly, not hourly
-        regime_smooth = pd.Series(regime_pred).ewm(span=168, min_periods=1).mean().values
-        # Normalize to model's actual range, then map to [0.8, 1.0]
-        regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
-        regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
-        regime_adj = 0.8 + 0.2 * regime_norm  # range [0.8, 1.0]
-        sigma_preds = sigma_preds * regime_adj
+        # Regime model disabled — no discriminative signal on either target
+        # (momentum persistence: coin flip; directional efficiency: pred std 0.028 vs target 0.072)
+        # Code kept for future experiments with better features/targets.
 
         # Vol prediction — classifier with vol feature subset
         vol_high_prob = vol_model.predict_proba(feats[:, vol_feat_mask])[:, 1]
