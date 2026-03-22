@@ -18,13 +18,23 @@ X_train, X_val, y_train, y_val, feature_names = load_data()
 # Model definition — experiment here
 # ---------------------------------------------------------------------------
 
-from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 
-model = RandomForestClassifier(
-    n_estimators=100,
-    class_weight="balanced",  # compensate for extreme imbalance
-    n_jobs=-1,
+# scale_pos_weight = count(negatives) / count(positives) ≈ 578
+neg = (y_train == 0).sum()
+pos = (y_train == 1).sum()
+spw = neg / pos
+
+model = XGBClassifier(
+    n_estimators=500,
+    learning_rate=0.05,
+    max_depth=6,
+    scale_pos_weight=spw,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    eval_metric="aucpr",
     random_state=42,
+    n_jobs=-1,
 )
 
 # ---------------------------------------------------------------------------
