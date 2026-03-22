@@ -10,7 +10,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import ExtraTreesRegressor, HistGradientBoostingClassifier, HistGradientBoostingRegressor
+from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 
 from prepare import (
     FORWARD_HOURS,
@@ -23,7 +23,7 @@ from prepare import (
 # Feature Engineering
 # ---------------------------------------------------------------------------
 
-RETURN_LOOKBACKS = [4, 12, 24, 48, 72, 168]  # 1h removed — noisiest with power transform
+RETURN_LOOKBACKS = [4, 12, 24, 48, 72, 168]  # 1h removed — noisiest
 VOLATILITY_WINDOWS = [24, 168]
 MAX_LOOKBACK = 168  # maximum lookback window (1 week)
 
@@ -120,7 +120,7 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
         bb_pos = (close - sma) / (2 * std_safe)
         feature_cols.append(bb_pos)
 
-    # 7b. Bollinger band width: 2*std/sma (24h removed — noisy with power transform)
+    # 7b. Bollinger band width: 2*std/sma (24h removed — noisy)
     for w in [72, 168]:
         sma = close_series.rolling(w, min_periods=w).mean().values
         std = close_series.rolling(w, min_periods=w).std().values
@@ -184,7 +184,7 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     feature_cols.append(np.sin(2 * np.pi * hours / 24))
     feature_cols.append(np.cos(2 * np.pi * hours / 24))
 
-    # 7. Day of week (cyclical)
+    # 11b. Day of week (cyclical)
     dow = dt.dayofweek
     feature_cols.append(np.sin(2 * np.pi * dow / 7))
     feature_cols.append(np.cos(2 * np.pi * dow / 7))
@@ -254,29 +254,9 @@ def compute_vol_targets(df: pd.DataFrame) -> np.ndarray:
 # Model Helpers
 # ---------------------------------------------------------------------------
 
-def count_model_params(models) -> int:
-    """Return approximate parameter count for an ensemble."""
-    if not models:
-        return 0
-    n_params = 0
-    for model in models:
-        for tree in model.estimators_:
-            n_params += tree.tree_.node_count
-    return n_params
-
-
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply EMA smoothing — reduce noise on linear-scaled predictions."""
     return pd.Series(raw_preds).ewm(span=20, min_periods=1).mean().values
-
-
-def _confidence_scaled_predict(model, features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Produce confidence-scaled predictions and confidence weights from a single model."""
-    all_tree_preds = np.array([tree.predict(features) for tree in model.estimators_])
-    preds = all_tree_preds.mean(axis=0)
-    pred_std = all_tree_preds.std(axis=0)
-    confidence = 1.0 / (1.0 + 2.0 * pred_std)
-    return preds * confidence, confidence
 
 
 # ---------------------------------------------------------------------------
