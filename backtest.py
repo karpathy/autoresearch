@@ -9,17 +9,13 @@ Usage:
 
 import sys
 import time
-import importlib
 
 from prepare import evaluate, TIME_BUDGET
 
 t0 = time.time()
 
-# Dynamic import to pick up agent's latest changes
 import strategy
-importlib.reload(strategy)
 
-# Run evaluation
 metrics = evaluate(strategy.Strategy)
 
 elapsed = time.time() - t0

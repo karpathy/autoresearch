@@ -13,7 +13,6 @@ Data is stored in ~/.cache/autoresearch/.
 import os
 import math
 import argparse
-import datetime
 
 import numpy as np
 import pandas as pd
@@ -39,6 +38,9 @@ TIME_BUDGET = 120       # max seconds per experiment run
 FEE_BPS = 5             # round-trip fee in basis points (applied per trade)
 MIN_TRADES = 20         # minimum trades for full score (penalty below this)
 CONFIDENCE_THRESHOLD = 0.0  # minimum confidence to place a trade
+MIN_CONFIDENCE = 0.01       # floor for confidence clamp (risk at least $0.01)
+MAX_CONFIDENCE = 0.99       # ceiling for confidence clamp (risk at most $0.99)
+INVALID_SCORE = -999.0      # sentinel for invalid/crashed strategies
 
 # Data paths
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "autoresearch")
@@ -116,7 +118,7 @@ def generate_synthetic_data(
     volume = pd.Series(base_vol).rolling(10, min_periods=1).mean().values
 
     df = pd.DataFrame({
-        "timestamp": timestamps[:n],
+        "timestamp": timestamps,
         "open": open_,
         "high": high,
         "low": low,
@@ -149,7 +151,6 @@ def compute_features(df):
 
     # Basic returns
     df["returns"] = df["close"].pct_change()
-    df["log_returns"] = np.log(df["close"] / df["close"].shift(1))
 
     # Volatility (20-bar rolling std of returns)
     df["volatility_20"] = df["returns"].rolling(20, min_periods=1).std()
@@ -163,16 +164,10 @@ def compute_features(df):
     # RSI
     df["rsi_14"] = ta.rsi(df["close"], length=14)
 
-    # MACD
-    macd_df = ta.macd(df["close"], fast=12, slow=26, signal=9)
-    if macd_df is not None:
-        df["macd"] = macd_df.iloc[:, 0]          # MACD line
-        df["macd_signal"] = macd_df.iloc[:, 1]    # Signal line
-        df["macd_hist"] = macd_df.iloc[:, 2]      # Histogram
-    else:
-        df["macd"] = 0.0
-        df["macd_signal"] = 0.0
-        df["macd_hist"] = 0.0
+    # MACD (derived from already-computed EMAs to avoid redundant passes)
+    df["macd"] = df["ema_12"] - df["ema_26"]
+    df["macd_signal"] = ta.ema(df["macd"], length=9)
+    df["macd_hist"] = df["macd"] - df["macd_signal"]
 
     # Bollinger Bands
     bb_df = ta.bbands(df["close"], length=20, std=2)
@@ -203,31 +198,25 @@ def compute_features(df):
 # Temporal split
 # ---------------------------------------------------------------------------
 
-def split_data(df):
+def get_val_data(df):
     """
-    Split data into train and validation sets based on date constants.
-    Returns (train_df, val_df).
+    Extract validation data based on configured date periods.
+    Returns val_df (reset index for positional access in backtest).
     """
     ts = df["timestamp"]
 
-    # Training period
-    train_mask = (ts >= TRAIN_START) & (ts < pd.Timestamp(TRAIN_END) + pd.Timedelta(days=1))
-    train_df = df[train_mask].copy()
-
-    # Validation periods (union of all configured periods)
     val_mask = pd.Series(False, index=df.index)
     for vstart, vend in VAL_PERIODS:
         period_mask = (ts >= vstart) & (ts < pd.Timestamp(vend) + pd.Timedelta(days=1))
         val_mask = val_mask | period_mask
-    val_df = df[val_mask].copy()
+    val_df = df[val_mask].reset_index(drop=True)
 
-    print(f"Train: {len(train_df)} bars ({TRAIN_START} to {TRAIN_END})")
     for vstart, vend in VAL_PERIODS:
         period_df = df[(ts >= vstart) & (ts < pd.Timestamp(vend) + pd.Timedelta(days=1))]
         print(f"Val:   {len(period_df)} bars ({vstart} to {vend})")
     print(f"Val total: {len(val_df)} bars")
 
-    return train_df, val_df
+    return val_df
 
 
 # ---------------------------------------------------------------------------
@@ -255,36 +244,41 @@ def run_backtest(strategy_class, df):
     """
     strategy = strategy_class()
     trades = []
+    error_count = 0
 
     fee_per_trade = FEE_BPS / 10000.0
+    close_arr = df["close"].values
+    ts_arr = df["timestamp"].values
 
-    # We need LOOKBACK + HORIZON bars from end to resolve the last trade
+    # Precompute future close prices (shifted by HORIZON_MINUTES)
+    future_close_arr = np.empty(len(df), dtype=np.float64)
+    future_close_arr[:len(df) - HORIZON_MINUTES] = close_arr[HORIZON_MINUTES:]
+    future_close_arr[len(df) - HORIZON_MINUTES:] = np.nan
+
     max_idx = len(df) - HORIZON_MINUTES
     start_idx = LOOKBACK_MINUTES
 
     for i in range(start_idx, max_idx):
-        # Window of LOOKBACK_MINUTES bars ending at current bar
-        window = df.iloc[i - LOOKBACK_MINUTES:i].copy()
+        window = df.iloc[i - LOOKBACK_MINUTES:i]
 
         try:
             result = strategy.on_bar(window)
             signal, confidence = int(result[0]), float(result[1])
-        except Exception:
+        except Exception as e:
+            error_count += 1
+            if error_count <= 3:
+                print(f"WARNING: strategy.on_bar() raised {type(e).__name__}: {e}")
             continue
 
-        # Skip no-trade signals or low confidence
         if signal == 0 or confidence <= CONFIDENCE_THRESHOLD:
             continue
 
-        # Clamp confidence
-        confidence = max(0.01, min(0.99, confidence))
+        confidence = max(MIN_CONFIDENCE, min(MAX_CONFIDENCE, confidence))
 
-        # Resolve trade: did price go up or down after HORIZON_MINUTES?
-        current_close = df.iloc[i]["close"]
-        future_close = df.iloc[i + HORIZON_MINUTES]["close"]
+        current_close = close_arr[i]
+        future_close = future_close_arr[i]
         actual_direction = 1 if future_close > current_close else -1
 
-        # Binary contract P&L
         correct = (signal == actual_direction)
         if correct:
             pnl = (1.0 - confidence) - fee_per_trade
@@ -292,13 +286,16 @@ def run_backtest(strategy_class, df):
             pnl = -confidence - fee_per_trade
 
         trades.append({
-            "timestamp": df.iloc[i]["timestamp"],
+            "timestamp": ts_arr[i],
             "signal": signal,
             "confidence": confidence,
             "actual_direction": actual_direction,
             "correct": correct,
             "pnl": pnl,
         })
+
+    if error_count > 0:
+        print(f"WARNING: strategy.on_bar() raised {error_count} total errors")
 
     return trades
 
@@ -314,7 +311,7 @@ def compute_metrics(trades):
     """
     if not trades or len(trades) < 2:
         return {
-            "score": -999.0,
+            "score": INVALID_SCORE,
             "sharpe": 0.0,
             "accuracy": 0.0,
             "num_trades": len(trades) if trades else 0,
@@ -347,8 +344,8 @@ def compute_metrics(trades):
     trade_factor = math.sqrt(min(num_trades / MIN_TRADES, 1.0))
 
     # Composite score
-    if num_trades < 5 or accuracy != accuracy:  # NaN check
-        score = -999.0
+    if num_trades < 5 or math.isnan(accuracy):
+        score = INVALID_SCORE
     else:
         score = sharpe * accuracy * trade_factor
 
@@ -376,11 +373,11 @@ def evaluate(strategy_class):
     # Load and prepare data
     df = load_data()
     df = compute_features(df)
-    _train_df, val_df = split_data(df)
+    val_df = get_val_data(df)
 
     if len(val_df) < LOOKBACK_MINUTES + HORIZON_MINUTES + 1:
         print("ERROR: not enough validation data")
-        return {"score": -999.0}
+        return {"score": INVALID_SCORE}
 
     # Run backtest on validation set
     print(f"\nRunning backtest on {len(val_df)} validation bars...")

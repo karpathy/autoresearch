@@ -25,7 +25,7 @@ You are predicting whether BTC will be **up or down 15 minutes from now**, for u
 
 **Available features** in the window DataFrame:
 - Base: `open`, `high`, `low`, `close`, `volume`
-- Returns: `returns`, `log_returns`
+- Returns: `returns`
 - Volatility: `volatility_20`
 - Moving averages: `sma_20`, `sma_50`, `ema_12`, `ema_26`
 - RSI: `rsi_14`
@@ -100,7 +100,7 @@ grep "^score:\|^sharpe:\|^accuracy:\|^num_trades:" run.log
 
 When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated).
 
-The TSV has a header row and 6 columns:
+The TSV has a header row and 7 columns:
 
 ```
 commit	score	sharpe	accuracy	num_trades	status	description
@@ -142,7 +142,7 @@ LOOP FOREVER:
 
 The branch accumulates only winning commits, creating monotonic improvement. All experiments (keeps, discards, crashes) are logged to results.tsv for full audit.
 
-**Timeout**: Each experiment should take <2 minutes total. If a run exceeds 5 minutes, kill it and treat it as a failure.
+**Timeout**: Each experiment should take <2 minutes total. If a run exceeds 4 minutes, kill it and treat it as a failure.
 
 **Crashes**: If a run crashes, use your judgment: If it's something dumb and easy to fix (e.g. a typo, a missing import), fix it and re-run. If the idea itself is fundamentally broken, just skip it.
 

@@ -17,7 +17,7 @@ class Strategy:
     on_bar() receives a DataFrame of the last LOOKBACK_MINUTES (60) 1-min candles
     with columns:
         Base:    open, high, low, close, volume
-        Returns: returns, log_returns
+        Returns: returns
         Vol:     volatility_20
         MAs:     sma_20, sma_50, ema_12, ema_26
         RSI:     rsi_14
@@ -29,9 +29,6 @@ class Strategy:
         signal:     1 = predict up, -1 = predict down, 0 = no trade
         confidence: float 0.0 to 1.0 (used as binary contract purchase price)
     """
-
-    def __init__(self):
-        pass
 
     def on_bar(self, window: pd.DataFrame) -> tuple[int, float]:
         latest = window.iloc[-1]
