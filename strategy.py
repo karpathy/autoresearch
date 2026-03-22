@@ -38,17 +38,14 @@ class Strategy:
         bb_signal = 0.5 + (0.5 - bb_pos) * 0.25
 
         # --- Signal 3: Volume confirmation ---
-        # Low volume moves are more likely to revert
         vol_ratio = latest["volume"] / (latest["volume_sma_20"] + 1e-10)
-        # If volume is below average, boost the mean reversion signal
         if vol_ratio < 0.8:
             vol_boost = 0.04
         elif vol_ratio > 1.5:
-            vol_boost = -0.02  # high volume = trend more likely to stick, reduce contrarian
+            vol_boost = -0.02
         else:
             vol_boost = 0.0
 
-        # Apply vol boost in the direction of mean reversion
         if mean_rev_signal > 0.5:
             mean_rev_signal += vol_boost
         else:
@@ -57,7 +54,11 @@ class Strategy:
         # --- Ensemble ---
         probability = 0.55 * mean_rev_signal + 0.45 * bb_signal
 
-        # Tighter threshold: be more selective
-        edge_threshold = 0.14
+        # --- Adaptive edge threshold based on volatility regime ---
+        # Use Bollinger bandwidth as a vol proxy
+        bb_bw = latest["bbands_bandwidth"]
+        # Low bandwidth (tight bands) = low vol → lower threshold (trade more)
+        # High bandwidth (wide bands) = high vol → higher threshold (be selective)
+        edge_threshold = np.clip(0.10 + bb_bw * 2.0, 0.10, 0.22)
 
         return (probability, edge_threshold)
