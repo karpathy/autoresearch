@@ -501,10 +501,12 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         sample_weight=sample_weight[regime_valid] if sample_weight is not None else None,
     )
 
-    # Diagnostic
+    # Diagnostic and normalization stats
     rtp = regime_model.predict(regime_features[regime_valid])
+    regime_train_p5 = float(np.percentile(rtp, 5))
+    regime_train_p95 = float(np.percentile(rtp, 95))
     print(f"  Regime target: mean={regime_targets[regime_valid].mean():.3f} std={regime_targets[regime_valid].std():.3f}")
-    print(f"  Regime train: mean={rtp.mean():.3f} std={rtp.std():.3f}")
+    print(f"  Regime train: mean={rtp.mean():.3f} std={rtp.std():.3f} p5={regime_train_p5:.3f} p95={regime_train_p95:.3f}")
 
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
@@ -546,11 +548,12 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         regime_feats = compute_regime_features(df)
         regime_feats = np.nan_to_num(regime_feats, nan=0.0)
         regime_pred = regime_model.predict(regime_feats)
-        regime_pred = np.clip(regime_pred, 0.0, 1.0)
         # Smooth heavily — regime changes weekly, not hourly
         regime_smooth = pd.Series(regime_pred).ewm(span=168, min_periods=1).mean().values
-        # Map to adjustment: high efficiency → full positions, low → reduced
-        regime_adj = 0.5 + 0.5 * regime_smooth  # range [0.5, 1.0]
+        # Normalize to model's actual range, then map to [0.8, 1.0]
+        regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
+        regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
+        regime_adj = 0.8 + 0.2 * regime_norm  # range [0.8, 1.0]
         sigma_preds = sigma_preds * regime_adj
 
         # Vol prediction — classifier with vol feature subset
