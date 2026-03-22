@@ -515,7 +515,10 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     # Drop rows where regime target is NaN (edges)
     regime_valid = ~np.isnan(regime_targets)
 
-    regime_model = HistGradientBoostingRegressor(
+    # Binarize: accuracy >= 0.50 → model is reliable (1), < 0.50 → unreliable (0)
+    regime_binary = (regime_targets[regime_valid] >= 0.50).astype(int)
+
+    regime_model = HistGradientBoostingClassifier(
         max_iter=500,
         max_depth=3,
         min_samples_leaf=200,
@@ -526,15 +529,15 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     )
     regime_model.fit(
         regime_features[regime_valid],
-        regime_targets[regime_valid],
+        regime_binary,
         sample_weight=sample_weight[regime_valid] if sample_weight is not None else None,
     )
 
-    # Diagnostic and normalization stats
-    rtp = regime_model.predict(regime_features[regime_valid])
+    # Diagnostic stats — probability of "accurate" class
+    rtp = regime_model.predict_proba(regime_features[regime_valid])[:, 1]
     regime_train_p5 = float(np.percentile(rtp, 5))
     regime_train_p95 = float(np.percentile(rtp, 95))
-    print(f"  Regime target: mean={regime_targets[regime_valid].mean():.3f} std={regime_targets[regime_valid].std():.3f}")
+    print(f"  Regime target: {regime_binary.mean()*100:.1f}% accurate ({regime_features.shape[1]} features)")
     print(f"  Regime train: mean={rtp.mean():.3f} std={rtp.std():.3f} p5={regime_train_p5:.3f} p95={regime_train_p95:.3f}")
 
     selected = np.ones(features.shape[1], dtype=bool)
@@ -576,7 +579,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         # Regime prediction — slow-moving position multiplier
         regime_feats = compute_regime_features(df)
         regime_feats = np.nan_to_num(regime_feats, nan=0.0)
-        regime_pred = regime_model.predict(regime_feats)
+        regime_pred = regime_model.predict_proba(regime_feats)[:, 1]
 
         # Smooth heavily — regime changes weekly, not hourly
         regime_smooth = pd.Series(regime_pred).ewm(span=168, min_periods=1).mean().values
