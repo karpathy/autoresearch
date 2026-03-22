@@ -527,10 +527,14 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         l2_regularization=2.0,
         random_state=42,
     )
+    # Weight inaccurate periods 3x for better identification (like vol model)
+    regime_sample_weight = np.where(regime_binary == 0, 3.0, 1.0)
+    if sample_weight is not None:
+        regime_sample_weight = regime_sample_weight * sample_weight[regime_valid]
     regime_model.fit(
         regime_features[regime_valid],
         regime_binary,
-        sample_weight=sample_weight[regime_valid] if sample_weight is not None else None,
+        sample_weight=regime_sample_weight,
     )
 
     # Diagnostic stats — probability of "accurate" class
@@ -595,9 +599,12 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         # Smooth heavily — regime changes weekly, not hourly
         regime_smooth = pd.Series(regime_pred).ewm(span=168, min_periods=1).mean().values
 
-        # Only reduce when model predicts low accuracy (prob < 0.50)
-        # No normalization needed — uses raw probability directly
-        regime_adj = np.clip(0.80 + 0.40 * regime_smooth, 0.90, 1.0)
+        # Normalize to model's actual range
+        regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
+        regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
+
+        # High accuracy → trust model, low accuracy → reduce positions
+        regime_adj = 0.90 + 0.10 * regime_norm  # range [0.90, 1.0]
         sigma_preds = sigma_preds * regime_adj
 
         # Vol prediction — classifier with vol feature subset
