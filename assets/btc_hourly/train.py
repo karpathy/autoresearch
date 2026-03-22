@@ -539,6 +539,17 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     regime_train_p95 = float(np.percentile(rtp, 95))
     print(f"  Regime target: {regime_binary.mean()*100:.1f}% accurate ({regime_features.shape[1]} features)")
     print(f"  Regime train: mean={rtp.mean():.3f} std={rtp.std():.3f} p5={regime_train_p5:.3f} p95={regime_train_p95:.3f}")
+    # Regime permutation importance (shuffle each feature, measure accuracy drop)
+    base_acc = float(np.mean(regime_model.predict(regime_features[regime_valid]) == regime_binary))
+    perm_imp = []
+    rng = np.random.RandomState(42)
+    for fi in range(regime_features.shape[1]):
+        feat_copy = regime_features[regime_valid].copy()
+        feat_copy[:, fi] = rng.permutation(feat_copy[:, fi])
+        shuf_acc = float(np.mean(regime_model.predict(feat_copy) == regime_binary))
+        perm_imp.append(base_acc - shuf_acc)
+    top_idx = np.argsort(perm_imp)[::-1]
+    print(f"  Regime importance: {', '.join(f'{i}:{perm_imp[i]:.4f}' for i in top_idx)}")
 
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
@@ -588,8 +599,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
         regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
 
-        # High accuracy → trust model, low accuracy → reduce positions
-        regime_adj = 0.85 + 0.15 * regime_norm  # range [0.85, 1.0]
+        # Bidirectional: amplify accurate periods, reduce inaccurate ones
+        regime_adj = 1.0 + 0.08 * (2.0 * regime_norm - 1.0)  # range [0.92, 1.08]
         sigma_preds = sigma_preds * regime_adj
 
         # Vol prediction — classifier with vol feature subset
