@@ -111,6 +111,37 @@ def _run_for_tier(args, hardware_tier: str | None) -> bool:
 
     if had_winner:
         log.info("Winner: %s (%.4f > %.4f)", winner.candidate_id, best_score, champion_score)
+
+        # OHB-1 real eval: validate top candidates before promoting
+        if getattr(args, "real_eval", False):
+            log.info("Step 4b: OHB-1 real LLM eval on top-5 finalists...")
+            from .benchmark import validate_finalists
+            top_candidates = [{"id": r.candidate_id, "config": r.config,
+                               "description": r.description} for r, _ in ranked[:5]]
+            obh_results = validate_finalists(top_candidates, top_n=5)
+            # Use OHB-1 winner if it beats simulation winner
+            if obh_results and obh_results[0].candidate_id != winner.candidate_id:
+                log.info(
+                    "OHB-1 reranked: simulation winner=%s (%.4f) → "
+                    "OHB-1 winner=%s (%.4f)",
+                    winner.candidate_id, best_score,
+                    obh_results[0].candidate_id, obh_results[0].composite_score,
+                )
+                winner_id = obh_results[0].candidate_id
+                # Find the winner result object from ranked list
+                for r, score in ranked:
+                    if r.candidate_id == winner_id:
+                        winner = r
+                        break
+            log.info(
+                "OHB-1 validated champion: %s composite=%.4f success=%.2f safety=%.2f cost=$%.5f",
+                obh_results[0].candidate_id,
+                obh_results[0].composite_score,
+                obh_results[0].success_rate,
+                obh_results[0].safety_rate,
+                obh_results[0].estimated_cost_usd,
+            )
+
         if args.promote:
             from .promoter import promote
             log.info("Step 5: Promoting winner to OpenCastor...")
@@ -173,6 +204,12 @@ def main() -> int:
                         help="Show the harness research dashboard and exit")
     parser.add_argument("--search-space-status", action="store_true",
                         help="Print search space size, explored count/pct, and champion as JSON")
+    parser.add_argument("--real-eval", action="store_true",
+                        help="Run OHB-1 real LLM benchmark on top-5 finalists before promotion "
+                             "(requires GEMINI_API_KEY; ~$0.01 per run)")
+    parser.add_argument("--benchmark", action="store_true",
+                        help="Run OHB-1 benchmark on a single candidate config and print results. "
+                             "Pass --candidates 1 and a specific config via --hardware-tier.")
     args = parser.parse_args()
 
     if args.dashboard:
@@ -183,6 +220,22 @@ def main() -> int:
         import json as _json
         from .search_space import status_dict
         print(_json.dumps(status_dict(), indent=2))
+        return 0
+
+    if args.benchmark:
+        import json as _json
+        from .benchmark import evaluate_candidate_real
+        from .generator import generate_candidates
+        # Evaluate the current champion config as a baseline
+        candidates = generate_candidates(n=1, dry_run=True,
+                                         hardware_tier=args.hardware_tier)
+        if not candidates:
+            print("No candidates generated")
+            return 1
+        cand = candidates[0]
+        print(f"Running OHB-1 benchmark on candidate: {cand['id']}")
+        result = evaluate_candidate_real(cand)
+        print(_json.dumps(result.summary(), indent=2))
         return 0
 
     logging.basicConfig(
