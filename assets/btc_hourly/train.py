@@ -275,7 +275,7 @@ def compute_regime_targets(df: pd.DataFrame) -> np.ndarray:
 
     # 3-fold time-series OOF predictions
     from sklearn.model_selection import TimeSeriesSplit
-    tscv = TimeSeriesSplit(n_splits=3)
+    tscv = TimeSeriesSplit(n_splits=5)
     oof_preds = np.full(len(tgt_v), np.nan)
 
     for train_idx, test_idx in tscv.split(feat_v):
@@ -512,11 +512,6 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     regime_features = regime_features[valid]
     regime_features = np.nan_to_num(regime_features, nan=0.0)
 
-    # Remove low-importance features: ret_720 (idx 0), cycle_pos (idx 4)
-    regime_exclude = {0, 4}
-    regime_feat_mask = [i for i in range(regime_features.shape[1]) if i not in regime_exclude]
-    regime_features = regime_features[:, regime_feat_mask]
-
     # Drop rows where regime target is NaN (edges)
     regime_valid = ~np.isnan(regime_targets)
 
@@ -595,7 +590,6 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         # Regime prediction — slow-moving position multiplier
         regime_feats = compute_regime_features(df)
         regime_feats = np.nan_to_num(regime_feats, nan=0.0)
-        regime_feats = regime_feats[:, regime_feat_mask]
         regime_pred = regime_model.predict_proba(regime_feats)[:, 1]
 
         # Smooth heavily — regime changes weekly, not hourly
