@@ -54,7 +54,7 @@ class Strategy:
             mean_rev_signal -= vol_boost
 
         # --- Ensemble ---
-        probability = 0.55 * mean_rev_signal + 0.45 * bb_signal
+        probability = 0.70 * mean_rev_signal + 0.30 * bb_signal
 
         # --- Adaptive edge threshold ---
         bb_bw = latest["bbands_bandwidth"]
