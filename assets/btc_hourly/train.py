@@ -365,6 +365,11 @@ def compute_regime_features(df: pd.DataFrame) -> np.ndarray:
         fr_cum_720 = pd.Series(fr).rolling(720, min_periods=1).sum().values
         feature_cols.append(fr_cum_720 * 10)
 
+    # 8. Fear & greed index (daily sentiment — extreme readings may signal regime change)
+    if "fear_greed" in df.columns:
+        fg = df["fear_greed"].values.astype(np.float64)
+        feature_cols.append(np.nan_to_num(fg, nan=50.0) / 100.0)  # normalize to [0, 1]
+
     features = np.column_stack(feature_cols)
 
     # Same trimming as other feature functions
@@ -519,7 +524,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     regime_binary = (regime_targets[regime_valid] >= 0.50).astype(int)
 
     regime_model = HistGradientBoostingClassifier(
-        max_iter=300,
+        max_iter=500,
         max_depth=3,
         min_samples_leaf=200,
         learning_rate=0.02,
