@@ -1,0 +1,5 @@
+---
+val_f1:          0.929877
+best_thresh:     0.9702
+train_seconds:   44.71
+positive_rate:   0.0017
