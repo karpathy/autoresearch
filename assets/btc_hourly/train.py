@@ -519,7 +519,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     regime_binary = (regime_targets[regime_valid] >= 0.50).astype(int)
 
     regime_model = HistGradientBoostingClassifier(
-        max_iter=500,
+        max_iter=300,
         max_depth=3,
         min_samples_leaf=200,
         learning_rate=0.02,
@@ -527,14 +527,10 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         l2_regularization=2.0,
         random_state=42,
     )
-    # Weight inaccurate periods 3x for better identification (like vol model)
-    regime_sample_weight = np.where(regime_binary == 0, 3.0, 1.0)
-    if sample_weight is not None:
-        regime_sample_weight = regime_sample_weight * sample_weight[regime_valid]
     regime_model.fit(
         regime_features[regime_valid],
         regime_binary,
-        sample_weight=regime_sample_weight,
+        sample_weight=sample_weight[regime_valid] if sample_weight is not None else None,
     )
 
     # Diagnostic stats — probability of "accurate" class
