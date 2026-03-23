@@ -470,20 +470,18 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     )
     model_aggressive.fit(features, targets, sample_weight=sample_weight)
 
-    # --- Vol model: predict high-vol probability (binary classification target) ---
+    # --- Vol model: regressor on binary target (MSE probability estimation) ---
     vol_targets_raw = compute_vol_targets(train_df)
     vol_targets = vol_targets_raw[MAX_LOOKBACK:]
     vol_targets = vol_targets[valid]  # same valid mask as return targets
-    vol_binary = (vol_targets > 1.3).astype(np.float64)  # 1 = vol expanding, 0 = normal
+    vol_binary = (vol_targets > 1.3).astype(np.float64)  # same binary target as old classifier
 
     # Exclude low-importance features from vol model (guided by permutation importance)
-    # Remove low-importance features from vol model (guided by permutation importance)
-    # VW returns (6-8): ~0.015; RSI (16-18): ~0.008; BB pos (19-20): ~0.004; Eff (28-29): ~0.003
     vol_exclude = {6, 7, 8, 16, 17, 18, 19, 20, 28, 29}
     vol_feat_mask = [i for i in range(features.shape[1]) if i not in vol_exclude]
     vol_features = features[:, vol_feat_mask]
 
-    vol_model = HistGradientBoostingClassifier(
+    vol_model = HistGradientBoostingRegressor(
         max_iter=1000,
         max_depth=4,
         min_samples_leaf=400,
@@ -492,17 +490,16 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         l2_regularization=1.5,
         random_state=42,
     )
-    # Weight positive vol examples 3x with log loss for better discrimination
+    # Weight positive vol examples 3x (same as old classifier)
     vol_sample_weight = np.where(vol_binary == 1, 3.0, 1.0)
     if sample_weight is not None:
         vol_sample_weight = vol_sample_weight * sample_weight
-    vol_model.fit(vol_features, vol_binary.astype(int), sample_weight=vol_sample_weight)
+    vol_model.fit(vol_features, vol_binary, sample_weight=vol_sample_weight)
 
     print(f"  Vol target: {vol_binary.mean()*100:.1f}% positive ({len(vol_feat_mask)} features)")
-    vtp = vol_model.predict_proba(vol_features)[:, 1]
+    vtp = np.clip(vol_model.predict(vol_features), 0.0, 1.0)
     print(f"  Vol train: mean={vtp.mean():.3f} std={vtp.std():.3f} "
           f"min={vtp.min():.3f} max={vtp.max():.3f} >0.5={100*(vtp>0.5).mean():.1f}%")
-    # Vol feature importance diagnostic
     if hasattr(vol_model, 'feature_importances_'):
         imp = vol_model.feature_importances_
         top_idx = np.argsort(imp)[::-1][:10]
@@ -596,12 +593,12 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         regime_adj = 0.90 + 0.10 * regime_norm  # range [0.90, 1.0]
         sigma_preds = sigma_preds * regime_adj
 
-        # Vol prediction — classifier with vol feature subset
-        vol_high_prob = vol_model.predict_proba(feats[:, vol_feat_mask])[:, 1]
-        predict_fn.last_vol_ratio = vol_high_prob  # expose for diagnostics
+        # Vol prediction — regressor on binary target, clip to [0,1] as pseudo-probability
+        vol_high_prob = np.clip(vol_model.predict(feats[:, vol_feat_mask]), 0.0, 1.0)
+        predict_fn.last_vol_ratio = vol_high_prob
         print(f"  Vol eval: mean={vol_high_prob.mean():.3f} std={vol_high_prob.std():.3f} "
               f"min={vol_high_prob.min():.3f} max={vol_high_prob.max():.3f} >0.5={100*(vol_high_prob>0.5).mean():.1f}%")
-        vol_adj = 1.08 - 0.58 * vol_high_prob  # bidirectional: amplify calm, reduce volatile
+        vol_adj = 1.08 - 0.65 * vol_high_prob  # stronger dampening matches regressor timing
         sigma_preds = sigma_preds * vol_adj
 
         # Rest of pipeline unchanged
