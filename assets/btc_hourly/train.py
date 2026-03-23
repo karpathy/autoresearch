@@ -383,7 +383,7 @@ def compute_regime_features(df: pd.DataFrame) -> np.ndarray:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply light EMA smoothing — reduce micro-noise while preserving signal."""
-    return pd.Series(raw_preds).ewm(span=8, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=12, min_periods=1).mean().values
 
 
 # ---------------------------------------------------------------------------
