@@ -140,11 +140,11 @@ def _holdout_health(result, thresholds):
     elif result["sharpe"] < thresholds.holdout_ok_threshold:
         caution_flags += 1
 
-    # Drawdown (matches DD scoring cliff at -10%)
+    # Drawdown (matches DD scoring cliff at -15%)
     dd = abs(result["max_drawdown"])
-    if dd > 0.15:
+    if dd > 0.20:
         warn_flags += 1
-    elif dd > 0.10:
+    elif dd > 0.15:
         caution_flags += 1
 
     # Trade count
@@ -186,10 +186,10 @@ def _score_windows(scored_results, scored_windows, forward_hours):
     # Drawdown: worst across scored windows
     worst_dd_raw = min(r["max_drawdown"] for r in scored_results)  # most negative
     dd = abs(worst_dd_raw)
-    if dd <= 0.10:
+    if dd <= 0.15:
         dd_mult = 1.0
     else:
-        dd_mult = 1.0 / (1.0 + ((dd - 0.10) / 0.05) ** 2)
+        dd_mult = 1.0 / (1.0 + ((dd - 0.15) / 0.05) ** 2)
 
     # Trade count: per-window exponential. Min across scored windows.
     window_trade_mults = []
