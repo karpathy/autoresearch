@@ -382,8 +382,8 @@ def compute_regime_features(df: pd.DataFrame) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
-    """No smoothing — predictions already persistent (11h avg sign-run)."""
-    return raw_preds
+    """Apply light EMA smoothing — reduce micro-noise while preserving signal."""
+    return pd.Series(raw_preds).ewm(span=8, min_periods=1).mean().values
 
 
 # ---------------------------------------------------------------------------
