@@ -383,7 +383,7 @@ def compute_regime_features(df: pd.DataFrame) -> np.ndarray:
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
     """Apply light EMA smoothing — reduce micro-noise while preserving signal."""
-    return pd.Series(raw_preds).ewm(span=12, min_periods=1).mean().values
+    return pd.Series(raw_preds).ewm(span=20, min_periods=1).mean().values
 
 
 # ---------------------------------------------------------------------------
@@ -592,9 +592,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
         regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
 
-        # High accuracy → trust model, low accuracy → reduce positions
-        regime_adj = 0.90 + 0.10 * regime_norm  # range [0.90, 1.0]
-        sigma_preds = sigma_preds * regime_adj
+        # Regime disabled for ablation test
+        regime_adj = 1.0
 
         # Vol prediction — classifier with vol feature subset
         vol_high_prob = vol_model.predict_proba(feats[:, vol_feat_mask])[:, 1]
