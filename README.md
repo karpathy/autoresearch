@@ -80,6 +80,29 @@ Seeing as there seems to be a lot of interest in tinkering with autoresearch on 
 
 I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
 
+## Running on cloud GPUs (RunPod, Lambda, Vast.ai, etc.)
+
+Most cloud GPU providers (RunPod, Lambda, Vast.ai, etc.) run containers as root by default. Claude Code blocks `--dangerously-skip-permissions` when running as root for security reasons, which prevents autonomous operation.
+
+This repo includes a `setup-cloud.sh` script that creates a non-root user and configures the environment for autonomous research:
+
+```bash
+# First, run prepare.py as root to download data
+uv run prepare.py
+
+# Then run the setup script
+./setup-cloud.sh
+
+# Launch autonomous research as the non-root user
+su - researcher -c 'cd ~/autoresearch && claude --dangerously-skip-permissions'
+```
+
+The script handles:
+- Creating a non-root user (`researcher`)
+- Copying the workspace to the user's home directory
+- Configuring git safe directory
+- Setting correct file permissions
+
 ## Notable forks
 
 - [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
