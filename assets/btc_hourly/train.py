@@ -598,7 +598,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         predict_fn.last_vol_ratio = vol_high_prob
         print(f"  Vol eval: mean={vol_high_prob.mean():.3f} std={vol_high_prob.std():.3f} "
               f"min={vol_high_prob.min():.3f} max={vol_high_prob.max():.3f} >0.5={100*(vol_high_prob>0.5).mean():.1f}%")
-        vol_adj = 1.08 - 0.65 * vol_high_prob  # stronger dampening matches regressor timing
+        vol_adj = 1.08 - 0.72 * vol_high_prob  # recalibrated dampening for MSE regressor
         sigma_preds = sigma_preds * vol_adj
 
         # Rest of pipeline unchanged
