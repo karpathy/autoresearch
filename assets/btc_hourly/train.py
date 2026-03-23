@@ -545,10 +545,6 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     models = [model_conservative, model_aggressive]
     blend_weights = [0.5, 0.5]  # equal weight for more diversity
 
-    # Compute and store training prediction bias for demeaning
-    train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 0.0  # no bias correction
-
     # Approximate param count (return models + vol model + regime model)
     n_params = 0
     for m in models:
@@ -575,8 +571,6 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         # Return prediction (existing)
         preds = [m.predict(feats) for m in models]
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
-        sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
-
         # Regime prediction — slow-moving position multiplier
         regime_feats = compute_regime_features(df)
         regime_feats = np.nan_to_num(regime_feats, nan=0.0)
@@ -601,8 +595,6 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         vol_adj = 1.08 - 0.72 * vol_high_prob  # recalibrated dampening for MSE regressor
         sigma_preds = sigma_preds * vol_adj
 
-        # Rest of pipeline unchanged
-        sigma_preds = np.clip(sigma_preds, -3.0, 3.0)
         sigma_preds = sigma_preds * 0.35
         sigma_smoothed = _smooth_predictions(sigma_preds)
         return sigma_smoothed, ts, vol
