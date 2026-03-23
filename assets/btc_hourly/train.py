@@ -550,7 +550,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 1.3  # stronger correction for bullish training bias
+    pred_bias = float(np.mean(train_preds)) * 0.0  # no bias correction
 
     # Approximate param count (return models + vol model + regime model)
     n_params = 0
@@ -592,8 +592,9 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
         regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
 
-        # Regime disabled for ablation test
-        regime_adj = 1.0
+        # High accuracy → trust model, low accuracy → reduce positions
+        regime_adj = 0.90 + 0.10 * regime_norm  # range [0.90, 1.0]
+        sigma_preds = sigma_preds * regime_adj
 
         # Vol prediction — classifier with vol feature subset
         vol_high_prob = vol_model.predict_proba(feats[:, vol_feat_mask])[:, 1]
