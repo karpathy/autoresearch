@@ -1,0 +1,27 @@
+{
+  "bot": "kalshi_weather",
+  "date": "2026-03-22",
+  "params": {
+    "MIN_EDGE": 20,
+    "MIN_BUY_PRICE": 20,
+    "MAX_DAILY_TRADES": 3,
+    "SPREAD_CAP": 6,
+    "MAX_TRADE_SIZE": 10,
+    "BANKROLL_CAP": 0.2,
+    "MODEL_WEIGHTS": {
+      "GFS": 3,
+      "HRRR": 3,
+      "ICON": 2,
+      "ECMWF": 1,
+      "GEM": 1
+    }
+  },
+  "metrics": {
+    "win_rate": 0.78,
+    "sharpe": 12.0,
+    "markets_tested_4yr": 20000,
+    "expected_daily_trades": 3,
+    "focus_cities": 7
+  },
+  "evaluation_method": "open_meteo_forecast_plus_historical_backtest"
+}

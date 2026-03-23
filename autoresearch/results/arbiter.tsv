@@ -1,0 +1,5 @@
+date	experiment	param_changed	old_value	new_value	metric_before	metric_after	status	description
+2026-03-21	arb-001	BASELINE	-	-	10974 opps/day avg_spread=18.0c	-	baseline	Dry-run analysis. 9334/12010 signals pass filters. 1372 trades/day logged. 2274 skipped for tier min spread.
+2026-03-21	arb-002	MIN_SPREAD_CENTS	3	5	9334 sigs avg=18.0c score=0.494	7324 sigs avg=21.8c score=0.524	keep	Raise min spread 3c→5c removes 3770 marginal signals. Avg spread +21%, avg score +6%. Better signal quality.
+2026-03-21	arb-003	MIN_ARB_SCORE	0.30	0.35	9334 sigs avg=18.0c	7642 sigs avg=20.9c score=0.531	keep	Raise score threshold removes 1692 low-quality signals. Marginal improvement, maintains coverage.
+2026-03-21	arb-004	TIERS.monthly.min_spread_cents	20	15	2256 Fed arbs skipped/day	0 Fed arbs skipped (19-19.8c spread)	REVERTED	INVALID: Scholar claimed 19.7c spread but actual spread was 2-5c. Kalshi Oct 2026 Fed markets had <700 contracts volume. Spread was computed incorrectly (wrong outcome comparison or missing liquidity check). DO NOT lower monthly tier min — the skip was correct.

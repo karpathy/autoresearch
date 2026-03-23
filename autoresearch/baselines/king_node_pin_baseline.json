@@ -1,0 +1,21 @@
+{
+  "established": "2026-03-22",
+  "source": "backtest (252 trading days)",
+  "params": {
+    "ENTRY_TIME": "2:25 PM ET",
+    "WING_WIDTH": 2.0,
+    "CONTRACTS": 10,
+    "PROFIT_TARGET": 0.50,
+    "STOP_LOSS": 2.0,
+    "EXIT_TIME": "3:45 PM ET",
+    "MIN_KING_GEX": 0,
+    "SKIP_NEGATIVE_KING": true
+  },
+  "metrics": {
+    "annual_return": 0.0943,
+    "win_rate": 0.714,
+    "sharpe_ratio": 11.42,
+    "profit_factor": 6.01
+  },
+  "notes": "Backtest shows +9.43% annual, Sharpe 11.42, 71.4% WR. Purple king filter (SKIP_NEGATIVE_KING=true) critical — negative gamma nodes don't pin."
+}

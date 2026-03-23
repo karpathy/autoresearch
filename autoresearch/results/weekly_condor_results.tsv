@@ -1,0 +1,3 @@
+date	experiment	param_changed	old_value	new_value	metric_before	metric_after	status	description
+2026-03-22	wc-001	BASELINE	VIX 15-30	-	203 trades, WR=82.8%, Sharpe=0.69, PF=1.33	-	baseline	10yr backtest (2016-03-2026-03). Sharpe 0.69, PF 1.33, annual 0.3%. VIX breakdown: Mid(15-25) 168 trades WR=85%, High(>25) 35 trades WR=74%.
+2026-03-22	wc-002	VIX band	15-30	18-25	203 trades, Sharpe=0.69, WR=82.8%	95 trades, Sharpe=0.12, WR=82.1%	discard	Tightening VIX band to 18-25 dramatically reduces trades (203→95) and Sharpe collapses (0.69→0.12). The 15-25 mid-range still includes lots of bad weeks; the high-VIX weeks (>25) actually provided diversification. Conclusion: keep VIX 15-30.

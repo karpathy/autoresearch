@@ -1,0 +1,2 @@
+date	experiment	param_changed	old_value	new_value	metric_before	metric_after	status	description
+2026-03-22	evc-001	BASELINE	-	-	WR=86.5%, PF=3.02 (historical)	-	baseline	Historical backtest on curated earnings dates. Paper trading active as of 2026-03-15. Real P&L tracking NOT yet implemented.

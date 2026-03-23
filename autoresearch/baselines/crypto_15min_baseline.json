@@ -1,0 +1,27 @@
+{
+  "bot": "crypto_15min",
+  "date": "2026-03-21",
+  "params": {
+    "min_edge_cents": 8.0,
+    "signal_minute": 2,
+    "WEIGHTS": {
+      "vol_imbalance": 0.35,
+      "stale_price": 0.25,
+      "bs_binary": 0.2,
+      "momentum": 0.1,
+      "funding_rate": 0.1,
+      "ob_imbalance": 0.1
+    },
+    "MAX_SHIFT": 0.25,
+    "BASE_RATE": 0.495
+  },
+  "metrics": {
+    "win_rate": 0.6,
+    "sharpe": 0.211,
+    "trades_day": 35.7,
+    "total_pnl": 154.0,
+    "avg_edge_cents": 8.9
+  },
+  "updated_by": "Exp 2: signal_minute 3\u21922",
+  "backtest_window": "7 days"
+}

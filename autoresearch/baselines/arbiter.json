@@ -1,0 +1,27 @@
+{
+  "bot": "arbiter",
+  "date": "2026-03-21",
+  "params": {
+    "MIN_SPREAD_CENTS": 3,
+    "MIN_ARB_SCORE": 0.30,
+    "MIN_EXECUTION_CONFIDENCE": 0.85,
+    "MIN_VOLUME_POLYMARKET": 5000,
+    "MIN_VOLUME_KALSHI": 500,
+    "SCAN_INTERVAL_SECONDS": 300,
+    "TIERS": {
+      "intraday": {"min_spread_cents": 5},
+      "daily": {"min_spread_cents": 8},
+      "weekly": {"min_spread_cents": 12},
+      "monthly": {"min_spread_cents": 20}
+    }
+  },
+  "metrics": {
+    "opportunities_per_day": 10974,
+    "dry_run_trades_per_day": 1372,
+    "avg_spread_logged": 18.0,
+    "avg_match_confidence": 0.925,
+    "skipped_due_to_tier_min": 2274,
+    "top_skipped_opportunity": "Fed Rate Cut Oct 2026 at ~19.7c spread"
+  },
+  "evaluation_method": "paper_comparison_2026-03-21"
+}

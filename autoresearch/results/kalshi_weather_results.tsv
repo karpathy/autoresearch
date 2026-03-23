@@ -1,0 +1,4 @@
+date	experiment	param_changed	old_value	new_value	metric_before	metric_after	status	description
+2026-03-21	kwx-001	MODEL_WEIGHTS.ECMWF	1	0	ensemble_MAE=1.87F,win_rate=78%	ensemble_MAE=1.79F,win_rate=~79%	keep	Remove ECMWF (3.0F MAE) from ensemble. 4% accuracy improvement. Action: set ECMWF weight=0.
+2026-03-21	kwx-002	MIN_EDGE (per-city)	20 (uniform)	Vegas/Boston/Miami=15, NYC/Phili/OKC=20, Chicago=25	trades/day=3,win_rate=78%	trades/day=3.5,win_rate=~77%	keep	Per-city edge thresholds. More trades in stable cities, higher threshold in Chicago (lake effect).
+2026-03-22	kwx-003	MODEL_WEIGHTS.GFS	3x	4x (HRRR 2x, rest 1x)	ensemble_MAE=1.87F (with ECMWF)	ensemble_MAE=~1.72F (est.)	pending	VPS backtest required to validate. GFS dominates 73/80 city-season combos. High potential but needs live validation.

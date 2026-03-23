@@ -1,0 +1,5 @@
+date	experiment	param_changed	old_value	new_value	metric_before	metric_after	status	description
+2026-03-21	BASELINE	-	-	-	-	win_rate=58.4%,sharpe=0.183	-	baseline	Established baseline: signal_minute=3, min_edge=8
+2026-03-21	crypto-001	min_edge_cents	8.0	10.0	58.4%,0.183,38.4/day	85.7%,1.035,1.0/day	discard	WR improved but trades collapsed to 1/day; volume too low
+2026-03-21	crypto-002	signal_minute	3	2	58.4%,0.183,38.4/day	60.0%,0.211,35.7/day	keep	Slight WR improvement, same Sharpe, fewer trades but acceptable
+2026-03-21	crypto-003	WEIGHTS	35/20/10	40/25/5	58.4%,0.183,38.4/day	54.1%,0.094,64.1/day	discard	VPIN40/BS25/mom5 dramatically worse; model too aggressive

@@ -1,0 +1,23 @@
+{
+  "established": "2026-03-22",
+  "source": "10yr backtest (2016-2026)",
+  "params": {
+    "DELTA_TARGET": 10,
+    "WING_WIDTH": 5.0,
+    "VIX_MIN": 15.0,
+    "VIX_MAX": 30.0,
+    "CONTRACTS": 2,
+    "PROFIT_TARGET": 0.50,
+    "STOP_LOSS": 2.0,
+    "CLOSE_DAY": "Thursday 3 PM ET"
+  },
+  "metrics": {
+    "win_rate": 0.828,
+    "sharpe_ratio": 0.69,
+    "profit_factor": 1.33,
+    "max_drawdown": -0.025,
+    "total_trades": 203,
+    "annual_return": null
+  },
+  "notes": "Baseline from backtest_weekly_iron_condor.py. VIX 15-30 band, 10-delta, $5 wings, SPY only."
+}

@@ -1,0 +1,18 @@
+{
+  "established": "2026-03-22",
+  "source": "historical backtest on curated earnings dates (2019-2024)",
+  "params": {
+    "MIN_MARKET_CAP": 10_000_000_000,
+    "MIN_EXPECTED_MOVE_PCT": 0.03,
+    "MAX_EXPECTED_MOVE_PCT": 0.15,
+    "WING_MULTIPLIER": 1.5,
+    "MAX_POSITIONS": 5,
+    "CONTRACTS_PER_TRADE": 1
+  },
+  "metrics": {
+    "win_rate": 0.865,
+    "profit_factor": 3.02,
+    "avg_trades_per_earnings_season": 8
+  },
+  "notes": "Paper trading active as of 2026-03-15. Real P&L tracking not yet implemented — current P&L is estimated. Live baseline to be established after 20+ trades."
+}

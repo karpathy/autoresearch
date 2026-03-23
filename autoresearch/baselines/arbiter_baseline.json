@@ -1,0 +1,19 @@
+{
+  "bot": "arbiter",
+  "date": "2026-03-21",
+  "params": {
+    "MIN_SPREAD_CENTS": 5,
+    "MIN_ARB_SCORE": 0.35,
+    "MIN_EXECUTION_CONFIDENCE": 0.85,
+    "TIERS_monthly_min_spread_cents": 15
+  },
+  "metrics": {
+    "opportunities_per_day": 10974,
+    "qualifying_with_new_params": 7642,
+    "avg_spread_logged": 20.9,
+    "avg_match_confidence": 0.925,
+    "skipped_due_to_old_tier_min": 0
+  },
+  "updated_by": "Exp 1,2,3: spread 5c, score 0.35, monthly tier 15c",
+  "evaluation_method": "paper_comparison_2026-03-21"
+}

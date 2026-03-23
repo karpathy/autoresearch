@@ -1,0 +1,8 @@
+date	experiment	param_changed	old_value	new_value	metric_before	metric_after	status	description
+2026-03-21	BASELINE	-	-	-	-	10974_opps,spread=18.0c,score=0.494	-	baseline	Established from scanner_2026-03-21.log analysis
+2026-03-21	arb-001	MIN_SPREAD_CENTS	3	5	9334_sig,18.0c,0.494	7324_sig,21.8c,0.524	keep	Remove 3-4c noise, +21% avg spread, +6% score
+2026-03-21	arb-002	MIN_ARB_SCORE	0.30	0.35	9334_sig,18.0c,0.494	7642_sig,20.9c,0.531	keep	Filter low-quality 0.30-0.34 scored signals
+2026-03-21	arb-003	TIERS.monthly.min_spread_cents	20	15	2256_Fed_arbs_skipped/day	0_Fed_arbs_skipped	keep	CRITICAL: Fed Oct 2026 arb at 19.7c persistent, 2256 skips/day
+2026-03-22	arb-005	MIN_SPREAD_CENTS	5	7	3_div,avg_spread=7.7c,2_above_0.35	3_div,avg_spread=13.5c,3_above_0.35	discard	Higher threshold removes low-quality signals but same count. Not compelling improvement.
+2026-03-22	arb-006	MIN_VOLUME_POLYMARKET	5000	2000	34_pairs,3_div	34_pairs,3_div	discard	6 additional markets exposed but none have Kalshi equivalents. No arb benefit.
+2026-03-22	arb-007	MIN_ARB_SCORE	0.35	0.40	5_div,4_above_0.35	5_div,4_above_0.40	keep	Filters NBA signal (0.246) while keeping 4 high-quality. Marginal quality improvement.

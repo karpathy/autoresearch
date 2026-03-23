@@ -1,0 +1,20 @@
+{
+  "established": "2026-03-22",
+  "source": "6-month backtest (Sept 2025 - Feb 2026) via gex-credit-spread-bot/backtest_phase2.py",
+  "params": {
+    "DTE": [7, 14],
+    "SPREAD_WIDTH": 5.0,
+    "MIN_GEX_CONFIDENCE": 0.40,
+    "MAX_POSITIONS": 5,
+    "PROFIT_TARGET": 0.50,
+    "STOP_LOSS": 2.0,
+    "MAX_ALLOCATION": 0.05
+  },
+  "metrics": {
+    "win_rate": 0.769,
+    "sharpe_ratio": 5.0,
+    "avg_credit_per_share": 10.99,
+    "total_trades": 52
+  },
+  "notes": "Phase 2 backtest. Negative GEX enhancement added (bull put spreads when regime=negative). VIX 15-30 mandatory. SPY only."
+}

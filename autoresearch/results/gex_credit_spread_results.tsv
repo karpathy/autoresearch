@@ -1,0 +1,2 @@
+date	experiment	param_changed	old_value	new_value	metric_before	metric_after	status	description
+2026-03-22	gcs-001	BASELINE	-	-	WR=76.9%, Sharpe=5.0, 52 trades (6mo)	-	baseline	Phase 2 backtest (Sept 2025-Feb 2026). Negative GEX enhancement active. VIX 15-30 mandatory.
