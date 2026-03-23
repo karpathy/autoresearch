@@ -10,7 +10,7 @@ import time
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 
 from prepare import (
     FORWARD_HOURS,
@@ -250,6 +250,57 @@ def compute_vol_targets(df: pd.DataFrame) -> np.ndarray:
     return vol_targets
 
 
+def compute_regime_targets(df: pd.DataFrame) -> np.ndarray:
+    """Compute favorable regime target: 1 = normal conditions, 0 = danger.
+
+    Danger conditions (reduce positions):
+      - Forward vol shock: forward 168h realized vol > 1.5x trailing vol
+      - Extreme chop: forward 168h directional efficiency < 5th percentile
+
+    ~70-80% of hours are "favorable" → model defaults to full positions.
+
+    Returns array of same length as df. Edges are NaN.
+    No sklearn, no trained models, no learned parameters.
+    """
+    close = df["close"].values.astype(np.float64)
+    n = len(close)
+
+    # --- Forward vol shock ---
+    hourly_ret = np.zeros(n)
+    hourly_ret[1:] = close[1:] / close[:-1] - 1.0
+    hr_series = pd.Series(hourly_ret)
+
+    forward_vol = hr_series.rolling(168, min_periods=168).std().shift(-168).values
+    trailing_vol = hr_series.rolling(168, min_periods=168).std().values
+    trailing_vol_safe = np.where((trailing_vol > 0) & ~np.isnan(trailing_vol), trailing_vol, 1.0)
+
+    vol_shock = np.full(n, False)
+    both_valid = ~np.isnan(forward_vol) & ~np.isnan(trailing_vol)
+    vol_shock[both_valid] = (forward_vol[both_valid] / trailing_vol_safe[both_valid]) > 1.5
+
+    # --- Extreme chop: low directional efficiency ---
+    net_move = np.full(n, np.nan)
+    net_move[:n - 168] = np.abs(close[168:] - close[:n - 168])
+    abs_hourly = np.abs(np.diff(close, prepend=close[0]))
+    path_length = pd.Series(abs_hourly).rolling(168, min_periods=168).sum().shift(-168).values
+    path_safe = np.where((path_length > 0) & ~np.isnan(path_length), path_length, 1.0)
+    fwd_efficiency = net_move / path_safe
+
+    eff_5th = pd.Series(fwd_efficiency).expanding(min_periods=720).quantile(0.05).values
+    extreme_chop = np.full(n, False)
+    eff_valid = ~np.isnan(fwd_efficiency) & ~np.isnan(eff_5th)
+    extreme_chop[eff_valid] = fwd_efficiency[eff_valid] < eff_5th[eff_valid]
+
+    # --- Combine: favorable = not vol_shock AND not extreme_chop ---
+    targets = np.full(n, np.nan)
+    any_valid = both_valid | eff_valid
+    targets[any_valid] = 1.0
+    targets[vol_shock | extreme_chop] = 0.0
+    targets[~any_valid] = np.nan
+
+    return targets
+
+
 # ---------------------------------------------------------------------------
 # Model Helpers
 # ---------------------------------------------------------------------------
@@ -268,9 +319,10 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     Architecture:
       - Return model: single HistGradientBoostingRegressor.
+      - Regime model: HistGradientBoostingClassifier on favorable regime target.
       - Position scaler: HistGradientBoostingRegressor on binary vol target (>0.9 threshold).
 
-    Pipeline: raw prediction → position scale → scale(0.35) → EMA(20)
+    Pipeline: raw prediction → regime adj [0.70, 1.0] → position scale → scale(0.35) → EMA(20)
 
     Args:
         train_df: OHLCV DataFrame for training. The date range varies —
@@ -367,7 +419,41 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         top_idx = np.argsort(imp)[::-1][:10]
         print(f"  Pos scaler top features: {', '.join(f'{i}:{imp[i]:.3f}' for i in top_idx)}")
 
-    # Approximate param count (return model + position scaler)
+    # --- Regime model: predict favorable regime (binary classifier) ---
+    regime_targets_raw = compute_regime_targets(train_df)
+    regime_targets = regime_targets_raw[MAX_LOOKBACK:]
+    regime_targets = regime_targets[valid]
+
+    # Vol/structure features only — no return-directional features
+    regime_feat_indices = [9, 10, 11, 12, 13, 14, 15, 21, 22, 24, 25, 26, 27, 28, 29, 30, 31]
+    regime_features = features[:, regime_feat_indices]
+
+    regime_valid = ~np.isnan(regime_targets)
+    regime_binary = regime_targets[regime_valid].astype(int)
+
+    regime_model = HistGradientBoostingClassifier(
+        max_iter=500,
+        max_depth=3,
+        min_samples_leaf=800,
+        learning_rate=0.02,
+        max_leaf_nodes=10,
+        l2_regularization=2.0,
+        random_state=42,
+    )
+    regime_model.fit(
+        regime_features[regime_valid],
+        regime_binary,
+        sample_weight=sample_weight[regime_valid] if sample_weight is not None else None,
+    )
+
+    rtp = regime_model.predict_proba(regime_features[regime_valid])[:, 1]
+    regime_train_p5 = float(np.percentile(rtp, 5))
+    regime_train_p95 = float(np.percentile(rtp, 95))
+    print(f"  Regime target: {regime_binary.mean()*100:.1f}% favorable ({len(regime_feat_indices)} features)")
+    print(f"  Regime train: mean={rtp.mean():.3f} std={rtp.std():.3f} "
+          f"p5={regime_train_p5:.3f} p95={regime_train_p95:.3f}")
+
+    # Approximate param count (return model + position scaler + regime model)
     n_params = sum(
         model._predictors[j][0].get_n_leaf_nodes()
         for j in range(len(model._predictors))
@@ -375,6 +461,10 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     n_params += sum(
         pos_scaler._predictors[j][0].get_n_leaf_nodes()
         for j in range(len(pos_scaler._predictors))
+    )
+    n_params += sum(
+        regime_model._predictors[j][0].get_n_leaf_nodes()
+        for j in range(len(regime_model._predictors))
     )
 
     # --- Return prediction closure ---
@@ -385,6 +475,19 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
         # Return prediction
         sigma_preds = model.predict(feats)
+
+        # Regime adjustment — power-transform mapping, faster EMA
+        regime_pred = regime_model.predict_proba(feats[:, regime_feat_indices])[:, 1]
+        regime_smooth = pd.Series(regime_pred).ewm(span=48, min_periods=1).mean().values
+
+        # Normalize to [0, 1] using train range
+        regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
+        regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
+
+        # Power transform: pushes most values toward 1.0, only extreme danger → 0.70
+        # regime_norm=0.5 → 0.81^0.3=0.94, regime_norm=0.1 → 0.50^0.3=0.85
+        regime_adj = 0.70 + 0.30 * (regime_norm ** 0.3)
+        sigma_preds = sigma_preds * regime_adj
 
         # Position scaling — regressor on binary target, clip to [0,1] as pseudo-probability
         scaler_signal = np.clip(pos_scaler.predict(feats[:, scaler_feat_mask]), 0.0, 1.0)
