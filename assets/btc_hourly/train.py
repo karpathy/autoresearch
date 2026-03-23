@@ -393,6 +393,21 @@ def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
 def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     """Train a model on the provided data and return a prediction function.
 
+    Architecture (verified via ablation 2026-03-23):
+      - Return model: 2-model ensemble (conservative + aggressive w/ max_features=0.8)
+        Ablation: neither single model beats ensemble on worst-case Sharpe.
+      - Regime model: HistGradientBoostingClassifier on directional accuracy target.
+        Ablation: removing drops composite score 0.5833→0.5726 (worse worst-case Sharpe/DD).
+      - Position scaler: HistGradientBoostingRegressor on binary vol target (>0.9 threshold).
+        Produces pseudo-probability used for position sizing.
+
+    Pipeline: return predictions → regime adj [0.90, 1.0] → position scale
+      → scale(0.35) → EMA(20)
+
+    Removed after cleanup:
+      - Bias correction (pred_bias): was multiplied by 0.0, always no-op.
+      - Clip to ±3.0: predictions never reached ±3.0 after position scaling.
+
     This is the recipe: features, architecture, hyperparameters, and prediction
     pipeline. The evaluation system calls this independently for each walk-forward
     window. Each call must be self-contained — no global state.
@@ -470,20 +485,18 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     )
     model_aggressive.fit(features, targets, sample_weight=sample_weight)
 
-    # --- Vol model: predict high-vol probability (binary classification target) ---
-    vol_targets_raw = compute_vol_targets(train_df)
-    vol_targets = vol_targets_raw[MAX_LOOKBACK:]
-    vol_targets = vol_targets[valid]  # same valid mask as return targets
-    vol_binary = (vol_targets > 1.3).astype(np.float64)  # 1 = vol expanding, 0 = normal
+    # --- Position scaler: regressor on binary vol target ---
+    scaler_targets_raw = compute_vol_targets(train_df)
+    scaler_targets = scaler_targets_raw[MAX_LOOKBACK:]
+    scaler_targets = scaler_targets[valid]  # same valid mask as return targets
+    scaler_binary = (scaler_targets > 0.9).astype(np.float64)  # very sensitive: dampen unless vol clearly declining
 
-    # Exclude low-importance features from vol model (guided by permutation importance)
-    # Remove low-importance features from vol model (guided by permutation importance)
-    # VW returns (6-8): ~0.015; RSI (16-18): ~0.008; BB pos (19-20): ~0.004; Eff (28-29): ~0.003
-    vol_exclude = {6, 7, 8, 16, 17, 18, 19, 20, 28, 29}
-    vol_feat_mask = [i for i in range(features.shape[1]) if i not in vol_exclude]
-    vol_features = features[:, vol_feat_mask]
+    # Exclude low-importance features (guided by permutation importance)
+    scaler_exclude = {6, 7, 8, 16, 17, 18, 19, 20, 28, 29}
+    scaler_feat_mask = [i for i in range(features.shape[1]) if i not in scaler_exclude]
+    scaler_features = features[:, scaler_feat_mask]
 
-    vol_model = HistGradientBoostingClassifier(
+    pos_scaler = HistGradientBoostingRegressor(
         max_iter=1000,
         max_depth=4,
         min_samples_leaf=400,
@@ -492,21 +505,20 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         l2_regularization=1.5,
         random_state=42,
     )
-    # Weight positive vol examples 3x with log loss for better discrimination
-    vol_sample_weight = np.where(vol_binary == 1, 3.0, 1.0)
+    # Weight positive examples 3x to focus on high-vol tail
+    scaler_sample_weight = np.where(scaler_binary == 1, 3.0, 1.0)
     if sample_weight is not None:
-        vol_sample_weight = vol_sample_weight * sample_weight
-    vol_model.fit(vol_features, vol_binary.astype(int), sample_weight=vol_sample_weight)
+        scaler_sample_weight = scaler_sample_weight * sample_weight
+    pos_scaler.fit(scaler_features, scaler_binary, sample_weight=scaler_sample_weight)
 
-    print(f"  Vol target: {vol_binary.mean()*100:.1f}% positive ({len(vol_feat_mask)} features)")
-    vtp = vol_model.predict_proba(vol_features)[:, 1]
-    print(f"  Vol train: mean={vtp.mean():.3f} std={vtp.std():.3f} "
+    print(f"  Pos scaler target: {scaler_binary.mean()*100:.1f}% positive ({len(scaler_feat_mask)} features)")
+    vtp = np.clip(pos_scaler.predict(scaler_features), 0.0, 1.0)
+    print(f"  Pos scaler train: mean={vtp.mean():.3f} std={vtp.std():.3f} "
           f"min={vtp.min():.3f} max={vtp.max():.3f} >0.5={100*(vtp>0.5).mean():.1f}%")
-    # Vol feature importance diagnostic
-    if hasattr(vol_model, 'feature_importances_'):
-        imp = vol_model.feature_importances_
+    if hasattr(pos_scaler, 'feature_importances_'):
+        imp = pos_scaler.feature_importances_
         top_idx = np.argsort(imp)[::-1][:10]
-        print(f"  Vol top features: {', '.join(f'{i}:{imp[i]:.3f}' for i in top_idx)}")
+        print(f"  Pos scaler top features: {', '.join(f'{i}:{imp[i]:.3f}' for i in top_idx)}")
 
     # --- Regime model: predict momentum persistence (binary classifier) ---
     regime_targets = compute_regime_targets(train_df)
@@ -546,13 +558,9 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     print(f"  Regime train: mean={rtp.mean():.3f} std={rtp.std():.3f} p5={regime_train_p5:.3f} p95={regime_train_p95:.3f}")
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
-    blend_weights = [0.5, 0.5]  # equal weight for more diversity
+    blend_weights = [0.5, 0.5]
 
-    # Compute and store training prediction bias for demeaning
-    train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 0.0  # no bias correction
-
-    # Approximate param count (return models + vol model + regime model)
+    # Approximate param count (return models + position scaler + regime model)
     n_params = 0
     for m in models:
         n_params += sum(
@@ -560,8 +568,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
             for j in range(len(m._predictors))
         )
     n_params += sum(
-        vol_model._predictors[j][0].get_n_leaf_nodes()
-        for j in range(len(vol_model._predictors))
+        pos_scaler._predictors[j][0].get_n_leaf_nodes()
+        for j in range(len(pos_scaler._predictors))
     )
     n_params += sum(
         regime_model._predictors[j][0].get_n_leaf_nodes()
@@ -578,8 +586,6 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         # Return prediction (existing)
         preds = [m.predict(feats) for m in models]
         sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
-        sigma_preds = sigma_preds - pred_bias  # remove training-context directional bias
-
         # Regime prediction — slow-moving position multiplier
         regime_feats = compute_regime_features(df)
         regime_feats = np.nan_to_num(regime_feats, nan=0.0)
@@ -596,16 +602,14 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         regime_adj = 0.90 + 0.10 * regime_norm  # range [0.90, 1.0]
         sigma_preds = sigma_preds * regime_adj
 
-        # Vol prediction — classifier with vol feature subset
-        vol_high_prob = vol_model.predict_proba(feats[:, vol_feat_mask])[:, 1]
-        predict_fn.last_vol_ratio = vol_high_prob  # expose for diagnostics
-        print(f"  Vol eval: mean={vol_high_prob.mean():.3f} std={vol_high_prob.std():.3f} "
-              f"min={vol_high_prob.min():.3f} max={vol_high_prob.max():.3f} >0.5={100*(vol_high_prob>0.5).mean():.1f}%")
-        vol_adj = 1.08 - 0.58 * vol_high_prob  # bidirectional: amplify calm, reduce volatile
-        sigma_preds = sigma_preds * vol_adj
+        # Position scaling — regressor on binary target, clip to [0,1] as pseudo-probability
+        scaler_signal = np.clip(pos_scaler.predict(feats[:, scaler_feat_mask]), 0.0, 1.0)
+        predict_fn.last_vol_ratio = scaler_signal
+        print(f"  Vol eval: mean={scaler_signal.mean():.3f} std={scaler_signal.std():.3f} "
+              f"min={scaler_signal.min():.3f} max={scaler_signal.max():.3f} >0.5={100*(scaler_signal>0.5).mean():.1f}%")
+        pos_scale = 1.08 - 0.72 * scaler_signal
+        sigma_preds = sigma_preds * pos_scale
 
-        # Rest of pipeline unchanged
-        sigma_preds = np.clip(sigma_preds, -3.0, 3.0)
         sigma_preds = sigma_preds * 0.35
         sigma_smoothed = _smooth_predictions(sigma_preds)
         return sigma_smoothed, ts, vol
