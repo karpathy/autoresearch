@@ -474,7 +474,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     vol_targets_raw = compute_vol_targets(train_df)
     vol_targets = vol_targets_raw[MAX_LOOKBACK:]
     vol_targets = vol_targets[valid]  # same valid mask as return targets
-    vol_binary = (vol_targets > 1.1).astype(np.float64)  # lower threshold: more sensitive vol detection
+    vol_binary = (vol_targets > 0.9).astype(np.float64)  # very sensitive: dampen unless vol clearly declining
 
     # Exclude low-importance features from vol model (guided by permutation importance)
     vol_exclude = {6, 7, 8, 16, 17, 18, 19, 20, 28, 29}
