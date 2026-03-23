@@ -36,3 +36,6 @@ assets/*/experiment-log.md
 # Run logs
 run.log
 assets/*/run.log
+assets/*/diagnostics/
+
+.DS_Store
