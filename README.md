@@ -31,7 +31,10 @@ If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/s
 python3 -m pip install modal
 modal setup
 
-# 2. Put Modal credentials in `.env` 
+# 2. Put credentials in `.env` (see `.env.example`)
+#    MODAL_TOKEN_ID=...
+#    MODAL_TOKEN_SECRET=...
+#    OPENAI_API_KEY=...
 
 # 3. Start your ai agent with ability to run without getting blocked. by permissions
 claude --dangerously-skip-permissions
