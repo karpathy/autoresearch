@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sorting Networks — The Unsolved Problem</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Hero -->
+    <header id="hero">
+      <div class="hero-content">
+        <div class="hero-tag">OPEN PROBLEM IN COMPUTER SCIENCE</div>
+        <h1>We still don't know the<br><em>fastest</em> way to sort 16 numbers.</h1>
+        <p class="hero-sub">
+          We can sort billions of records. We can sort 15 numbers in 56 comparisons.
+          But for 16? The lower bound says 53 might suffice. The best we've found needs 60.
+          Seven comparisons. Unknown for decades.
+        </p>
+        <button id="explore-btn" class="btn-primary">Explore the Problem</button>
+      </div>
+      <canvas id="hero-canvas"></canvas>
+    </header>
+
+    <!-- What is a sorting network -->
+    <section id="explainer">
+      <div class="section-inner">
+        <h2>What is a sorting network?</h2>
+        <p>A sorting network is a fixed sequence of comparisons — no branching, no decisions based on the data. The same wires, the same gates, every time. That's what makes them so useful for GPUs and hardware: they're parallel, predictable, and blazingly fast.</p>
+        <div class="comparator-demo">
+          <div class="demo-label">A single comparator: two wires, one gate</div>
+          <canvas id="comparator-canvas" width="400" height="120"></canvas>
+          <div class="demo-label">If left > right, swap. Otherwise, don't.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Interactive Network -->
+    <section id="interactive">
+      <div class="section-inner wide">
+        <div class="interactive-header">
+          <div>
+            <h2>Watch it sort</h2>
+            <p>Drag the numbers, pick a network, hit play.</p>
+          </div>
+          <div class="controls">
+            <div class="control-group">
+              <label>Network</label>
+              <div class="network-tabs">
+                <button class="tab active" data-network="batcher">Batcher (n=16, 63)</button>
+                <button class="tab" data-network="best16">Best Known (n=16, 60*)</button>
+                <button class="tab" data-network="n8">Optimal (n=8, 19)</button>
+                <button class="tab" data-network="n4">Optimal (n=4, 5)</button>
+              </div>
+            </div>
+            <div class="control-group">
+              <label>Speed</label>
+              <input type="range" id="speed-slider" min="1" max="10" value="5" />
+            </div>
+          </div>
+        </div>
+
+        <div class="network-container">
+          <div id="input-lane">
+            <!-- draggable number chips -->
+          </div>
+          <canvas id="network-canvas"></canvas>
+          <div id="output-lane">
+            <!-- result chips -->
+          </div>
+        </div>
+
+        <div class="playback-controls">
+          <button id="btn-randomize" class="btn-ghost">Randomize</button>
+          <button id="btn-step-back" class="btn-ghost icon-btn" title="Step back">&#9664;</button>
+          <button id="btn-play" class="btn-primary wide">&#9654; Play</button>
+          <button id="btn-step-fwd" class="btn-ghost icon-btn" title="Step forward">&#9654;&#9654;</button>
+          <button id="btn-reset" class="btn-ghost">Reset</button>
+          <span class="step-counter">Step <span id="current-step">0</span> / <span id="total-steps">0</span></span>
+        </div>
+
+        <div id="comparison-flash" class="comparison-flash"></div>
+      </div>
+    </section>
+
+    <!-- The gap -->
+    <section id="gap-section">
+      <div class="section-inner">
+        <h2>The gap that haunts computer scientists</h2>
+        <div class="gap-visual">
+          <div class="gap-bar-container">
+            <div class="gap-axis">
+              <span>53</span>
+              <span>54</span>
+              <span>55</span>
+              <span>56</span>
+              <span>57</span>
+              <span>58</span>
+              <span>59</span>
+              <span>60</span>
+              <span>61</span>
+            </div>
+            <div class="gap-bar-track">
+              <div class="gap-known">
+                <div class="gap-label-inner">Lower bound: 53</div>
+              </div>
+              <div class="gap-unknown">
+                <div class="gap-question">?</div>
+              </div>
+              <div class="gap-best">
+                <div class="gap-label-inner">Best found: 60</div>
+              </div>
+            </div>
+          </div>
+          <div class="gap-stats">
+            <div class="stat">
+              <div class="stat-num">7</div>
+              <div class="stat-label">comparisons unaccounted for</div>
+            </div>
+            <div class="stat">
+              <div class="stat-num">50+</div>
+              <div class="stat-label">years this has been open</div>
+            </div>
+            <div class="stat">
+              <div class="stat-num">2<sup>16</sup>!</div>
+              <div class="stat-label">possible input orderings to verify</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Why it matters -->
+    <section id="why-matters">
+      <div class="section-inner">
+        <h2>Why seven comparisons matter</h2>
+        <div class="cards">
+          <div class="card">
+            <div class="card-icon">⚡</div>
+            <h3>GPU Kernels</h3>
+            <p>Deep learning models sort small batches millions of times per second. Shaving comparisons from inner loops is measurable at scale.</p>
+          </div>
+          <div class="card">
+            <div class="card-icon">🔧</div>
+            <h3>Compilers</h3>
+            <p>GCC and LLVM use sorting networks to generate optimal code for small fixed-size sorts — embedded in auto-vectorization passes.</p>
+          </div>
+          <div class="card">
+            <div class="card-icon">🧬</div>
+            <h3>Theory</h3>
+            <p>Proving optimal sorting networks requires new lower bound techniques. Solutions here often transfer to other circuit complexity problems.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Compare networks -->
+    <section id="compare-section">
+      <div class="section-inner wide">
+        <h2>Compare network depths</h2>
+        <p>Depth = how many parallel rounds of comparisons are needed. Fewer rounds = faster on parallel hardware.</p>
+        <div id="compare-canvas-container">
+          <canvas id="compare-canvas"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <p>Built to explore an open problem. <a href="https://en.wikipedia.org/wiki/Sorting_network" target="_blank">Wikipedia: Sorting networks</a></p>
+    </footer>
+  </div>
+
+  <script src="networks.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>

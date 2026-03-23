@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node:*)",
+      "Bash(start \"\" \"C:\\\\backup_synced\\\\home\\\\dev\\\\projects\\\\github\\\\temp-throwaway\\\\minimal-sorting-network-visual\\\\index.html\")",
+      "Bash(explorer:*)",
+      "Bash(cmd /c start \"\" \"C:\\\\backup_synced\\\\home\\\\dev\\\\projects\\\\github\\\\temp-throwaway\\\\minimal-sorting-network-visual\\\\index.html\")",
+      "Bash(wc:*)"
+    ]
+  }
+}
