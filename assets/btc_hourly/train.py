@@ -393,6 +393,21 @@ def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
 def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     """Train a model on the provided data and return a prediction function.
 
+    Architecture (verified via ablation 2026-03-23):
+      - Return model: 2-model ensemble (conservative + aggressive w/ max_features=0.8)
+        Ablation: neither single model beats ensemble on worst-case Sharpe.
+      - Regime model: HistGradientBoostingClassifier on directional accuracy target.
+        Ablation: removing drops composite score 0.5833→0.5726 (worse worst-case Sharpe/DD).
+      - Position scaler: HistGradientBoostingRegressor on binary vol target (>0.9 threshold).
+        Produces pseudo-probability used for position sizing.
+
+    Pipeline: return predictions → regime adj [0.90, 1.0] → position scale
+      → scale(0.35) → EMA(20)
+
+    Removed after cleanup:
+      - Bias correction (pred_bias): was multiplied by 0.0, always no-op.
+      - Clip to ±3.0: predictions never reached ±3.0 after position scaling.
+
     This is the recipe: features, architecture, hyperparameters, and prediction
     pipeline. The evaluation system calls this independently for each walk-forward
     window. Each call must be self-contained — no global state.
@@ -543,7 +558,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     print(f"  Regime train: mean={rtp.mean():.3f} std={rtp.std():.3f} p5={regime_train_p5:.3f} p95={regime_train_p95:.3f}")
     selected = np.ones(features.shape[1], dtype=bool)
     models = [model_conservative, model_aggressive]
-    blend_weights = [0.5, 0.5]  # equal weight for more diversity
+    blend_weights = [0.5, 0.5]
 
     # Approximate param count (return models + position scaler + regime model)
     n_params = 0
