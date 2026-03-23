@@ -22,6 +22,7 @@ dev/
 
 # Results file
 results.tsv
+progress.png
 
 # Secret files
 .env

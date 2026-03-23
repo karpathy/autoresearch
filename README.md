@@ -1,12 +1,12 @@
 # autoresearch on Modal
 
-![teaser](progress.png)
-
 *One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
 
 This fork is set up to run autoresearch loops through a lightweight local Modal control shim. The goal is still the same: let an agent edit `train.py`, run a fixed-budget training experiment, compare the result, and iterate. The difference is that the local machine is only the orchestrator. GPU training happens remotely on Modal, so the local agent can drive long-running experiments without needing a local NVIDIA box.
 
 The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching most of the Python files manually. Instead, you are programming the `program.md` file that tells the agent how to run the loop and evaluate experiments. A bit more context on the original project is in this [tweet](https://x.com/karpathy/status/2029701092347630069).
+
+`progress.png` is a generated artifact and is intentionally not tracked in git. Render it from the current `results.tsv` after the first recorded run.
 
 ## How it works
 
