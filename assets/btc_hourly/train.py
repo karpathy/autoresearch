@@ -382,8 +382,8 @@ def compute_regime_features(df: pd.DataFrame) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
-    """Apply EMA smoothing — reduce noise on linear-scaled predictions."""
-    return pd.Series(raw_preds).ewm(span=20, min_periods=1).mean().values
+    """No smoothing — predictions already persistent (11h avg sign-run)."""
+    return raw_preds
 
 
 # ---------------------------------------------------------------------------
@@ -550,7 +550,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
     # Compute and store training prediction bias for demeaning
     train_preds = sum(w * m.predict(features) for w, m in zip(blend_weights, models))
-    pred_bias = float(np.mean(train_preds)) * 0.0  # no bias correction
+    pred_bias = float(np.mean(train_preds)) * 1.3  # stronger correction for bullish training bias
 
     # Approximate param count (return models + vol model + regime model)
     n_params = 0
