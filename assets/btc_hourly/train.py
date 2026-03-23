@@ -484,9 +484,12 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
         regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
 
-        # Power transform: pushes most values toward 1.0, only extreme danger → 0.70
-        # regime_norm=0.5 → 0.81^0.3=0.94, regime_norm=0.1 → 0.50^0.3=0.85
-        regime_adj = 0.70 + 0.30 * (regime_norm ** 0.3)
+        # Threshold activation: 1.0 for most predictions, dampen only extreme tail
+        # Below 5th pctile → 0.70 (full dampening)
+        # 5th-15th pctile → linear transition
+        # Above 15th pctile → 1.0 (no effect, ~85% of predictions)
+        inner_norm = np.clip((regime_norm - 0.05) / 0.10, 0.0, 1.0)
+        regime_adj = 0.70 + 0.30 * inner_norm
         sigma_preds = sigma_preds * regime_adj
 
         # Position scaling — regressor on binary target, clip to [0,1] as pseudo-probability
