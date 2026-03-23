@@ -484,12 +484,18 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
         regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
 
-        # Threshold activation: 1.0 for most predictions, dampen only extreme tail
-        # Below 5th pctile → 0.70 (full dampening)
-        # 5th-15th pctile → linear transition
-        # Above 15th pctile → 1.0 (no effect, ~85% of predictions)
-        inner_norm = np.clip((regime_norm - 0.05) / 0.10, 0.0, 1.0)
-        regime_adj = 0.70 + 0.30 * inner_norm
+        # Asymmetric threshold: dampen danger tail, boost favorable tail
+        # Below 5th pctile → 0.70 (dampen)
+        # 5th-15th → transition to 1.0
+        # 15th-85th → 1.0 (no effect)
+        # 85th-95th → transition to 1.15
+        # Above 95th → 1.15 (boost)
+        if regime_norm.min() < 0.15:  # any danger predictions?
+            dampen = np.clip((regime_norm - 0.05) / 0.10, 0.0, 1.0)  # 0→1 over [0.05, 0.15]
+            boost = np.clip((regime_norm - 0.85) / 0.10, 0.0, 1.0)  # 0→1 over [0.85, 0.95]
+            regime_adj = 0.70 + 0.30 * dampen + 0.15 * boost  # [0.70, 1.0] + [0, 0.15]
+        else:
+            regime_adj = np.ones_like(regime_norm)
         sigma_preds = sigma_preds * regime_adj
 
         # Position scaling — regressor on binary target, clip to [0,1] as pseudo-probability
