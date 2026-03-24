@@ -43,6 +43,7 @@ import onnxruntime as ort
 # Constants (immutable)
 # ---------------------------------------------------------------------------
 
+EPOCHS = 10                    # Fixed budget per experiment (immutable)
 EMBEDDING_DIM = 256
 IMAGE_SIZE = 224
 TRAIN_DIR = "/data/mnt/mnt_ml_shared/Vic/product_code_dataset/train"

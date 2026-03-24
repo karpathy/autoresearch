@@ -21,7 +21,7 @@ from prepare import (
     # Dataset builders
     build_distill_dataset, build_arcface_dataset, build_val_dataset,
     # Constants
-    EMBEDDING_DIM, IMAGE_SIZE, DEFAULT_TEACHER_CACHE_DIR,
+    EPOCHS, EMBEDDING_DIM, IMAGE_SIZE, DEFAULT_TEACHER_CACHE_DIR,
     SKIP_CLASSES, VAL_DIR,
     # Utility
     set_seed,
@@ -51,7 +51,6 @@ BATCH_SIZE = 256
 ARCFACE_BATCH_SIZE = 128
 LR = 1e-1
 WEIGHT_DECAY = 1e-5
-EPOCHS = 10                    # Fixed budget per REQUIREMENTS
 NUM_WORKERS = 16
 SEED = 42
 DEVICE = "cuda"
@@ -679,6 +678,7 @@ def main() -> None:
 
         # Retrieval evaluation
         recall_at_1 = 0.0
+        recall_at_5 = 0.0
         mean_cos = stats.mean_cosine
         if val_dataset is not None:
             retrieval_metrics = run_retrieval_eval(
@@ -693,30 +693,90 @@ def main() -> None:
                 num_workers=NUM_WORKERS,
             )
             recall_at_1 = retrieval_metrics["recall@1"]
+            recall_at_5 = retrieval_metrics.get(f"recall@{RETRIEVAL_TOPK}", 0.0)
             logger.info(
                 f"  Retrieval: recall@1={recall_at_1:.4f} "
-                f"recall@{RETRIEVAL_TOPK}={retrieval_metrics.get(f'recall@{RETRIEVAL_TOPK}', 0):.4f}"
+                f"recall@{RETRIEVAL_TOPK}={recall_at_5:.4f}"
             )
 
         combined = compute_combined_metric(recall_at_1, mean_cos)
         logger.info(f"  Combined metric: {combined:.6f}")
 
-    # Greppable summary block (per D-08)
+    # Compute final metrics
     elapsed = time.time() - t_start
+    peak_vram_mb = round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
+    final_distill_loss = stats.distill_loss
+    final_arc_loss = stats.arc_loss
+    final_vat_loss = stats.vat_loss
+    final_sep_loss = stats.sep_loss
+
+    # Write metrics.json (per D-02, INFRA-02, INFRA-05, INFRA-06)
+    import json
+
+    metrics = {
+        "status": "success",
+        "combined_metric": combined,
+        "recall_at_1": recall_at_1,
+        "recall_at_5": recall_at_5,
+        "mean_cosine": mean_cos,
+        "distill_loss": final_distill_loss,
+        "arc_loss": final_arc_loss,
+        "vat_loss": final_vat_loss,
+        "sep_loss": final_sep_loss,
+        "peak_vram_mb": peak_vram_mb,
+        "epochs": EPOCHS,
+        "elapsed_seconds": round(elapsed, 1),
+    }
+    with open("metrics.json", "w") as f:
+        json.dump(metrics, f, indent=2)
+
+    # Greppable summary block (per INFRA-06)
     print("---")
+    print(f"status:           success")
     print(f"combined_metric:  {combined:.6f}")
     print(f"recall@1:         {recall_at_1:.6f}")
+    print(f"recall@5:         {recall_at_5:.6f}")
     print(f"mean_cosine:      {mean_cos:.6f}")
-    print(f"peak_vram_mb:     {torch.cuda.max_memory_allocated() / 1024**2:.1f}")
-    print(f"total_seconds:    {elapsed:.1f}")
+    print(f"distill_loss:     {final_distill_loss:.6f}")
+    print(f"arc_loss:         {final_arc_loss:.6f}")
+    print(f"vat_loss:         {final_vat_loss:.6f}")
+    print(f"sep_loss:         {final_sep_loss:.6f}")
+    print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
     print(f"epochs:           {EPOCHS}")
+    print(f"elapsed_seconds:  {elapsed:.1f}")
 
 
 if __name__ == "__main__":
+    import json
+    import traceback
+
     try:
         main()
     except torch.cuda.OutOfMemoryError:
+        peak = torch.cuda.max_memory_allocated() / 1024 / 1024
+        metrics = {
+            "status": "oom",
+            "peak_vram_mb": round(peak, 1),
+            "error": "CUDA out of memory",
+        }
+        with open("metrics.json", "w") as f:
+            json.dump(metrics, f, indent=2)
         print("---")
         print("status: OOM")
-        print(f"peak_vram_mb: {torch.cuda.max_memory_allocated() / 1024**2:.1f}")
+        print(f"peak_vram_mb: {peak:.1f}")
+        sys.exit(1)
+    except Exception as e:
+        peak = 0.0
+        try:
+            peak = torch.cuda.max_memory_allocated() / 1024 / 1024
+        except Exception:
+            pass
+        metrics = {
+            "status": "crash",
+            "peak_vram_mb": round(peak, 1),
+            "error": str(e),
+        }
+        with open("metrics.json", "w") as f:
+            json.dump(metrics, f, indent=2)
+        traceback.print_exc()
         sys.exit(1)
