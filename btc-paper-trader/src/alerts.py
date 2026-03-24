@@ -68,12 +68,20 @@ def run_health_checks(
     return alerts
 
 
-def write_alerts(alerts: list[str], path: str) -> None:
-    """Append timestamped alerts to the alert log file."""
+def write_alerts(alerts: list[str], path: str, max_bytes: int = 10 * 1024 * 1024) -> None:
+    """Append timestamped alerts to the alert log file. Rotates at max_bytes."""
     if not alerts:
         return
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    # Rotate if too large
+    if os.path.exists(path) and os.path.getsize(path) > max_bytes:
+        backup = path + ".1"
+        if os.path.exists(backup):
+            os.unlink(backup)
+        os.rename(path, backup)
+
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     with open(path, "a") as f:

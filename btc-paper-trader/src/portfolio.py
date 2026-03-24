@@ -27,14 +27,18 @@ class PortfolioState:
 
 
 def load_portfolio_state(path: str) -> PortfolioState:
-    """Load portfolio state from JSON file. Returns default if missing."""
+    """Load portfolio state from JSON file. Returns default if missing or corrupted."""
     if not os.path.exists(path):
         return PortfolioState()
 
-    with open(path) as f:
-        data = json.load(f)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"Portfolio state corrupted ({path}): {e}. Using defaults.")
+        return PortfolioState()
 
-    return PortfolioState(
+    state = PortfolioState(
         position=data.get("position", 0.0),
         portfolio_value=data.get("portfolio_value", 1.0),
         peak_value=data.get("peak_value", 1.0),
@@ -45,13 +49,28 @@ def load_portfolio_state(path: str) -> PortfolioState:
         daily_returns=data.get("daily_returns", []),
     )
 
+    # Validate critical values are finite
+    for field_name in ("position", "portfolio_value", "peak_value", "prev_btc_price"):
+        val = getattr(state, field_name)
+        if not isinstance(val, (int, float)) or not np.isfinite(val):
+            logger.error(f"Portfolio state {field_name}={val} is invalid. Using defaults.")
+            return PortfolioState()
+
+    return state
+
 
 def save_portfolio_state(state: PortfolioState, path: str) -> None:
     """Save portfolio state to JSON with atomic write."""
     tmp_path = path + ".tmp"
-    with open(tmp_path, "w") as f:
-        json.dump(asdict(state), f, indent=2, default=str)
-    os.replace(tmp_path, path)
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(asdict(state), f, indent=2, default=str)
+        os.replace(tmp_path, path)
+    except Exception as e:
+        logger.error(f"Failed to save portfolio state: {e}")
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
 
 
 def update_portfolio(

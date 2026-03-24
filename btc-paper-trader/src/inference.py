@@ -3,6 +3,7 @@
 Every intermediate value is captured for diagnostic logging.
 """
 
+import logging
 from dataclasses import dataclass
 
 import joblib
@@ -10,6 +11,8 @@ import numpy as np
 import pandas as pd
 
 from .features import FEATURE_COUNT_WITH_FUNDING, FEATURE_COUNT_WITHOUT_FUNDING, compute_features
+
+logger = logging.getLogger(__name__)
 
 EXPECTED_ARTIFACT_KEYS = {
     "model", "model_72", "conf_model", "pos_scaler",
@@ -117,7 +120,27 @@ def run_inference(df: pd.DataFrame, artifacts: dict) -> InferenceResult:
 
     # Compute features on full history
     feats, ts, vol = compute_features(df)
+
+    # Feature quality check: count NaN before masking
+    nan_count = np.isnan(feats).sum()
+    nan_frac = nan_count / feats.size if feats.size > 0 else 0
+    if nan_frac > 0.05:
+        logger.warning(
+            f"Feature quality degraded: {nan_count} NaN ({nan_frac:.1%} of values). "
+            f"Likely cause: data gap in rolling windows."
+        )
+    elif nan_count > 0:
+        logger.debug(f"Features: {nan_count} NaN masked ({nan_frac:.2%})")
+
     feats = np.nan_to_num(feats, nan=0.0)
+
+    # Validate feature shape matches artifact
+    expected_n = artifacts["n_features"]
+    if feats.shape[1] != expected_n:
+        raise ValueError(
+            f"Feature count mismatch: computed {feats.shape[1]}, "
+            f"artifact expects {expected_n}"
+        )
 
     # 24h prediction
     pred_24 = model.predict(feats)

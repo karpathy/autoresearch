@@ -20,6 +20,82 @@ logger = logging.getLogger(__name__)
 _KRAKEN_ANNUAL_TO_8H = 1.0 / (365.25 * 3)
 
 
+def validate_candle(candle: dict) -> list[str]:
+    """Validate candle data. Returns list of issues (empty if OK)."""
+    issues = []
+    for field in ("open", "high", "low", "close"):
+        v = candle.get(field)
+        if v is None or not np.isfinite(v) or v <= 0:
+            issues.append(f"{field}={v} (must be positive and finite)")
+    if candle.get("high", 0) < candle.get("low", 0):
+        issues.append(f"high={candle['high']} < low={candle['low']}")
+    v = candle.get("volume")
+    if v is not None and (not np.isfinite(v) or v < 0):
+        issues.append(f"volume={v} (must be non-negative)")
+    return issues
+
+
+def backfill_recent_gap(
+    df: pd.DataFrame,
+    symbol: str = "BTCUSDT",
+    base_url: str = "https://api.binance.us",
+) -> pd.DataFrame:
+    """Fill gap between last parquet timestamp and now.
+
+    Fetches missing candles from Binance US (up to 1000 per request).
+    Returns updated DataFrame with gap filled.
+    """
+    latest_ts = df["timestamp"].max()
+    start_ms = int((latest_ts + pd.Timedelta(hours=1)).timestamp() * 1000)
+    end_ms = int(pd.Timestamp.now("UTC").tz_localize(None).timestamp() * 1000)
+
+    url = f"{base_url}/api/v3/klines"
+    new_rows = []
+    current_start = start_ms
+
+    while current_start < end_ms:
+        try:
+            resp = requests.get(url, params={
+                "symbol": symbol, "interval": "1h",
+                "startTime": current_start, "limit": 1000,
+            }, timeout=30)
+            resp.raise_for_status()
+            klines = resp.json()
+        except Exception as e:
+            logger.warning(f"Backfill fetch failed: {e}")
+            break
+
+        if not klines:
+            break
+
+        for k in klines:
+            if len(k) < 6:
+                continue
+            new_rows.append({
+                "timestamp": pd.Timestamp(k[0], unit="ms", tz="UTC").tz_localize(None),
+                "open": float(k[1]),
+                "high": float(k[2]),
+                "low": float(k[3]),
+                "close": float(k[4]),
+                "volume": float(k[5]),
+            })
+        current_start = klines[-1][0] + 1
+        time.sleep(0.3)
+
+    if new_rows:
+        new_df = pd.DataFrame(new_rows)
+        # Carry forward funding_rate if column exists
+        if "funding_rate" in df.columns:
+            new_df["funding_rate"] = df["funding_rate"].iloc[-1]
+        df = pd.concat([df, new_df], ignore_index=True)
+        df = df.sort_values("timestamp").drop_duplicates(subset="timestamp").reset_index(drop=True)
+        if "funding_rate" in df.columns:
+            df["funding_rate"] = df["funding_rate"].ffill()
+        logger.info(f"Backfilled {len(new_rows)} candles")
+
+    return df
+
+
 def fetch_latest_candle(
     symbol: str = "BTCUSDT",
     base_url: str = "https://api.binance.us",
@@ -48,6 +124,13 @@ def fetch_latest_candle(
 
             # The second-to-last candle is the most recently completed one
             candle = klines[-2]
+
+            # Validate response structure
+            if not isinstance(candle, list) or len(candle) < 6:
+                logger.warning(f"Malformed candle response: {candle!r:.200}")
+                if attempt < retry_attempts - 1:
+                    time.sleep(retry_delay)
+                continue
 
             # Binance kline format: [open_time, open, high, low, close, volume, ...]
             ts_ms = candle[0]
@@ -104,7 +187,17 @@ def fetch_latest_funding(
             return None
 
         # Convert annualized rate to per-8h (Binance convention)
-        annual_rate = float(ticker["fundingRate"])
+        if "fundingRate" not in ticker:
+            logger.warning("Kraken ticker missing fundingRate field")
+            return None
+        try:
+            annual_rate = float(ticker["fundingRate"])
+        except (ValueError, TypeError):
+            logger.warning(f"Kraken fundingRate not parseable: {ticker.get('fundingRate')!r}")
+            return None
+        if not np.isfinite(annual_rate):
+            logger.warning(f"Kraken fundingRate not finite: {annual_rate}")
+            return None
         per_8h_rate = annual_rate * _KRAKEN_ANNUAL_TO_8H
 
         # Parse timestamp from lastTime
@@ -140,8 +233,15 @@ def load_parquet(path: str) -> pd.DataFrame:
 def save_parquet(df: pd.DataFrame, path: str) -> None:
     """Save DataFrame to parquet with atomic write (temp + rename)."""
     tmp_path = path + ".tmp"
-    df.to_parquet(tmp_path, index=False)
-    os.replace(tmp_path, path)
+    try:
+        df.to_parquet(tmp_path, index=False)
+        os.replace(tmp_path, path)
+    except Exception as e:
+        logger.error(f"Failed to save parquet {path}: {e}")
+        # Clean up orphaned tmp file
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
 
 
 def append_candle(

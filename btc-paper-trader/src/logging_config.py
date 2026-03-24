@@ -84,16 +84,33 @@ def setup_system_log(
     return logger
 
 
+_MAX_CSV_BYTES = 50 * 1024 * 1024  # 50MB
+
+
+def _rotate_if_large(path: str, max_bytes: int = _MAX_CSV_BYTES) -> None:
+    """Rotate file to .1 backup if it exceeds max_bytes."""
+    if os.path.exists(path) and os.path.getsize(path) > max_bytes:
+        backup = path + ".1"
+        if os.path.exists(backup):
+            os.unlink(backup)
+        os.rename(path, backup)
+        logging.getLogger(__name__).info(f"Rotated {path} ({max_bytes // 1024 // 1024}MB limit)")
+
+
 def _append_csv_row(path: str, row: dict, fields: list[str]) -> None:
     """Append a row to a CSV file. Write header if file doesn't exist."""
-    write_header = not os.path.exists(path) or os.path.getsize(path) == 0
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    _rotate_if_large(path)
+    write_header = not os.path.exists(path) or os.path.getsize(path) == 0
 
-    with open(path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        if write_header:
-            writer.writeheader()
-        writer.writerow({k: row.get(k, "") for k in fields})
+    try:
+        with open(path, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fields)
+            if write_header:
+                writer.writeheader()
+            writer.writerow({k: row.get(k, "") for k in fields})
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to write CSV row to {path}: {e}")
 
 
 def append_prediction_row(path: str, row: dict) -> None:
