@@ -478,7 +478,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
 
         # Regime adjustment — power-transform mapping, faster EMA
         regime_pred = regime_model.predict_proba(feats[:, regime_feat_indices])[:, 1]
-        regime_smooth = pd.Series(regime_pred).ewm(span=48, min_periods=1).mean().values
+        regime_smooth = pd.Series(regime_pred).ewm(span=24, min_periods=1).mean().values
 
         # Normalize to [0, 1] using train range
         regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
