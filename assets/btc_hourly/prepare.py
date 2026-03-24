@@ -653,8 +653,15 @@ def _merge_supplementary(
     return result
 
 
+_TRAIN_DATA_CACHE = CACHE_DIR / "last_train_data.parquet"
+
+
 def _load_all_data() -> pd.DataFrame:
-    """Load the full dataset with supplementary features. Internal use only."""
+    """Load the full dataset with supplementary features. Internal use only.
+
+    Also saves a snapshot to ~/.cache/autotrader/last_train_data.parquet
+    so that export_artifacts.py can reproduce the exact training data.
+    """
     ohlcv_df = download_data()
 
     # Download supplementary data sources (non-critical — failures fill with defaults)
@@ -670,7 +677,12 @@ def _load_all_data() -> pd.DataFrame:
         (cot_df, {"cot_dealer_net": 0.0, "cot_asset_mgr_net": 0.0, "cot_lev_fund_net": 0.0}),
     ]
 
-    return _merge_supplementary(ohlcv_df, supplementary)
+    result = _merge_supplementary(ohlcv_df, supplementary)
+
+    # Save snapshot for deterministic export
+    result.to_parquet(_TRAIN_DATA_CACHE, index=False)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
