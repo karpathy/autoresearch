@@ -40,3 +40,9 @@ assets/*/run.log
 assets/*/diagnostics/
 
 .DS_Store
+
+# Paper trader runtime files (not tracked)
+btc-paper-trader/artifacts/
+btc-paper-trader/data/
+btc-paper-trader/logs/
+btc-paper-trader/.venv/

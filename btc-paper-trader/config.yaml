@@ -1,0 +1,51 @@
+data:
+  parquet_path: data/btcusdt_1h.parquet
+  binance_base_url: https://api.binance.us     # US-accessible (Binance.com returns 451)
+  kraken_futures_url: https://futures.kraken.com  # For funding rate + OI (Binance Futures blocked)
+  symbol: BTCUSDT
+  kraken_symbol: PF_XBTUSD
+  fetch_retry_attempts: 3
+  fetch_retry_delay_seconds: 60
+
+model:
+  artifact_path: artifacts/model_8619431.joblib
+  scale_factor: 0.35
+  ema_span: 20
+
+trading:
+  sigma_threshold: 0.20
+  sigma_full_position: 0.50
+  fee_rate: 0.001
+  slippage_rate: 0.0005
+  starting_portfolio_value: 1.0
+
+logging:
+  prediction_log: logs/predictions.csv
+  trade_log: logs/trades.csv
+  daily_summary_log: logs/daily_summary.csv
+  system_log: logs/system.log
+  system_log_max_bytes: 10485760  # 10MB
+  system_log_backup_count: 3
+
+alerts:
+  method: file  # file | slack | telegram
+  alert_file: logs/alerts.log
+  drawdown_threshold: -0.10
+  prediction_sanity_threshold: 2.0
+  model_staleness_days: 30
+
+supplementary:
+  orderbook_path: data/orderbook_1h.parquet
+  open_interest_path: data/open_interest_1h.parquet
+  liquidations_path: data/liquidations_1h.parquet
+
+reporting:
+  daily_report_path: logs/daily_report.txt
+  delivery_method: telegram  # file | email | telegram | slack
+  telegram_bot_token: ${TELEGRAM_BOT_TOKEN}  # env var
+  telegram_chat_id: ${TELEGRAM_CHAT_ID}      # env var
+  # email_smtp_host: smtp.gmail.com
+  # email_smtp_port: 587
+  # email_from: autotrader@example.com
+  # email_to: ian@example.com
+  # slack_webhook_url: https://hooks.slack.com/...
