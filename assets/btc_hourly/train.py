@@ -494,14 +494,13 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         feats, ts, vol = compute_features(df)
         feats = np.nan_to_num(feats, nan=0.0)
 
-        # 24h prediction + 72h asymmetric modulation (+2% agree, -8% disagree)
+        # 24h prediction + EMA-smoothed 72h dampen-only modulation
         pred_24 = model.predict(feats)
-        pred_72 = model_72.predict(feats)
+        pred_72_raw = model_72.predict(feats)
+        # EMA-smooth 72h predictions to reduce transient false disagreements
+        pred_72 = pd.Series(pred_72_raw).ewm(span=12, min_periods=1).mean().values
         sign_match = np.sign(pred_24) * np.sign(pred_72)
-        # Asymmetric: dampen only on disagreement, no boost on agreement
-        # agree (sign_match=+1): 1.0
-        # disagree (sign_match=-1): 1.0 - 0.08 = 0.92
-        # neutral (sign_match=0): 1.0 - 0.04 = 0.96
+        # Dampen only on disagreement, no boost on agreement
         sigma_preds = pred_24 * (1.0 - 0.04 + 0.04 * sign_match)
 
         # Confidence scaler — asymmetric threshold, EMA-24
