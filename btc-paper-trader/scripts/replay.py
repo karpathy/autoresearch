@@ -275,11 +275,45 @@ def replay(
     summary_rows = _count_csv_rows(summary_log)
     n_days = (end_ts - start_ts).days + 1
 
-    # Generate summary report
-    report = f"""Replay Summary — {start} to {end}
-==========================================
+    # Compute segmented metrics from prediction log
+    parity_cutoff = pd.Timestamp("2026-03-01")
+    seg_parity = _compute_segment_metrics(pred_log, start_ts, parity_cutoff - pd.Timedelta(hours=1))
+    seg_oos = _compute_segment_metrics(pred_log, parity_cutoff, end_ts)
 
-Infrastructure checks:
+    # Parity assessment
+    parity_return_ok = abs(seg_parity["total_return"] - 4.3) < 0.5 if seg_parity["n_hours"] > 0 else False
+    parity_trades_ok = abs(seg_parity["n_trades"] - 17) <= 5 if seg_parity["n_hours"] > 0 else False
+    parity_assessment = "MATCH" if (parity_return_ok and parity_trades_ok) else "MISMATCH"
+
+    # Generate segmented report
+    report = f"""Replay Summary
+==============
+
+=== INFRASTRUCTURE PARITY CHECK (Jan 1 - Feb 28) ===
+
+  Hours replayed:       {seg_parity['n_hours']:,}
+  Trades:               {seg_parity['n_trades']} (backtester: 17)
+  Return:               {seg_parity['total_return']:+.1f}% (backtester: +4.3%)
+  Sharpe:               {seg_parity['sharpe']:.2f} (backtester: 3.86)
+  Max drawdown:         {seg_parity['max_drawdown']:.2f}%
+  Parity assessment:    {parity_assessment}
+
+=== GENUINE OUT-OF-SAMPLE VALIDATION (Mar 1 - present) ===
+
+  Hours replayed:       {seg_oos['n_hours']:,}
+  Trades:               {seg_oos['n_trades']}
+  Return:               {seg_oos['total_return']:+.2f}%
+  Sharpe:               {seg_oos['sharpe']:.2f}
+  Max drawdown:         {seg_oos['max_drawdown']:.2f}%
+  Win rate:             {seg_oos['win_rate']:.0f}%
+  Avg |position|:       {seg_oos['avg_position']:.2f}
+  Long trades:          {seg_oos['long_trades']}
+  Short trades:         {seg_oos['short_trades']}
+  Total funding cost:   {seg_oos['total_funding_cost']:.3f}%
+  Total fee cost:       {seg_oos['total_fee_cost']:.3f}%
+
+=== INFRASTRUCTURE HEALTH (full replay) ===
+
   Total hours replayed:     {n_hours:,}
   Prediction log rows:      {pred_rows:,}  (expect == hours)
   Trade log rows:           {trade_rows}
@@ -288,31 +322,21 @@ Infrastructure checks:
   Infinite values:          {inf_values}      (expect 0)
   Replay time:              {elapsed:.1f}s
 
-Portfolio checks:
   Final portfolio value:    {state.portfolio_value:.4f}
-  Max drawdown:             {(state.portfolio_value - state.peak_value) / state.peak_value * 100 if state.peak_value > 0 else 0:.2f}%
   Total trades:             {n_trades}
-  Position changes:         {n_position_changes}
   Hours positioned:         {hours_positioned} / {n_hours} ({hours_positioned / n_hours * 100:.1f}%)
   Max position size:        {_max_abs_position(pred_log):.2f}
   Max consecutive flat:     {max_consecutive_flat} hours
 
-Cost checks:
-  Total fee costs:          {total_fee_cost * 100:.3f}% of portfolio
-  Total funding costs:      {total_funding_cost * 100:.3f}% of portfolio
-  Cumulative funding:       {state.cumulative_funding_cost * 100:.3f}%
+  Total fee costs:          {total_fee_cost * 100:.3f}%
+  Total funding costs:      {state.cumulative_funding_cost * 100:.3f}%
   Total BIP fees:           ${total_bip_cost:.2f}
 
-Consistency checks:
   Prediction range:         [{result.pred_final[replay_indices].min():.4f}, {result.pred_final[replay_indices].max():.4f}] sigma
   |pred| > 0.20 frequency:  {(np.abs(result.pred_final[replay_indices]) > 0.20).mean() * 100:.1f}% of hours
   Conf scaler range:        [{result.conf_adj[replay_indices].min():.3f}, {result.conf_adj[replay_indices].max():.3f}]
   Position scaler range:    [{result.pos_scale[replay_indices].min():.3f}, {result.pos_scale[replay_indices].max():.3f}]
   Funding rate range:       [{funding_rates[replay_indices].min():.6f}, {funding_rates[replay_indices].max():.6f}]
-
-Daily summary checks:
-  Days with positive return: (see {summary_log})
-  Running Sharpe (final):    {compute_rolling_sharpe(pred_log, days=9999):.2f}
 """
 
     with open(report_path, "w") as f:
@@ -354,6 +378,76 @@ def _log_replay_daily_summary(summary_log, pred_log, date, state):
         "total_funding_cost": float(day_data["funding_cost"].sum()) if "funding_cost" in day_data.columns else 0.0,
     }
     append_daily_summary(summary_log, row)
+
+
+def _compute_segment_metrics(pred_log: str, seg_start, seg_end) -> dict:
+    """Compute metrics for a time segment of the prediction log."""
+    default = {
+        "n_hours": 0, "n_trades": 0, "total_return": 0.0, "sharpe": 0.0,
+        "max_drawdown": 0.0, "win_rate": 0.0, "avg_position": 0.0,
+        "long_trades": 0, "short_trades": 0,
+        "total_funding_cost": 0.0, "total_fee_cost": 0.0,
+    }
+    if not os.path.exists(pred_log):
+        return default
+
+    df = pd.read_csv(pred_log)
+    if len(df) == 0:
+        return default
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    seg = df[(df["timestamp"] >= seg_start) & (df["timestamp"] <= seg_end)]
+    if len(seg) == 0:
+        return default
+
+    # Hourly returns
+    funding = seg["funding_cost"] if "funding_cost" in seg.columns else 0.0
+    hourly_rets = seg["position_prev"] * seg["btc_return_1h"] - seg["fee_cost"] - funding
+
+    # Total return (compounded)
+    equity = (1 + hourly_rets).cumprod()
+    total_return = float((equity.iloc[-1] - 1) * 100)
+
+    # Sharpe
+    if hourly_rets.std() > 0:
+        sharpe = float(hourly_rets.mean() / hourly_rets.std() * np.sqrt(8760))
+    else:
+        sharpe = 0.0
+
+    # Max drawdown
+    peak = equity.cummax()
+    dd = (equity - peak) / peak
+    max_drawdown = float(dd.min() * 100)
+
+    # Trade counts
+    trades = seg[seg["position_delta"].abs() > 1e-6]
+    n_trades = len(trades)
+    long_trades = int((trades["position"] > 1e-6).sum()) if n_trades > 0 else 0
+    short_trades = int((trades["position"] < -1e-6).sum()) if n_trades > 0 else 0
+
+    # Win rate (hours with positive P&L when positioned)
+    positioned = seg[seg["position_prev"].abs() > 1e-6]
+    if len(positioned) > 0:
+        pos_pnl = positioned["position_prev"] * positioned["btc_return_1h"] - positioned["fee_cost"]
+        if "funding_cost" in positioned.columns:
+            pos_pnl -= positioned["funding_cost"]
+        win_rate = float((pos_pnl > 0).mean() * 100)
+    else:
+        win_rate = 0.0
+
+    return {
+        "n_hours": len(seg),
+        "n_trades": n_trades,
+        "total_return": total_return,
+        "sharpe": sharpe,
+        "max_drawdown": max_drawdown,
+        "win_rate": win_rate,
+        "avg_position": float(seg["position"].abs().mean()),
+        "long_trades": long_trades,
+        "short_trades": short_trades,
+        "total_funding_cost": float(seg["funding_cost"].sum() * 100) if "funding_cost" in seg.columns else 0.0,
+        "total_fee_cost": float(seg["fee_cost"].sum() * 100),
+    }
 
 
 def _count_csv_rows(path):
