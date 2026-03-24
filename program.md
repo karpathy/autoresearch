@@ -1,114 +1,160 @@
 # autoresearch
 
-This is an experiment to have the LLM do its own research.
+This is an experiment to have the LLM do its own research on ReID knowledge distillation.
 
 ## Setup
 
 To set up a new experiment, work with the user to:
 
-1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar5`). The branch `autoresearch/<tag>` must not already exist — this is a fresh run.
+1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar25`). The branch `autoresearch/<tag>` must not already exist -- this is a fresh run.
 2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
 3. **Read the in-scope files**: The repo is small. Read these files for full context:
-   - `README.md` — repository context.
-   - `prepare.py` — fixed constants, data prep, tokenizer, dataloader, evaluation. Do not modify.
-   - `train.py` — the file you modify. Model architecture, optimizer, training loop.
-4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
-5. **Initialize results.tsv**: Create `results.tsv` with just the header row. The baseline will be recorded after the first run.
-6. **Confirm and go**: Confirm setup looks good.
+   - `program.md` -- these instructions (you are reading it)
+   - `prepare.py` -- IMMUTABLE: data loading, teacher inference, evaluation, caching. Do not modify.
+   - `train.py` -- YOUR FILE: student model, losses, optimizer, scheduler, augmentations. Everything here is fair game within constraints.
+4. **Verify teacher cache exists** at `workspace/output/trendyol_teacher_cache2/`. If it does not exist, the first run will build it automatically (takes ~10-30 min, excluded from experiment budget). This is normal.
+5. **Initialize results.tsv** with just the header row:
+   ```
+   commit	combined_metric	recall_1	mean_cosine	peak_vram_mb	status	description
+   ```
+6. **Run baseline**: `python train.py > run.log 2>&1` -- your first run is always the unmodified train.py to establish the baseline.
+7. **Record baseline** in results.tsv, commit as baseline.
+8. **Begin experiment loop**.
 
-Once you get confirmation, kick off the experimentation.
+Once the baseline is recorded, kick off the experimentation loop below.
 
 ## Experimentation
 
-Each experiment runs on a single GPU. The training script runs for a **fixed time budget of 5 minutes** (wall clock training time, excluding startup/compilation). You launch it simply as: `uv run train.py`.
+Each experiment runs on a single GPU (RTX 4090, 24GB VRAM). The training script runs for a **fixed budget of 10 epochs** (NOT wall-clock time -- you optimize WHAT happens in 10 epochs, not how many). You launch it simply as:
+
+```
+python train.py > run.log 2>&1
+```
 
 **What you CAN do:**
-- Modify `train.py` — this is the only file you edit. Everything is fair game: model architecture, optimizer, hyperparameters, training loop, batch size, model size, etc.
+- Modify `train.py` -- this is the only file you edit. Everything is fair game: model architecture, optimizer, hyperparameters, loss functions, loss weights, augmentations, training loop, batch size, projection head design, backbone choice. All within the constraints below.
 
 **What you CANNOT do:**
-- Modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, tokenizer, and training constants (time budget, sequence length, etc).
-- Install new packages or add dependencies. You can only use what's already in `pyproject.toml`.
-- Modify the evaluation harness. The `evaluate_bpb` function in `prepare.py` is the ground truth metric.
+- Modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, teacher inference, and caching logic. Modifying it breaks the trust boundary and makes all experiments non-comparable.
+- Install new packages or add dependencies. You can only use what's already in `pyproject.toml`. Available: torch, timm, onnxruntime, transformers, torchvision, numpy, PIL.
+- Modify the evaluation harness. The `evaluate_retrieval` and `compute_combined_metric` functions in `prepare.py` are the ground truth metric.
+- Exceed the edge deployment limits (see Hard Constraints below).
 
-**The goal is simple: get the lowest val_bpb.** Since the time budget is fixed, you don't need to worry about training time — it's always 5 minutes. Everything is fair game: change the architecture, the optimizer, the hyperparameters, the batch size, the model size. The only constraint is that the code runs without crashing and finishes within the time budget.
+**The goal is simple: get the highest combined_metric.** The combined metric is `0.5 * recall@1 + 0.5 * mean_cosine`. Higher is better. recall@1 measures retrieval accuracy (can the model find the right product?). mean_cosine measures teacher alignment (does the student agree with the teacher?).
 
-**VRAM** is a soft constraint. Some increase is acceptable for meaningful val_bpb gains, but it should not blow up dramatically.
+**VRAM** is a HARD constraint. The RTX 4090 has 24GB. If peak VRAM exceeds 22GB on a successful run, do NOT increase batch size or model size further -- you are near the limit. OOM = crash = discard.
 
-**Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome — that's a simplification win. When evaluating whether to keep a change, weigh the complexity cost against the improvement magnitude. A 0.001 val_bpb improvement that adds 20 lines of hacky code? Probably not worth it. A 0.001 val_bpb improvement from deleting code? Definitely keep. An improvement of ~0 but much simpler code? Keep.
+**Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome -- that's a simplification win. When evaluating whether to keep a change, weigh the complexity cost against the improvement magnitude. But always maintain edge-deployability -- a simpler model that's too big to deploy is useless.
 
-**The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
+**The first run**: Your very first run should always be to establish the baseline, so you will run the training script as-is. Record the baseline combined_metric, then begin experimenting.
 
-## Output format
+## Hard Constraints -- NEVER VIOLATE
 
-Once the script finishes it prints a summary like this:
+These are absolute rules. Violating any one invalidates all experiments.
+
+1. **NEVER edit prepare.py** -- it contains evaluation, data loading, and teacher inference. Modifying it breaks the trust boundary. All experiments become non-comparable. If you need something from prepare.py, import it. Do not add new imports of private/internal functions.
+
+2. **NEVER install new packages** -- only use what's in `pyproject.toml`. Available: torch, timm, onnxruntime, transformers, torchvision, numpy, PIL. If you want a feature from a missing library, implement it yourself in train.py using only these packages.
+
+3. **NEVER exceed 10 epochs** -- this is the fixed experiment budget. You optimize WHAT happens in 10 epochs, not how many epochs to train. The epoch count is enforced by prepare.py.
+
+4. **NEVER stop the loop** -- run until manually interrupted. The human may be asleep. Do NOT ask "should I continue?" or "is this a good stopping point?" See NEVER STOP section below.
+
+5. **NEVER exceed edge deployment limits** -- the student model must remain edge-deployable:
+   - Embedding dimension MUST remain 256.
+   - After any architecture change, verify parameter count and GFLOPs are reasonable.
+   - Parameter count must not grow unbounded. If you change the backbone, verify it is still lightweight (LCNet-class, not ResNet-50 class).
+   - If you switch backbones, confirm the new one is comparable in size to `lcnet_050`.
+
+6. **NEVER remove quality degradation augmentation** -- real-world ReID images are low-resolution, JPEG-compressed, and degraded. The `RandomQualityDegradation` transform simulates this. You may tune its parameters (prob, downsample_ratio, quality_range) but it must remain active. Removing it will improve metrics on clean validation images but produce a model that fails in production.
+
+## Output Format
+
+After each run, the script prints a summary block:
 
 ```
 ---
-val_bpb:          0.997900
-training_seconds: 300.1
-total_seconds:    325.9
-peak_vram_mb:     45060.2
-mfu_percent:      39.80
-total_tokens_M:   499.6
-num_steps:        953
-num_params_M:     50.3
-depth:            8
+combined_metric:  0.654321
+recall@1:         0.432100
+mean_cosine:      0.876543
+peak_vram_mb:     18432.1
+total_seconds:    342.5
+epochs:           10
 ```
 
-Note that the script is configured to always stop after 5 minutes, so depending on the computing platform of this computer the numbers might look different. You can extract the key metric from the log file:
+Extract the key metrics from the log file:
 
 ```
-grep "^val_bpb:" run.log
+grep "^combined_metric:\|^recall@1:\|^mean_cosine:\|^peak_vram_mb:" run.log
 ```
 
-## Logging results
+If the grep output is empty, the run crashed -- see Crash Handling below.
 
-When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated — commas break in descriptions).
+## Logging Results
 
-The TSV has a header row and 5 columns:
+When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated -- commas break in descriptions).
+
+The TSV has a header row and 7 columns:
 
 ```
-commit	val_bpb	memory_gb	status	description
+commit	combined_metric	recall_1	mean_cosine	peak_vram_mb	status	description
 ```
 
 1. git commit hash (short, 7 chars)
-2. val_bpb achieved (e.g. 1.234567) — use 0.000000 for crashes
-3. peak memory in GB, round to .1f (e.g. 12.3 — divide peak_vram_mb by 1024) — use 0.0 for crashes
-4. status: `keep`, `discard`, or `crash`
-5. short text description of what this experiment tried
+2. combined_metric achieved (e.g. 0.654321) -- use 0.000000 for crashes
+3. recall_1 (e.g. 0.432100) -- use 0.000000 for crashes
+4. mean_cosine (e.g. 0.876543) -- use 0.000000 for crashes
+5. peak_vram_mb, round to .1f (e.g. 18432.1) -- use 0.0 for crashes
+6. status: `keep`, `discard`, or `crash`
+7. short text description of what this experiment tried
 
 Example:
 
 ```
-commit	val_bpb	memory_gb	status	description
-a1b2c3d	0.997900	44.0	keep	baseline
-b2c3d4e	0.993200	44.2	keep	increase LR to 0.04
-c3d4e5f	1.005000	44.0	discard	switch to GeLU activation
-d4e5f6g	0.000000	0.0	crash	double model width (OOM)
+commit	combined_metric	recall_1	mean_cosine	peak_vram_mb	status	description
+a1b2c3d	0.654321	0.432100	0.876543	18432.1	keep	baseline
+b2c3d4e	0.672100	0.460200	0.884000	18500.3	keep	reduce ArcFace weight from 0.05 to 0.02, increase LR to 0.15
+c3d4e5f	0.640000	0.410000	0.870000	18400.0	discard	switch to GeLU activation in projection head
+d4e5f6g	0.000000	0.000000	0.000000	0.0	crash	double batch size to 512 (OOM)
 ```
 
-## The experiment loop
+**NOTE:** results.tsv is NOT git-tracked. It is your experiment log across kept and discarded runs.
 
-The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
+Keep descriptions informative so you can reason about them later. Bad: "try stuff". Good: "reduce ArcFace weight from 0.05 to 0.02, increase LR to 0.15".
+
+## The Experiment Loop
+
+The experiment runs on a dedicated branch (e.g. `autoresearch/mar25`).
 
 LOOP FOREVER:
 
-1. Look at the git state: the current branch/commit we're on
-2. Tune `train.py` with an experimental idea by directly hacking the code.
-3. git commit
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
-8. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
-9. If val_bpb is equal or worse, you git reset back to where you started
+1. **Read history**: Check results.tsv. `cat results.tsv`. What has been tried? What improved? What patterns emerge? (e.g., "lower LR helped", "VAT hurts", "ArcFace weight 0.1 > 0.05"). See the History Reasoning section below for guidance.
 
-The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
+2. **Choose next experiment**: Based on history, pick an idea from the playbook or formulate your own hypothesis. Prefer unexplored dimensions over minor variations of explored ones. One idea per experiment for clear attribution.
 
-**Timeout**: Each experiment should take ~5 minutes total (+ a few seconds for startup and eval overhead). If a run exceeds 10 minutes, kill it and treat it as a failure (discard and revert).
+3. **Edit train.py**: Make your changes. Keep diffs minimal and focused. One idea per experiment.
 
-**Crashes**: If a run crashes (OOM, or a bug, or etc.), use your judgment: If it's something dumb and easy to fix (e.g. a typo, a missing import), fix it and re-run. If the idea itself is fundamentally broken, just skip it, log "crash" as the status in the tsv, and move on.
+4. **git commit**: Commit the change with a descriptive message (e.g., "reduce ArcFace weight to 0.02").
 
-**NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
+5. **Run**: `python train.py > run.log 2>&1`
 
-As an example use case, a user might leave you running while they sleep. If each experiment takes you ~5 minutes then you can run approx 12/hour, for a total of about 100 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
+6. **Read results**: `grep "^combined_metric:\|^recall@1:\|^mean_cosine:\|^peak_vram_mb:" run.log`
+   - If grep is empty: run crashed. `tail -n 50 run.log` for the stack trace. See Crash Handling below.
+
+7. **Log to results.tsv**: Record all 7 columns. NOTE: do not git-track results.tsv.
+
+8. **Keep or discard**:
+   - combined_metric improved (higher than current best)? **KEEP** -- advance the branch.
+   - Same or worse? **DISCARD** -- `git reset --hard HEAD~1`
+   - Crash? Log as crash in results.tsv, `git reset --hard HEAD~1`
+   - 3+ consecutive crashes on the same idea? **SKIP** that direction entirely and move on.
+
+9. **GOTO 1**
+
+**Timeout**: Each experiment takes roughly 5-15 minutes depending on batch size and augmentation. If a run exceeds 30 minutes, kill it (`kill` the process) and treat it as a failure -- discard and revert.
+
+## NEVER STOP
+
+Once the experiment loop has begun (after the initial setup and baseline), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?" The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder -- re-read the playbook, re-read results.tsv for patterns, re-read train.py for overlooked opportunities, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
+
+As an example use case, a user might leave you running while they sleep. If each experiment takes you ~10-15 minutes (10 epochs), you can run approximately 4-6 experiments per hour, for a total of about 40-50 over the duration of an overnight run. The user then wakes up to experimental results -- a full results.tsv and a branch history of improvements -- all completed by you while they slept.
