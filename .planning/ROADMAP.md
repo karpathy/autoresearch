@@ -29,7 +29,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. prepare.py computes and prints the combined metric (`0.5 * recall@1 + 0.5 * mean_cosine`) after a train.py run completes
   4. All tunable parameters in train.py are module-level constants (no argparse, no config files) -- an agent can modify them by editing Python source
   5. Evaluation logic (recall@1/k, mean_cosine) exists only in prepare.py -- grep confirms zero evaluation code in train.py
-**Plans**: TBD
+**Plans:** 3 plans
+Plans:
+- [ ] 01-01-PLAN.md -- Create prepare.py with all immutable infrastructure (data, teacher, evaluation, metrics)
+- [ ] 01-02-PLAN.md -- Create train.py with all agent-editable components (model, losses, augmentations, training loop)
+- [ ] 01-03-PLAN.md -- Smoke tests and boundary verification for the split (pytest suite)
 
 ### Phase 2: Experiment Infrastructure
 **Goal**: A complete experiment loop harness exists that can run train.py, log results, manage git state, and recover from crashes -- ready for an agent to drive
@@ -71,7 +75,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Core Refactoring | 0/TBD | Not started | - |
+| 1. Core Refactoring | 0/3 | Planning complete | - |
 | 2. Experiment Infrastructure | 0/TBD | Not started | - |
 | 3. Agent Instructions | 0/TBD | Not started | - |
 | 4. Validation | 0/TBD | Not started | - |
