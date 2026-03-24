@@ -21,3 +21,7 @@ dev/
 
 # Results file
 results.tsv
+
+# Experiment artifacts (ephemeral, overwritten each run)
+metrics.json
+run.log
