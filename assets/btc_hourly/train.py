@@ -498,11 +498,11 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         pred_24 = model.predict(feats)
         pred_72 = model_72.predict(feats)
         sign_match = np.sign(pred_24) * np.sign(pred_72)
-        # Asymmetric: dampen more on disagreement than boost on agreement
-        # agree (sign_match=+1): 1.0 + 0.02 = 1.02
+        # Asymmetric: dampen only on disagreement, no boost on agreement
+        # agree (sign_match=+1): 1.0
         # disagree (sign_match=-1): 1.0 - 0.08 = 0.92
-        # neutral (sign_match=0): 1.0 - 0.03 = 0.97
-        sigma_preds = pred_24 * (1.0 - 0.03 + 0.05 * sign_match)
+        # neutral (sign_match=0): 1.0 - 0.04 = 0.96
+        sigma_preds = pred_24 * (1.0 - 0.04 + 0.04 * sign_match)
 
         # Confidence scaler — asymmetric threshold, EMA-24
         conf_pred = conf_model.predict_proba(feats[:, conf_feat_indices])[:, 1]
