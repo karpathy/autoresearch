@@ -19,10 +19,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Infrastructure
 
-- [ ] **INFRA-01**: Each experiment is a git commit; improvement = keep, regression = `git reset --hard`
+- [x] **INFRA-01**: Each experiment is a git commit; improvement = keep, regression = `git reset --hard`
 - [x] **INFRA-02**: `results.tsv` logs every experiment: commit hash, combined metric, recall@1, mean_cosine, peak VRAM, status (kept/discarded/crash), description
 - [x] **INFRA-03**: OOM and runtime crashes are caught, logged as "crash" in results.tsv, git reset performed, loop continues
-- [ ] **INFRA-04**: After 3 consecutive crashes on the same idea, agent skips that direction
+- [x] **INFRA-04**: After 3 consecutive crashes on the same idea, agent skips that direction
 - [x] **INFRA-05**: Peak VRAM (`torch.cuda.max_memory_allocated()`) is tracked and logged per experiment
 - [x] **INFRA-06**: Run output includes decomposed sub-metrics (recall@1, recall@5, mean_cosine, distill_loss, arc_loss, vat_loss, sep_loss) in greppable format
 - [x] **INFRA-07**: Fixed budget of 10 epochs per experiment, teacher cache build time excluded from budget
@@ -86,10 +86,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REFAC-05 | Phase 1 | Complete |
 | REFAC-06 | Phase 1 | Complete |
 | REFAC-07 | Phase 1 | Complete |
-| INFRA-01 | Phase 2 | Pending |
+| INFRA-01 | Phase 2 | Complete |
 | INFRA-02 | Phase 2 | Complete |
 | INFRA-03 | Phase 2 | Complete |
-| INFRA-04 | Phase 2 | Pending |
+| INFRA-04 | Phase 2 | Complete |
 | INFRA-05 | Phase 2 | Complete |
 | INFRA-06 | Phase 2 | Complete |
 | INFRA-07 | Phase 2 | Complete |

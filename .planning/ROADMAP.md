@@ -48,7 +48,7 @@ Plans:
 **Plans:** 2 plans
 Plans:
 - [x] 02-01-PLAN.md -- Add metrics.json output, crash handling, VRAM tracking, and greppable stdout summary to train.py
-- [ ] 02-02-PLAN.md -- Create infrastructure test suite verifying metrics.json contract, results.tsv format, and crash handling
+- [x] 02-02-PLAN.md -- Create infrastructure test suite verifying metrics.json contract, results.tsv format, and crash handling
 
 ### Phase 3: Agent Instructions
 **Goal**: program.md gives an LLM agent everything it needs to autonomously run effective ReID experiments -- domain knowledge, search strategy, constraints, and history-reading capability
