@@ -16,6 +16,7 @@ class BacktestConfig:
     sigma_full_position: float = 0.50    # prediction level for 100% position
     fee_rate: float = 0.001              # per-trade fee (one side)
     slippage_rate: float = 0.0005        # per-trade slippage estimate
+    model_funding_cost: bool = True      # apply funding rate as hourly holding cost
 
 
 @dataclass(frozen=True)

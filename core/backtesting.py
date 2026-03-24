@@ -14,7 +14,8 @@ from core.config import BacktestConfig
 
 def backtest(sigma_predictions: np.ndarray, close_prices: np.ndarray,
              timestamps: np.ndarray, subperiods: list,
-             config: BacktestConfig) -> dict:
+             config: BacktestConfig,
+             funding_rates: np.ndarray | None = None) -> dict:
     """Run backtest on sigma-space predictions against actual prices.
 
     Args:
@@ -23,6 +24,9 @@ def backtest(sigma_predictions: np.ndarray, close_prices: np.ndarray,
         timestamps: Array of pd.Timestamp aligned with predictions.
         subperiods: List of (start, end, label) tuples for consistency check.
         config: Backtesting parameters (thresholds, fees, slippage).
+        funding_rates: Optional array of per-8h funding rates aligned with
+            predictions. When provided and config.model_funding_cost is True,
+            hourly funding cost = position * (funding_rate / 8) is deducted.
 
     Returns:
         dict with keys: sharpe, max_drawdown, n_trades, total_return,
@@ -48,6 +52,13 @@ def backtest(sigma_predictions: np.ndarray, close_prices: np.ndarray,
     portfolio_returns = np.zeros(n)
     n_trades = 0
 
+    # Prepare funding rate array (per-8h → per-hour)
+    has_funding = (config.model_funding_cost
+                   and funding_rates is not None
+                   and len(funding_rates) == n)
+    if has_funding:
+        hourly_funding = np.nan_to_num(funding_rates, nan=0.0) / 8.0
+
     for i in range(1, n):
         pos = positions[i - 1]
         portfolio_returns[i] = pos * price_returns[i]
@@ -59,6 +70,10 @@ def backtest(sigma_predictions: np.ndarray, close_prices: np.ndarray,
         if pos_change > 1e-10:
             cost = pos_change * (config.fee_rate + config.slippage_rate)
             portfolio_returns[i] -= cost
+
+        # Funding cost: position * hourly_funding_rate (every hour when positioned)
+        if has_funding:
+            portfolio_returns[i] -= pos * hourly_funding[i]
 
         # Count trades on zero-crossings only (direction changes)
         if (prev_pos > 0 and pos < 0) or (prev_pos < 0 and pos > 0) \

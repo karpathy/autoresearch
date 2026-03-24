@@ -100,12 +100,18 @@ def _eval_window(build_model_fn, all_data, window, window_idx,
 
     eval_preds = merged["sigma_pred"].values
 
+    # Pass funding rates for holding cost (if available in data)
+    funding_rates = None
+    if "funding_rate" in merged.columns:
+        funding_rates = merged["funding_rate"].values
+
     bt = backtest(
         sigma_predictions=eval_preds,
         close_prices=merged["close"].values,
         timestamps=merged["timestamp"].values,
         subperiods=window["subperiods"],
         config=backtest_config,
+        funding_rates=funding_rates,
     )
     print("evaluated")
     return bt, train_seconds, eval_preds
