@@ -33,7 +33,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 - [x] 01-01-PLAN.md -- Create prepare.py with all immutable infrastructure (data, teacher, evaluation, metrics)
 - [x] 01-02-PLAN.md -- Create train.py with all agent-editable components (model, losses, augmentations, training loop)
-- [ ] 01-03-PLAN.md -- Smoke tests and boundary verification for the split (pytest suite)
+- [x] 01-03-PLAN.md -- Smoke tests and boundary verification for the split (pytest suite)
 
 ### Phase 2: Experiment Infrastructure
 **Goal**: A complete experiment loop harness exists that can run train.py, log results, manage git state, and recover from crashes -- ready for an agent to drive
