@@ -13,8 +13,8 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **REFAC-02**: Evaluation logic (retrieval recall@1/k, mean_cosine) lives exclusively in `prepare.py` and cannot be modified by the agent
 - [x] **REFAC-03**: Teacher embedding cache (ONNX + DINOv2) is extracted to `prepare.py` with disk + memory caching
 - [x] **REFAC-04**: Dataset loading (product_code, retail, commodity, negatives) is extracted to `prepare.py` with fixed train/val splits
-- [ ] **REFAC-05**: `train.py` exposes all tunable parameters as module-level constants (no argparse, no config files)
-- [ ] **REFAC-06**: `train.py` model implements `.encode(images) -> Tensor[B, 256]` (L2-normalized) contract with `prepare.py`
+- [x] **REFAC-05**: `train.py` exposes all tunable parameters as module-level constants (no argparse, no config files)
+- [x] **REFAC-06**: `train.py` model implements `.encode(images) -> Tensor[B, 256]` (L2-normalized) contract with `prepare.py`
 - [x] **REFAC-07**: `prepare.py` computes the single combined metric: `0.5 * recall@1 + 0.5 * mean_cosine`
 
 ### Infrastructure
@@ -83,8 +83,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REFAC-02 | Phase 1 | Complete |
 | REFAC-03 | Phase 1 | Complete |
 | REFAC-04 | Phase 1 | Complete |
-| REFAC-05 | Phase 1 | Pending |
-| REFAC-06 | Phase 1 | Pending |
+| REFAC-05 | Phase 1 | Complete |
+| REFAC-06 | Phase 1 | Complete |
 | REFAC-07 | Phase 1 | Complete |
 | INFRA-01 | Phase 2 | Pending |
 | INFRA-02 | Phase 2 | Pending |

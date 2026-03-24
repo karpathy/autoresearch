@@ -32,7 +32,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 3 plans
 Plans:
 - [x] 01-01-PLAN.md -- Create prepare.py with all immutable infrastructure (data, teacher, evaluation, metrics)
-- [ ] 01-02-PLAN.md -- Create train.py with all agent-editable components (model, losses, augmentations, training loop)
+- [x] 01-02-PLAN.md -- Create train.py with all agent-editable components (model, losses, augmentations, training loop)
 - [ ] 01-03-PLAN.md -- Smoke tests and boundary verification for the split (pytest suite)
 
 ### Phase 2: Experiment Infrastructure
