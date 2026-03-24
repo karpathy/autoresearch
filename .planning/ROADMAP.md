@@ -71,7 +71,10 @@ Plans:
   1. Baseline run of unmodified train.py produces a valid combined metric logged as the first row in results.tsv
   2. At least one full autonomous cycle completes: agent reads history, modifies train.py, runs experiment, evaluates, and correctly keeps or discards the result
   3. Intentional OOM trigger is caught, logged as crash, git-reset performed, and the agent continues to the next experiment without human intervention
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 04-01-PLAN.md -- Baseline run + one full autonomous cycle (VALD-01, VALD-02)
+- [ ] 04-02-PLAN.md -- Crash recovery verification + launch overnight autonomous run (VALD-03, D-02)
 
 ## Progress
 
@@ -83,4 +86,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | 1. Core Refactoring | 0/3 | Planning complete | - |
 | 2. Experiment Infrastructure | 0/2 | Planning complete | - |
 | 3. Agent Instructions | 0/1 | Planning complete | - |
-| 4. Validation | 0/TBD | Not started | - |
+| 4. Validation | 0/2 | Planning complete | - |
