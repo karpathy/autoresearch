@@ -26,8 +26,12 @@ PREDICTION_FIELDS = [
     "position_prev",
     "position_delta",
     "fee_cost",
+    "funding_rate",
+    "funding_cost",
     "btc_price",
     "btc_return_1h",
+    "bip_n_contracts",
+    "bip_fee_cost",
 ]
 
 TRADE_FIELDS = [
@@ -50,6 +54,7 @@ DAILY_SUMMARY_FIELDS = [
     "max_position_size",
     "hours_flat",
     "sharpe_running",
+    "total_funding_cost",
 ]
 
 

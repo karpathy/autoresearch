@@ -34,6 +34,16 @@ alerts:
   prediction_sanity_threshold: 2.0
   model_staleness_days: 30
 
+funding:
+  model_funding_cost: true        # apply funding rate to P&L
+  funding_rate_source: kraken     # use kraken funding_rate from parquet
+
+bip_tracking:
+  enabled: true
+  contract_size: 0.01             # BTC per contract
+  fee_per_contract: 0.46          # USD (exchange + commission + clearing + NFA)
+  slippage_bps: 5.0
+
 supplementary:
   orderbook_path: data/orderbook_1h.parquet
   open_interest_path: data/open_interest_1h.parquet

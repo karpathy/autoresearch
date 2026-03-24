@@ -193,12 +193,29 @@ def _run_hourly_inner(config: dict) -> int:
         sigma_full=trading_cfg["sigma_full_position"],
     )
 
+    # Get current funding rate from the DataFrame for cost calculation
+    current_funding_rate = 0.0
+    if "funding_rate" in df.columns:
+        current_funding_rate = float(df["funding_rate"].iloc[-1])
+
     new_state, metrics = update_portfolio(
         state,
         new_position,
         candle["close"],
         fee_rate=trading_cfg["fee_rate"],
         slippage_rate=trading_cfg["slippage_rate"],
+        funding_rate=current_funding_rate,
+    )
+
+    # BIP fee tracking (parallel, doesn't affect P&L)
+    from .portfolio import compute_bip_fees
+    bip_cfg = config.get("bip_tracking", {})
+    bip = compute_bip_fees(
+        position_delta=metrics["position_delta"],
+        btc_price=candle["close"],
+        contract_size=bip_cfg.get("contract_size", 0.01),
+        fee_per_contract=bip_cfg.get("fee_per_contract", 0.46),
+        slippage_bps=bip_cfg.get("slippage_bps", 5.0),
     )
     save_portfolio_state(new_state, state_path)
 
@@ -229,8 +246,12 @@ def _run_hourly_inner(config: dict) -> int:
         "position_prev": metrics["position_prev"],
         "position_delta": metrics["position_delta"],
         "fee_cost": metrics["fee_cost"],
+        "funding_rate": metrics["funding_rate"],
+        "funding_cost": metrics["funding_cost"],
         "btc_price": candle["close"],
         "btc_return_1h": metrics["btc_return_1h"],
+        "bip_n_contracts": bip["n_contracts"],
+        "bip_fee_cost": bip["total_bip_cost"],
     }
     append_prediction_row(log_cfg["prediction_log"], pred_row)
 

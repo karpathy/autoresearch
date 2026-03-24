@@ -69,6 +69,11 @@ def generate_report(
     lines.append(f"  Peak value:         {peak:.4f}")
     lines.append(f"  Current drawdown:   {drawdown:.2f}%")
     lines.append(f"  Max drawdown:       {drawdown:.2f}%")
+
+    # Funding costs
+    today_funding = _compute_today_funding(prediction_log_path, today)
+    cum_funding = portfolio_state.cumulative_funding_cost * 100
+    lines.append(f"  Funding costs:      {today_funding:+.3f}% (today) / {cum_funding:+.3f}% (cumulative)")
     lines.append("")
 
     # --- Trading activity ---
@@ -101,6 +106,10 @@ def generate_report(
     lines.append(f"  Win rate:           {metrics['win_rate']:.0f}%")
     lines.append(f"  Avg trade duration: {metrics['avg_trade_duration']:.1f} hours")
     lines.append(f"  Monthly returns:    {metrics['monthly_returns_str']}")
+
+    # Fee comparison
+    fee_comparison = _compute_fee_comparison(prediction_log_path)
+    lines.append(f"  Fee comparison:     model={fee_comparison['model_fees']:.2f}% vs BIP={fee_comparison['bip_fees']:.2f}% (cumulative)")
     lines.append("")
 
     # --- Alerts ---
@@ -125,8 +134,37 @@ def _compute_today_return(log_path: str, date: str) -> float:
     today_data = df[df["date"] == date]
     if len(today_data) == 0:
         return 0.0
-    hourly_rets = today_data["position_prev"] * today_data["btc_return_1h"] - today_data["fee_cost"]
+    funding = today_data["funding_cost"] if "funding_cost" in today_data.columns else 0.0
+    hourly_rets = today_data["position_prev"] * today_data["btc_return_1h"] - today_data["fee_cost"] - funding
     return float(((1 + hourly_rets).prod() - 1) * 100)
+
+
+def _compute_today_funding(log_path: str, date: str) -> float:
+    """Compute today's total funding cost as percentage."""
+    if not os.path.exists(log_path):
+        return 0.0
+    df = pd.read_csv(log_path)
+    if len(df) == 0 or "funding_cost" not in df.columns:
+        return 0.0
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df["date"] = df["timestamp"].dt.date.astype(str)
+    today_data = df[df["date"] == date]
+    if len(today_data) == 0:
+        return 0.0
+    return float(today_data["funding_cost"].sum() * 100)
+
+
+def _compute_fee_comparison(log_path: str) -> dict:
+    """Compute cumulative model fees vs BIP fees as percentages."""
+    default = {"model_fees": 0.0, "bip_fees": 0.0}
+    if not os.path.exists(log_path):
+        return default
+    df = pd.read_csv(log_path)
+    if len(df) == 0:
+        return default
+    model_fees = df["fee_cost"].sum() * 100 if "fee_cost" in df.columns else 0.0
+    bip_fees = df["bip_fee_cost"].sum() / 100 if "bip_fee_cost" in df.columns else 0.0  # BIP is in USD, rough % estimate
+    return {"model_fees": float(model_fees), "bip_fees": float(bip_fees)}
 
 
 def _compute_trading_activity(

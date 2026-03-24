@@ -7,7 +7,7 @@ import tempfile
 import numpy as np
 import pytest
 
-from src.portfolio import PortfolioState, load_portfolio_state, save_portfolio_state, update_portfolio
+from src.portfolio import PortfolioState, compute_bip_fees, load_portfolio_state, save_portfolio_state, update_portfolio
 
 
 class TestUpdatePortfolio:
@@ -113,6 +113,67 @@ class TestUpdatePortfolio:
         # Expected: (1 - 0.0015) * (1 + 0.01) * (1 - 0.0015)
         expected = (1 - 0.0015) * (1 + 0.01) * (1 - 0.0015)
         assert state.portfolio_value == pytest.approx(expected, rel=1e-6)
+
+
+class TestFundingRate:
+    def test_long_positive_funding_is_cost(self):
+        """Long + positive funding rate = cost (you pay)."""
+        state = PortfolioState(position=1.0, portfolio_value=1.0, prev_btc_price=40000)
+        new_state, metrics = update_portfolio(
+            state, 1.0, 40000, funding_rate=0.0008,  # per-8h
+        )
+        # hourly_rate = 0.0008 / 8 = 0.0001
+        # funding_cost = 1.0 * 0.0001 = 0.0001
+        assert metrics["funding_cost"] == pytest.approx(0.0001)
+        assert metrics["portfolio_return"] == pytest.approx(-0.0001)  # no price change, just funding
+
+    def test_short_positive_funding_is_credit(self):
+        """Short + positive funding rate = credit (you receive)."""
+        state = PortfolioState(position=-0.5, portfolio_value=1.0, prev_btc_price=40000)
+        new_state, metrics = update_portfolio(
+            state, -0.5, 40000, funding_rate=0.0008,
+        )
+        # funding_cost = -0.5 * 0.0001 = -0.00005 (negative = credit)
+        assert metrics["funding_cost"] == pytest.approx(-0.00005)
+        assert metrics["portfolio_return"] == pytest.approx(0.00005)
+
+    def test_flat_position_zero_funding(self):
+        """Zero position = zero funding cost."""
+        state = PortfolioState(position=0.0, portfolio_value=1.0, prev_btc_price=40000)
+        new_state, metrics = update_portfolio(
+            state, 0.0, 40000, funding_rate=0.001,
+        )
+        assert metrics["funding_cost"] == 0.0
+
+    def test_cumulative_funding_tracked(self):
+        """Cumulative funding cost accumulates across runs."""
+        state = PortfolioState(position=1.0, portfolio_value=1.0, prev_btc_price=40000,
+                               cumulative_funding_cost=0.001)
+        new_state, _ = update_portfolio(state, 1.0, 40000, funding_rate=0.0008)
+        assert new_state.cumulative_funding_cost == pytest.approx(0.001 + 0.0001)
+
+
+class TestBipFees:
+    def test_no_position_change(self):
+        bip = compute_bip_fees(0.0, 70000)
+        assert bip["n_contracts"] == 0
+        assert bip["total_bip_cost"] == 0.0
+
+    def test_full_position_change(self):
+        """Full position change at $70k."""
+        bip = compute_bip_fees(1.0, 70000, contract_size=0.01, fee_per_contract=0.46)
+        # notional = 1.0 * 70000 = $70000
+        # n_contracts = round(70000 / (0.01 * 70000)) = round(100) = 100
+        assert bip["n_contracts"] == 100
+        assert bip["fixed_fees"] == pytest.approx(46.0)  # 100 * $0.46
+        assert bip["slippage"] == pytest.approx(70000 * 5.0 / 10000)  # 5bps of $70k
+
+    def test_partial_position_change(self):
+        bip = compute_bip_fees(0.1, 70000, contract_size=0.01, fee_per_contract=0.46)
+        # notional = 0.1 * 70000 = $7000
+        # n_contracts = round(7000 / 700) = 10
+        assert bip["n_contracts"] == 10
+        assert bip["fixed_fees"] == pytest.approx(4.6)
 
 
 class TestPortfolioStatePersistence:
