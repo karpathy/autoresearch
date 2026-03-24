@@ -47,7 +47,7 @@ Plans:
   5. Teacher cache build time is excluded from the 10-epoch experiment budget
 **Plans:** 2 plans
 Plans:
-- [ ] 02-01-PLAN.md -- Add metrics.json output, crash handling, VRAM tracking, and greppable stdout summary to train.py
+- [x] 02-01-PLAN.md -- Add metrics.json output, crash handling, VRAM tracking, and greppable stdout summary to train.py
 - [ ] 02-02-PLAN.md -- Create infrastructure test suite verifying metrics.json contract, results.tsv format, and crash handling
 
 ### Phase 3: Agent Instructions
