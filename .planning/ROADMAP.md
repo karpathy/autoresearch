@@ -56,7 +56,9 @@ Plans:
   2. program.md encodes all hard constraints: never edit prepare.py, never add dependencies, never exceed 10 epochs, never stop the loop
   3. program.md instructs the agent to read results.tsv history and reason about what to try next based on past experiment outcomes
   4. program.md describes the full autonomous loop (modify train.py, run, evaluate, keep/discard, repeat) with explicit instructions for never-stop behavior
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 03-01-PLAN.md -- Write complete program.md with ReID domain content, search space, experiment playbook, and autonomous loop instructions
 
 ### Phase 4: Validation
 **Goal**: The complete system is proven to work end-to-end -- baseline established, autonomous loop demonstrated, crash recovery verified
@@ -77,5 +79,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 |-------|----------------|--------|-----------|
 | 1. Core Refactoring | 0/3 | Planning complete | - |
 | 2. Experiment Infrastructure | 0/TBD | Not started | - |
-| 3. Agent Instructions | 0/TBD | Not started | - |
+| 3. Agent Instructions | 0/1 | Planning complete | - |
 | 4. Validation | 0/TBD | Not started | - |
