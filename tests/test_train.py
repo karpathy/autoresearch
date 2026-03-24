@@ -136,7 +136,7 @@ def test_greppable_output():
     assert "recall@1:" in src
     assert "mean_cosine:" in src
     assert "peak_vram_mb:" in src
-    assert "total_seconds:" in src
+    assert "elapsed_seconds:" in src
     assert "epochs:" in src
 
 
