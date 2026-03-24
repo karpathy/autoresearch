@@ -31,7 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. Evaluation logic (recall@1/k, mean_cosine) exists only in prepare.py -- grep confirms zero evaluation code in train.py
 **Plans:** 3 plans
 Plans:
-- [ ] 01-01-PLAN.md -- Create prepare.py with all immutable infrastructure (data, teacher, evaluation, metrics)
+- [x] 01-01-PLAN.md -- Create prepare.py with all immutable infrastructure (data, teacher, evaluation, metrics)
 - [ ] 01-02-PLAN.md -- Create train.py with all agent-editable components (model, losses, augmentations, training loop)
 - [ ] 01-03-PLAN.md -- Smoke tests and boundary verification for the split (pytest suite)
 
