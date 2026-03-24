@@ -158,3 +158,121 @@ LOOP FOREVER:
 Once the experiment loop has begun (after the initial setup and baseline), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?" The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder -- re-read the playbook, re-read results.tsv for patterns, re-read train.py for overlooked opportunities, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
 
 As an example use case, a user might leave you running while they sleep. If each experiment takes you ~10-15 minutes (10 epochs), you can run approximately 4-6 experiments per hour, for a total of about 40-50 over the duration of an overnight run. The user then wakes up to experimental results -- a full results.tsv and a branch history of improvements -- all completed by you while they slept.
+
+## Domain Context: ReID Knowledge Distillation
+
+A brief primer so you understand the domain you are optimizing:
+
+- **ReID (Re-Identification)**: Given a query image of a product, find matching products in a gallery using embedding similarity. The model maps images to a vector space where similar products are close and different products are far apart.
+- **Knowledge distillation**: A large, accurate teacher model (ONNX Trendyol model or DINOv2) produces high-quality 256-dimensional embeddings. A small student model (LCNet050) learns to match the teacher's embeddings while remaining small enough to deploy on edge devices.
+- **The combined metric** balances two objectives:
+  - **recall@1** -- retrieval accuracy. Can the model find the correct product as its top-1 nearest neighbor? This is the end-user metric.
+  - **mean_cosine** -- teacher alignment. Does the student's embedding agree with the teacher's? This provides a stable training signal even when retrieval has not converged.
+- **The student model pipeline**: Input image -> backbone (LCNet050 from timm) -> projection head (linear layers) -> L2-normalized 256-dimensional embedding.
+- **Training uses multiple losses**:
+  - **Distillation loss** (cosine similarity with teacher embeddings) -- the primary training signal.
+  - **ArcFace loss** (angular margin classification) -- pushes embeddings of same-class products closer, different-class further apart.
+  - **VAT loss** (Virtual Adversarial Training) -- adversarial robustness regularization. Currently disabled by default (weight=0).
+  - **Separation loss** -- pushes blacklist product embeddings away from whitelist centroid.
+- **The backbone is partially frozen**: Initially frozen, then last stages are unfrozen at a configurable epoch. This prevents destroying pretrained features early in training.
+
+## Search Space Reference
+
+These are all the tunable constants in train.py. Read train.py to confirm exact variable names before editing -- names may differ slightly from this table.
+
+| Constant | Default | Domain | Notes |
+|----------|---------|--------|-------|
+| `LR` | 1e-1 | Optimizer | Learning rate -- high-impact, try first |
+| `WEIGHT_DECAY` | 1e-5 | Optimizer | Regularization strength |
+| `BATCH_SIZE` | 256 | Training | Distillation batch size -- watch VRAM |
+| `ARCFACE_BATCH_SIZE` | 128 | Training | ArcFace batch size -- watch VRAM |
+| `ARCFACE_LOSS_WEIGHT` | 0.05 | Loss | Weight of ArcFace loss in total -- high-impact |
+| `ARCFACE_S` | 32.0 | Loss | ArcFace scale parameter |
+| `ARCFACE_M` | 0.50 | Loss | ArcFace margin -- affects class separation |
+| `VAT_WEIGHT` | 0 (disabled) | Loss | Virtual adversarial training -- try enabling |
+| `VAT_EPSILON` | 8.0 | Loss | VAT perturbation magnitude |
+| `SEP_WEIGHT` | 1.0 | Loss | Separation loss weight |
+| `UNFREEZE_EPOCH` | 5 | Backbone | When to unfreeze backbone stages |
+| `QUALITY_DEGRADATION_PROB` | 0.5 | Augmentation | Probability of quality degradation -- NEVER set to 0 |
+| `DROP_HARD_RATIO` | 0.2 | ArcFace | Hard negative mining ratio |
+| `ARCFACE_PHASEOUT_EPOCH` | 0 (disabled) | Loss | Epoch to phase out ArcFace -- try enabling |
+| `EMBEDDING_DIM` | 256 | Model | MUST remain 256 (hard constraint) |
+| `MODEL_NAME` | `hf-hub:timm/lcnet_050.ra2_in1k` | Model | Can change to other timm backbones if edge-deployable |
+
+**Important:** These names may differ slightly from the actual constants in train.py. Always read train.py to confirm exact variable names before editing.
+
+## ReID Experiment Playbook
+
+Experiment hints organized by expected impact. Start with Tier 1 and work down. These are directional suggestions -- use your judgment and results history to choose exact values.
+
+### Tier 1 -- High Impact, Low Risk (try first)
+
+- **Loss weight ratios**: Adjust the balance between distillation, ArcFace, and separation losses. The default ArcFace weight (0.05) is conservative -- experiment in the range 0.01-0.2. The distillation loss is implicit (weight 1.0). Try different ratios to find the best balance between teacher alignment and class separation.
+- **Learning rate and schedule**: Try cosine annealing with warmup. Experiment with warmup fraction (5-20% of epochs). Try lower LR (1e-2 to 1e-3) with longer warmup. The default LR (1e-1) is aggressive -- lower values with a schedule may converge better.
+- **Unfreeze epoch and stages**: Currently unfreezes backbone at epoch 5. Try earlier (epoch 2-3) or later (epoch 7-8). Try unfreezing fewer or more stages. Use a lower LR for backbone parameters than for the projection head (differential learning rates).
+
+### Tier 2 -- Medium Impact, Medium Risk
+
+- **Projection head design**: Add hidden layers between backbone and embedding. Try BatchNorm -> ReLU -> Linear patterns. Try dropout between layers. Keep final output dimension = 256 (hard constraint).
+- **Augmentation parameters**: Tune quality degradation intensity (prob, downsample ratio, quality range). Add or adjust color jitter, random erasing. NEVER remove quality degradation entirely (hard constraint).
+- **ArcFace margin and scale**: Tune ARCFACE_M (try 0.3-0.7) and ARCFACE_S (try 16-64). These control how sharply the model separates classes. Higher margin = harder task = potentially better embeddings if training converges.
+- **VAT regularization**: Currently disabled (weight=0). Try enabling with small weight (0.01-0.1). VAT adds adversarial perturbations to embeddings, which may improve robustness. Start small -- too much VAT can destabilize training.
+- **Optimizer choice**: Default is SGD with momentum. Try AdamW with lower LR (1e-3 to 1e-4). AdamW often works better for fine-tuning pretrained models.
+
+### Tier 3 -- High Impact, Higher Risk (try when Tier 1/2 plateau)
+
+- **Different backbone**: Try other lightweight models from the timm registry. MUST remain edge-deployable -- check parameter count and GFLOPs. Examples: mobilenetv3_small_100, efficientnet_lite0, tf_mobilenetv3_small_minimal_100. Always verify parameter count is comparable to LCNet050 (~2M params). Do NOT try large models (ResNet-50, EfficientNet-B4, etc.).
+- **Batch size changes**: Increase for better gradient estimates but watch VRAM. Decrease if hitting OOM. Batch size affects gradient noise and can significantly change convergence dynamics.
+- **ArcFace phaseout**: Try phasing out ArcFace loss after epoch N (e.g., epoch 6-8) to let distillation dominate in the final training epochs. This may help the student focus on teacher alignment during fine-tuning.
+- **Novel loss ideas**: Circle loss, subcenter ArcFace, proxy-anchor loss. Implement from scratch using only torch (no new dependencies). These are advanced -- only try if Tier 1/2 ideas are exhausted. The math is standard and you can implement them in train.py.
+
+## When You Are Stuck
+
+If experiments stop improving, escalate through these levels:
+
+1. **Minor plateau (3-5 no-improvement experiments)**: Switch to a different parameter dimension. If you were tuning LR, switch to loss weights. If tuning losses, try augmentation. Change the axis of search, not just the values.
+
+2. **Medium plateau (5-10 no-improvement experiments)**: Jump to a different tier. Re-read results.tsv and identify the single best configuration. Try combining the best configuration with ideas from unexplored dimensions. Look at decomposed metrics -- maybe recall@1 is good but mean_cosine is lagging. Target the weaker metric.
+
+3. **Major plateau (10+ no-improvement experiments)**: Try radical changes -- different backbone, novel loss function, extreme augmentation parameter changes. Re-read train.py carefully line by line for overlooked opportunities. Re-read this playbook from the top. Try ideas you previously dismissed.
+
+## Reading results.tsv for History Reasoning
+
+Before EVERY experiment, read results.tsv:
+
+```
+cat results.tsv
+```
+
+Analyze before choosing your next experiment:
+
+- **How many experiments have run?** Are you early (exploring broadly) or deep (refining)?
+- **What is the current best combined_metric?** What configuration produced it?
+- **Which changes improved it?** Look for patterns: "LR decreases helped", "ArcFace weight in range 0.02-0.05 worked best", "VAT consistently crashed".
+- **Which changes hurt or crashed?** Avoid repeating failed directions.
+- **Use decomposed metrics**: If recall@1 improved but mean_cosine dropped, the change helped retrieval but hurt teacher alignment. Choose your next experiment to address the weaker metric specifically.
+- **If multiple crashes on similar ideas**, skip that entire direction. Move to a completely different parameter dimension.
+- **Track VRAM trends**: If peak_vram_mb is creeping up across experiments, be cautious about adding model complexity or increasing batch sizes.
+
+The quality of your experiments depends on the quality of your reasoning about past results. Do not skip this step.
+
+## Crash Handling
+
+When a run crashes:
+
+1. **Check the error**: `tail -n 50 run.log`
+
+2. **If OOM (CUDA out of memory)**:
+   - Your next experiment MUST reduce compute, not try the same thing with a minor tweak.
+   - Reduce batch size, reduce model size, or simplify the architecture.
+   - If peak_vram_mb was > 22000 on the previous successful run, do NOT increase batch size or model size further. You are near the 24GB limit.
+
+3. **If bug (typo, import error, shape mismatch)**:
+   - Fix the bug and re-run. This does not count as a failed experiment -- it's a code fix.
+   - `git reset --hard HEAD~1`, fix the issue, commit again, re-run.
+
+4. **If 3+ consecutive crashes on the same idea**:
+   - Skip that direction entirely. Log the last crash, then move to something completely different.
+   - Do not keep trying variations of a fundamentally broken idea.
+
+5. **VRAM budget rule**: If peak_vram_mb > 22000 on a successful run, do NOT increase batch size or model size further. You are operating near the 24GB RTX 4090 limit. Future experiments should maintain or reduce compute.
