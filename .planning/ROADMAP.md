@@ -45,7 +45,10 @@ Plans:
   3. An OOM crash is caught, logged as "crash" in results.tsv, git reset is performed, and the loop continues to the next iteration without human intervention
   4. Run output includes all decomposed sub-metrics (recall@1, recall@5, mean_cosine, distill_loss, arc_loss, vat_loss, sep_loss) in a greppable format
   5. Teacher cache build time is excluded from the 10-epoch experiment budget
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 02-01-PLAN.md -- Add metrics.json output, crash handling, VRAM tracking, and greppable stdout summary to train.py
+- [ ] 02-02-PLAN.md -- Create infrastructure test suite verifying metrics.json contract, results.tsv format, and crash handling
 
 ### Phase 3: Agent Instructions
 **Goal**: program.md gives an LLM agent everything it needs to autonomously run effective ReID experiments -- domain knowledge, search strategy, constraints, and history-reading capability
@@ -78,6 +81,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Core Refactoring | 0/3 | Planning complete | - |
-| 2. Experiment Infrastructure | 0/TBD | Not started | - |
+| 2. Experiment Infrastructure | 0/2 | Planning complete | - |
 | 3. Agent Instructions | 0/1 | Planning complete | - |
 | 4. Validation | 0/TBD | Not started | - |
