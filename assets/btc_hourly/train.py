@@ -381,14 +381,14 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     )
     model.fit(features, targets, sample_weight=sample_weight)
 
-    # --- Train 48h auxiliary model (higher regularization for higher-variance target) ---
-    targets_48 = compute_targets(train_df, horizon=48)[MAX_LOOKBACK:]
-    valid_48 = ~np.isnan(targets_48)
-    tgt_48 = targets_48[valid_48] / vol_safe[valid_48]
-    tgt_48 = np.clip(tgt_48, -5.0, 5.0)
-    sw_48 = sw_trimmed[valid_48] if sw_trimmed is not None else None
+    # --- Train 72h auxiliary model (higher regularization for higher-variance target) ---
+    targets_72 = compute_targets(train_df, horizon=72)[MAX_LOOKBACK:]
+    valid_72 = ~np.isnan(targets_72)
+    tgt_72 = targets_72[valid_72] / vol_safe[valid_72]
+    tgt_72 = np.clip(tgt_72, -5.0, 5.0)
+    sw_72 = sw_trimmed[valid_72] if sw_trimmed is not None else None
 
-    model_48 = HistGradientBoostingRegressor(
+    model_72 = HistGradientBoostingRegressor(
         max_iter=800,
         max_depth=3,
         min_samples_leaf=1000,
@@ -398,8 +398,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
-    model_48.fit(features_all[valid_48], tgt_48, sample_weight=sw_48)
-    print(f"  48h auxiliary model trained (regularized)")
+    model_72.fit(features_all[valid_72], tgt_72, sample_weight=sw_72)
+    print(f"  72h auxiliary model trained (regularized)")
 
     # --- Position scaler: regressor on binary vol target ---
     scaler_targets_raw = compute_vol_targets(train_df)
@@ -476,8 +476,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         for j in range(len(model._predictors))
     )
     n_params += sum(
-        model_48._predictors[j][0].get_n_leaf_nodes()
-        for j in range(len(model_48._predictors))
+        model_72._predictors[j][0].get_n_leaf_nodes()
+        for j in range(len(model_72._predictors))
     )
     n_params += sum(
         pos_scaler._predictors[j][0].get_n_leaf_nodes()
@@ -494,10 +494,10 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         feats, ts, vol = compute_features(df)
         feats = np.nan_to_num(feats, nan=0.0)
 
-        # 24h prediction + 48h asymmetric modulation (+2% agree, -8% disagree)
+        # 24h prediction + 72h asymmetric modulation (+2% agree, -8% disagree)
         pred_24 = model.predict(feats)
-        pred_48 = model_48.predict(feats)
-        sign_match = np.sign(pred_24) * np.sign(pred_48)
+        pred_72 = model_72.predict(feats)
+        sign_match = np.sign(pred_24) * np.sign(pred_72)
         # Asymmetric: dampen more on disagreement than boost on agreement
         # agree (sign_match=+1): 1.0 + 0.02 = 1.02
         # disagree (sign_match=-1): 1.0 - 0.08 = 0.92
