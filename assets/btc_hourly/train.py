@@ -251,130 +251,54 @@ def compute_vol_targets(df: pd.DataFrame) -> np.ndarray:
 
 
 def compute_regime_targets(df: pd.DataFrame) -> np.ndarray:
-    """Compute forward return model directional accuracy over next 168h.
+    """Compute favorable regime target: 1 = normal conditions, 0 = danger.
 
-    Uses 3-fold time-series out-of-fold predictions to measure when the
-    return model tends to be right vs wrong. This captures model reliability
-    rather than market direction.
+    Danger conditions (reduce positions):
+      - Forward vol shock: forward 168h realized vol > 1.5x trailing vol
+      - Extreme chop: forward 168h directional efficiency < 5th percentile
 
-    High accuracy → trust the model → full positions.
-    Low accuracy → model is failing → reduce positions.
+    ~70-80% of hours are "favorable" → model defaults to full positions.
 
-    Returns array of same length as df. Edges and first fold are NaN.
-    """
-    n = len(df)
-
-    # Replicate the return model's feature/target pipeline
-    features, _, vol_safe = compute_features(df)
-    raw_targets = compute_targets(df)
-    raw_targets = raw_targets[MAX_LOOKBACK:]
-
-    valid = ~np.isnan(raw_targets)
-    feat_v = np.nan_to_num(features[valid], nan=0.0)
-    tgt_v = np.clip(raw_targets[valid] / vol_safe[valid], -5.0, 5.0)
-
-    # 3-fold time-series OOF predictions
-    from sklearn.model_selection import TimeSeriesSplit
-    tscv = TimeSeriesSplit(n_splits=3)
-    oof_preds = np.full(len(tgt_v), np.nan)
-
-    for train_idx, test_idx in tscv.split(feat_v):
-        m = HistGradientBoostingRegressor(
-            max_iter=500, max_depth=4, min_samples_leaf=600,
-            learning_rate=0.01, max_leaf_nodes=15,
-            l2_regularization=1.5, random_state=42,
-        )
-        m.fit(feat_v[train_idx], tgt_v[train_idx])
-        oof_preds[test_idx] = m.predict(feat_v[test_idx])
-
-    # Directional accuracy at each hour
-    has_pred = ~np.isnan(oof_preds)
-    correct = np.full(len(tgt_v), np.nan)
-    correct[has_pred] = (
-        np.sign(oof_preds[has_pred]) == np.sign(tgt_v[has_pred])
-    ).astype(np.float64)
-
-    # Forward 168h rolling accuracy (reverse → trailing rolling → reverse)
-    fwd_acc = pd.Series(correct[::-1].copy()).rolling(
-        168, min_periods=84
-    ).mean().values[::-1].copy()
-
-    # Map back to original df length
-    full_targets = np.full(n, np.nan)
-    valid_indices = np.arange(MAX_LOOKBACK, n)[valid]
-    full_targets[valid_indices[:len(fwd_acc)]] = fwd_acc
-
-    return full_targets
-
-
-def compute_regime_features(df: pd.DataFrame) -> np.ndarray:
-    """Compute weekly-scale features for regime classification.
-
-    These features capture slow-moving market structure that changes
-    over weeks, not hours. Designed for data sources that are toxic
-    to the hourly return model (weekly COT, daily sentiment).
+    Returns array of same length as df. Edges are NaN.
+    No sklearn, no trained models, no learned parameters.
     """
     close = df["close"].values.astype(np.float64)
-    volume = df["volume"].values.astype(np.float64)
+    n = len(close)
 
-    hourly_returns = np.zeros(len(close))
-    hourly_returns[1:] = close[1:] / close[:-1] - 1.0
-    hr_series = pd.Series(hourly_returns)
+    # --- Forward vol shock ---
+    hourly_ret = np.zeros(n)
+    hourly_ret[1:] = close[1:] / close[:-1] - 1.0
+    hr_series = pd.Series(hourly_ret)
 
-    feature_cols = []
+    forward_vol = hr_series.rolling(168, min_periods=168).std().shift(-168).values
+    trailing_vol = hr_series.rolling(168, min_periods=168).std().values
+    trailing_vol_safe = np.where((trailing_vol > 0) & ~np.isnan(trailing_vol), trailing_vol, 1.0)
 
-    # 1. Long-term trend (720h / 30-day return)
-    ret_720 = np.full(len(close), 0.0)
-    ret_720[720:] = close[720:] / close[:-720] - 1.0
-    feature_cols.append(ret_720)
+    vol_shock = np.full(n, False)
+    both_valid = ~np.isnan(forward_vol) & ~np.isnan(trailing_vol)
+    vol_shock[both_valid] = (forward_vol[both_valid] / trailing_vol_safe[both_valid]) > 1.5
 
-    # 2. 720h price range / price (cycle amplitude)
-    close_series = pd.Series(close)
-    roll_max_720 = close_series.rolling(720, min_periods=168).max().values
-    roll_min_720 = close_series.rolling(720, min_periods=168).min().values
-    range_720 = np.where(close > 0, (roll_max_720 - roll_min_720) / close, 0.0)
-    feature_cols.append(range_720)
+    # --- Extreme chop: low directional efficiency ---
+    net_move = np.full(n, np.nan)
+    net_move[:n - 168] = np.abs(close[168:] - close[:n - 168])
+    abs_hourly = np.abs(np.diff(close, prepend=close[0]))
+    path_length = pd.Series(abs_hourly).rolling(168, min_periods=168).sum().shift(-168).values
+    path_safe = np.where((path_length > 0) & ~np.isnan(path_length), path_length, 1.0)
+    fwd_efficiency = net_move / path_safe
 
-    # 3. 720h directional efficiency (trend quality at monthly scale)
-    net_move_720 = np.full(len(close), 0.0)
-    net_move_720[720:] = close[720:] - close[:-720]
-    path_720 = pd.Series(np.abs(np.diff(close, prepend=close[0]))).rolling(
-        720, min_periods=168).sum().values
-    path_safe = np.where(path_720 > 0, path_720, 1.0)
-    feature_cols.append(net_move_720 / path_safe)
+    eff_5th = pd.Series(fwd_efficiency).expanding(min_periods=720).quantile(0.05).values
+    extreme_chop = np.full(n, False)
+    eff_valid = ~np.isnan(fwd_efficiency) & ~np.isnan(eff_5th)
+    extreme_chop[eff_valid] = fwd_efficiency[eff_valid] < eff_5th[eff_valid]
 
-    # 4. Vol regime: 168h vol / 720h vol
-    vol_168 = hr_series.rolling(168, min_periods=168).std().values
-    vol_720 = hr_series.rolling(720, min_periods=168).std().values
-    vol_regime = np.where(vol_720 > 0, vol_168 / vol_720, 1.0)
-    feature_cols.append(np.nan_to_num(vol_regime, nan=1.0))
+    # --- Combine: favorable = not vol_shock AND not extreme_chop ---
+    targets = np.full(n, np.nan)
+    any_valid = both_valid | eff_valid
+    targets[any_valid] = 1.0
+    targets[vol_shock | extreme_chop] = 0.0
+    targets[~any_valid] = np.nan
 
-    # 5. Cycle position: price relative to 720h rolling max
-    cycle_pos = np.where(roll_max_720 > 0, close / roll_max_720, 1.0)
-    feature_cols.append(np.nan_to_num(cycle_pos, nan=1.0))
-
-    # 6. COT features (weekly institutional positioning)
-    if "cot_dealer_net" in df.columns:
-        feature_cols.append(df["cot_dealer_net"].values.astype(np.float64))
-        feature_cols.append(df["cot_asset_mgr_net"].values.astype(np.float64))
-        feature_cols.append(df["cot_lev_fund_net"].values.astype(np.float64))
-
-    # 7. Funding rate long-term (720h cumulative — monthly positioning pressure)
-    if "funding_rate" in df.columns:
-        fr = df["funding_rate"].values.astype(np.float64)
-        fr_cum_720 = pd.Series(fr).rolling(720, min_periods=1).sum().values
-        feature_cols.append(fr_cum_720 * 10)
-
-    # 8. Fear & greed index (daily sentiment — extreme readings may signal regime change)
-    if "fear_greed" in df.columns:
-        fg = df["fear_greed"].values.astype(np.float64)
-        feature_cols.append(np.nan_to_num(fg, nan=50.0) / 100.0)  # normalize to [0, 1]
-
-    features = np.column_stack(feature_cols)
-
-    # Same trimming as other feature functions
-    valid_start = MAX_LOOKBACK
-    return features[valid_start:]
+    return targets
 
 
 # ---------------------------------------------------------------------------
@@ -393,24 +317,12 @@ def _smooth_predictions(raw_preds: np.ndarray) -> np.ndarray:
 def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     """Train a model on the provided data and return a prediction function.
 
-    Architecture (verified via ablation 2026-03-23):
-      - Return model: 2-model ensemble (conservative + aggressive w/ max_features=0.8)
-        Ablation: neither single model beats ensemble on worst-case Sharpe.
-      - Regime model: HistGradientBoostingClassifier on directional accuracy target.
-        Ablation: removing drops composite score 0.5833→0.5726 (worse worst-case Sharpe/DD).
+    Architecture:
+      - Return model: single HistGradientBoostingRegressor.
+      - Regime model: HistGradientBoostingClassifier on favorable regime target.
       - Position scaler: HistGradientBoostingRegressor on binary vol target (>0.9 threshold).
-        Produces pseudo-probability used for position sizing.
 
-    Pipeline: return predictions → regime adj [0.90, 1.0] → position scale
-      → scale(0.35) → EMA(20)
-
-    Removed after cleanup:
-      - Bias correction (pred_bias): was multiplied by 0.0, always no-op.
-      - Clip to ±3.0: predictions never reached ±3.0 after position scaling.
-
-    This is the recipe: features, architecture, hyperparameters, and prediction
-    pipeline. The evaluation system calls this independently for each walk-forward
-    window. Each call must be self-contained — no global state.
+    Pipeline: raw prediction → regime adj [0.70, 1.0] → position scale → scale(0.35) → EMA(20)
 
     Args:
         train_df: OHLCV DataFrame for training. The date range varies —
@@ -459,8 +371,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     mono_cst[5] = 1  # 168h vol-normalized return (momentum)
     # indices 28-29: directional efficiency — unconstrained (high efficiency in downtrend = bearish)
 
-    # --- Train: two-model ensemble for diversity ---
-    model_conservative = HistGradientBoostingRegressor(
+    # --- Train: single return model ---
+    model = HistGradientBoostingRegressor(
         max_iter=1000,
         max_depth=4,
         min_samples_leaf=600,
@@ -470,20 +382,7 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
-    model_conservative.fit(features, targets, sample_weight=sample_weight)
-
-    model_aggressive = HistGradientBoostingRegressor(
-        max_iter=1000,
-        max_depth=4,
-        min_samples_leaf=600,
-        learning_rate=0.01,
-        max_leaf_nodes=15,
-        max_features=0.8,
-        l2_regularization=1.5,
-        monotonic_cst=mono_cst.tolist(),
-        random_state=42,
-    )
-    model_aggressive.fit(features, targets, sample_weight=sample_weight)
+    model.fit(features, targets, sample_weight=sample_weight)
 
     # --- Position scaler: regressor on binary vol target ---
     scaler_targets_raw = compute_vol_targets(train_df)
@@ -520,25 +419,22 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         top_idx = np.argsort(imp)[::-1][:10]
         print(f"  Pos scaler top features: {', '.join(f'{i}:{imp[i]:.3f}' for i in top_idx)}")
 
-    # --- Regime model: predict momentum persistence (binary classifier) ---
-    regime_targets = compute_regime_targets(train_df)
-    regime_targets = regime_targets[MAX_LOOKBACK:]
-    regime_targets = regime_targets[valid]  # same valid mask as return targets
+    # --- Regime model: predict favorable regime (binary classifier) ---
+    regime_targets_raw = compute_regime_targets(train_df)
+    regime_targets = regime_targets_raw[MAX_LOOKBACK:]
+    regime_targets = regime_targets[valid]
 
-    regime_features = compute_regime_features(train_df)
-    regime_features = regime_features[valid]
-    regime_features = np.nan_to_num(regime_features, nan=0.0)
+    # Vol/structure features only — no return-directional features
+    regime_feat_indices = [9, 10, 11, 12, 13, 14, 15, 21, 22, 24, 25, 26, 27, 28, 29, 30, 31]
+    regime_features = features[:, regime_feat_indices]
 
-    # Drop rows where regime target is NaN (edges)
     regime_valid = ~np.isnan(regime_targets)
-
-    # Binarize: accuracy >= 0.50 → model is reliable (1), < 0.50 → unreliable (0)
-    regime_binary = (regime_targets[regime_valid] >= 0.50).astype(int)
+    regime_binary = regime_targets[regime_valid].astype(int)
 
     regime_model = HistGradientBoostingClassifier(
         max_iter=500,
         max_depth=3,
-        min_samples_leaf=200,
+        min_samples_leaf=800,
         learning_rate=0.02,
         max_leaf_nodes=10,
         l2_regularization=2.0,
@@ -550,23 +446,18 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         sample_weight=sample_weight[regime_valid] if sample_weight is not None else None,
     )
 
-    # Diagnostic stats — probability of "accurate" class
     rtp = regime_model.predict_proba(regime_features[regime_valid])[:, 1]
     regime_train_p5 = float(np.percentile(rtp, 5))
     regime_train_p95 = float(np.percentile(rtp, 95))
-    print(f"  Regime target: {regime_binary.mean()*100:.1f}% accurate ({regime_features.shape[1]} features)")
-    print(f"  Regime train: mean={rtp.mean():.3f} std={rtp.std():.3f} p5={regime_train_p5:.3f} p95={regime_train_p95:.3f}")
-    selected = np.ones(features.shape[1], dtype=bool)
-    models = [model_conservative, model_aggressive]
-    blend_weights = [0.5, 0.5]
+    print(f"  Regime target: {regime_binary.mean()*100:.1f}% favorable ({len(regime_feat_indices)} features)")
+    print(f"  Regime train: mean={rtp.mean():.3f} std={rtp.std():.3f} "
+          f"p5={regime_train_p5:.3f} p95={regime_train_p95:.3f}")
 
-    # Approximate param count (return models + position scaler + regime model)
-    n_params = 0
-    for m in models:
-        n_params += sum(
-            m._predictors[j][0].get_n_leaf_nodes()
-            for j in range(len(m._predictors))
-        )
+    # Approximate param count (return model + position scaler + regime model)
+    n_params = sum(
+        model._predictors[j][0].get_n_leaf_nodes()
+        for j in range(len(model._predictors))
+    )
     n_params += sum(
         pos_scaler._predictors[j][0].get_n_leaf_nodes()
         for j in range(len(pos_scaler._predictors))
@@ -581,25 +472,30 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         """Generate sigma-space predictions on arbitrary OHLCV data."""
         feats, ts, vol = compute_features(df)
         feats = np.nan_to_num(feats, nan=0.0)
-        feats = feats[:, selected]
 
-        # Return prediction (existing)
-        preds = [m.predict(feats) for m in models]
-        sigma_preds = sum(w * p for w, p in zip(blend_weights, preds))
-        # Regime prediction — slow-moving position multiplier
-        regime_feats = compute_regime_features(df)
-        regime_feats = np.nan_to_num(regime_feats, nan=0.0)
-        regime_pred = regime_model.predict_proba(regime_feats)[:, 1]
+        # Return prediction
+        sigma_preds = model.predict(feats)
 
-        # Smooth heavily — regime changes weekly, not hourly
-        regime_smooth = pd.Series(regime_pred).ewm(span=168, min_periods=1).mean().values
+        # Regime adjustment — power-transform mapping, faster EMA
+        regime_pred = regime_model.predict_proba(feats[:, regime_feat_indices])[:, 1]
+        regime_smooth = pd.Series(regime_pred).ewm(span=24, min_periods=1).mean().values
 
-        # Normalize to model's actual range
+        # Normalize to [0, 1] using train range
         regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
         regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
 
-        # High accuracy → trust model, low accuracy → reduce positions
-        regime_adj = 0.90 + 0.10 * regime_norm  # range [0.90, 1.0]
+        # Asymmetric threshold: dampen danger tail, boost favorable tail
+        # Below 5th pctile → 0.70 (dampen)
+        # 5th-15th → transition to 1.0
+        # 15th-85th → 1.0 (no effect)
+        # 85th-95th → transition to 1.20
+        # Above 95th → 1.20 (boost)
+        if regime_norm.min() < 0.15:  # any danger predictions?
+            dampen = np.clip((regime_norm - 0.05) / 0.10, 0.0, 1.0)  # 0→1 over [0.05, 0.15]
+            boost = np.clip((regime_norm - 0.85) / 0.10, 0.0, 1.0)  # 0→1 over [0.85, 0.95]
+            regime_adj = 0.70 + 0.30 * dampen + 0.20 * boost  # [0.70, 1.0] + [0, 0.20]
+        else:
+            regime_adj = np.ones_like(regime_norm)
         sigma_preds = sigma_preds * regime_adj
 
         # Position scaling — regressor on binary target, clip to [0,1] as pseudo-probability
@@ -615,8 +511,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         return sigma_smoothed, ts, vol
 
     predict_fn.n_params = n_params
-    predict_fn.n_selected = int(selected.sum())
-    predict_fn.n_total_features = len(selected)
+    predict_fn.n_selected = features.shape[1]
+    predict_fn.n_total_features = features.shape[1]
     return predict_fn
 
 
