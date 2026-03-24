@@ -73,7 +73,7 @@ Plans:
   3. Intentional OOM trigger is caught, logged as crash, git-reset performed, and the agent continues to the next experiment without human intervention
 **Plans:** 2 plans
 Plans:
-- [ ] 04-01-PLAN.md -- Baseline run + one full autonomous cycle (VALD-01, VALD-02)
+- [x] 04-01-PLAN.md -- Baseline run + one full autonomous cycle (VALD-01, VALD-02)
 - [ ] 04-02-PLAN.md -- Crash recovery verification + launch overnight autonomous run (VALD-03, D-02)
 
 ## Progress

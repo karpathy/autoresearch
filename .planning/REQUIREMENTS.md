@@ -37,8 +37,8 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Validation
 
-- [ ] **VALD-01**: Baseline run of unmodified train.py produces a valid combined metric and logs to results.tsv
-- [ ] **VALD-02**: At least one full autonomous loop cycle completes: agent modifies train.py, runs, evaluates, keeps or discards
+- [x] **VALD-01**: Baseline run of unmodified train.py produces a valid combined metric and logs to results.tsv
+- [x] **VALD-02**: At least one full autonomous loop cycle completes: agent modifies train.py, runs, evaluates, keeps or discards
 - [ ] **VALD-03**: Crash recovery verified: intentionally trigger OOM, confirm system logs crash and continues
 
 ## v2 Requirements
@@ -98,8 +98,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AGNT-03 | Phase 3 | Complete |
 | AGNT-04 | Phase 3 | Complete |
 | AGNT-05 | Phase 3 | Complete |
-| VALD-01 | Phase 4 | Pending |
-| VALD-02 | Phase 4 | Pending |
+| VALD-01 | Phase 4 | Complete |
+| VALD-02 | Phase 4 | Complete |
 | VALD-03 | Phase 4 | Pending |
 
 **Coverage:**
