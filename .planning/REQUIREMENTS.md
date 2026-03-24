@@ -29,11 +29,11 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Agent
 
-- [ ] **AGNT-01**: `program.md` contains ReID-specific experiment strategy, constraints, and search space documentation
-- [ ] **AGNT-02**: `program.md` includes prioritized experiment hints: loss weights, backbone unfreezing, augmentation, LR schedule, projection head design
-- [ ] **AGNT-03**: `program.md` encodes hard constraints: never edit prepare.py, never add dependencies, never exceed 10 epochs, never stop
-- [ ] **AGNT-04**: Agent runs autonomously in a never-stop loop -- modify train.py -> run -> evaluate -> keep/discard -> repeat
-- [ ] **AGNT-05**: Agent reads results.tsv history to reason about what to try next
+- [x] **AGNT-01**: `program.md` contains ReID-specific experiment strategy, constraints, and search space documentation
+- [x] **AGNT-02**: `program.md` includes prioritized experiment hints: loss weights, backbone unfreezing, augmentation, LR schedule, projection head design
+- [x] **AGNT-03**: `program.md` encodes hard constraints: never edit prepare.py, never add dependencies, never exceed 10 epochs, never stop
+- [x] **AGNT-04**: Agent runs autonomously in a never-stop loop -- modify train.py -> run -> evaluate -> keep/discard -> repeat
+- [x] **AGNT-05**: Agent reads results.tsv history to reason about what to try next
 
 ### Validation
 
@@ -93,11 +93,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INFRA-05 | Phase 2 | Complete |
 | INFRA-06 | Phase 2 | Complete |
 | INFRA-07 | Phase 2 | Complete |
-| AGNT-01 | Phase 3 | Pending |
-| AGNT-02 | Phase 3 | Pending |
-| AGNT-03 | Phase 3 | Pending |
-| AGNT-04 | Phase 3 | Pending |
-| AGNT-05 | Phase 3 | Pending |
+| AGNT-01 | Phase 3 | Complete |
+| AGNT-02 | Phase 3 | Complete |
+| AGNT-03 | Phase 3 | Complete |
+| AGNT-04 | Phase 3 | Complete |
+| AGNT-05 | Phase 3 | Complete |
 | VALD-01 | Phase 4 | Pending |
 | VALD-02 | Phase 4 | Pending |
 | VALD-03 | Phase 4 | Pending |
