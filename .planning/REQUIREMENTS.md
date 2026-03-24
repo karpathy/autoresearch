@@ -32,7 +32,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **AGNT-01**: `program.md` contains ReID-specific experiment strategy, constraints, and search space documentation
 - [ ] **AGNT-02**: `program.md` includes prioritized experiment hints: loss weights, backbone unfreezing, augmentation, LR schedule, projection head design
 - [ ] **AGNT-03**: `program.md` encodes hard constraints: never edit prepare.py, never add dependencies, never exceed 10 epochs, never stop
-- [ ] **AGNT-04**: Agent runs autonomously in a never-stop loop — modify train.py → run → evaluate → keep/discard → repeat
+- [ ] **AGNT-04**: Agent runs autonomously in a never-stop loop -- modify train.py -> run -> evaluate -> keep/discard -> repeat
 - [ ] **AGNT-05**: Agent reads results.tsv history to reason about what to try next
 
 ### Validation
@@ -64,14 +64,14 @@ Deferred to future release. Tracked but not in current roadmap.
 
 | Feature | Reason |
 |---------|--------|
-| Optuna / Ray Tune / NAS frameworks | LLM agent IS the search algorithm — HPO frameworks restrict to parameter sweeps |
+| Optuna / Ray Tune / NAS frameworks | LLM agent IS the search algorithm -- HPO frameworks restrict to parameter sweeps |
 | MLflow / W&B experiment tracking | results.tsv + git history is sufficient; adds infra complexity |
 | Multi-GPU / distributed training | Single RTX 4090 constraint; distributed adds NCCL/sync complexity |
-| Configuration files (YAML/JSON) | Code IS the config — agent edits Python constants directly |
+| Configuration files (YAML/JSON) | Code IS the config -- agent edits Python constants directly |
 | Warm-starting from previous weights | Breaks fair comparison between experiments |
 | Dashboard / visualization UI | No one watches at 3am; results.tsv is human-readable |
 | New pip dependencies | Breaks reproducibility and security boundary |
-| Agent editing prepare.py | Evaluation must be immutable — trust boundary |
+| Agent editing prepare.py | Evaluation must be immutable -- trust boundary |
 
 ## Traceability
 
@@ -79,34 +79,34 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REFAC-01 | — | Pending |
-| REFAC-02 | — | Pending |
-| REFAC-03 | — | Pending |
-| REFAC-04 | — | Pending |
-| REFAC-05 | — | Pending |
-| REFAC-06 | — | Pending |
-| REFAC-07 | — | Pending |
-| INFRA-01 | — | Pending |
-| INFRA-02 | — | Pending |
-| INFRA-03 | — | Pending |
-| INFRA-04 | — | Pending |
-| INFRA-05 | — | Pending |
-| INFRA-06 | — | Pending |
-| INFRA-07 | — | Pending |
-| AGNT-01 | — | Pending |
-| AGNT-02 | — | Pending |
-| AGNT-03 | — | Pending |
-| AGNT-04 | — | Pending |
-| AGNT-05 | — | Pending |
-| VALD-01 | — | Pending |
-| VALD-02 | — | Pending |
-| VALD-03 | — | Pending |
+| REFAC-01 | Phase 1 | Pending |
+| REFAC-02 | Phase 1 | Pending |
+| REFAC-03 | Phase 1 | Pending |
+| REFAC-04 | Phase 1 | Pending |
+| REFAC-05 | Phase 1 | Pending |
+| REFAC-06 | Phase 1 | Pending |
+| REFAC-07 | Phase 1 | Pending |
+| INFRA-01 | Phase 2 | Pending |
+| INFRA-02 | Phase 2 | Pending |
+| INFRA-03 | Phase 2 | Pending |
+| INFRA-04 | Phase 2 | Pending |
+| INFRA-05 | Phase 2 | Pending |
+| INFRA-06 | Phase 2 | Pending |
+| INFRA-07 | Phase 2 | Pending |
+| AGNT-01 | Phase 3 | Pending |
+| AGNT-02 | Phase 3 | Pending |
+| AGNT-03 | Phase 3 | Pending |
+| AGNT-04 | Phase 3 | Pending |
+| AGNT-05 | Phase 3 | Pending |
+| VALD-01 | Phase 4 | Pending |
+| VALD-02 | Phase 4 | Pending |
+| VALD-03 | Phase 4 | Pending |
 
 **Coverage:**
 - v1 requirements: 22 total
-- Mapped to phases: 0
-- Unmapped: 22 ⚠️
+- Mapped to phases: 22
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-25*
-*Last updated: 2026-03-25 after initial definition*
+*Last updated: 2026-03-25 after roadmap creation*
