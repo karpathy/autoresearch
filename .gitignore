@@ -24,6 +24,7 @@ AGENTS.md
 
 # Experimental code/artifacts
 dev/
+prompt.md
 
 # Results file (root and asset directories)
 results.tsv
