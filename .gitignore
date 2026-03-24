@@ -21,3 +21,7 @@ dev/
 
 # Results file
 results.tsv
+
+# Local run logs/artifacts
+run.log
+runs/

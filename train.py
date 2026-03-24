@@ -8,6 +8,21 @@ import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
+def _sanitize_no_proxy():
+    value = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
+    if not value:
+        return
+    parts = [p.strip() for p in value.split(",") if p.strip() and ":" not in p]
+    sanitized = ",".join(parts)
+    if sanitized:
+        os.environ["NO_PROXY"] = sanitized
+        os.environ["no_proxy"] = sanitized
+    else:
+        os.environ.pop("NO_PROXY", None)
+        os.environ.pop("no_proxy", None)
+
+_sanitize_no_proxy()
+
 import gc
 import math
 import time
@@ -449,6 +464,12 @@ FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 # Model size
 DEPTH = 8               # number of transformer layers
 DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
+
+_gpu_mem_gib = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+if _gpu_mem_gib < 45:
+    DEVICE_BATCH_SIZE = min(DEVICE_BATCH_SIZE, 64)
+if _gpu_mem_gib < 25:
+    DEVICE_BATCH_SIZE = min(DEVICE_BATCH_SIZE, 32)
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
