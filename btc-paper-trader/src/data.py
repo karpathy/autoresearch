@@ -54,7 +54,7 @@ def fetch_latest_candle(
             ts = pd.Timestamp(ts_ms, unit="ms", tz="UTC").tz_localize(None)
 
             # Validate: timestamp should be within the last 2 hours
-            now = pd.Timestamp.now(tz=None)
+            now = pd.Timestamp.now("UTC").tz_localize(None)
             age_hours = (now - ts).total_seconds() / 3600
             if age_hours > 2:
                 logger.warning(f"Candle timestamp {ts} is {age_hours:.1f}h old")

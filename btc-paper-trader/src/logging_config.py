@@ -61,16 +61,17 @@ def setup_system_log(
     """Configure rotating file handler for system log."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
-    logger = logging.getLogger("paper_trader")
+    # Use root logger so all modules (src.data, src.inference, etc.) are captured
+    logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
 
-    # Avoid adding duplicate handlers
-    if not logger.handlers:
+    # Avoid adding duplicate handlers on repeat calls
+    if not any(isinstance(h, RotatingFileHandler) for h in logger.handlers):
         handler = RotatingFileHandler(
             path, maxBytes=max_bytes, backupCount=backup_count,
         )
         handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+        formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
         handler.setFormatter(formatter)
         logger.addHandler(handler)
 

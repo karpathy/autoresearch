@@ -58,29 +58,30 @@ def run_hourly(config: dict) -> int:
     trading_cfg = config["trading"]
     log_cfg = config["logging"]
 
+    def elapsed():
+        return f"[{time.time() - start_time:.1f}s]"
+
+    logger.info(f"{elapsed()} === Hourly run starting ===")
+
     # --- Load model artifacts ---
     artifact_path = model_cfg["artifact_path"]
-    logger.info(f"Loading artifacts from {artifact_path}")
     try:
         artifacts = load_artifacts(artifact_path)
         if not validate_artifacts(artifacts):
-            logger.error("Artifact validation failed")
+            logger.error(f"{elapsed()} Artifact validation failed")
             return 2
-        logger.info(
-            f"Artifacts loaded: commit={artifacts['commit']}, "
-            f"trained_at={artifacts['trained_at']}"
-        )
+        logger.info(f"{elapsed()} Artifacts loaded: commit={artifacts['commit']}")
     except Exception as e:
-        logger.error(f"Failed to load artifacts: {e}")
+        logger.error(f"{elapsed()} Failed to load artifacts: {e}")
         return 2
 
     # --- Load historical data ---
     parquet_path = data_cfg["parquet_path"]
     try:
         df = load_parquet(parquet_path)
-        logger.info(f"Loaded {len(df)} rows from {parquet_path}")
+        logger.info(f"{elapsed()} Parquet loaded: {len(df)} rows")
     except Exception as e:
-        logger.error(f"Failed to load parquet: {e}")
+        logger.error(f"{elapsed()} Failed to load parquet: {e}")
         return 2
 
     # --- Fetch latest candle ---
@@ -91,10 +92,9 @@ def run_hourly(config: dict) -> int:
         retry_delay=data_cfg.get("fetch_retry_delay_seconds", 60),
     )
     if candle is None:
-        logger.warning("Failed to fetch latest candle")
+        logger.warning(f"{elapsed()} Failed to fetch latest candle")
         return 1
-
-    logger.info(f"Fetched candle: {candle['timestamp']} close={candle['close']:.2f}")
+    logger.info(f"{elapsed()} Candle: {candle['timestamp']} close=${candle['close']:.2f}")
 
     # --- Fetch funding rate (from Kraken Futures) ---
     funding_result = fetch_latest_funding(
@@ -102,26 +102,28 @@ def run_hourly(config: dict) -> int:
         kraken_symbol=data_cfg.get("kraken_symbol", "PF_XBTUSD"),
     )
     funding_rate = funding_result[0] if funding_result else None
-    if funding_rate is not None:
-        logger.info(f"Funding rate: {funding_rate:.6f}")
+    logger.info(f"{elapsed()} Funding rate: {funding_rate:.6f}" if funding_rate else f"{elapsed()} Funding rate: forward-fill")
 
     # --- Append to DataFrame and save ---
+    prev_len = len(df)
     df = append_candle(df, candle, funding_rate)
     save_parquet(df, parquet_path)
-    logger.info(f"Parquet updated: {len(df)} rows")
+    new_rows = len(df) - prev_len
+    logger.info(f"{elapsed()} Parquet saved: {len(df)} rows ({'+' + str(new_rows) if new_rows else 'dedup'})")
 
     # --- Fetch supplementary data (non-critical) ---
     _fetch_supplementary(config, candle["close"])
 
     # --- Run inference ---
+    logger.info(f"{elapsed()} Running inference on {len(df)} rows...")
     try:
         result = run_inference(df, artifacts)
         logger.info(
-            f"Inference: pred_final={result.pred_final:.4f}, "
+            f"{elapsed()} Inference done: pred_final={result.pred_final:.4f}, "
             f"position={result.position:.2f}"
         )
     except Exception as e:
-        logger.error(f"Inference failed: {e}", exc_info=True)
+        logger.error(f"{elapsed()} Inference failed: {e}", exc_info=True)
         return 2
 
     # --- Update portfolio ---
@@ -213,8 +215,7 @@ def run_hourly(config: dict) -> int:
         for alert in alerts:
             logger.warning(f"ALERT: {alert}")
 
-    elapsed = time.time() - start_time
-    logger.info(f"Hourly run completed in {elapsed:.1f}s")
+    logger.info(f"{elapsed()} === Hourly run complete ===")
     return 0
 
 
