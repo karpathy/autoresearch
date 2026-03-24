@@ -210,23 +210,23 @@ def compute_features(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarr
     return features, timestamps, vol_trimmed
 
 
-def compute_targets(df: pd.DataFrame) -> np.ndarray:
-    """Compute 24-hour forward returns: close[t+24]/close[t] - 1.
+def compute_targets(df: pd.DataFrame, horizon: int = FORWARD_HOURS) -> np.ndarray:
+    """Compute forward returns: close[t+horizon]/close[t] - 1.
 
-    Returns array of same length as df. Last FORWARD_HOURS entries are NaN.
+    Returns array of same length as df. Last `horizon` entries are NaN.
     """
     close = df["close"].values.astype(np.float64)
     n = len(close)
     targets = np.full(n, np.nan)
-    targets[:n - FORWARD_HOURS] = close[FORWARD_HOURS:] / close[:n - FORWARD_HOURS] - 1.0
+    targets[:n - horizon] = close[horizon:] / close[:n - horizon] - 1.0
     return targets
 
 
-def compute_vol_targets(df: pd.DataFrame) -> np.ndarray:
-    """Compute forward realized vol ratio: std(next 24h returns) / trailing 168h vol.
+def compute_vol_targets(df: pd.DataFrame, horizon: int = FORWARD_HOURS) -> np.ndarray:
+    """Compute forward realized vol ratio: std(next `horizon` returns) / trailing 168h vol.
 
     A ratio of 1.0 = vol stays the same. >1 = vol increasing. <1 = calming.
-    Returns array of same length as df. Last FORWARD_HOURS entries are NaN.
+    Returns array of same length as df. Last `horizon` entries are NaN.
     """
     close = df["close"].values.astype(np.float64)
     n = len(close)
@@ -235,9 +235,9 @@ def compute_vol_targets(df: pd.DataFrame) -> np.ndarray:
     hourly_ret = np.zeros(n)
     hourly_ret[1:] = close[1:] / close[:-1] - 1.0
 
-    # Forward realized vol: std of hourly returns over next FORWARD_HOURS
+    # Forward realized vol: std of hourly returns over next horizon
     hr_series = pd.Series(hourly_ret)
-    forward_vol = hr_series.rolling(FORWARD_HOURS, min_periods=FORWARD_HOURS).std().shift(-FORWARD_HOURS).values
+    forward_vol = hr_series.rolling(horizon, min_periods=horizon).std().shift(-horizon).values
 
     # Trailing 168h vol (same as used in compute_features for vol_safe)
     trailing_vol = hr_series.rolling(168, min_periods=168).std().values
@@ -250,7 +250,7 @@ def compute_vol_targets(df: pd.DataFrame) -> np.ndarray:
     return vol_targets
 
 
-def compute_regime_targets(df: pd.DataFrame) -> np.ndarray:
+def compute_confidence_targets(df: pd.DataFrame) -> np.ndarray:
     """Compute favorable regime target: 1 = normal conditions, 0 = danger.
 
     Danger conditions (reduce positions):
@@ -318,11 +318,16 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     """Train a model on the provided data and return a prediction function.
 
     Architecture:
-      - Return model: single HistGradientBoostingRegressor.
-      - Regime model: HistGradientBoostingClassifier on favorable regime target.
-      - Position scaler: HistGradientBoostingRegressor on binary vol target (>0.9 threshold).
+      - Return model: single HistGradientBoostingRegressor predicting
+        vol-normalized 24h forward returns.
+      - Confidence scaler: HGB classifier on favorable conditions target
+        (vol shock + chop detection). Asymmetric [0.70, 1.20] adjustment —
+        dampens bottom 5-15% of predictions, boosts top 10%.
+      - Position scaler: HGB regressor on binary vol target (>0.9 threshold).
+        Modulates position size based on predicted vol conditions.
 
-    Pipeline: raw prediction → regime adj [0.70, 1.0] → position scale → scale(0.35) → EMA(20)
+    Pipeline: raw prediction → confidence adj [0.70, 1.20] → position
+      scale → scale(0.35) → EMA(20)
 
     Args:
         train_df: OHLCV DataFrame for training. The date range varies —
@@ -419,19 +424,19 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         top_idx = np.argsort(imp)[::-1][:10]
         print(f"  Pos scaler top features: {', '.join(f'{i}:{imp[i]:.3f}' for i in top_idx)}")
 
-    # --- Regime model: predict favorable regime (binary classifier) ---
-    regime_targets_raw = compute_regime_targets(train_df)
-    regime_targets = regime_targets_raw[MAX_LOOKBACK:]
-    regime_targets = regime_targets[valid]
+    # --- Confidence scaler: predict favorable conditions (binary classifier) ---
+    conf_targets_raw = compute_confidence_targets(train_df)
+    conf_targets = conf_targets_raw[MAX_LOOKBACK:]
+    conf_targets = conf_targets[valid]
 
     # Vol/structure features only — no return-directional features
-    regime_feat_indices = [9, 10, 11, 12, 13, 14, 15, 21, 22, 24, 25, 26, 27, 28, 29, 30, 31]
-    regime_features = features[:, regime_feat_indices]
+    conf_feat_indices = [9, 10, 11, 12, 13, 14, 15, 21, 22, 24, 25, 26, 27, 28, 29, 30, 31]
+    conf_features = features[:, conf_feat_indices]
 
-    regime_valid = ~np.isnan(regime_targets)
-    regime_binary = regime_targets[regime_valid].astype(int)
+    conf_valid = ~np.isnan(conf_targets)
+    conf_binary = conf_targets[conf_valid].astype(int)
 
-    regime_model = HistGradientBoostingClassifier(
+    conf_model = HistGradientBoostingClassifier(
         max_iter=500,
         max_depth=3,
         min_samples_leaf=800,
@@ -440,20 +445,20 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         l2_regularization=2.0,
         random_state=42,
     )
-    regime_model.fit(
-        regime_features[regime_valid],
-        regime_binary,
-        sample_weight=sample_weight[regime_valid] if sample_weight is not None else None,
+    conf_model.fit(
+        conf_features[conf_valid],
+        conf_binary,
+        sample_weight=sample_weight[conf_valid] if sample_weight is not None else None,
     )
 
-    rtp = regime_model.predict_proba(regime_features[regime_valid])[:, 1]
-    regime_train_p5 = float(np.percentile(rtp, 5))
-    regime_train_p95 = float(np.percentile(rtp, 95))
-    print(f"  Regime target: {regime_binary.mean()*100:.1f}% favorable ({len(regime_feat_indices)} features)")
-    print(f"  Regime train: mean={rtp.mean():.3f} std={rtp.std():.3f} "
-          f"p5={regime_train_p5:.3f} p95={regime_train_p95:.3f}")
+    rtp = conf_model.predict_proba(conf_features[conf_valid])[:, 1]
+    conf_train_p5 = float(np.percentile(rtp, 5))
+    conf_train_p95 = float(np.percentile(rtp, 95))
+    print(f"  Confidence target: {conf_binary.mean()*100:.1f}% favorable ({len(conf_feat_indices)} features)")
+    print(f"  Confidence train: mean={rtp.mean():.3f} std={rtp.std():.3f} "
+          f"p5={conf_train_p5:.3f} p95={conf_train_p95:.3f}")
 
-    # Approximate param count (return model + position scaler + regime model)
+    # Approximate param count (return model + position scaler + confidence scaler)
     n_params = sum(
         model._predictors[j][0].get_n_leaf_nodes()
         for j in range(len(model._predictors))
@@ -463,8 +468,8 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         for j in range(len(pos_scaler._predictors))
     )
     n_params += sum(
-        regime_model._predictors[j][0].get_n_leaf_nodes()
-        for j in range(len(regime_model._predictors))
+        conf_model._predictors[j][0].get_n_leaf_nodes()
+        for j in range(len(conf_model._predictors))
     )
 
     # --- Return prediction closure ---
@@ -476,27 +481,19 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         # Return prediction
         sigma_preds = model.predict(feats)
 
-        # Regime adjustment — power-transform mapping, faster EMA
-        regime_pred = regime_model.predict_proba(feats[:, regime_feat_indices])[:, 1]
-        regime_smooth = pd.Series(regime_pred).ewm(span=24, min_periods=1).mean().values
+        # Confidence scaler — asymmetric threshold, EMA-24
+        conf_pred = conf_model.predict_proba(feats[:, conf_feat_indices])[:, 1]
+        conf_smooth = pd.Series(conf_pred).ewm(span=24, min_periods=1).mean().values
 
         # Normalize to [0, 1] using train range
-        regime_range = max(regime_train_p95 - regime_train_p5, 1e-6)
-        regime_norm = np.clip((regime_smooth - regime_train_p5) / regime_range, 0.0, 1.0)
+        conf_range = max(conf_train_p95 - conf_train_p5, 1e-6)
+        conf_norm = np.clip((conf_smooth - conf_train_p5) / conf_range, 0.0, 1.0)
 
         # Asymmetric threshold: dampen danger tail, boost favorable tail
-        # Below 5th pctile → 0.70 (dampen)
-        # 5th-15th → transition to 1.0
-        # 15th-85th → 1.0 (no effect)
-        # 85th-95th → transition to 1.20
-        # Above 95th → 1.20 (boost)
-        if regime_norm.min() < 0.15:  # any danger predictions?
-            dampen = np.clip((regime_norm - 0.05) / 0.10, 0.0, 1.0)  # 0→1 over [0.05, 0.15]
-            boost = np.clip((regime_norm - 0.85) / 0.10, 0.0, 1.0)  # 0→1 over [0.85, 0.95]
-            regime_adj = 0.70 + 0.30 * dampen + 0.20 * boost  # [0.70, 1.0] + [0, 0.20]
-        else:
-            regime_adj = np.ones_like(regime_norm)
-        sigma_preds = sigma_preds * regime_adj
+        dampen = np.clip((conf_norm - 0.05) / 0.10, 0.0, 1.0)
+        boost = np.clip((conf_norm - 0.85) / 0.10, 0.0, 1.0)
+        conf_adj = 0.70 + 0.30 * dampen + 0.20 * boost
+        sigma_preds = sigma_preds * conf_adj
 
         # Position scaling — regressor on binary target, clip to [0,1] as pseudo-probability
         scaler_signal = np.clip(pos_scaler.predict(feats[:, scaler_feat_mask]), 0.0, 1.0)
