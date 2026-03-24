@@ -204,6 +204,90 @@ def run_inference(df: pd.DataFrame, artifacts: dict) -> InferenceResult:
     )
 
 
+@dataclass
+class FullInferenceResult:
+    """All intermediate arrays from inference over the full dataset."""
+
+    timestamps: np.ndarray       # (N,) aligned timestamps
+    pred_24_raw: np.ndarray      # (N,)
+    pred_72_raw: np.ndarray      # (N,)
+    pred_72_smoothed: np.ndarray # (N,)
+    sign_agree: np.ndarray       # (N,)
+    pred_after_72h: np.ndarray   # (N,)
+    conf_prob: np.ndarray        # (N,)
+    conf_smoothed: np.ndarray    # (N,)
+    conf_norm: np.ndarray        # (N,)
+    conf_adj: np.ndarray         # (N,)
+    pos_scaler_signal: np.ndarray # (N,)
+    pos_scale: np.ndarray        # (N,)
+    pred_after_scale: np.ndarray # (N,) after ×0.35
+    pred_final: np.ndarray       # (N,) after EMA-20
+
+
+def run_inference_full(df: pd.DataFrame, artifacts: dict) -> FullInferenceResult:
+    """Run inference on the full DataFrame, returning arrays for ALL hours.
+
+    Same pipeline as run_inference() but returns every intermediate array
+    instead of just the last row. Used by replay.py.
+    """
+    model = artifacts["model"]
+    model_72 = artifacts["model_72"]
+    conf_model = artifacts["conf_model"]
+    pos_scaler = artifacts["pos_scaler"]
+    conf_feat_indices = artifacts["conf_feat_indices"]
+    conf_train_p5 = artifacts["conf_train_p5"]
+    conf_train_p95 = artifacts["conf_train_p95"]
+    scaler_feat_mask = artifacts["scaler_feat_mask"]
+
+    feats, ts, vol = compute_features(df)
+    feats = np.nan_to_num(feats, nan=0.0)
+
+    expected_n = artifacts["n_features"]
+    if feats.shape[1] != expected_n:
+        raise ValueError(
+            f"Feature count mismatch: computed {feats.shape[1]}, "
+            f"artifact expects {expected_n}"
+        )
+
+    pred_24 = model.predict(feats)
+    pred_72_raw = model_72.predict(feats)
+    pred_72 = pd.Series(pred_72_raw).ewm(span=12, min_periods=1).mean().values
+    sign_match = np.sign(pred_24) * np.sign(pred_72)
+    pred_after_72h = pred_24 * (1.0 - 0.04 + 0.04 * sign_match)
+
+    conf_pred = conf_model.predict_proba(feats[:, conf_feat_indices])[:, 1]
+    conf_smooth = pd.Series(conf_pred).ewm(span=24, min_periods=1).mean().values
+    conf_range = max(conf_train_p95 - conf_train_p5, 1e-6)
+    conf_norm = np.clip((conf_smooth - conf_train_p5) / conf_range, 0.0, 1.0)
+    dampen = np.clip((conf_norm - 0.05) / 0.10, 0.0, 1.0)
+    boost = np.clip((conf_norm - 0.85) / 0.10, 0.0, 1.0)
+    conf_adj = 0.70 + 0.30 * dampen + 0.20 * boost
+
+    scaler_signal = np.clip(pos_scaler.predict(feats[:, scaler_feat_mask]), 0.0, 1.0)
+    pos_scale = 1.08 - 0.72 * scaler_signal
+
+    sigma_preds = pred_after_72h * conf_adj * pos_scale
+    pred_after_scale = sigma_preds * 0.35
+    pred_final = pd.Series(pred_after_scale).ewm(span=20, min_periods=1).mean().values
+
+    return FullInferenceResult(
+        timestamps=ts,
+        pred_24_raw=pred_24,
+        pred_72_raw=pred_72_raw,
+        pred_72_smoothed=pred_72,
+        sign_agree=sign_match,
+        pred_after_72h=pred_after_72h,
+        conf_prob=conf_pred,
+        conf_smoothed=conf_smooth,
+        conf_norm=conf_norm,
+        conf_adj=conf_adj,
+        pos_scaler_signal=scaler_signal,
+        pos_scale=pos_scale,
+        pred_after_scale=pred_after_scale,
+        pred_final=pred_final,
+    )
+
+
 def compute_position(
     pred_final: float,
     sigma_threshold: float = 0.20,
