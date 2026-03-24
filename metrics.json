@@ -1,0 +1,14 @@
+{
+  "status": "success",
+  "combined_metric": 0.695132523929517,
+  "recall_at_1": 0.8190000057220459,
+  "recall_at_5": 0.8841999769210815,
+  "mean_cosine": 0.5712650421369879,
+  "distill_loss": 0.42873495570118564,
+  "arc_loss": 15.192898527945879,
+  "vat_loss": 0.0,
+  "sep_loss": 0.0045579214787853815,
+  "peak_vram_mb": 1486.5,
+  "epochs": 10,
+  "elapsed_seconds": 1053.8
+}
