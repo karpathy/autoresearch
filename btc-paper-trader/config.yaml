@@ -8,7 +8,7 @@ data:
   fetch_retry_delay_seconds: 60
 
 model:
-  artifact_path: artifacts/model_8619431.joblib
+  artifact_path: artifacts/model_05c400f.joblib
   scale_factor: 0.35
   ema_span: 20
 

@@ -23,6 +23,7 @@ from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostin
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "assets" / "btc_hourly"))
 
+from core.evaluation import compute_decay_weights  # noqa: E402
 from prepare import _load_all_data  # noqa: E402
 from train import (  # noqa: E402
     MAX_LOOKBACK,
@@ -81,6 +82,18 @@ def export(train_end: str | None = None):
     targets = targets / vol_train
     targets = np.clip(targets, -5.0, 5.0)
 
+    # --- Sample weights: exponential decay matching backtester ---
+    # The backtester uses 5-year half-life decay, anchored to the eval start.
+    # For the paper trader export, eval_start = day after train_end.
+    eval_start = pd.Timestamp(train_end) + pd.Timedelta(days=1)
+    sample_weight_full = compute_decay_weights(
+        train_df["timestamp"].values, eval_start, half_life_years=5.0,
+    )
+    sw_trimmed = sample_weight_full[MAX_LOOKBACK:]
+    sample_weight = sw_trimmed[valid]
+    print(f"  Sample weights: range [{sample_weight.min():.3f}, {sample_weight.max():.3f}] "
+          f"(half-life 5yr, anchored to {eval_start.date()})")
+
     # --- Monotonic constraints ---
     mono_cst = np.zeros(features.shape[1], dtype=int)
     mono_cst[3] = 1  # 48h return
@@ -99,7 +112,7 @@ def export(train_end: str | None = None):
         monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
-    model.fit(features, targets)
+    model.fit(features, targets, sample_weight=sample_weight)
     print("  Done")
 
     # --- Train 72h auxiliary model ---
@@ -108,6 +121,7 @@ def export(train_end: str | None = None):
     valid_72 = ~np.isnan(targets_72)
     tgt_72 = targets_72[valid_72] / vol_safe[valid_72]
     tgt_72 = np.clip(tgt_72, -5.0, 5.0)
+    sw_72 = sw_trimmed[valid_72]
 
     model_72 = HistGradientBoostingRegressor(
         max_iter=800,
@@ -119,7 +133,7 @@ def export(train_end: str | None = None):
         monotonic_cst=mono_cst.tolist(),
         random_state=42,
     )
-    model_72.fit(features_all[valid_72], tgt_72)
+    model_72.fit(features_all[valid_72], tgt_72, sample_weight=sw_72)
     print("  Done")
 
     # --- Train position scaler ---
@@ -142,7 +156,7 @@ def export(train_end: str | None = None):
         l2_regularization=1.5,
         random_state=42,
     )
-    scaler_sample_weight = np.where(scaler_binary == 1, 3.0, 1.0)
+    scaler_sample_weight = np.where(scaler_binary == 1, 3.0, 1.0) * sample_weight
     pos_scaler.fit(scaler_features, scaler_binary, sample_weight=scaler_sample_weight)
     print(f"  {len(scaler_feat_mask)} features, {scaler_binary.mean()*100:.1f}% positive")
 
@@ -167,7 +181,10 @@ def export(train_end: str | None = None):
         l2_regularization=2.0,
         random_state=42,
     )
-    conf_model.fit(conf_features[conf_valid], conf_binary)
+    conf_model.fit(
+        conf_features[conf_valid], conf_binary,
+        sample_weight=sample_weight[conf_valid],
+    )
 
     rtp = conf_model.predict_proba(conf_features[conf_valid])[:, 1]
     conf_train_p5 = float(np.percentile(rtp, 5))
