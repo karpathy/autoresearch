@@ -342,28 +342,20 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
                     sigma-space.
     """
     # --- Compute features and targets ---
-    features, timestamps, vol_safe = compute_features(train_df)
-    targets = compute_targets(train_df)
+    features_all, timestamps, vol_safe = compute_features(train_df)
+    features_all = np.nan_to_num(features_all, nan=0.0)
+    sw_trimmed = sample_weight[MAX_LOOKBACK:] if sample_weight is not None else None
 
-    # Align: targets need same trimming as features (MAX_LOOKBACK from start)
-    targets = targets[MAX_LOOKBACK:]
-
-    # Drop rows where targets are NaN (last FORWARD_HOURS rows)
+    targets = compute_targets(train_df)[MAX_LOOKBACK:]
     valid = ~np.isnan(targets)
-    features = features[valid]
+    features = features_all[valid]
     targets = targets[valid]
     vol_train = vol_safe[valid]
-
-    # Align sample_weight with features/targets (same trimming)
-    if sample_weight is not None:
-        sample_weight = sample_weight[MAX_LOOKBACK:]
-        sample_weight = sample_weight[valid]
+    sample_weight = sw_trimmed[valid] if sw_trimmed is not None else None
 
     # Vol-normalize targets first, then winsorize in sigma-space
     targets = targets / vol_train
     targets = np.clip(targets, -5.0, 5.0)
-
-    features = np.nan_to_num(features, nan=0.0)
 
     # --- Monotonic constraints ---
     # Short-term returns unconstrained to allow mean reversion after extreme moves.
@@ -388,6 +380,26 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         random_state=42,
     )
     model.fit(features, targets, sample_weight=sample_weight)
+
+    # --- Train 72h auxiliary model (higher regularization for higher-variance target) ---
+    targets_72 = compute_targets(train_df, horizon=72)[MAX_LOOKBACK:]
+    valid_72 = ~np.isnan(targets_72)
+    tgt_72 = targets_72[valid_72] / vol_safe[valid_72]
+    tgt_72 = np.clip(tgt_72, -5.0, 5.0)
+    sw_72 = sw_trimmed[valid_72] if sw_trimmed is not None else None
+
+    model_72 = HistGradientBoostingRegressor(
+        max_iter=800,
+        max_depth=3,
+        min_samples_leaf=1000,
+        learning_rate=0.01,
+        max_leaf_nodes=10,
+        l2_regularization=3.0,
+        monotonic_cst=mono_cst.tolist(),
+        random_state=42,
+    )
+    model_72.fit(features_all[valid_72], tgt_72, sample_weight=sw_72)
+    print(f"  72h auxiliary model trained (regularized)")
 
     # --- Position scaler: regressor on binary vol target ---
     scaler_targets_raw = compute_vol_targets(train_df)
@@ -458,10 +470,14 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
     print(f"  Confidence train: mean={rtp.mean():.3f} std={rtp.std():.3f} "
           f"p5={conf_train_p5:.3f} p95={conf_train_p95:.3f}")
 
-    # Approximate param count (return model + position scaler + confidence scaler)
+    # Approximate param count (24h + 48h return models + position scaler + confidence scaler)
     n_params = sum(
         model._predictors[j][0].get_n_leaf_nodes()
         for j in range(len(model._predictors))
+    )
+    n_params += sum(
+        model_72._predictors[j][0].get_n_leaf_nodes()
+        for j in range(len(model_72._predictors))
     )
     n_params += sum(
         pos_scaler._predictors[j][0].get_n_leaf_nodes()
@@ -478,8 +494,14 @@ def build_model(train_df: pd.DataFrame, sample_weight=None) -> callable:
         feats, ts, vol = compute_features(df)
         feats = np.nan_to_num(feats, nan=0.0)
 
-        # Return prediction
-        sigma_preds = model.predict(feats)
+        # 24h prediction + EMA-smoothed 72h dampen-only modulation
+        pred_24 = model.predict(feats)
+        pred_72_raw = model_72.predict(feats)
+        # EMA-smooth 72h predictions to reduce transient false disagreements
+        pred_72 = pd.Series(pred_72_raw).ewm(span=12, min_periods=1).mean().values
+        sign_match = np.sign(pred_24) * np.sign(pred_72)
+        # Dampen only on disagreement, no boost on agreement
+        sigma_preds = pred_24 * (1.0 - 0.04 + 0.04 * sign_match)
 
         # Confidence scaler — asymmetric threshold, EMA-24
         conf_pred = conf_model.predict_proba(feats[:, conf_feat_indices])[:, 1]
