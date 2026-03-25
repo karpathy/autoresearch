@@ -248,8 +248,93 @@ class DINOv2Teacher:
         batch = torch.stack(tensors).to(self.device)
         with torch.amp.autocast(self.device):
             out = self.model(batch)
-        emb = out.last_hidden_state  # already L2-normalized 256d
-        return [e.cpu().numpy() for e in emb]
+        emb = out.last_hidden_state[:, 0, :]  # CLS token only, shape (B, 256)
+        return [e.cpu().numpy().flatten() for e in emb]
+
+
+# ---------------------------------------------------------------------------
+# Stub teacher classes for future phases
+# ---------------------------------------------------------------------------
+
+class DINOv3Teacher:
+    """DINOv3 fine-tuned teacher. Stub -- will be implemented in Phase 7."""
+
+    embedding_dim = 256
+
+    def __init__(self, device: str = "cuda", **kwargs) -> None:
+        raise NotImplementedError("DINOv3Teacher will be implemented in Phase 7")
+
+    def encode_batch(self, images: list[np.ndarray | Image.Image]) -> list[np.ndarray | None]:
+        raise NotImplementedError("DINOv3Teacher will be implemented in Phase 7")
+
+
+class RADIOTeacher:
+    """C-RADIO teacher. Stub -- will be implemented in Phase 8."""
+
+    embedding_dim = None  # unknown until Phase 8 runtime verification
+
+    def __init__(self, version: str = "c-radio_v4-so400m", device: str = "cuda", **kwargs) -> None:
+        raise NotImplementedError("RADIOTeacher will be implemented in Phase 8")
+
+    def encode_batch(self, images: list[np.ndarray | Image.Image]) -> list[np.ndarray | None]:
+        raise NotImplementedError("RADIOTeacher will be implemented in Phase 8")
+
+
+# ---------------------------------------------------------------------------
+# Teacher Registry
+# ---------------------------------------------------------------------------
+
+TEACHER_REGISTRY: dict[str, dict] = {
+    "trendyol_onnx": {
+        "class": TrendyolEmbedder,
+        "embedding_dim": 256,
+        "cache_dir": DEFAULT_TEACHER_CACHE_DIR,  # reuse existing cache
+        "init_kwargs": {},
+    },
+    "dinov2": {
+        "class": DINOv2Teacher,
+        "embedding_dim": 256,
+        "cache_dir": "workspace/output/teacher_cache/dinov2",
+        "init_kwargs": {"model_name": "Trendyol/trendyol-dino-v2-ecommerce-256d"},
+    },
+    "dinov3_ft": {
+        "class": DINOv3Teacher,
+        "embedding_dim": 256,
+        "cache_dir": "workspace/output/teacher_cache/dinov3_ft",
+        "init_kwargs": {},
+    },
+    "radio_so400m": {
+        "class": RADIOTeacher,
+        "embedding_dim": None,  # determined at init time per Phase 8
+        "cache_dir": "workspace/output/teacher_cache/radio_so400m",
+        "init_kwargs": {"version": "c-radio_v4-so400m"},
+    },
+    "radio_h": {
+        "class": RADIOTeacher,
+        "embedding_dim": None,
+        "cache_dir": "workspace/output/teacher_cache/radio_h",
+        "init_kwargs": {"version": "c-radio_v4-h"},
+    },
+}
+
+
+def init_teachers(
+    teacher_names: list[str],
+    device: str = "cuda",
+) -> dict[str, object]:
+    """Initialize multiple teachers. Only loads the requested ones."""
+    teachers = {}
+    for name in teacher_names:
+        if name not in TEACHER_REGISTRY:
+            raise ValueError(f"Unknown teacher: {name}. Available: {list(TEACHER_REGISTRY.keys())}")
+        entry = TEACHER_REGISTRY[name]
+        try:
+            teachers[name] = entry["class"](**entry["init_kwargs"], device=device)
+            logger.info(f"Initialized teacher: {name}")
+        except Exception as e:
+            logger.error(f"Failed to initialize teacher {name}: {e}")
+            raise
+    return teachers
 
 
 # ---------------------------------------------------------------------------
