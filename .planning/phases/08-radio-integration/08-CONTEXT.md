@@ -16,7 +16,7 @@ Integrate RADIO models as teachers with adaptor selection (backbone, dino_v3, si
 ### RADIO Adaptor Strategy
 - **D-01:** Cache ALL 3 adaptor outputs (backbone, dino_v3, siglip2-g) for each RADIO variant. Disk is cheap (~10GB per adaptor), re-running RADIO inference is expensive.
 - **D-02:** Summary features cached as .npy files per sample, native dimension (1152d for SO400M, 1280d for H). Same pattern as other teachers.
-- **D-03:** Spatial features cached as memory-mapped .npy files. Format: `{sample_id}_spatial.npy` shape `(N, D)` where N=num_spatial_tokens, D=feature_dim. Memory-mapped to avoid loading entire cache into RAM.
+- **D-03:** ~~Spatial features cached as memory-mapped .npy files.~~ **UPDATED (research found ~417GB per adaptor needed vs 329GB disk available):** Spatial features computed on-the-fly during training via `RADIOTeacher.extract_spatial_batch()`. Summary features remain cached. Future: if disk expands, add optional spatial caching.
 - **D-04:** `RADIO_VARIANT = "so400m"` constant in train.py (or "h"). `RADIO_ADAPTORS = ["backbone"]` list constant — agent selects which adaptor outputs to distill from.
 - **D-05:** Each adaptor gets its own projection head in train.py (because dims may differ across adaptors). Agent can tune projection architectures.
 
