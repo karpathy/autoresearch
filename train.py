@@ -14,6 +14,7 @@ from prepare import (
     PadToSquare,
     # Teacher
     TrendyolEmbedder, init_teacher, load_teacher_embeddings,
+    TEACHER_REGISTRY, init_teachers, build_all_teacher_caches,
     # Evaluation
     run_retrieval_eval, compute_combined_metric,
     # Transforms
@@ -66,7 +67,11 @@ VAT_EPSILON = 8.0
 SEP_WEIGHT = 1.0
 UNFREEZE_EPOCH = 0             # 0 = unfreeze from start (per D-02)
 BACKBONE_LR_MULT = 0.1        # Backbone LR = LR * this
-TEACHER_CACHE_DIR = DEFAULT_TEACHER_CACHE_DIR
+# Teacher selection (per D-03, D-05)
+TEACHER = "trendyol_onnx"  # Single teacher mode (default, backward compatible)
+# Multi-teacher mode: set TEACHERS to enable, overrides TEACHER
+# Example: TEACHERS = {"trendyol_onnx": 0.5, "dinov2": 0.5}
+TEACHERS: dict[str, float] | None = None
 OUTPUT_DIR = "workspace/output/distill_trendyol_lcnet050_retail"
 RETRIEVAL_MAX_SAMPLES = 5000
 RETRIEVAL_TOPK = 5
@@ -83,6 +88,13 @@ SE_REDUCTION = 0.25           # SE squeeze ratio
 ACTIVATION = "h_swish"        # "h_swish" | "relu" | "gelu"
 KERNEL_SIZES = [3, 3, 3, 3, 3, 3, 5, 5, 5, 5, 5, 5, 5]  # Per-block kernel sizes (13 blocks)
 USE_PRETRAINED = True          # Load timm pretrained weights when scale matches
+
+
+def _get_active_teachers() -> tuple[list[str], dict[str, float]]:
+    """Resolve TEACHER/TEACHERS constants into teacher names and weights."""
+    if TEACHERS is not None:
+        return list(TEACHERS.keys()), dict(TEACHERS)
+    return [TEACHER], {TEACHER: 1.0}
 
 
 # ============================================================
@@ -187,6 +199,7 @@ class LCNet(nn.Module):
         kernel_sizes: list[int] = KERNEL_SIZES,
         embedding_dim: int = 256,
         device: str = "cuda",
+        teacher_dims: dict[str, int] | None = None,
     ) -> None:
         super().__init__()
         act_lookup = {"h_swish": nn.Hardswish, "relu": nn.ReLU, "gelu": nn.GELU}
@@ -230,11 +243,26 @@ class LCNet(nn.Module):
         # Global average pooling
         self.gap = nn.AdaptiveAvgPool2d(1)
 
-        # Projection: Linear(1280, embedding_dim) + BN
-        self.proj = nn.Sequential(
-            nn.Linear(1280, embedding_dim),
-            nn.BatchNorm1d(embedding_dim),
-        )
+        # Projection head(s)
+        # Multi-teacher mode (per D-06): per-teacher projection heads
+        self.proj_heads: nn.ModuleDict | None = None
+        if teacher_dims is not None and len(teacher_dims) > 1:
+            self.proj_heads = nn.ModuleDict({
+                t_name: nn.Sequential(
+                    nn.Linear(1280, t_dim),
+                    nn.BatchNorm1d(t_dim),
+                )
+                for t_name, t_dim in teacher_dims.items()
+            })
+            # self.proj points to first teacher's head for encode() compatibility
+            first_name = next(iter(teacher_dims))
+            self.proj = self.proj_heads[first_name]
+        else:
+            # Single-teacher mode (backward compatible)
+            self.proj = nn.Sequential(
+                nn.Linear(1280, embedding_dim),
+                nn.BatchNorm1d(embedding_dim),
+            )
 
         # Weight initialization
         self._init_weights()
@@ -278,6 +306,11 @@ class LCNet(nn.Module):
         x = self.head_act(self.conv_head(spatial))
         x = self.gap(x).flatten(1)
         return spatial, x
+
+    def forward_backbone(self, images: torch.Tensor) -> torch.Tensor:
+        """Return raw backbone features [B, 1280] before any projection head."""
+        _spatial, summary = self.forward_features(images)
+        return summary
 
     def forward_embeddings_train(self, images: torch.Tensor) -> torch.Tensor:
         """Forward pass with gradients for training. Returns L2-normalized [B, 256]."""
