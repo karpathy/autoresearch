@@ -71,6 +71,11 @@ OUTPUT_DIR = "workspace/output/distill_trendyol_lcnet050_retail"
 RETRIEVAL_MAX_SAMPLES = 5000
 RETRIEVAL_TOPK = 5
 
+# --- SSL Contrastive Loss ---
+SSL_WEIGHT = 0.0              # 0 = disabled; 0.01-0.1 typical. NOTE: enabling doubles forward passes per batch (VRAM ~1.5x)
+SSL_TEMPERATURE = 0.07        # InfoNCE temperature (learnable, this is init value)
+SSL_PROJ_DIM = 128            # SSL projection head output dim
+
 # --- Custom LCNet Backbone ---
 LCNET_SCALE = 0.5             # Width multiplier (0.5 matches current lcnet_050)
 SE_START_BLOCK = 10           # Block index where SE begins (0-indexed, 13 total blocks)
@@ -512,6 +517,49 @@ def vat_embedding_loss(
     return (1.0 - functional.cosine_similarity(emb_clean, emb_adv, dim=1)).mean()
 
 
+class InfoNCELoss(nn.Module):
+    """InfoNCE contrastive loss with learnable temperature (CLIP-style).
+
+    Pushes two augmented views of the same image together,
+    different images apart. Uses in-batch negatives.
+    """
+
+    def __init__(self, temperature: float = 0.07) -> None:
+        super().__init__()
+        # CLIP-style learnable log temperature
+        self.log_scale = nn.Parameter(torch.tensor(np.log(1.0 / temperature)))
+
+    def forward(self, z_a: torch.Tensor, z_b: torch.Tensor) -> torch.Tensor:
+        # z_a, z_b: [B, D] L2-normalized projections
+        # Clamp log_scale to prevent temperature explosion (Pitfall 7)
+        log_scale = self.log_scale.clamp(max=4.6052)  # temperature >= 0.01
+        temperature = torch.exp(-log_scale)
+        logits = z_a @ z_b.T / temperature  # [B, B]
+        labels = torch.arange(len(z_a), device=z_a.device)
+        loss = (functional.cross_entropy(logits, labels) + functional.cross_entropy(logits.T, labels)) / 2
+        return loss
+
+
+class SSLProjectionHead(nn.Module):
+    """Separate projection head for SSL contrastive learning.
+
+    Maps 256d embeddings to 128d contrastive space.
+    NOT part of the LCNet class -- does not affect .encode() output.
+    """
+
+    def __init__(self, in_dim: int = 256, hidden_dim: int = 128, out_dim: int = 128) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, out_dim),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return functional.normalize(self.net(x), p=2, dim=1)
+
+
 # ============================================================
 # TRAINING LOOP (agent edits everything here)
 # ============================================================
@@ -523,6 +571,7 @@ class EpochStats:
     arc_loss: float
     vat_loss: float
     sep_loss: float
+    ssl_loss: float
     mean_cosine: float
 
 
@@ -547,15 +596,22 @@ def run_train_epoch(
     wl_centroid_ema: dict | None = None,
     backbone_unfrozen: bool = False,
     save_first_batch_path: Path | None = None,
+    ssl_weight: float = 0.0,
+    ssl_head: "SSLProjectionHead | None" = None,
+    info_nce: "InfoNCELoss | None" = None,
+    train_transform=None,
 ) -> EpochStats:
     """Run one training epoch with separate distillation and ArcFace data."""
     model.train()
+    if ssl_head is not None:
+        ssl_head.train()
 
     total_loss = 0.0
     total_distill = 0.0
     total_arc = 0.0
     total_vat = 0.0
     total_sep = 0.0
+    total_ssl = 0.0
     total_align = 0.0
     _bl_idx = blacklist_class_indices or set()
     n = 0
@@ -643,7 +699,26 @@ def run_train_epoch(
                     centroid = functional.normalize(wl_centroid_ema["centroid"].unsqueeze(0), p=2, dim=1)
                     l_sep = (bl_emb @ centroid.T).clamp(min=0).mean()
 
-            loss = distill_loss + arc_loss_weight * arc_loss + sep_weight * l_sep
+            # --- SSL Contrastive Loss (dual-view, student-only) ---
+            ssl_loss_val = torch.tensor(0.0, device=device)
+            if ssl_weight > 0 and ssl_head is not None and info_nce is not None and train_transform is not None:
+                # view_a = student_emb (from normal training forward pass, already computed above)
+                # view_b = re-augment raw images from paths
+                view_b_imgs = []
+                for p in paths:
+                    img = Image.open(p).convert("RGB")
+                    view_b_imgs.append(train_transform(img))
+                view_b_tensor = torch.stack(view_b_imgs).to(device, non_blocking=True)
+
+                emb_b = model.forward_embeddings_train(view_b_tensor)
+
+                # Project to contrastive space
+                z_a = ssl_head(student_emb)  # gradients flow to encoder via student_emb
+                z_b = ssl_head(emb_b)
+
+                ssl_loss_val = info_nce(z_a, z_b)
+
+            loss = distill_loss + arc_loss_weight * arc_loss + sep_weight * l_sep + ssl_weight * ssl_loss_val
 
         # --- VAT Loss (fp32, outside autocast to avoid precision issues) ---
         # Skip VAT while backbone is frozen -- perturbations have no effect.
@@ -664,6 +739,7 @@ def run_train_epoch(
         total_arc += float(arc_loss.item())
         total_vat += float(l_vat.item())
         total_sep += float(l_sep.item())
+        total_ssl += float(ssl_loss_val.item())
         total_align += batch_align
         n += 1
 
@@ -675,7 +751,8 @@ def run_train_epoch(
             bar = "=" * filled + ">" + "." * (bar_len - filled - 1) if filled < bar_len else "=" * bar_len
             avg_loss = total_loss / n
             avg_cos = total_align / n
-            print(f"\r  {n}/{total_steps} [{bar}] - loss: {avg_loss:.4f} - cos: {avg_cos:.4f}", end="", flush=True)
+            ssl_str = f" - ssl: {total_ssl / n:.4f}" if ssl_weight > 0 else ""
+            print(f"\r  {n}/{total_steps} [{bar}] - loss: {avg_loss:.4f} - cos: {avg_cos:.4f}{ssl_str}", end="", flush=True)
     print()  # newline after epoch
 
     return EpochStats(
@@ -684,6 +761,7 @@ def run_train_epoch(
         arc_loss=total_arc / max(n, 1),
         vat_loss=total_vat / max(n, 1),
         sep_loss=total_sep / max(n, 1),
+        ssl_loss=total_ssl / max(n, 1),
         mean_cosine=total_align / max(n, 1),
     )
 
@@ -749,6 +827,18 @@ def main() -> None:
     if USE_PRETRAINED:
         load_pretrained_lcnet(model, LCNET_SCALE)
 
+    # SSL components (per D-01, D-02, D-04)
+    ssl_head: SSLProjectionHead | None = None
+    info_nce_loss: InfoNCELoss | None = None
+    if SSL_WEIGHT > 0:
+        ssl_head = SSLProjectionHead(
+            in_dim=EMBEDDING_DIM,
+            hidden_dim=SSL_PROJ_DIM,
+            out_dim=SSL_PROJ_DIM,
+        ).to(device)
+        info_nce_loss = InfoNCELoss(temperature=SSL_TEMPERATURE).to(device)
+        logger.info(f"SSL enabled: weight={SSL_WEIGHT}, temperature={SSL_TEMPERATURE}, proj_dim={SSL_PROJ_DIM}")
+
     # ArcFace head
     arc_margin: ArcMarginProduct | None = None
     if USE_ARCFACE and arcface_dataset is not None:
@@ -778,6 +868,10 @@ def main() -> None:
     head_params = list(model.proj.parameters()) + list(model.conv_head.parameters()) + list(model.head_act.parameters())
     if arc_margin is not None:
         head_params += list(arc_margin.parameters())
+    if ssl_head is not None:
+        head_params += list(ssl_head.parameters())
+    if info_nce_loss is not None:
+        head_params += list(info_nce_loss.parameters())  # learnable temperature
 
     optimizer = torch.optim.AdamW(
         [
@@ -826,6 +920,10 @@ def main() -> None:
             head_params = list(model.proj.parameters()) + list(model.conv_head.parameters()) + list(model.head_act.parameters())
             if arc_margin is not None:
                 head_params += list(arc_margin.parameters())
+            if ssl_head is not None:
+                head_params += list(ssl_head.parameters())
+            if info_nce_loss is not None:
+                head_params += list(info_nce_loss.parameters())
             optimizer = torch.optim.AdamW(
                 [
                     {"params": head_params, "lr": LR},
@@ -865,6 +963,10 @@ def main() -> None:
             wl_centroid_ema=wl_centroid_ema,
             backbone_unfrozen=backbone_unfrozen,
             save_first_batch_path=first_batch_path,
+            ssl_weight=SSL_WEIGHT,
+            ssl_head=ssl_head,
+            info_nce=info_nce_loss,
+            train_transform=train_transform,
         )
         elapsed_epoch = time.time() - t0
 
@@ -872,7 +974,7 @@ def main() -> None:
         logger.info(
             f"Epoch {epoch + 1}/{EPOCHS} | "
             f"loss={stats.loss:.4f} distill={stats.distill_loss:.4f} "
-            f"arc={stats.arc_loss:.4f} vat={stats.vat_loss:.4f} sep={stats.sep_loss:.4f} cosine={stats.mean_cosine:.4f}{arc_w_str} | "
+            f"arc={stats.arc_loss:.4f} vat={stats.vat_loss:.4f} sep={stats.sep_loss:.4f} ssl={stats.ssl_loss:.4f} cosine={stats.mean_cosine:.4f}{arc_w_str} | "
             f"{elapsed_epoch:.1f}s"
         )
 
@@ -971,6 +1073,7 @@ def main() -> None:
     final_arc_loss = stats.arc_loss
     final_vat_loss = stats.vat_loss
     final_sep_loss = stats.sep_loss
+    final_ssl_loss = stats.ssl_loss
 
     # Write metrics.json (per D-02, INFRA-02, INFRA-05, INFRA-06)
     import json
@@ -985,6 +1088,7 @@ def main() -> None:
         "arc_loss": final_arc_loss,
         "vat_loss": final_vat_loss,
         "sep_loss": final_sep_loss,
+        "ssl_loss": final_ssl_loss,
         "peak_vram_mb": peak_vram_mb,
         "epochs": EPOCHS,
         "elapsed_seconds": round(elapsed, 1),
@@ -1003,6 +1107,7 @@ def main() -> None:
     print(f"arc_loss:         {final_arc_loss:.6f}")
     print(f"vat_loss:         {final_vat_loss:.6f}")
     print(f"sep_loss:         {final_sep_loss:.6f}")
+    print(f"ssl_loss:         {final_ssl_loss:.6f}")
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
     print(f"epochs:           {EPOCHS}")
     print(f"elapsed_seconds:  {elapsed:.1f}")
