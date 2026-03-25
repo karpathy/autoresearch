@@ -56,7 +56,7 @@ Plans:
 - Integer phases (5, 6, 7, 8, 9): Planned milestone work
 - Decimal phases (e.g. 5.1): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 5: SSL + Custom LCNet** - Add InfoNCE contrastive loss and custom LCNet backbone with agent-tunable architecture (zero prepare.py changes)
+- [x] **Phase 5: SSL + Custom LCNet** - Add InfoNCE contrastive loss and custom LCNet backbone with agent-tunable architecture (zero prepare.py changes) (completed 2026-03-25)
 - [ ] **Phase 6: Multi-Teacher Infrastructure** - Expand prepare.py to support 5+ teachers with independent caches and multi-teacher combos
 - [ ] **Phase 7: DINOv3 Fine-tune** - Fine-tune DINOv3 ViT-H+ (840M) on product dataset using autoresearch pattern (separate sub-project)
 - [ ] **Phase 8: RADIO Integration** - Add RADIO teacher with adaptor selection and spatial distillation via memory-mapped cache
@@ -74,7 +74,7 @@ Plans:
   3. Custom LCNet supports optional timm pretrained weight initialization (when scale matches a known timm variant)
   4. Custom LCNet exposes pre-GAP spatial feature maps (for future RADIO spatial distillation) via a `.encode_spatial()` or equivalent method
   5. `einops` is added to pyproject.toml and importable
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 05-01-PLAN.md -- Custom LCNet backbone with tunable architecture + einops dependency
 - [x] 05-02-PLAN.md -- SSL InfoNCE contrastive loss with projection head and training loop integration
@@ -146,7 +146,7 @@ Phases execute in numeric order: 5 -> 6 -> 7 -> 8 -> 9
 | 2. Experiment Infrastructure | v1.0 | 2/2 | Complete | - |
 | 3. Agent Instructions | v1.0 | 1/1 | Complete | - |
 | 4. Validation | v1.0 | 2/2 | Complete | - |
-| 5. SSL + Custom LCNet | v2.0 | 0/2 | Planned | - |
+| 5. SSL + Custom LCNet | v2.0 | 0/2 | Complete    | 2026-03-25 |
 | 6. Multi-Teacher Infrastructure | v2.0 | 0/2 | Planned | - |
 | 7. DINOv3 Fine-tune | v2.0 | 0/3 | Planned | - |
 | 8. RADIO Integration | v2.0 | 0/? | Not started | - |
