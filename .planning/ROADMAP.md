@@ -104,8 +104,8 @@ Plans:
 **Plans:** 1/3 plans executed
 Plans:
 - [x] 07-01-PLAN.md -- Create dino_finetune/ sub-project (prepare_dino.py + train_dino.py)
-- [ ] 07-02-PLAN.md -- Create program_dino.md agent instructions
-- [ ] 07-03-PLAN.md -- Integrate DINOv3FTTeacher into main prepare.py + add peft dependency
+- [x] 07-02-PLAN.md -- Create program_dino.md agent instructions
+- [x] 07-03-PLAN.md -- Integrate DINOv3FTTeacher into main prepare.py + add peft dependency
 
 ### Phase 8: RADIO Integration
 **Goal**: RADIO models are fully integrated as teachers with adaptor selection, spatial feature caching, and spatial distillation loss -- all agent-tunable
