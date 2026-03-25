@@ -147,7 +147,7 @@ Phases execute in numeric order: 5 -> 6 -> 7 -> 8 -> 9
 | 3. Agent Instructions | v1.0 | 1/1 | Complete | - |
 | 4. Validation | v1.0 | 2/2 | Complete | - |
 | 5. SSL + Custom LCNet | v2.0 | 0/2 | Complete    | 2026-03-25 |
-| 6. Multi-Teacher Infrastructure | v2.0 | 2/2 | Complete   | 2026-03-25 |
+| 6. Multi-Teacher Infrastructure | v2.0 | 2/2 | Complete    | 2026-03-25 |
 | 7. DINOv3 Fine-tune | v2.0 | 0/3 | Planned | - |
 | 8. RADIO Integration | v2.0 | 0/? | Not started | - |
 | 9. RADIO Training Techniques + Wrap-up | v2.0 | 0/3 | Planned | - |
