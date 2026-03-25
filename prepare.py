@@ -740,32 +740,105 @@ def collate_arcface(
 
 
 # ---------------------------------------------------------------------------
-# Teacher embedding cache
+# Teacher embedding cache (per-teacher to prevent cross-teacher collisions)
 # ---------------------------------------------------------------------------
 
-_TEACHER_MEM_CACHE: dict[str, np.ndarray] = {}
+_TEACHER_MEM_CACHES: dict[str, dict[str, np.ndarray]] = {}
+
+
+def _write_cache_metadata(
+    cache_dir: Path,
+    teacher_name: str,
+    embedding_dim: int,
+    num_samples: int,
+    model_version: str = "",
+    input_resolution: int = 224,
+) -> None:
+    """Write metadata.json for a teacher cache directory."""
+    import json
+    from datetime import datetime
+
+    metadata = {
+        "teacher_name": teacher_name,
+        "embedding_dim": embedding_dim,
+        "num_samples": num_samples,
+        "cache_date": datetime.utcnow().isoformat(),
+        "model_version": model_version,
+        "input_resolution": input_resolution,
+    }
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    with open(cache_dir / "metadata.json", "w") as f:
+        json.dump(metadata, f, indent=2)
+    logger.info(f"Wrote cache metadata for {teacher_name}: {num_samples} samples, dim={embedding_dim}")
+
+
+def _is_cache_valid(
+    cache_dir: Path,
+    expected_dim: int | None,
+    expected_samples: int,
+) -> bool:
+    """Check if a teacher cache is valid by reading metadata.json.
+
+    Returns True if metadata exists and matches expectations.
+    Skips dim check if expected_dim is None (for RADIO stubs with unknown dim).
+    """
+    import json
+
+    cache_dir = Path(cache_dir)
+    metadata_path = cache_dir / "metadata.json"
+    if not metadata_path.exists():
+        return False
+    try:
+        with open(metadata_path) as f:
+            meta = json.load(f)
+        if expected_dim is not None and meta.get("embedding_dim") != expected_dim:
+            logger.warning(
+                f"Cache dim mismatch for {cache_dir}: expected {expected_dim}, got {meta.get('embedding_dim')}"
+            )
+            return False
+        if meta.get("num_samples", 0) != expected_samples:
+            logger.warning(
+                f"Cache sample count mismatch for {cache_dir}: expected {expected_samples}, got {meta.get('num_samples')}"
+            )
+            return False
+        return True
+    except (json.JSONDecodeError, KeyError) as e:
+        logger.warning(f"Invalid metadata.json in {cache_dir}: {e}")
+        return False
 
 
 def load_teacher_embeddings(
     image_paths: Sequence[str],
-    teacher: TrendyolEmbedder,
+    teacher,  # Any teacher with encode_batch interface
     device: torch.device,
     cache_dir: str | None = None,
+    teacher_name: str = "default",
 ) -> torch.Tensor:
-    """Load teacher embeddings with in-memory + disk caching and batch inference."""
+    """Load teacher embeddings with in-memory + disk caching and batch inference.
+
+    Uses per-teacher memory cache keyed by teacher_name to prevent cross-teacher
+    collisions. The teacher_name parameter defaults to "default" for backward
+    compatibility with existing train.py calls.
+    """
+    # Ensure per-teacher cache dict exists
+    if teacher_name not in _TEACHER_MEM_CACHES:
+        _TEACHER_MEM_CACHES[teacher_name] = {}
+    mem_cache = _TEACHER_MEM_CACHES[teacher_name]
+
     embeddings: list[np.ndarray] = [None] * len(image_paths)  # type: ignore[list-item]
 
     # Phase 1: in-memory cache -> disk cache
     uncached_indices: list[int] = []
     for i, path in enumerate(image_paths):
-        if path in _TEACHER_MEM_CACHE:
-            embeddings[i] = _TEACHER_MEM_CACHE[path]
+        if path in mem_cache:
+            embeddings[i] = mem_cache[path]
             continue
         if cache_dir:
             cache_path = Path(cache_dir) / f"{hashlib.md5(path.encode()).hexdigest()}.npy"
             if cache_path.exists():
                 emb = np.load(cache_path)
-                _TEACHER_MEM_CACHE[path] = emb
+                mem_cache[path] = emb
                 embeddings[i] = emb
                 continue
         uncached_indices.append(i)
@@ -778,13 +851,87 @@ def load_teacher_embeddings(
         for j, i in enumerate(uncached_indices):
             emb = emb_list[j]
             embeddings[i] = emb
-            _TEACHER_MEM_CACHE[image_paths[i]] = emb
+            mem_cache[image_paths[i]] = emb
             if cache_dir and emb is not None:
                 cache_path = Path(cache_dir) / f"{hashlib.md5(image_paths[i].encode()).hexdigest()}.npy"
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
                 np.save(cache_path, emb)
 
     return torch.tensor(np.stack(embeddings), device=device, dtype=torch.float32)
+
+
+def build_all_teacher_caches(
+    teacher_names: list[str],
+    image_paths: list[str],
+    device: str = "cuda",
+) -> None:
+    """Build embedding caches for all requested teachers sequentially.
+
+    Processes one teacher at a time with explicit GPU cleanup between teachers
+    to stay within VRAM budget. Reuses existing valid caches (including the
+    pre-existing Trendyol cache).
+    """
+    import gc
+
+    for name in teacher_names:
+        if name not in TEACHER_REGISTRY:
+            raise ValueError(f"Unknown teacher: {name}. Available: {list(TEACHER_REGISTRY.keys())}")
+        entry = TEACHER_REGISTRY[name]
+        cache_dir = Path(entry["cache_dir"])
+        expected_dim = entry["embedding_dim"]
+
+        # For existing caches without metadata.json (e.g., Trendyol), write metadata
+        # from .npy file count rather than rebuilding
+        if cache_dir.exists() and not (cache_dir / "metadata.json").exists():
+            npy_files = list(cache_dir.glob("*.npy"))
+            if npy_files:
+                logger.info(
+                    f"Found existing cache for {name} at {cache_dir} with {len(npy_files)} files, writing metadata"
+                )
+                _write_cache_metadata(
+                    cache_dir=cache_dir,
+                    teacher_name=name,
+                    embedding_dim=expected_dim or 0,
+                    num_samples=len(npy_files),
+                )
+                continue
+
+        # Check if cache is already valid
+        if _is_cache_valid(cache_dir, expected_dim, len(image_paths)):
+            logger.info(f"Cache valid for {name}, skipping rebuild")
+            continue
+
+        # Build cache: instantiate teacher, run inference, cleanup
+        logger.info(f"Building cache for {name} ({len(image_paths)} images)...")
+        teacher = entry["class"](**entry["init_kwargs"], device=device)
+
+        # Use load_teacher_embeddings in batches
+        batch_size = 256
+        for start in range(0, len(image_paths), batch_size):
+            batch_paths = image_paths[start : start + batch_size]
+            load_teacher_embeddings(
+                batch_paths,
+                teacher,
+                torch.device(device),
+                cache_dir=str(cache_dir),
+                teacher_name=name,
+            )
+            if (start // batch_size) % 50 == 0:
+                logger.info(f"  {name}: {min(start + batch_size, len(image_paths))}/{len(image_paths)}")
+
+        # Write metadata
+        _write_cache_metadata(
+            cache_dir=cache_dir,
+            teacher_name=name,
+            embedding_dim=expected_dim or 0,
+            num_samples=len(image_paths),
+        )
+
+        # Explicit cleanup to free VRAM before next teacher
+        del teacher
+        gc.collect()
+        torch.cuda.empty_cache()
+        logger.info(f"Cache built for {name}, GPU memory released")
 
 
 # ---------------------------------------------------------------------------
