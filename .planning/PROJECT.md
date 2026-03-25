@@ -8,6 +8,20 @@ An autonomous AI-driven experimentation system for ReID (Re-Identification) mode
 
 The AI agent can autonomously discover better ReID model configurations (higher recall@1 + cosine alignment) without human intervention, running experiments overnight and producing a log of what worked and what didn't.
 
+## Current Milestone: v2.0 Expanded Search Space
+
+**Goal:** Dramatically expand the agent's search space with multi-teacher distillation (5 teachers), SSL contrastive loss, custom LCNet architecture, RADIO training techniques, and DINOv3 fine-tuning — all as agent-tunable parameters.
+
+**Target features:**
+- SSL contrastive loss (InfoNCE) as additional training signal
+- Custom LCNet backbone with agent-tunable architecture (width, SE, kernels, activation)
+- 5 teachers: Trendyol ONNX, DINOv2, DINOv3-ft (ViT-g 1.1B), C-RADIOv4-SO400M, C-RADIOv4-H
+- RADIO adaptor outputs (backbone, dino_v3, siglip2-g) as selectable distillation targets
+- RADIO spatial distillation with memory-mapped cache
+- RADIO training techniques: PHI-S, Feature Normalizer, L_angle, Hybrid Loss, Adaptor MLP v2, FeatSharp
+- Teacher selection and multi-teacher combos as agent-tunable parameters
+- DINOv3 fine-tuned on product dataset using autoresearch pattern
+
 ## Requirements
 
 ### Validated
@@ -27,10 +41,10 @@ The AI agent can autonomously discover better ReID model configurations (higher 
 
 ### Out of Scope
 
-- Modifying the teacher model (Trendyol ONNX / DINOv2) — fixed reference
-- Modifying evaluation logic — ground truth metric must be immutable
 - Multi-GPU / distributed training — single RTX 4090 only
-- Adding new pip dependencies — only what's in `pyproject.toml`
+- DINOv3-7B fine-tune — requires 50GB+ VRAM; use ViT-g 1.1B instead
+- RADIO training code reproduction — use inference weights only
+- Modifying evaluation logic — ground truth metric must be immutable
 - Changing dataset paths or data preparation — fixed infrastructure
 
 ## Context

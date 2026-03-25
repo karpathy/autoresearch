@@ -1,15 +1,15 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: Milestone complete
-stopped_at: Completed 04-02-PLAN.md
-last_updated: "2026-03-24T21:28:14.342Z"
+milestone: v2.0
+milestone_name: Expanded Search Space
+status: Ready to plan Phase 5
+stopped_at: Roadmap created for v2.0
+last_updated: "2026-03-25T13:00:00.000Z"
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 8
-  completed_plans: 8
+  total_phases: 5
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # Project State
@@ -19,64 +19,49 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-25)
 
 **Core value:** AI agent autonomously discovers better ReID model configurations without human intervention
-**Current focus:** Phase 04 — validation
+**Current focus:** v2.0 Phase 5 -- SSL + Custom LCNet (zero prepare.py changes, independent features)
 
 ## Current Position
 
-Phase: 04
-Plan: Not started
+Phase: 5 of 9 (SSL + Custom LCNet) -- first phase of v2.0
+Plan: --
+Status: Ready to plan
+Last activity: 2026-03-25 -- v2.0 roadmap created (Phases 5-9)
+
+Progress: [##########..........] 44% (v1.0 complete, v2.0 not started)
 
 ## Performance Metrics
 
 **Velocity:**
-
-- Total plans completed: 0
-- Average duration: -
-- Total execution time: 0 hours
+- Total plans completed: 8 (v1.0)
+- Average duration: --
+- Total execution time: -- hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
-
-**Recent Trend:**
-
-- Last 5 plans: -
-- Trend: -
-
-*Updated after each plan completion*
-| Phase 01 P01 | 6min | 1 tasks | 1 files |
-| Phase 01 P02 | 5min | 1 tasks | 1 files |
-| Phase 01 P03 | 3min | 3 tasks | 4 files |
-| Phase 02 P01 | 3min | 2 tasks | 3 files |
-| Phase 02 P02 | 2min | 2 tasks | 2 files |
-| Phase 03 P01 | 3min | 2 tasks | 1 files |
-| Phase 04 P01 | 17min | 3 tasks | 4 files |
-| Phase 04 P02 | 5min | 3 tasks | 3 files |
+| 1. Core Refactoring | 3/3 | -- | -- |
+| 2. Experiment Infra | 2/2 | -- | -- |
+| 3. Agent Instructions | 1/1 | -- | -- |
+| 4. Validation | 2/2 | -- | -- |
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
+v1.0 decisions (carried forward):
+- prepare.py/train.py split boundary is foundational architecture
+- 10 epochs per experiment, teacher cache excluded from budget
+- Combined metric: 0.5 * recall@1 + 0.5 * mean_cosine
+- Baseline metric 0.695 established
 
-- Roadmap: 4-phase structure derived from requirement categories (REFAC -> INFRA -> AGNT -> VALD)
-- Roadmap: Phase 1 is critical path -- the prepare.py/train.py split boundary is the hardest-to-change decision
-- [Phase 01]: Used second PadToSquare (TF.pad) over broken first version (tf.pad)
-- [Phase 01]: Builder functions accept transform/quality_degradation as params to avoid circular imports
-- [Phase 01]: EPOCHS=10 (not 80), UNFREEZE_EPOCH=0 (not 5) -- train.py constants match autoresearch fixed budget
-- [Phase 01]: Tests use inspect.getsource() for boundary verification -- avoids GPU/data deps
-- [Phase 02]: EPOCHS moved from train.py to prepare.py for immutable budget enforcement
-- [Phase 02]: metrics.json contract: success/oom/crash with structured sub-metrics for agent loop consumption
-- [Phase 02]: AST-based contract testing for train.py avoids GPU/data dependencies in CI
-- [Phase 03]: Preserved original autoresearch structure, replaced all domain content for ReID knowledge distillation
-- [Phase 03]: 6 NEVER constraints encoded prominently; VRAM budget rule at 22GB to prevent OOM cascades
-- [Phase 04]: Baseline metric 0.695 established with unmodified train.py at 10 epochs
-- [Phase 04]: ArcFace loss weight reduction (0.05->0.03) improved combined_metric by 1.5% to 0.706
-- [Phase 04]: OOM crash recovery validated: 24GB allocation caught by try/except handler, logged as crash, git reset reverts cleanly
-- [Phase 04]: Overnight launch deferred to user (requires persistent terminal session)
+v2.0 decisions:
+- 5 teachers: Trendyol ONNX, DINOv2, DINOv3-ft, C-RADIOv4-SO400M, C-RADIOv4-H
+- DINOv3 fine-tune uses autoresearch sub-project pattern
+- Only new dependency: einops (required by RADIO)
+- Custom LCNet replaces timm lcnet_050; architecture params agent-tunable
+- Phase 5 starts with SSL + LCNet (zero prepare.py changes)
 
 ### Pending Todos
 
@@ -84,12 +69,13 @@ None yet.
 
 ### Blockers/Concerns
 
-- Research gap: Exact timm version should be pinned before experiments for reproducible baselines
-- Research gap: Teacher model selection (ONNX vs DINOv2) needs a decision before Phase 1 implementation
-- Research gap: 10-epoch budget may need manual validation before committing
+- RADIO SO400M exact summary dimension needs runtime verification (expected 1152d)
+- DINOv2Teacher.encode_batch() may have bug (3D vs 2D output) -- verify before use
+- Spatial cache disk budget (~300GB estimate) needs validation
+- VRAM budget tight for DINOv3 ViT-g 1.1B with LoRA -- needs profiling
 
 ## Session Continuity
 
-Last session: 2026-03-24T21:23:58.337Z
-Stopped at: Completed 04-02-PLAN.md
+Last session: 2026-03-25
+Stopped at: v2.0 roadmap created, ready to plan Phase 5
 Resume file: None

@@ -41,7 +41,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **VALD-02**: At least one full autonomous loop cycle completes: agent modifies train.py, runs, evaluates, keeps or discards
 - [x] **VALD-03**: Crash recovery verified: intentionally trigger OOM, confirm system logs crash and continues
 
-## v2 Requirements — Expanded Search Space
+## v2 Requirements -- Expanded Search Space
 
 ### SSL Contrastive Loss
 - [ ] **SSL-01**: train.py includes InfoNCE contrastive loss
@@ -58,12 +58,12 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **TEACH-01**: prepare.py supports 5+ teachers: Trendyol ONNX, DINOv2, DINOv3-ft, all C-RADIO variants
 - [ ] **TEACH-02**: Each teacher has independent cache directory with metadata
 - [ ] **TEACH-03**: Cache building sequential per teacher (VRAM safety)
-- [ ] **TEACH-04**: `TEACHER` is a module-level constant — agent can switch teachers
+- [ ] **TEACH-04**: `TEACHER` is a module-level constant -- agent can switch teachers
 - [ ] **TEACH-05**: Multi-teacher mode with per-teacher loss weights as tunable constants
 
 ### RADIO Integration
 - [ ] **RADIO-01**: RADIOTeacher class supporting all C-RADIO variants with adaptor selection
-- [ ] **RADIO-02**: 3 adaptor outputs: backbone, dino_v3, siglip2-g — agent selects which to distill from
+- [ ] **RADIO-02**: 3 adaptor outputs: backbone, dino_v3, siglip2-g -- agent selects which to distill from
 - [ ] **RADIO-03**: Each adaptor's summary features cached with native dim, projection in train.py
 - [ ] **RADIO-04**: Spatial features cached separately with memory-mapped storage
 - [ ] **RADIO-05**: Spatial distillation loss in train.py
@@ -87,7 +87,7 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Updated Infrastructure
 - [ ] **INFRA-08**: program.md updated with expanded search space
 - [ ] **INFRA-09**: `einops` added to pyproject.toml
-- [ ] **INFRA-10**: Evaluation metric unchanged — trust boundary preserved
+- [ ] **INFRA-10**: Evaluation metric unchanged -- trust boundary preserved
 
 ## v3 Requirements (Deferred)
 
@@ -139,45 +139,45 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VALD-01 | Phase 4 | Complete |
 | VALD-02 | Phase 4 | Complete |
 | VALD-03 | Phase 4 | Complete |
-| SSL-01 | — | Pending |
-| SSL-02 | — | Pending |
-| SSL-03 | — | Pending |
-| LCNET-01 | — | Pending |
-| LCNET-02 | — | Pending |
-| LCNET-03 | — | Pending |
-| LCNET-04 | — | Pending |
-| TEACH-01 | — | Pending |
-| TEACH-02 | — | Pending |
-| TEACH-03 | — | Pending |
-| TEACH-04 | — | Pending |
-| TEACH-05 | — | Pending |
-| RADIO-01 | — | Pending |
-| RADIO-02 | — | Pending |
-| RADIO-03 | — | Pending |
-| RADIO-04 | — | Pending |
-| RADIO-05 | — | Pending |
-| RADIO-06 | — | Pending |
-| DINO3-01 | — | Pending |
-| DINO3-02 | — | Pending |
-| DINO3-03 | — | Pending |
-| DINO3-04 | — | Pending |
-| TRAIN-01 | — | Pending |
-| TRAIN-02 | — | Pending |
-| TRAIN-03 | — | Pending |
-| TRAIN-04 | — | Pending |
-| TRAIN-05 | — | Pending |
-| TRAIN-06 | — | Pending |
-| TRAIN-07 | — | Pending |
-| INFRA-08 | — | Pending |
-| INFRA-09 | — | Pending |
-| INFRA-10 | — | Pending |
+| SSL-01 | Phase 5 | Pending |
+| SSL-02 | Phase 5 | Pending |
+| SSL-03 | Phase 5 | Pending |
+| LCNET-01 | Phase 5 | Pending |
+| LCNET-02 | Phase 5 | Pending |
+| LCNET-03 | Phase 5 | Pending |
+| LCNET-04 | Phase 5 | Pending |
+| INFRA-09 | Phase 5 | Pending |
+| TEACH-01 | Phase 6 | Pending |
+| TEACH-02 | Phase 6 | Pending |
+| TEACH-03 | Phase 6 | Pending |
+| TEACH-04 | Phase 6 | Pending |
+| TEACH-05 | Phase 6 | Pending |
+| DINO3-01 | Phase 7 | Pending |
+| DINO3-02 | Phase 7 | Pending |
+| DINO3-03 | Phase 7 | Pending |
+| DINO3-04 | Phase 7 | Pending |
+| RADIO-01 | Phase 8 | Pending |
+| RADIO-02 | Phase 8 | Pending |
+| RADIO-03 | Phase 8 | Pending |
+| RADIO-04 | Phase 8 | Pending |
+| RADIO-05 | Phase 8 | Pending |
+| RADIO-06 | Phase 8 | Pending |
+| TRAIN-01 | Phase 9 | Pending |
+| TRAIN-02 | Phase 9 | Pending |
+| TRAIN-03 | Phase 9 | Pending |
+| TRAIN-04 | Phase 9 | Pending |
+| TRAIN-05 | Phase 9 | Pending |
+| TRAIN-06 | Phase 9 | Pending |
+| TRAIN-07 | Phase 9 | Pending |
+| INFRA-08 | Phase 9 | Pending |
+| INFRA-10 | Phase 9 | Pending |
 
 **Coverage:**
 - v1 requirements: 22 total (all complete)
 - v2 requirements: 32 total
-- Mapped to phases: 0
-- Unmapped: 32 ⚠️
+- Mapped to phases: 32/32
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-25*
-*Last updated: 2026-03-25 after roadmap creation*
+*Last updated: 2026-03-25 after v2.0 roadmap creation*

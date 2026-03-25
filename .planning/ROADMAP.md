@@ -1,89 +1,139 @@
 # Roadmap: ReID Autoresearch
 
-## Overview
+## Milestones
 
-Transform the monolithic `finetune_trendyol_arcface3.py` (~1400 lines) into the autoresearch three-file pattern (prepare.py, train.py, program.md), wire up experiment infrastructure (git loop, results logging, crash recovery), write ReID-specific agent instructions, and validate with a live autonomous run. The end state: an AI agent that runs experiments overnight on an RTX 4090, autonomously discovering better ReID model configurations.
+- [x] **v1.0 MVP** - Phases 1-4 (shipped)
+- [ ] **v2.0 Expanded Search Space** - Phases 5-9 (in progress)
 
 ## Phases
 
-**Phase Numbering:**
-- Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
-
-Decimal phases appear between their surrounding integers in numeric order.
-
-- [ ] **Phase 1: Core Refactoring** - Split monolith into prepare.py (immutable) and train.py (agent-editable) with clear trust boundary
-- [ ] **Phase 2: Experiment Infrastructure** - Git management, results logging, crash recovery, and VRAM tracking for the experiment loop
-- [ ] **Phase 3: Agent Instructions** - ReID-specific program.md with experiment strategy, search space, and hard constraints
-- [ ] **Phase 4: Validation** - Baseline run, full autonomous loop cycle, and crash recovery verification
-
-## Phase Details
+<details>
+<summary>v1.0 MVP (Phases 1-4) - SHIPPED</summary>
 
 ### Phase 1: Core Refactoring
 **Goal**: The monolith is cleanly split so that prepare.py owns all immutable concerns (data, teacher, evaluation, caching) and train.py is a self-contained, agent-editable training script
 **Depends on**: Nothing (first phase)
 **Requirements**: REFAC-01, REFAC-02, REFAC-03, REFAC-04, REFAC-05, REFAC-06, REFAC-07
-**Success Criteria** (what must be TRUE):
-  1. Running `python prepare.py` loads all datasets, builds/loads teacher cache, and is ready to evaluate a trained model -- without touching train.py internals
-  2. Running `python train.py` trains for 10 epochs and produces a model whose `.encode(images)` returns L2-normalized `Tensor[B, 256]`
-  3. prepare.py computes and prints the combined metric (`0.5 * recall@1 + 0.5 * mean_cosine`) after a train.py run completes
-  4. All tunable parameters in train.py are module-level constants (no argparse, no config files) -- an agent can modify them by editing Python source
-  5. Evaluation logic (recall@1/k, mean_cosine) exists only in prepare.py -- grep confirms zero evaluation code in train.py
 **Plans:** 3 plans
 Plans:
-- [x] 01-01-PLAN.md -- Create prepare.py with all immutable infrastructure (data, teacher, evaluation, metrics)
-- [x] 01-02-PLAN.md -- Create train.py with all agent-editable components (model, losses, augmentations, training loop)
-- [x] 01-03-PLAN.md -- Smoke tests and boundary verification for the split (pytest suite)
+- [x] 01-01-PLAN.md -- Create prepare.py with all immutable infrastructure
+- [x] 01-02-PLAN.md -- Create train.py with all agent-editable components
+- [x] 01-03-PLAN.md -- Smoke tests and boundary verification
 
 ### Phase 2: Experiment Infrastructure
-**Goal**: A complete experiment loop harness exists that can run train.py, log results, manage git state, and recover from crashes -- ready for an agent to drive
+**Goal**: A complete experiment loop harness exists that can run train.py, log results, manage git state, and recover from crashes
 **Depends on**: Phase 1
 **Requirements**: INFRA-01, INFRA-02, INFRA-03, INFRA-04, INFRA-05, INFRA-06, INFRA-07
-**Success Criteria** (what must be TRUE):
-  1. After a successful experiment, the change is committed to git and results.tsv contains a row with commit hash, combined metric, recall@1, mean_cosine, peak VRAM, status "kept", and a description
-  2. After a regression, git reset is performed, results.tsv logs the experiment as "discarded", and train.py reverts to its previous state
-  3. An OOM crash is caught, logged as "crash" in results.tsv, git reset is performed, and the loop continues to the next iteration without human intervention
-  4. Run output includes all decomposed sub-metrics (recall@1, recall@5, mean_cosine, distill_loss, arc_loss, vat_loss, sep_loss) in a greppable format
-  5. Teacher cache build time is excluded from the 10-epoch experiment budget
 **Plans:** 2 plans
 Plans:
-- [x] 02-01-PLAN.md -- Add metrics.json output, crash handling, VRAM tracking, and greppable stdout summary to train.py
-- [x] 02-02-PLAN.md -- Create infrastructure test suite verifying metrics.json contract, results.tsv format, and crash handling
+- [x] 02-01-PLAN.md -- Metrics output, crash handling, VRAM tracking
+- [x] 02-02-PLAN.md -- Infrastructure test suite
 
 ### Phase 3: Agent Instructions
-**Goal**: program.md gives an LLM agent everything it needs to autonomously run effective ReID experiments -- domain knowledge, search strategy, constraints, and history-reading capability
+**Goal**: program.md gives an LLM agent everything it needs to autonomously run effective ReID experiments
 **Depends on**: Phase 2
 **Requirements**: AGNT-01, AGNT-02, AGNT-03, AGNT-04, AGNT-05
-**Success Criteria** (what must be TRUE):
-  1. program.md documents the ReID search space (loss weights, backbone unfreezing schedule, augmentation strategies, LR schedules, projection head designs) with prioritized experiment hints
-  2. program.md encodes all hard constraints: never edit prepare.py, never add dependencies, never exceed 10 epochs, never stop the loop
-  3. program.md instructs the agent to read results.tsv history and reason about what to try next based on past experiment outcomes
-  4. program.md describes the full autonomous loop (modify train.py, run, evaluate, keep/discard, repeat) with explicit instructions for never-stop behavior
 **Plans:** 1 plan
 Plans:
-- [x] 03-01-PLAN.md -- Write complete program.md with ReID domain content, search space, experiment playbook, and autonomous loop instructions
+- [x] 03-01-PLAN.md -- Write complete program.md
 
 ### Phase 4: Validation
-**Goal**: The complete system is proven to work end-to-end -- baseline established, autonomous loop demonstrated, crash recovery verified
+**Goal**: The complete system is proven to work end-to-end
 **Depends on**: Phase 3
 **Requirements**: VALD-01, VALD-02, VALD-03
-**Success Criteria** (what must be TRUE):
-  1. Baseline run of unmodified train.py produces a valid combined metric logged as the first row in results.tsv
-  2. At least one full autonomous cycle completes: agent reads history, modifies train.py, runs experiment, evaluates, and correctly keeps or discards the result
-  3. Intentional OOM trigger is caught, logged as crash, git-reset performed, and the agent continues to the next experiment without human intervention
 **Plans:** 2 plans
 Plans:
-- [x] 04-01-PLAN.md -- Baseline run + one full autonomous cycle (VALD-01, VALD-02)
-- [x] 04-02-PLAN.md -- Crash recovery verification + launch overnight autonomous run (VALD-03, D-02)
+- [x] 04-01-PLAN.md -- Baseline run + one full autonomous cycle
+- [x] 04-02-PLAN.md -- Crash recovery verification + launch overnight run
+
+</details>
+
+### v2.0 Expanded Search Space (In Progress)
+
+**Milestone Goal:** Dramatically expand the agent's search space with multi-teacher distillation (5 teachers), SSL contrastive loss, custom LCNet architecture, RADIO training techniques, and DINOv3 fine-tuning -- all as agent-tunable parameters.
+
+**Phase Numbering:**
+- Integer phases (5, 6, 7, 8, 9): Planned milestone work
+- Decimal phases (e.g. 5.1): Urgent insertions (marked with INSERTED)
+
+- [ ] **Phase 5: SSL + Custom LCNet** - Add InfoNCE contrastive loss and custom LCNet backbone with agent-tunable architecture (zero prepare.py changes)
+- [ ] **Phase 6: Multi-Teacher Infrastructure** - Expand prepare.py to support 5+ teachers with independent caches and multi-teacher combos
+- [ ] **Phase 7: DINOv3 Fine-tune** - Fine-tune DINOv3 ViT-g on product dataset using autoresearch pattern (separate sub-project)
+- [ ] **Phase 8: RADIO Integration** - Add RADIO teacher with adaptor selection and spatial distillation via memory-mapped cache
+- [ ] **Phase 9: RADIO Training Techniques + Wrap-up** - Implement RADIO-inspired training techniques and update program.md with expanded search space
+
+## Phase Details
+
+### Phase 5: SSL + Custom LCNet
+**Goal**: The agent has two new independent capabilities in train.py -- a self-supervised contrastive loss and a fully custom LCNet backbone with tunable architecture -- without any changes to prepare.py
+**Depends on**: Phase 4 (v1.0 complete)
+**Requirements**: SSL-01, SSL-02, SSL-03, LCNET-01, LCNET-02, LCNET-03, LCNET-04, INFRA-09
+**Success Criteria** (what must be TRUE):
+  1. train.py includes an InfoNCE contrastive loss with a separate projection head, and `SSL_WEIGHT` is a module-level constant the agent can set to 0.0 (disabled) or any positive value
+  2. train.py defines a custom LCNet backbone that preserves the `.encode(images) -> Tensor[B, 256]` contract, with `LCNET_SCALE`, `SE_START_BLOCK`, `SE_REDUCTION`, kernel sizes, and `ACTIVATION` as module-level constants
+  3. Custom LCNet supports optional timm pretrained weight initialization (when scale matches a known timm variant)
+  4. Custom LCNet exposes pre-GAP spatial feature maps (for future RADIO spatial distillation) via a `.encode_spatial()` or equivalent method
+  5. `einops` is added to pyproject.toml and importable
+**Plans**: TBD
+
+### Phase 6: Multi-Teacher Infrastructure
+**Goal**: prepare.py supports 5+ teachers with independent caches, and the agent can select which teacher(s) to distill from via module-level constants in train.py
+**Depends on**: Phase 5 (custom LCNet needed for spatial features)
+**Requirements**: TEACH-01, TEACH-02, TEACH-03, TEACH-04, TEACH-05
+**Success Criteria** (what must be TRUE):
+  1. prepare.py can initialize and cache embeddings for all 5 teachers: Trendyol ONNX, DINOv2, DINOv3-ft, C-RADIOv4-SO400M, C-RADIOv4-H -- each with its own cache directory and metadata
+  2. Cache building runs sequentially per teacher (never two teachers on GPU simultaneously) to stay within 24GB VRAM
+  3. `TEACHER` is a module-level constant in train.py that the agent can set to any single teacher name, and the system loads the correct cached embeddings
+  4. Multi-teacher mode works: `TEACHER_WEIGHTS` dict in train.py maps teacher names to loss weights, and training uses the weighted combination
+**Plans**: TBD
+
+### Phase 7: DINOv3 Fine-tune
+**Goal**: A DINOv3 ViT-g model is fine-tuned on the product dataset using its own autoresearch loop, producing a teacher checkpoint that integrates into the main system
+**Depends on**: Phase 6 (multi-teacher infra to integrate the result)
+**Requirements**: DINO3-01, DINO3-02, DINO3-03, DINO3-04
+**Success Criteria** (what must be TRUE):
+  1. A separate autoresearch sub-project exists (prepare_dino.py + train_dino.py) that fine-tunes DINOv3 ViT-g 1.1B with LoRA on the product dataset within RTX 4090 VRAM
+  2. The fine-tuned DINOv3 model is exported to a format loadable by the main system's teacher infrastructure
+  3. DINOv3-ft embeddings are cached to disk like other teachers and produce valid cosine similarities with student embeddings
+**Plans**: TBD
+
+### Phase 8: RADIO Integration
+**Goal**: RADIO models are fully integrated as teachers with adaptor selection, spatial feature caching, and spatial distillation loss -- all agent-tunable
+**Depends on**: Phase 5 (LCNet spatial features), Phase 6 (multi-teacher infra)
+**Requirements**: RADIO-01, RADIO-02, RADIO-03, RADIO-04, RADIO-05, RADIO-06
+**Success Criteria** (what must be TRUE):
+  1. A RADIOTeacher class supports both C-RADIOv4-SO400M and C-RADIOv4-H, with 3 adaptor outputs (backbone, dino_v3, siglip2-g) selectable at init time
+  2. Each adaptor's summary features are cached with native dimension, and projection to student dimension happens in train.py (not in the cache)
+  3. Spatial features are cached separately using memory-mapped storage (.npy), enabling spatial distillation without re-running RADIO inference
+  4. train.py includes a spatial distillation loss that aligns student spatial features (from custom LCNet) with teacher spatial features (from RADIO cache)
+  5. `RADIO_VARIANT` and `RADIO_ADAPTORS` are module-level constants in train.py that the agent can tune
+**Plans**: TBD
+
+### Phase 9: RADIO Training Techniques + Wrap-up
+**Goal**: RADIO-inspired training techniques are available as agent-tunable options, and program.md is updated with the full v2.0 search space documentation
+**Depends on**: Phase 8 (RADIO integration)
+**Requirements**: TRAIN-01, TRAIN-02, TRAIN-03, TRAIN-04, TRAIN-05, TRAIN-06, TRAIN-07, INFRA-08, INFRA-10
+**Success Criteria** (what must be TRUE):
+  1. PHI-S (Hadamard isotropic standardization) and Feature Normalizer (per-teacher whitening + rotation) are implemented in train.py as toggleable modules with enable flags
+  2. L_angle (balanced summary loss normalized by angular dispersion) and Hybrid Loss (cosine + smooth-L1 for spatial) are available as loss function options the agent can select
+  3. Per-teacher adaptor MLP v2 (LayerNorm+GELU+residual) replaces simple linear projection when enabled, and FeatSharp is implemented (deferred if VRAM-constrained)
+  4. Shift Equivariant Loss for spatial distillation is implemented and toggleable
+  5. program.md documents the full v2.0 search space (5 teachers, SSL, custom LCNet params, RADIO adaptors, all training techniques) with prioritized experiment strategy, and the evaluation metric remains unchanged (trust boundary preserved)
+**Plans**: TBD
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4
+Phases execute in numeric order: 5 -> 6 -> 7 -> 8 -> 9
 
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. Core Refactoring | 0/3 | Planning complete | - |
-| 2. Experiment Infrastructure | 0/2 | Planning complete | - |
-| 3. Agent Instructions | 0/1 | Planning complete | - |
-| 4. Validation | 0/2 | Planning complete | - |
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 1. Core Refactoring | v1.0 | 3/3 | Complete | - |
+| 2. Experiment Infrastructure | v1.0 | 2/2 | Complete | - |
+| 3. Agent Instructions | v1.0 | 1/1 | Complete | - |
+| 4. Validation | v1.0 | 2/2 | Complete | - |
+| 5. SSL + Custom LCNet | v2.0 | 0/? | Not started | - |
+| 6. Multi-Teacher Infrastructure | v2.0 | 0/? | Not started | - |
+| 7. DINOv3 Fine-tune | v2.0 | 0/? | Not started | - |
+| 8. RADIO Integration | v2.0 | 0/? | Not started | - |
+| 9. RADIO Training Techniques + Wrap-up | v2.0 | 0/? | Not started | - |
