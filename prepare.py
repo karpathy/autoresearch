@@ -256,16 +256,61 @@ class DINOv2Teacher:
 # Stub teacher classes for future phases
 # ---------------------------------------------------------------------------
 
-class DINOv3Teacher:
-    """DINOv3 fine-tuned teacher. Stub -- will be implemented in Phase 7."""
+class DINOv3FTTeacher:
+    """Fine-tuned DINOv3 ViT-H+ as teacher. Loads base model + LoRA adapter."""
 
-    embedding_dim = 256
+    embedding_dim = 1280
 
-    def __init__(self, device: str = "cuda", **kwargs) -> None:
-        raise NotImplementedError("DINOv3Teacher will be implemented in Phase 7")
+    def __init__(self, adapter_path: str = "dino_finetune/output/best_adapter", device: str = "cuda") -> None:
+        import os
+        from peft import PeftModel
+        from transformers import AutoModel, AutoImageProcessor
 
+        if not os.path.isdir(adapter_path):
+            raise FileNotFoundError(
+                f"DINOv3FTTeacher: adapter not found at {adapter_path}. "
+                "Run dino_finetune/train_dino.py first."
+            )
+
+        os.environ["XFORMERS_DISABLED"] = "1"
+        _patch_transformers_compat()
+
+        base_model = AutoModel.from_pretrained(
+            "facebook/dinov3-vith16plus-pretrain-lvd1689m",
+            torch_dtype=torch.bfloat16,
+            attn_implementation="sdpa",
+            low_cpu_mem_usage=True,
+        )
+        self.model = PeftModel.from_pretrained(base_model, adapter_path)
+        self.model.to(device).eval()
+        for p in self.model.parameters():
+            p.requires_grad_(False)
+
+        self.processor = AutoImageProcessor.from_pretrained(
+            "facebook/dinov3-vith16plus-pretrain-lvd1689m"
+        )
+        self.device = device
+        logger.info(f"DINOv3FTTeacher: loaded adapter from {adapter_path}, output_dim=1280")
+
+    @torch.no_grad()
     def encode_batch(self, images: list[np.ndarray | Image.Image]) -> list[np.ndarray | None]:
-        raise NotImplementedError("DINOv3Teacher will be implemented in Phase 7")
+        if not images:
+            return []
+        pil_images = []
+        for img in images:
+            if isinstance(img, np.ndarray):
+                img = Image.fromarray(img)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            pil_images.append(img)
+        inputs = self.processor(images=pil_images, return_tensors="pt")
+        pixel_values = inputs["pixel_values"].to(self.device, dtype=torch.bfloat16)
+        with torch.amp.autocast(self.device, dtype=torch.bfloat16):
+            out = self.model(pixel_values)
+        # CLS token at index 0 (register tokens at 1-4, patch tokens at 5+)
+        cls_emb = out.last_hidden_state[:, 0]  # [B, 1280]
+        cls_emb = functional.normalize(cls_emb.float(), dim=1)
+        return [e.cpu().numpy() for e in cls_emb]
 
 
 class RADIOTeacher:
@@ -298,10 +343,10 @@ TEACHER_REGISTRY: dict[str, dict] = {
         "init_kwargs": {"model_name": "Trendyol/trendyol-dino-v2-ecommerce-256d"},
     },
     "dinov3_ft": {
-        "class": DINOv3Teacher,
-        "embedding_dim": 256,
+        "class": DINOv3FTTeacher,
+        "embedding_dim": 1280,
         "cache_dir": "workspace/output/teacher_cache/dinov3_ft",
-        "init_kwargs": {},
+        "init_kwargs": {"adapter_path": "dino_finetune/output/best_adapter"},
     },
     "radio_so400m": {
         "class": RADIOTeacher,
