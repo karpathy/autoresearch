@@ -15,6 +15,9 @@ from prepare import (
     # Teacher
     load_teacher_embeddings,
     TEACHER_REGISTRY, init_teachers, build_all_teacher_caches,
+    # RADIO teacher
+    load_radio_teacher_embeddings, RADIO_VERSION_MAP,
+    build_radio_summary_cache,
     # Evaluation
     run_retrieval_eval, compute_combined_metric,
     # Transforms
@@ -88,6 +91,37 @@ SE_REDUCTION = 0.25           # SE squeeze ratio
 ACTIVATION = "h_swish"        # "h_swish" | "relu" | "gelu"
 KERNEL_SIZES = [3, 3, 3, 3, 3, 3, 5, 5, 5, 5, 5, 5, 5]  # Per-block kernel sizes (13 blocks)
 USE_PRETRAINED = True          # Load timm pretrained weights when scale matches
+
+# --- RADIO Teacher Configuration ---
+RADIO_VARIANT = "so400m"              # "so400m" or "h" (C-RADIOv4 variant)
+RADIO_ADAPTORS = ["backbone"]          # subset of ["backbone", "dino_v3", "siglip2-g"]
+RADIO_CACHE_BASE = "workspace/output/teacher_cache"
+
+
+def _load_radio_metadata(
+    variant: str,
+    adaptors: list[str],
+    cache_base: str,
+) -> dict[str, int]:
+    """Read adaptor summary dimensions from cached metadata.json files.
+
+    Returns dict mapping adaptor name -> summary_dim.
+    Raises FileNotFoundError if metadata not yet built.
+    """
+    import json
+
+    dims: dict[str, int] = {}
+    for adaptor in adaptors:
+        meta_path = Path(cache_base) / f"radio_{variant}" / adaptor / "metadata.json"
+        if not meta_path.exists():
+            raise FileNotFoundError(
+                f"RADIO metadata not found at {meta_path}. "
+                f"Run build_radio_summary_cache first."
+            )
+        with open(meta_path) as f:
+            meta = json.load(f)
+        dims[adaptor] = meta["summary_dim"]
+    return dims
 
 
 def _get_active_teachers() -> tuple[list[str], dict[str, float]]:
@@ -633,11 +667,17 @@ def run_train_epoch(
     ssl_head: "SSLProjectionHead | None" = None,
     info_nce: "InfoNCELoss | None" = None,
     train_transform=None,
+    radio_proj_heads: nn.ModuleDict | None = None,
+    radio_adaptors: list[str] | None = None,
+    radio_variant: str | None = None,
+    radio_cache_base: str | None = None,
 ) -> EpochStats:
     """Run one training epoch with separate distillation and ArcFace data."""
     model.train()
     if ssl_head is not None:
         ssl_head.train()
+    if radio_proj_heads is not None:
+        radio_proj_heads.train()
 
     total_loss = 0.0
     total_distill = 0.0
@@ -672,7 +712,12 @@ def run_train_epoch(
             # --- Distillation Loss (multi-teacher weighted, per D-07) ---
             total_distill_loss = torch.tensor(0.0, device=device)
             first_cos_mean = 0.0
-            for t_idx, (t_name, t_weight) in enumerate(teacher_weights.items()):
+            _loss_idx = 0
+
+            # Non-RADIO teachers: use existing load_teacher_embeddings
+            for t_name, t_weight in teacher_weights.items():
+                if t_name.startswith("radio_"):
+                    continue  # RADIO handled below
                 t_cache_dir = TEACHER_REGISTRY[t_name]["cache_dir"]
                 t_emb = load_teacher_embeddings(paths, teachers[t_name], device, t_cache_dir, teacher_name=t_name)
                 if hasattr(model, 'proj_heads') and model.proj_heads is not None:
@@ -684,8 +729,29 @@ def run_train_epoch(
                 t_emb = t_emb.to(device=device, dtype=s_proj.dtype)
                 cos = functional.cosine_similarity(s_proj, t_emb, dim=1)
                 total_distill_loss = total_distill_loss + t_weight * (1.0 - cos).mean()
-                if t_idx == 0:
+                if _loss_idx == 0:
                     first_cos_mean = float(cos.mean().item())
+                _loss_idx += 1
+
+            # RADIO teachers: per-adaptor distillation via cached summaries
+            if radio_proj_heads is not None and radio_adaptors and radio_variant and radio_cache_base:
+                backbone_feat = model.forward_backbone(images)
+                for r_name in [n for n in teacher_weights if n.startswith("radio_")]:
+                    r_weight = teacher_weights[r_name]
+                    # Weighted sum across all active adaptors (equal weight within a RADIO teacher)
+                    adaptor_weight = r_weight / len(radio_adaptors)
+                    for adaptor in radio_adaptors:
+                        cache_dir = str(Path(radio_cache_base) / f"radio_{radio_variant}" / adaptor)
+                        r_emb = load_radio_teacher_embeddings(paths, adaptor, cache_dir, device)
+                        r_proj = radio_proj_heads[adaptor](backbone_feat)
+                        r_proj = functional.normalize(r_proj, p=2, dim=1)
+                        r_emb = r_emb.to(device=device, dtype=r_proj.dtype)
+                        cos = functional.cosine_similarity(r_proj, r_emb, dim=1)
+                        total_distill_loss = total_distill_loss + adaptor_weight * (1.0 - cos).mean()
+                        if _loss_idx == 0:
+                            first_cos_mean = float(cos.mean().item())
+                        _loss_idx += 1
+
             distill_loss = total_distill_loss
             batch_align = first_cos_mean
 
@@ -860,23 +926,61 @@ def main() -> None:
     # Resolve active teachers (per D-03, D-05)
     teacher_names, teacher_weights = _get_active_teachers()
 
-    # Validate teacher dimensions
+    # Collect all image paths for cache building
+    all_image_paths = [s[0] for s in distill_dataset.samples]
+    if distill_dataset.retail_samples:
+        all_image_paths += [s[0] for s in distill_dataset.retail_samples]
+
+    # Identify which teachers are RADIO-based
+    radio_teacher_names = [n for n in teacher_names if n.startswith("radio_")]
+    non_radio_teacher_names = [n for n in teacher_names if not n.startswith("radio_")]
+
+    # Build RADIO caches first (per D-09, D-10) -- needs GPU, builds per-adaptor caches
+    radio_adaptor_dims: dict[str, int] = {}  # adaptor_name -> summary_dim
+    if radio_teacher_names:
+        logger.info(f"Building RADIO summary caches: variant={RADIO_VARIANT}, adaptors={RADIO_ADAPTORS}")
+        radio_adaptor_dims = build_radio_summary_cache(
+            variant=RADIO_VARIANT,
+            adaptor_names=RADIO_ADAPTORS,
+            image_paths=all_image_paths,
+            cache_base=RADIO_CACHE_BASE,
+            batch_size=32,
+            device=str(device),
+        )
+        logger.info(f"RADIO adaptor dims: {radio_adaptor_dims}")
+
+    # Read RADIO metadata for projection head dims (from cached metadata.json)
+    if radio_teacher_names and not radio_adaptor_dims:
+        radio_adaptor_dims = _load_radio_metadata(RADIO_VARIANT, RADIO_ADAPTORS, RADIO_CACHE_BASE)
+
+    # Validate non-RADIO teacher dimensions
     teacher_dims: dict[str, int] = {}
-    for name in teacher_names:
+    for name in non_radio_teacher_names:
         dim = TEACHER_REGISTRY[name]["embedding_dim"]
         if dim is None:
             raise ValueError(f"Teacher {name} has no embedding_dim set -- is it a stub?")
         teacher_dims[name] = dim
 
-    # Build caches sequentially (per D-11, VRAM safety)
-    all_image_paths = [s[0] for s in distill_dataset.samples]
-    if distill_dataset.retail_samples:
-        all_image_paths += [s[0] for s in distill_dataset.retail_samples]
-    build_all_teacher_caches(teacher_names, all_image_paths, device=str(device))
+    # For RADIO teachers, use backbone adaptor's dim as the "teacher dim" for LCNet proj_heads
+    # Each RADIO adaptor gets its own projection head via radio_proj_heads (below)
+    for name in radio_teacher_names:
+        # Use first adaptor dim as teacher_dims entry for backward compat
+        first_adaptor = RADIO_ADAPTORS[0]
+        teacher_dims[name] = radio_adaptor_dims[first_adaptor]
 
-    # Initialize teachers for online inference during training
-    teachers_dict = init_teachers(teacher_names, device=str(device))
+    # Build non-RADIO caches sequentially (per D-11, VRAM safety)
+    if non_radio_teacher_names:
+        build_all_teacher_caches(non_radio_teacher_names, all_image_paths, device=str(device))
+
+    # Initialize non-RADIO teachers for online inference during training
+    # RADIO teachers use pre-cached embeddings only (no online inference needed)
+    if non_radio_teacher_names:
+        teachers_dict = init_teachers(non_radio_teacher_names, device=str(device))
+    else:
+        teachers_dict = {}
     logger.info(f"Teachers: {teacher_names} weights={teacher_weights}")
+    if radio_teacher_names:
+        logger.info(f"RADIO teachers use cached embeddings: variant={RADIO_VARIANT}, adaptors={RADIO_ADAPTORS}")
 
     # Model
     if len(teacher_names) > 1:
@@ -903,6 +1007,20 @@ def main() -> None:
 
     if USE_PRETRAINED:
         load_pretrained_lcnet(model, LCNET_SCALE)
+
+    # RADIO per-adaptor projection heads (per D-05)
+    # Each adaptor gets a Linear projection from its summary_dim to EMBEDDING_DIM
+    # Dims read from metadata.json (never hardcoded)
+    radio_proj_heads: nn.ModuleDict | None = None
+    if radio_teacher_names and radio_adaptor_dims:
+        radio_proj_heads = nn.ModuleDict({
+            adaptor: nn.Sequential(
+                nn.Linear(summary_dim, EMBEDDING_DIM),
+                nn.BatchNorm1d(EMBEDDING_DIM),
+            )
+            for adaptor, summary_dim in radio_adaptor_dims.items()
+        }).to(device)
+        logger.info(f"RADIO projection heads: {dict(radio_adaptor_dims)} -> {EMBEDDING_DIM}")
 
     # SSL components (per D-01, D-02, D-04)
     ssl_head: SSLProjectionHead | None = None
@@ -946,6 +1064,8 @@ def main() -> None:
     else:
         proj_params = list(model.proj.parameters())
     head_params = proj_params + list(model.conv_head.parameters()) + list(model.head_act.parameters())
+    if radio_proj_heads is not None:
+        head_params += list(radio_proj_heads.parameters())
     if arc_margin is not None:
         head_params += list(arc_margin.parameters())
     if ssl_head is not None:
@@ -1004,6 +1124,8 @@ def main() -> None:
             else:
                 proj_params_rebuild = list(model.proj.parameters())
             head_params = proj_params_rebuild + list(model.conv_head.parameters()) + list(model.head_act.parameters())
+            if radio_proj_heads is not None:
+                head_params += list(radio_proj_heads.parameters())
             if arc_margin is not None:
                 head_params += list(arc_margin.parameters())
             if ssl_head is not None:
@@ -1053,6 +1175,10 @@ def main() -> None:
             ssl_head=ssl_head,
             info_nce=info_nce_loss,
             train_transform=train_transform,
+            radio_proj_heads=radio_proj_heads,
+            radio_adaptors=RADIO_ADAPTORS if radio_teacher_names else None,
+            radio_variant=RADIO_VARIANT if radio_teacher_names else None,
+            radio_cache_base=RADIO_CACHE_BASE if radio_teacher_names else None,
         )
         elapsed_epoch = time.time() - t0
 
