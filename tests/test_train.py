@@ -270,3 +270,134 @@ def test_training_classes_in_train():
     assert hasattr(train, "EpochStats")
     assert hasattr(train, "run_train_epoch")
     assert hasattr(train, "main")
+    # SSL classes
+    assert hasattr(train, "InfoNCELoss")
+    assert hasattr(train, "SSLProjectionHead")
+
+
+# --- SSL-01: InfoNCE Loss ---
+
+def test_infonce_loss_computes():
+    """SSL-01: InfoNCE loss produces scalar, positive, differentiable output."""
+    info_nce = train.InfoNCELoss(temperature=0.07)
+    z_a = torch.nn.functional.normalize(torch.randn(8, 128), p=2, dim=1)
+    z_b = torch.nn.functional.normalize(torch.randn(8, 128), p=2, dim=1)
+    loss = info_nce(z_a, z_b)
+    assert loss.shape == (), f"InfoNCE loss should be scalar, got {loss.shape}"
+    assert loss.item() > 0, "InfoNCE loss should be positive"
+    assert loss.requires_grad, "InfoNCE loss should require grad"
+
+    # Perfect alignment should produce lower loss than random
+    z_same = torch.nn.functional.normalize(torch.randn(8, 128), p=2, dim=1)
+    loss_aligned = info_nce(z_same, z_same)
+    loss_random = info_nce(z_a, z_b)
+    assert loss_aligned.item() < loss_random.item(), \
+        f"Aligned loss {loss_aligned.item():.4f} should be lower than random {loss_random.item():.4f}"
+
+
+def test_infonce_learnable_temperature():
+    """SSL-01: InfoNCE has learnable log_scale parameter."""
+    info_nce = train.InfoNCELoss(temperature=0.07)
+    assert hasattr(info_nce, "log_scale"), "InfoNCE missing log_scale parameter"
+    assert isinstance(info_nce.log_scale, torch.nn.Parameter)
+    assert info_nce.log_scale.requires_grad, "log_scale should be learnable"
+    # Verify initial temperature is approximately 0.07
+    import numpy as np
+    expected_log_scale = np.log(1.0 / 0.07)
+    assert abs(info_nce.log_scale.item() - expected_log_scale) < 1e-4, \
+        f"Initial log_scale {info_nce.log_scale.item():.4f} != expected {expected_log_scale:.4f}"
+
+
+def test_infonce_temperature_clamped():
+    """SSL-01: InfoNCE clamps log_scale to prevent NaN (Pitfall 7)."""
+    info_nce = train.InfoNCELoss(temperature=0.07)
+    # Manually set log_scale to a huge value
+    info_nce.log_scale.data.fill_(100.0)
+    z_a = torch.nn.functional.normalize(torch.randn(8, 128), p=2, dim=1)
+    z_b = torch.nn.functional.normalize(torch.randn(8, 128), p=2, dim=1)
+    loss = info_nce(z_a, z_b)
+    assert not torch.isnan(loss), "InfoNCE loss should not be NaN even with extreme log_scale"
+    assert not torch.isinf(loss), "InfoNCE loss should not be Inf even with extreme log_scale"
+
+
+# --- SSL-02: SSL Projection Head ---
+
+def test_ssl_proj_head_separate():
+    """SSL-02: SSLProjectionHead is NOT part of LCNet."""
+    model = train.LCNet(scale=0.5, embedding_dim=256, device="cpu")
+    lcnet_modules = set(type(m).__name__ for m in model.modules())
+    assert "SSLProjectionHead" not in lcnet_modules, \
+        "SSLProjectionHead should NOT be inside LCNet"
+
+    # Output shape and L2 normalization
+    ssl_head = train.SSLProjectionHead(in_dim=256, hidden_dim=128, out_dim=128)
+    emb = torch.randn(4, 256)
+    proj = ssl_head(emb)
+    assert proj.shape == (4, 128), f"Expected (4, 128), got {proj.shape}"
+    norms = torch.norm(proj, dim=1)
+    assert torch.allclose(norms, torch.ones(4), atol=1e-5), \
+        f"SSL projection not L2-normalized: {norms}"
+
+
+def test_ssl_proj_head_dimensions():
+    """SSL-02: SSLProjectionHead is a 2-layer MLP (Linear, BN, ReLU, Linear)."""
+    ssl_head = train.SSLProjectionHead(in_dim=256, hidden_dim=128, out_dim=128)
+    # Check internal structure: net has 4 children
+    children = list(ssl_head.net.children())
+    assert len(children) == 4, f"Expected 4 layers in net, got {len(children)}"
+    assert isinstance(children[0], torch.nn.Linear), "First layer should be Linear"
+    assert isinstance(children[1], torch.nn.BatchNorm1d), "Second layer should be BatchNorm1d"
+    assert isinstance(children[2], torch.nn.ReLU), "Third layer should be ReLU"
+    assert isinstance(children[3], torch.nn.Linear), "Fourth layer should be Linear"
+
+    # Verify dimensions
+    assert children[0].in_features == 256
+    assert children[0].out_features == 128
+    assert children[3].in_features == 128
+    assert children[3].out_features == 128
+
+
+# --- SSL-03: SSL Constants ---
+
+def test_ssl_weight_constant():
+    """SSL-03: SSL constants exist with correct defaults."""
+    assert train.SSL_WEIGHT == 0.0, f"SSL_WEIGHT should be 0.0, got {train.SSL_WEIGHT}"
+    assert train.SSL_TEMPERATURE == 0.07, f"SSL_TEMPERATURE should be 0.07, got {train.SSL_TEMPERATURE}"
+    assert train.SSL_PROJ_DIM == 128, f"SSL_PROJ_DIM should be 128, got {train.SSL_PROJ_DIM}"
+
+
+def test_ssl_constants_in_module_level():
+    """SSL-03: All three SSL constants are module-level (not inside any class)."""
+    # Check they're in the train module's namespace
+    assert "SSL_WEIGHT" in dir(train)
+    assert "SSL_TEMPERATURE" in dir(train)
+    assert "SSL_PROJ_DIM" in dir(train)
+
+
+# --- SSL Integration Tests ---
+
+def test_ssl_disabled_by_default():
+    """SSL is disabled by default (SSL_WEIGHT=0.0)."""
+    assert train.SSL_WEIGHT == 0.0
+    # Verify main() conditionally creates SSL components
+    src = inspect.getsource(train.main)
+    assert "if SSL_WEIGHT > 0" in src, "main() should conditionally create SSL components"
+
+
+def test_epoch_stats_has_ssl_loss():
+    """EpochStats includes ssl_loss field."""
+    # Verify via dataclass fields (hasattr doesn't work on non-default dataclass fields)
+    assert "ssl_loss" in train.EpochStats.__dataclass_fields__, \
+        "EpochStats missing ssl_loss field"
+    # Create instance
+    stats = train.EpochStats(
+        loss=1.0, distill_loss=0.5, arc_loss=0.1,
+        vat_loss=0.0, sep_loss=0.0, ssl_loss=0.0, mean_cosine=0.8,
+    )
+    assert stats.ssl_loss == 0.0
+
+
+def test_greppable_output_includes_ssl():
+    """Greppable output section includes ssl_loss."""
+    src = inspect.getsource(train)
+    assert "ssl_loss:" in src, "train.py source should contain 'ssl_loss:' greppable output"
