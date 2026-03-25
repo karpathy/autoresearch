@@ -1,6 +1,7 @@
 loguru
 numpy
 onnxruntime-gpu>=1.17,<1.20
+peft
 Pillow
 timm
 torch
