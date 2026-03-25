@@ -80,10 +80,16 @@ RETRIEVAL_TOPK = 5
 class ProjectionHead(nn.Module):
     def __init__(self, in_features: int, out_features: int) -> None:
         super().__init__()
-        self.fc = nn.Linear(in_features, out_features)
+        hidden_dim = 512
+        self.net = nn.Sequential(
+            nn.Linear(in_features, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, out_features),
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.fc(x)
+        return self.net(x)
 
 
 class ArcMarginProduct(nn.Module):
