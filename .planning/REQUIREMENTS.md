@@ -55,9 +55,9 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **LCNET-04**: Exposes pre-GAP spatial features for RADIO spatial distillation
 
 ### Multi-Teacher Infrastructure
-- [ ] **TEACH-01**: prepare.py supports 5+ teachers: Trendyol ONNX, DINOv2, DINOv3-ft, all C-RADIO variants
-- [ ] **TEACH-02**: Each teacher has independent cache directory with metadata
-- [ ] **TEACH-03**: Cache building sequential per teacher (VRAM safety)
+- [x] **TEACH-01**: prepare.py supports 5+ teachers: Trendyol ONNX, DINOv2, DINOv3-ft, all C-RADIO variants
+- [x] **TEACH-02**: Each teacher has independent cache directory with metadata
+- [x] **TEACH-03**: Cache building sequential per teacher (VRAM safety)
 - [ ] **TEACH-04**: `TEACHER` is a module-level constant -- agent can switch teachers
 - [ ] **TEACH-05**: Multi-teacher mode with per-teacher loss weights as tunable constants
 
@@ -147,9 +147,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LCNET-03 | Phase 5 | Complete |
 | LCNET-04 | Phase 5 | Complete |
 | INFRA-09 | Phase 5 | Complete |
-| TEACH-01 | Phase 6 | Pending |
-| TEACH-02 | Phase 6 | Pending |
-| TEACH-03 | Phase 6 | Pending |
+| TEACH-01 | Phase 6 | Complete |
+| TEACH-02 | Phase 6 | Complete |
+| TEACH-03 | Phase 6 | Complete |
 | TEACH-04 | Phase 6 | Pending |
 | TEACH-05 | Phase 6 | Pending |
 | DINO3-01 | Phase 7 | Pending |

@@ -90,7 +90,7 @@ Plans:
   4. Multi-teacher mode works: `TEACHER_WEIGHTS` dict in train.py maps teacher names to loss weights, and training uses the weighted combination
 **Plans:** 2 plans
 Plans:
-- [ ] 06-01-PLAN.md -- Teacher registry, DINOv2 fix, cache infrastructure in prepare.py
+- [x] 06-01-PLAN.md -- Teacher registry, DINOv2 fix, cache infrastructure in prepare.py
 - [ ] 06-02-PLAN.md -- TEACHER/TEACHERS constants and multi-teacher training loop in train.py
 
 ### Phase 7: DINOv3 Fine-tune
