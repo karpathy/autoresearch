@@ -58,7 +58,7 @@ Work through each layer sequentially. Consult `references/analysis-framework.md`
 - Handle partial months using projection formula
 - Calculate baselines (averages across complete months)
 - Quantify performance gaps (lead volume, win rate, impression share, spend)
-- Classify root cause using the diagnostic matrix (see `references/diagnostics-and-formulas.md`)
+- Classify root cause using the diagnostic matrix (see `references/diagnostics-and-formulas.md`). **You MUST use one of these exact labels verbatim**: "Competitive Positioning", "Market Demand Decline", "Budget Constraint", or "Mixed". State it explicitly in the Executive Summary (e.g., "Root Cause: Competitive Positioning"). Do not paraphrase or use synonyms like "systemic underbidding" or "volume constraint" — use the matrix label.
 - For accounts under 90 days, use leading indicators (Contact Rate, Quote Rate) instead of Sold CPA
 
 **Layer 3 — Source-Level Diagnosis:**

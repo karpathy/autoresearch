@@ -92,12 +92,12 @@ PROMPT
 )" > "$GRADE_FILE" 2>/dev/null
 
     # Extract score from grade file
-    SCORE_LINE=$(grep "SUMMARY:" "$GRADE_FILE" 2>/dev/null | head -1 || echo "SUMMARY: error")
-    PASS_COUNT=$(echo "$SCORE_LINE" | sed -n 's/.*\([0-9][0-9]*\) pass.*/\1/p')
+    SCORE_LINE=$(grep "SUMMARY:.*pass.*fail" "$GRADE_FILE" 2>/dev/null | tail -1 || echo "SUMMARY: 0 pass, 0 fail, 0 n/a")
+    PASS_COUNT=$(echo "$SCORE_LINE" | awk -F'pass' '{print $1}' | grep -oE '[0-9]+' | tail -1)
     PASS_COUNT=${PASS_COUNT:-0}
-    FAIL_COUNT=$(echo "$SCORE_LINE" | sed -n 's/.*\([0-9][0-9]*\) fail.*/\1/p')
+    FAIL_COUNT=$(echo "$SCORE_LINE" | awk -F'fail' '{print $1}' | awk -F'pass' '{print $2}' | grep -oE '[0-9]+' | tail -1)
     FAIL_COUNT=${FAIL_COUNT:-0}
-    NA_COUNT=$(echo "$SCORE_LINE" | sed -n 's/.*\([0-9][0-9]*\) n\/a.*/\1/p')
+    NA_COUNT=$(echo "$SCORE_LINE" | awk -F'n/a' '{print $1}' | awk -F'fail' '{print $2}' | grep -oE '[0-9]+' | tail -1)
     NA_COUNT=${NA_COUNT:-0}
     TOTAL=$((PASS_COUNT + FAIL_COUNT))
     if [ "$TOTAL" -gt 0 ]; then
