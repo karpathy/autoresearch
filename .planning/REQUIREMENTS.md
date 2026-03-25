@@ -70,8 +70,8 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **RADIO-06**: `RADIO_VARIANT` and `RADIO_ADAPTORS` as tunable constants
 
 ### DINOv3 Fine-tuned Teacher
-- [ ] **DINO3-01**: Fine-tune largest DINO variant fitting RTX 4090 (ViT-g 1.1B + LoRA) on product dataset
-- [ ] **DINO3-02**: Uses autoresearch pattern (prepare_dino.py + train_dino.py)
+- [x] **DINO3-01**: Fine-tune largest DINO variant fitting RTX 4090 (ViT-g 1.1B + LoRA) on product dataset
+- [x] **DINO3-02**: Uses autoresearch pattern (prepare_dino.py + train_dino.py)
 - [ ] **DINO3-03**: Fine-tuned model exported and integrated as teacher
 - [ ] **DINO3-04**: Embeddings cached to disk like other teachers
 
@@ -152,8 +152,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TEACH-03 | Phase 6 | Complete |
 | TEACH-04 | Phase 6 | Complete |
 | TEACH-05 | Phase 6 | Complete |
-| DINO3-01 | Phase 7 | Pending |
-| DINO3-02 | Phase 7 | Pending |
+| DINO3-01 | Phase 7 | Complete |
+| DINO3-02 | Phase 7 | Complete |
 | DINO3-03 | Phase 7 | Pending |
 | DINO3-04 | Phase 7 | Pending |
 | RADIO-01 | Phase 8 | Pending |
