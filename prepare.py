@@ -426,6 +426,62 @@ class RADIOTeacher:
         """Return summary dimension for the given adaptor."""
         return self.feature_dims[adaptor]["summary_dim"]
 
+    def get_spatial_info(self, adaptor: str = "backbone") -> dict:
+        """Return spatial_tokens, spatial_dim, grid_h, grid_w for an adaptor.
+
+        Grid dimensions assume a square spatial grid (standard for ViT with
+        square input images). Verified at init via dummy forward pass.
+        """
+        info = self.feature_dims[adaptor]
+        n_tokens = info["spatial_tokens"]
+        grid_size = int(n_tokens ** 0.5)  # assume square grid
+        return {
+            "spatial_tokens": n_tokens,
+            "spatial_dim": info["spatial_dim"],
+            "grid_h": grid_size,
+            "grid_w": grid_size,
+        }
+
+    @torch.no_grad()
+    def extract_spatial_batch(
+        self,
+        images: torch.Tensor,  # [B, 3, H, W] already in [0, 1] range
+        adaptor: str = "backbone",
+    ) -> torch.Tensor:
+        """Extract spatial features on-the-fly for a training batch.
+
+        Returns: [B, N_tokens, D] float32 tensor on same device as input.
+
+        NOTE: Spatial caching to disk is infeasible (417GB per adaptor vs 329GB
+        available). This method runs RADIO inference per training batch when
+        SPATIAL_DISTILL_WEIGHT > 0 in train.py. On-the-fly computation trades
+        extra GPU time for zero disk usage.
+        """
+        import torch.nn.functional as F
+
+        # Adjust to nearest supported resolution
+        nearest_res = self.model.get_nearest_supported_resolution(*images.shape[-2:])
+        if images.shape[-2:] != tuple(nearest_res):
+            images = F.interpolate(images, nearest_res, mode="bilinear", align_corners=False)
+
+        with torch.autocast(self.device, dtype=torch.bfloat16):
+            output = self.model(images)
+
+        # Extract spatial features for the requested adaptor
+        if isinstance(output, dict):
+            if adaptor not in output:
+                raise KeyError(
+                    f"Adaptor '{adaptor}' not found in RADIO output. "
+                    f"Available: {list(output.keys())}"
+                )
+            _summary, features = output[adaptor]
+        else:
+            # No adaptors loaded -- output is (summary, features) tuple
+            _summary, features = output
+
+        # Return as float32 [B, N_tokens, D]
+        return features.float()
+
     @torch.no_grad()
     def encode_batch(
         self,

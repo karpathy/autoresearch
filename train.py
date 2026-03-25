@@ -17,7 +17,7 @@ from prepare import (
     TEACHER_REGISTRY, init_teachers, build_all_teacher_caches,
     # RADIO teacher
     load_radio_teacher_embeddings, RADIO_VERSION_MAP,
-    build_radio_summary_cache,
+    build_radio_summary_cache, RADIOTeacher,
     # Evaluation
     run_retrieval_eval, compute_combined_metric,
     # Transforms
@@ -96,6 +96,9 @@ USE_PRETRAINED = True          # Load timm pretrained weights when scale matches
 RADIO_VARIANT = "so400m"              # "so400m" or "h" (C-RADIOv4 variant)
 RADIO_ADAPTORS = ["backbone"]          # subset of ["backbone", "dino_v3", "siglip2-g"]
 RADIO_CACHE_BASE = "workspace/output/teacher_cache"
+
+# --- Spatial Distillation ---
+SPATIAL_DISTILL_WEIGHT = 0.0   # 0.0 = disabled; agent sets positive value to enable spatial distillation from RADIO
 
 
 def _load_radio_metadata(
@@ -547,6 +550,63 @@ def save_batch_visualization(
 # LOSSES (agent edits loss functions)
 # ============================================================
 
+
+class SpatialAdapter(nn.Module):
+    """Conv1x1 + BN to project student spatial features to RADIO spatial dim.
+
+    Per D-08: lightweight adapter that aligns student's pre-GAP spatial
+    feature channels to the RADIO teacher's spatial feature dimension.
+    """
+
+    def __init__(self, student_channels: int, radio_spatial_dim: int) -> None:
+        super().__init__()
+        self.proj = nn.Conv2d(student_channels, radio_spatial_dim, kernel_size=1, bias=False)
+        self.bn = nn.BatchNorm2d(radio_spatial_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, C, H_s, W_s] student spatial features
+        return self.bn(self.proj(x))
+
+
+def spatial_distillation_loss(
+    student_spatial: torch.Tensor,   # [B, C, H_s, W_s] from LCNet pre-GAP
+    teacher_spatial: torch.Tensor,   # [B, N, D] RADIO spatial (NLC format)
+    adapter: SpatialAdapter,
+    teacher_grid_h: int,
+    teacher_grid_w: int,
+) -> torch.Tensor:
+    """Compute spatial distillation loss between student and teacher spatial features.
+
+    Per D-06: Student spatial is bilinear-interpolated to match teacher spatial
+    resolution, then projected via Conv1x1+BN to teacher dim. Both feature maps
+    are L2-normalized before MSE to handle scale mismatch between student and
+    RADIO teacher representations.
+    """
+    # Reshape teacher from NLC [B, N, D] to NCHW [B, D, H_t, W_t]
+    B = teacher_spatial.shape[0]
+    teacher_nchw = teacher_spatial.reshape(B, teacher_grid_h, teacher_grid_w, -1)
+    teacher_nchw = teacher_nchw.permute(0, 3, 1, 2).contiguous()  # [B, D, H_t, W_t]
+
+    # Interpolate student spatial to match teacher grid resolution
+    student_interp = functional.interpolate(
+        student_spatial,
+        size=(teacher_grid_h, teacher_grid_w),
+        mode="bilinear",
+        align_corners=False,
+    )  # [B, C, H_t, W_t]
+
+    # Project student to teacher dim via Conv1x1 + BN
+    student_proj = adapter(student_interp)  # [B, D, H_t, W_t]
+
+    # L2-normalize along channel dim before loss (helps with scale mismatch)
+    student_proj = functional.normalize(student_proj, p=2, dim=1)
+    teacher_nchw = functional.normalize(teacher_nchw, p=2, dim=1)
+
+    # MSE loss on aligned, normalized spatial feature maps
+    loss = functional.mse_loss(student_proj, teacher_nchw)
+    return loss
+
+
 def vat_embedding_loss(
     model: LCNet,
     x: torch.Tensor,
@@ -639,6 +699,7 @@ class EpochStats:
     vat_loss: float
     sep_loss: float
     ssl_loss: float
+    spatial_loss: float
     mean_cosine: float
 
 
@@ -671,6 +732,13 @@ def run_train_epoch(
     radio_adaptors: list[str] | None = None,
     radio_variant: str | None = None,
     radio_cache_base: str | None = None,
+    spatial_distill_weight: float = 0.0,
+    spatial_adapter: "SpatialAdapter | None" = None,
+    spatial_radio_teacher: "RADIOTeacher | None" = None,
+    spatial_grid_h: int = 0,
+    spatial_grid_w: int = 0,
+    imagenet_mean: tuple[float, ...] = (0.485, 0.456, 0.406),
+    imagenet_std: tuple[float, ...] = (0.229, 0.224, 0.225),
 ) -> EpochStats:
     """Run one training epoch with separate distillation and ArcFace data."""
     model.train()
@@ -678,6 +746,8 @@ def run_train_epoch(
         ssl_head.train()
     if radio_proj_heads is not None:
         radio_proj_heads.train()
+    if spatial_adapter is not None:
+        spatial_adapter.train()
 
     total_loss = 0.0
     total_distill = 0.0
@@ -685,6 +755,7 @@ def run_train_epoch(
     total_vat = 0.0
     total_sep = 0.0
     total_ssl = 0.0
+    total_spatial = 0.0
     total_align = 0.0
     _bl_idx = blacklist_class_indices or set()
     n = 0
@@ -828,7 +899,34 @@ def run_train_epoch(
 
                 ssl_loss_val = info_nce(z_a, z_b)
 
-            loss = distill_loss + arc_loss_weight * arc_loss + sep_weight * l_sep + ssl_weight * ssl_loss_val
+            # --- Spatial Distillation Loss (on-the-fly RADIO spatial features) ---
+            spatial_loss_val = torch.tensor(0.0, device=device)
+            if spatial_distill_weight > 0 and spatial_adapter is not None and spatial_radio_teacher is not None:
+                # Get student spatial features (pre-GAP, [B, C, H_s, W_s])
+                student_spatial, _summary = model.forward_features(images)
+
+                # Un-normalize images from ImageNet normalization back to [0, 1] for RADIO
+                _mean = torch.tensor(imagenet_mean, device=device).view(1, 3, 1, 1)
+                _std = torch.tensor(imagenet_std, device=device).view(1, 3, 1, 1)
+                images_01 = images * _std + _mean  # reverse normalization to [0, 1]
+                images_01 = images_01.clamp(0.0, 1.0)
+
+                # Extract teacher spatial features on-the-fly (no disk caching)
+                teacher_spatial = spatial_radio_teacher.extract_spatial_batch(
+                    images_01, adaptor=radio_adaptors[0] if radio_adaptors else "backbone"
+                )
+
+                spatial_loss_val = spatial_distillation_loss(
+                    student_spatial=student_spatial,
+                    teacher_spatial=teacher_spatial,
+                    adapter=spatial_adapter,
+                    teacher_grid_h=spatial_grid_h,
+                    teacher_grid_w=spatial_grid_w,
+                )
+                if n == 0:
+                    logger.info(f"spatial_distill_loss={spatial_loss_val.item():.6f}")
+
+            loss = distill_loss + arc_loss_weight * arc_loss + sep_weight * l_sep + ssl_weight * ssl_loss_val + spatial_distill_weight * spatial_loss_val
 
         # --- VAT Loss (fp32, outside autocast to avoid precision issues) ---
         # Skip VAT while backbone is frozen -- perturbations have no effect.
@@ -850,6 +948,7 @@ def run_train_epoch(
         total_vat += float(l_vat.item())
         total_sep += float(l_sep.item())
         total_ssl += float(ssl_loss_val.item())
+        total_spatial += float(spatial_loss_val.item())
         total_align += batch_align
         n += 1
 
@@ -862,7 +961,8 @@ def run_train_epoch(
             avg_loss = total_loss / n
             avg_cos = total_align / n
             ssl_str = f" - ssl: {total_ssl / n:.4f}" if ssl_weight > 0 else ""
-            print(f"\r  {n}/{total_steps} [{bar}] - loss: {avg_loss:.4f} - cos: {avg_cos:.4f}{ssl_str}", end="", flush=True)
+            spatial_str = f" - spatial: {total_spatial / n:.4f}" if spatial_distill_weight > 0 else ""
+            print(f"\r  {n}/{total_steps} [{bar}] - loss: {avg_loss:.4f} - cos: {avg_cos:.4f}{ssl_str}{spatial_str}", end="", flush=True)
     print()  # newline after epoch
 
     return EpochStats(
@@ -872,6 +972,7 @@ def run_train_epoch(
         vat_loss=total_vat / max(n, 1),
         sep_loss=total_sep / max(n, 1),
         ssl_loss=total_ssl / max(n, 1),
+        spatial_loss=total_spatial / max(n, 1),
         mean_cosine=total_align / max(n, 1),
     )
 
@@ -1022,6 +1123,34 @@ def main() -> None:
         }).to(device)
         logger.info(f"RADIO projection heads: {dict(radio_adaptor_dims)} -> {EMBEDDING_DIM}")
 
+    # Spatial distillation components (per D-06, D-07, D-08)
+    spatial_adapter: SpatialAdapter | None = None
+    spatial_radio_teacher: RADIOTeacher | None = None
+    spatial_grid_h = 0
+    spatial_grid_w = 0
+    if SPATIAL_DISTILL_WEIGHT > 0:
+        # Load RADIO teacher for on-the-fly spatial extraction (lazy init, only when needed)
+        spatial_radio_teacher = RADIOTeacher(
+            variant=RADIO_VARIANT,
+            adaptor_names=RADIO_ADAPTORS,
+            device=str(device),
+        )
+        spatial_info = spatial_radio_teacher.get_spatial_info(RADIO_ADAPTORS[0])
+        spatial_grid_h = spatial_info["grid_h"]
+        spatial_grid_w = spatial_info["grid_w"]
+        radio_spatial_dim = spatial_info["spatial_dim"]
+
+        # Get student spatial channels (from LCNet last stage output)
+        # The student spatial features are pre-conv_head, last stage output channels
+        # For LCNet with scale=0.5, last stage has make_divisible(512*0.5) = 256 channels
+        student_spatial_ch = make_divisible(512 * LCNET_SCALE)
+        spatial_adapter = SpatialAdapter(student_spatial_ch, radio_spatial_dim).to(device)
+        logger.info(
+            f"Spatial distillation enabled: weight={SPATIAL_DISTILL_WEIGHT}, "
+            f"student_ch={student_spatial_ch}, radio_dim={radio_spatial_dim}, "
+            f"grid={spatial_grid_h}x{spatial_grid_w}"
+        )
+
     # SSL components (per D-01, D-02, D-04)
     ssl_head: SSLProjectionHead | None = None
     info_nce_loss: InfoNCELoss | None = None
@@ -1066,6 +1195,8 @@ def main() -> None:
     head_params = proj_params + list(model.conv_head.parameters()) + list(model.head_act.parameters())
     if radio_proj_heads is not None:
         head_params += list(radio_proj_heads.parameters())
+    if spatial_adapter is not None:
+        head_params += list(spatial_adapter.parameters())
     if arc_margin is not None:
         head_params += list(arc_margin.parameters())
     if ssl_head is not None:
@@ -1126,6 +1257,8 @@ def main() -> None:
             head_params = proj_params_rebuild + list(model.conv_head.parameters()) + list(model.head_act.parameters())
             if radio_proj_heads is not None:
                 head_params += list(radio_proj_heads.parameters())
+            if spatial_adapter is not None:
+                head_params += list(spatial_adapter.parameters())
             if arc_margin is not None:
                 head_params += list(arc_margin.parameters())
             if ssl_head is not None:
@@ -1179,6 +1312,11 @@ def main() -> None:
             radio_adaptors=RADIO_ADAPTORS if radio_teacher_names else None,
             radio_variant=RADIO_VARIANT if radio_teacher_names else None,
             radio_cache_base=RADIO_CACHE_BASE if radio_teacher_names else None,
+            spatial_distill_weight=SPATIAL_DISTILL_WEIGHT,
+            spatial_adapter=spatial_adapter,
+            spatial_radio_teacher=spatial_radio_teacher,
+            spatial_grid_h=spatial_grid_h,
+            spatial_grid_w=spatial_grid_w,
         )
         elapsed_epoch = time.time() - t0
 
@@ -1186,7 +1324,7 @@ def main() -> None:
         logger.info(
             f"Epoch {epoch + 1}/{EPOCHS} | "
             f"loss={stats.loss:.4f} distill={stats.distill_loss:.4f} "
-            f"arc={stats.arc_loss:.4f} vat={stats.vat_loss:.4f} sep={stats.sep_loss:.4f} ssl={stats.ssl_loss:.4f} cosine={stats.mean_cosine:.4f}{arc_w_str} | "
+            f"arc={stats.arc_loss:.4f} vat={stats.vat_loss:.4f} sep={stats.sep_loss:.4f} ssl={stats.ssl_loss:.4f} spatial={stats.spatial_loss:.4f} cosine={stats.mean_cosine:.4f}{arc_w_str} | "
             f"{elapsed_epoch:.1f}s"
         )
 
@@ -1288,6 +1426,7 @@ def main() -> None:
     final_vat_loss = stats.vat_loss
     final_sep_loss = stats.sep_loss
     final_ssl_loss = stats.ssl_loss
+    final_spatial_loss = stats.spatial_loss
 
     # Write metrics.json (per D-02, INFRA-02, INFRA-05, INFRA-06)
     import json
@@ -1303,6 +1442,7 @@ def main() -> None:
         "vat_loss": final_vat_loss,
         "sep_loss": final_sep_loss,
         "ssl_loss": final_ssl_loss,
+        "spatial_distill_loss": final_spatial_loss,
         "peak_vram_mb": peak_vram_mb,
         "epochs": EPOCHS,
         "elapsed_seconds": round(elapsed, 1),
@@ -1322,6 +1462,7 @@ def main() -> None:
     print(f"vat_loss:         {final_vat_loss:.6f}")
     print(f"sep_loss:         {final_sep_loss:.6f}")
     print(f"ssl_loss:         {final_ssl_loss:.6f}")
+    print(f"spatial_distill_loss: {final_spatial_loss:.6f}")
     print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
     print(f"epochs:           {EPOCHS}")
     print(f"elapsed_seconds:  {elapsed:.1f}")
