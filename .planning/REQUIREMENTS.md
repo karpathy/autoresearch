@@ -58,8 +58,8 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **TEACH-01**: prepare.py supports 5+ teachers: Trendyol ONNX, DINOv2, DINOv3-ft, all C-RADIO variants
 - [x] **TEACH-02**: Each teacher has independent cache directory with metadata
 - [x] **TEACH-03**: Cache building sequential per teacher (VRAM safety)
-- [ ] **TEACH-04**: `TEACHER` is a module-level constant -- agent can switch teachers
-- [ ] **TEACH-05**: Multi-teacher mode with per-teacher loss weights as tunable constants
+- [x] **TEACH-04**: `TEACHER` is a module-level constant -- agent can switch teachers
+- [x] **TEACH-05**: Multi-teacher mode with per-teacher loss weights as tunable constants
 
 ### RADIO Integration
 - [ ] **RADIO-01**: RADIOTeacher class supporting all C-RADIO variants with adaptor selection
@@ -150,8 +150,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TEACH-01 | Phase 6 | Complete |
 | TEACH-02 | Phase 6 | Complete |
 | TEACH-03 | Phase 6 | Complete |
-| TEACH-04 | Phase 6 | Pending |
-| TEACH-05 | Phase 6 | Pending |
+| TEACH-04 | Phase 6 | Complete |
+| TEACH-05 | Phase 6 | Complete |
 | DINO3-01 | Phase 7 | Pending |
 | DINO3-02 | Phase 7 | Pending |
 | DINO3-03 | Phase 7 | Pending |
