@@ -41,37 +41,75 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **VALD-02**: At least one full autonomous loop cycle completes: agent modifies train.py, runs, evaluates, keeps or discards
 - [x] **VALD-03**: Crash recovery verified: intentionally trigger OOM, confirm system logs crash and continues
 
-## v2 Requirements
+## v2 Requirements — Expanded Search Space
 
-Deferred to future release. Tracked but not in current roadmap.
+### SSL Contrastive Loss
+- [ ] **SSL-01**: train.py includes InfoNCE contrastive loss
+- [ ] **SSL-02**: SSL uses a separate projection head
+- [ ] **SSL-03**: `SSL_WEIGHT` is a module-level constant agent can tune
 
-### Multi-Agent
+### Custom LCNet Backbone
+- [ ] **LCNET-01**: Custom LCNet backbone in train.py replacing timm, `.encode()` contract preserved
+- [ ] **LCNET-02**: Agent can tune LCNET_SCALE, SE_START_BLOCK, SE_REDUCTION, kernel sizes, ACTIVATION
+- [ ] **LCNET-03**: Optional timm pretrained weight initialization
+- [ ] **LCNET-04**: Exposes pre-GAP spatial features for RADIO spatial distillation
 
-- **MULTI-01**: Multiple agents experiment in parallel on separate GPU branches
-- **MULTI-02**: Results from parallel agents are merged and compared
+### Multi-Teacher Infrastructure
+- [ ] **TEACH-01**: prepare.py supports 5+ teachers: Trendyol ONNX, DINOv2, DINOv3-ft, all C-RADIO variants
+- [ ] **TEACH-02**: Each teacher has independent cache directory with metadata
+- [ ] **TEACH-03**: Cache building sequential per teacher (VRAM safety)
+- [ ] **TEACH-04**: `TEACHER` is a module-level constant — agent can switch teachers
+- [ ] **TEACH-05**: Multi-teacher mode with per-teacher loss weights as tunable constants
 
-### Advanced Metrics
+### RADIO Integration
+- [ ] **RADIO-01**: RADIOTeacher class supporting all C-RADIO variants with adaptor selection
+- [ ] **RADIO-02**: 3 adaptor outputs: backbone, dino_v3, siglip2-g — agent selects which to distill from
+- [ ] **RADIO-03**: Each adaptor's summary features cached with native dim, projection in train.py
+- [ ] **RADIO-04**: Spatial features cached separately with memory-mapped storage
+- [ ] **RADIO-05**: Spatial distillation loss in train.py
+- [ ] **RADIO-06**: `RADIO_VARIANT` and `RADIO_ADAPTORS` as tunable constants
 
-- **METR-01**: Per-category recall breakdown (e.g., by product type)
-- **METR-02**: Embedding visualization (t-SNE/UMAP) generated after each kept experiment
+### DINOv3 Fine-tuned Teacher
+- [ ] **DINO3-01**: Fine-tune largest DINO variant fitting RTX 4090 (ViT-g 1.1B + LoRA) on product dataset
+- [ ] **DINO3-02**: Uses autoresearch pattern (prepare_dino.py + train_dino.py)
+- [ ] **DINO3-03**: Fine-tuned model exported and integrated as teacher
+- [ ] **DINO3-04**: Embeddings cached to disk like other teachers
 
-### Model Export
+### RADIO Training Techniques
+- [ ] **TRAIN-01**: PHI-S distribution balancing (Hadamard isotropic standardization)
+- [ ] **TRAIN-02**: Feature Normalizer (per-teacher whitening + rotation)
+- [ ] **TRAIN-03**: Balanced Summary Loss L_angle (normalize by angular dispersion)
+- [ ] **TRAIN-04**: Hybrid Loss (0.9*cosine + 0.1*smooth-L1 for spatial features)
+- [ ] **TRAIN-05**: Per-teacher adaptor MLP v2 (LayerNorm+GELU+residual)
+- [ ] **TRAIN-06**: FeatSharp spatial feature sharpening (deferred if VRAM-constrained)
+- [ ] **TRAIN-07**: Shift Equivariant Loss for spatial distillation
 
-- **EXPRT-01**: Best model automatically exported to ONNX format
-- **EXPRT-02**: Best model benchmarked for inference latency
+### Updated Infrastructure
+- [ ] **INFRA-08**: program.md updated with expanded search space
+- [ ] **INFRA-09**: `einops` added to pyproject.toml
+- [ ] **INFRA-10**: Evaluation metric unchanged — trust boundary preserved
+
+## v3 Requirements (Deferred)
+
+- **MULTI-01**: Multiple agents in parallel on separate GPU branches
+- **MULTI-02**: Results from parallel agents merged
+- **METR-01**: Per-category recall breakdown
+- **METR-02**: Embedding visualization (t-SNE/UMAP)
+- **EXPRT-01**: Best model exported to ONNX
+- **EXPRT-02**: Inference latency benchmark
+- **OPT-01**: Fine-tune larger DINO on multi-GPU
+- **OPT-02**: Quantization-aware training (INT8)
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Optuna / Ray Tune / NAS frameworks | LLM agent IS the search algorithm -- HPO frameworks restrict to parameter sweeps |
-| MLflow / W&B experiment tracking | results.tsv + git history is sufficient; adds infra complexity |
-| Multi-GPU / distributed training | Single RTX 4090 constraint; distributed adds NCCL/sync complexity |
-| Configuration files (YAML/JSON) | Code IS the config -- agent edits Python constants directly |
-| Warm-starting from previous weights | Breaks fair comparison between experiments |
-| Dashboard / visualization UI | No one watches at 3am; results.tsv is human-readable |
-| New pip dependencies | Breaks reproducibility and security boundary |
-| Agent editing prepare.py | Evaluation must be immutable -- trust boundary |
+| Multi-GPU / distributed training | Single RTX 4090 constraint |
+| DINOv3-7B fine-tune | 7B requires 50GB+ VRAM even with LoRA; use ViT-g 1.1B |
+| RADIO training code reproduction | Training code not released; use inference weights only |
+| Spectral reparametrization | Low value for small CNN student |
+| Per-teacher CLS token | Student is CNN not ViT |
+| DAMP weight noise | Low priority regularization |
 
 ## Traceability
 
@@ -101,11 +139,44 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VALD-01 | Phase 4 | Complete |
 | VALD-02 | Phase 4 | Complete |
 | VALD-03 | Phase 4 | Complete |
+| SSL-01 | — | Pending |
+| SSL-02 | — | Pending |
+| SSL-03 | — | Pending |
+| LCNET-01 | — | Pending |
+| LCNET-02 | — | Pending |
+| LCNET-03 | — | Pending |
+| LCNET-04 | — | Pending |
+| TEACH-01 | — | Pending |
+| TEACH-02 | — | Pending |
+| TEACH-03 | — | Pending |
+| TEACH-04 | — | Pending |
+| TEACH-05 | — | Pending |
+| RADIO-01 | — | Pending |
+| RADIO-02 | — | Pending |
+| RADIO-03 | — | Pending |
+| RADIO-04 | — | Pending |
+| RADIO-05 | — | Pending |
+| RADIO-06 | — | Pending |
+| DINO3-01 | — | Pending |
+| DINO3-02 | — | Pending |
+| DINO3-03 | — | Pending |
+| DINO3-04 | — | Pending |
+| TRAIN-01 | — | Pending |
+| TRAIN-02 | — | Pending |
+| TRAIN-03 | — | Pending |
+| TRAIN-04 | — | Pending |
+| TRAIN-05 | — | Pending |
+| TRAIN-06 | — | Pending |
+| TRAIN-07 | — | Pending |
+| INFRA-08 | — | Pending |
+| INFRA-09 | — | Pending |
+| INFRA-10 | — | Pending |
 
 **Coverage:**
-- v1 requirements: 22 total
-- Mapped to phases: 22
-- Unmapped: 0
+- v1 requirements: 22 total (all complete)
+- v2 requirements: 32 total
+- Mapped to phases: 0
+- Unmapped: 32 ⚠️
 
 ---
 *Requirements defined: 2026-03-25*
