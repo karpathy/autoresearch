@@ -85,7 +85,10 @@ Plans:
   2. Cache building runs sequentially per teacher (never two teachers on GPU simultaneously) to stay within 24GB VRAM
   3. `TEACHER` is a module-level constant in train.py that the agent can set to any single teacher name, and the system loads the correct cached embeddings
   4. Multi-teacher mode works: `TEACHER_WEIGHTS` dict in train.py maps teacher names to loss weights, and training uses the weighted combination
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 06-01-PLAN.md -- Teacher registry, DINOv2 fix, cache infrastructure in prepare.py
+- [ ] 06-02-PLAN.md -- TEACHER/TEACHERS constants and multi-teacher training loop in train.py
 
 ### Phase 7: DINOv3 Fine-tune
 **Goal**: A DINOv3 ViT-g model is fine-tuned on the product dataset using its own autoresearch loop, producing a teacher checkpoint that integrates into the main system
@@ -133,7 +136,7 @@ Phases execute in numeric order: 5 -> 6 -> 7 -> 8 -> 9
 | 3. Agent Instructions | v1.0 | 1/1 | Complete | - |
 | 4. Validation | v1.0 | 2/2 | Complete | - |
 | 5. SSL + Custom LCNet | v2.0 | 0/? | Not started | - |
-| 6. Multi-Teacher Infrastructure | v2.0 | 0/? | Not started | - |
+| 6. Multi-Teacher Infrastructure | v2.0 | 0/2 | Planned | - |
 | 7. DINOv3 Fine-tune | v2.0 | 0/? | Not started | - |
 | 8. RADIO Integration | v2.0 | 0/? | Not started | - |
 | 9. RADIO Training Techniques + Wrap-up | v2.0 | 0/? | Not started | - |
