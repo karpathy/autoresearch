@@ -62,12 +62,12 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **TEACH-05**: Multi-teacher mode with per-teacher loss weights as tunable constants
 
 ### RADIO Integration
-- [ ] **RADIO-01**: RADIOTeacher class supporting all C-RADIO variants with adaptor selection
-- [ ] **RADIO-02**: 3 adaptor outputs: backbone, dino_v3, siglip2-g -- agent selects which to distill from
-- [ ] **RADIO-03**: Each adaptor's summary features cached with native dim, projection in train.py
+- [x] **RADIO-01**: RADIOTeacher class supporting all C-RADIO variants with adaptor selection
+- [x] **RADIO-02**: 3 adaptor outputs: backbone, dino_v3, siglip2-g -- agent selects which to distill from
+- [x] **RADIO-03**: Each adaptor's summary features cached with native dim, projection in train.py
 - [ ] **RADIO-04**: Spatial features cached separately with memory-mapped storage
 - [ ] **RADIO-05**: Spatial distillation loss in train.py
-- [ ] **RADIO-06**: `RADIO_VARIANT` and `RADIO_ADAPTORS` as tunable constants
+- [x] **RADIO-06**: `RADIO_VARIANT` and `RADIO_ADAPTORS` as tunable constants
 
 ### DINOv3 Fine-tuned Teacher
 - [x] **DINO3-01**: Fine-tune largest DINO variant fitting RTX 4090 (ViT-g 1.1B + LoRA) on product dataset
@@ -156,12 +156,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DINO3-02 | Phase 7 | Complete |
 | DINO3-03 | Phase 7 | Complete |
 | DINO3-04 | Phase 7 | Complete |
-| RADIO-01 | Phase 8 | Pending |
-| RADIO-02 | Phase 8 | Pending |
-| RADIO-03 | Phase 8 | Pending |
+| RADIO-01 | Phase 8 | Complete |
+| RADIO-02 | Phase 8 | Complete |
+| RADIO-03 | Phase 8 | Complete |
 | RADIO-04 | Phase 8 | Pending |
 | RADIO-05 | Phase 8 | Pending |
-| RADIO-06 | Phase 8 | Pending |
+| RADIO-06 | Phase 8 | Complete |
 | TRAIN-01 | Phase 9 | Pending |
 | TRAIN-02 | Phase 9 | Pending |
 | TRAIN-03 | Phase 9 | Pending |
