@@ -1,0 +1,5 @@
+commit	score	status	description
+baseline	68.6%	keep	baseline (S1:78% S2:90.9% S3:89% S4:56% S5:29%)
+3b96dc1	92.0%	keep	require all 3 recommendation categories as distinct sections (O2 fix)
+cc1c36d	91.6%	keep	require exact diagnostic matrix labels for root cause (C1 fix, O1 variance)
+e71b2fb	82.8%	discard	add Key Metrics Snapshot as 7th section (S1/S2 regressed)
