@@ -82,10 +82,43 @@ Example:
 ```
 commit	val_bpb	memory_gb	status	description
 a1b2c3d	0.997900	44.0	keep	baseline
-b2c3d4e	0.993200	44.2	keep	increase LR to 0.04
-c3d4e5f	1.005000	44.0	discard	switch to GeLU activation
-d4e5f6g	0.000000	0.0	crash	double model width (OOM)
+b2c3d4e	0.993200	44.2	keep	[opt] increase LR to 0.04
+c3d4e5f	1.005000	44.0	discard	[arch] switch to GeLU activation
+d4e5f6g	0.000000	0.0	crash	[scale] double model width (OOM)
 ```
+
+## Search strategy
+
+Your search space has natural layers, and they're not equally important. Changes to the model architecture shift the entire loss landscape — tuning the learning rate on a bad architecture is wasted work. Work from the inside out.
+
+**Layers (inside → outside):**
+
+| Layer | What to change | Examples |
+|-------|---------------|----------|
+| **Architecture** | Model structure, attention, activations | window pattern, activation function, normalization, embedding design, aspect ratio / head dim |
+| **Optimization** | How the model learns | optimizer params, LR schedule shape, warmup/warmdown ratio, weight decay strategy |
+| **Scale** | How big and how much | depth, batch size, specific LR values, device batch size |
+
+Three layers because that's how the codebase splits: `train.py` has model definition (arch), optimizer setup (opt), and numeric constants (scale). The layers map to the code.
+
+**How to explore:**
+
+1. Establish the baseline first (as always).
+2. Start with architecture experiments — these have the highest expected impact per run.
+3. When you find an architecture improvement, stabilize it: run it again to confirm the gain is real, not noise.
+4. Then move outward to optimization, then scale. Each layer builds on the stable result of the layer inside it.
+
+**Key rules:**
+
+- **One layer at a time.** Don't mix an architecture change with an optimization change in the same experiment — you won't know which helped. Exception: if an architecture change *requires* a scale adjustment to fit in VRAM, that's one experiment, not two.
+- **When stuck, go inward.** If tuning LR and batch size stops yielding gains, the architecture may be the bottleneck. Step back to the inner layer and try something more radical there.
+- **Tag your experiments.** In the results.tsv description, prefix with the layer: `[arch]`, `[opt]`, or `[scale]`. This makes patterns visible when you review.
+
+## Reviewing past results
+
+Scan `results.tsv` before every run. No exceptions. Which layer has produced the most keeps? Are there patterns — e.g. all activation changes failed, or LR changes keep helping? 30 seconds of pattern-matching beats 5 minutes of wasted compute.
+
+This doesn't solve exploration-vs-exploitation — you're still hill-climbing. But you'll climb smarter by spending experiments on the highest-leverage layer instead of bouncing randomly.
 
 ## The experiment loop
 
