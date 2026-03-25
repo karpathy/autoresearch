@@ -66,7 +66,9 @@ These are absolute rules. Violating any one invalidates all experiments.
    - Parameter count must not grow unbounded. If you change the backbone, verify it is still lightweight (LCNet-class, not ResNet-50 class).
    - If you switch backbones, confirm the new one is comparable in size to `lcnet_050`.
 
-6. **NEVER remove quality degradation augmentation** -- real-world ReID images are low-resolution, JPEG-compressed, and degraded. The `RandomQualityDegradation` transform simulates this. You may tune its parameters (prob, downsample_ratio, quality_range) but it must remain active. Removing it will improve metrics on clean validation images but produce a model that fails in production.
+6. **NEVER remove or modify the checkpoint saving block** -- the code between `# Save model checkpoint` and `# Compute final metrics` in train.py MUST remain intact. It saves `checkpoint_last.pt` and `checkpoint_best.pt`. You may change `OUTPUT_DIR` but never delete the `torch.save()` calls or the checkpoint dict construction.
+
+7. **NEVER remove quality degradation augmentation** -- real-world ReID images are low-resolution, JPEG-compressed, and degraded. The `RandomQualityDegradation` transform simulates this. You may tune its parameters (prob, downsample_ratio, quality_range) but it must remain active. Removing it will improve metrics on clean validation images but produce a model that fails in production.
 
 ## Output Format
 

@@ -708,6 +708,23 @@ def main() -> None:
         combined = compute_combined_metric(recall_at_1, mean_cos)
         logger.info(f"  Combined metric: {combined:.6f}")
 
+    # Save model checkpoint
+    ckpt = {
+        "model_state_dict": model.state_dict(),
+        "epoch": EPOCHS,
+        "combined_metric": combined,
+        "recall_at_1": recall_at_1,
+        "mean_cosine": mean_cos,
+    }
+    if arc_margin is not None:
+        ckpt["arc_margin_state_dict"] = arc_margin.state_dict()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    torch.save(ckpt, out_dir / "checkpoint_last.pt")
+    if not hasattr(main, "_best_combined") or combined > main._best_combined:
+        main._best_combined = combined
+        torch.save(ckpt, out_dir / "checkpoint_best.pt")
+        logger.info(f"  -> New best combined metric: {combined:.6f}")
+
     # Compute final metrics
     elapsed = time.time() - t_start
     peak_vram_mb = round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
