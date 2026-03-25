@@ -74,7 +74,10 @@ Plans:
   3. Custom LCNet supports optional timm pretrained weight initialization (when scale matches a known timm variant)
   4. Custom LCNet exposes pre-GAP spatial feature maps (for future RADIO spatial distillation) via a `.encode_spatial()` or equivalent method
   5. `einops` is added to pyproject.toml and importable
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 05-01-PLAN.md -- Custom LCNet backbone with tunable architecture + einops dependency
+- [ ] 05-02-PLAN.md -- SSL InfoNCE contrastive loss with projection head and training loop integration
 
 ### Phase 6: Multi-Teacher Infrastructure
 **Goal**: prepare.py supports 5+ teachers with independent caches, and the agent can select which teacher(s) to distill from via module-level constants in train.py
@@ -139,7 +142,7 @@ Phases execute in numeric order: 5 -> 6 -> 7 -> 8 -> 9
 | 2. Experiment Infrastructure | v1.0 | 2/2 | Complete | - |
 | 3. Agent Instructions | v1.0 | 1/1 | Complete | - |
 | 4. Validation | v1.0 | 2/2 | Complete | - |
-| 5. SSL + Custom LCNet | v2.0 | 0/? | Not started | - |
+| 5. SSL + Custom LCNet | v2.0 | 0/2 | Planned | - |
 | 6. Multi-Teacher Infrastructure | v2.0 | 0/2 | Planned | - |
 | 7. DINOv3 Fine-tune | v2.0 | 0/3 | Planned | - |
 | 8. RADIO Integration | v2.0 | 0/? | Not started | - |
