@@ -13,7 +13,7 @@ from prepare import (
     collate_distill, collate_arcface,
     PadToSquare,
     # Teacher
-    TrendyolEmbedder, init_teacher, load_teacher_embeddings,
+    load_teacher_embeddings,
     TEACHER_REGISTRY, init_teachers, build_all_teacher_caches,
     # Evaluation
     run_retrieval_eval, compute_combined_metric,
@@ -22,7 +22,7 @@ from prepare import (
     # Dataset builders
     build_distill_dataset, build_arcface_dataset, build_val_dataset,
     # Constants
-    EPOCHS, EMBEDDING_DIM, IMAGE_SIZE, DEFAULT_TEACHER_CACHE_DIR,
+    EPOCHS, EMBEDDING_DIM, IMAGE_SIZE,
     SKIP_CLASSES, VAL_DIR,
     # Utility
     set_seed,
@@ -615,12 +615,12 @@ def run_train_epoch(
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler._LRScheduler | None,
     scaler: torch.amp.GradScaler,
-    teacher: TrendyolEmbedder,
+    teachers: dict[str, object],
+    teacher_weights: dict[str, float],
     device: torch.device,
     amp: bool,
     arc_margin: ArcMarginProduct | None,
     arc_loss_weight: float,
-    cache_dir: str | None,
     drop_hard_ratio: float = 0.0,
     vat_weight: float = 0.0,
     vat_epsilon: float = 0.1,
@@ -664,19 +664,30 @@ def run_train_epoch(
             )
             first_batch_saved = True
 
-        # Load teacher embeddings for distillation
-        teacher_emb = load_teacher_embeddings(paths, teacher, device, cache_dir)
-
         optimizer.zero_grad(set_to_none=True)
 
         with torch.autocast(device_type=device.type, enabled=amp):
             student_emb = model.forward_embeddings_train(images)
 
-            # --- Distillation Loss ---
-            teacher_emb = teacher_emb.to(device=device, dtype=student_emb.dtype)
-            cosine = functional.cosine_similarity(student_emb, teacher_emb, dim=1)
-            distill_loss = (1.0 - cosine).mean()
-            batch_align = float(cosine.mean().item())
+            # --- Distillation Loss (multi-teacher weighted, per D-07) ---
+            total_distill_loss = torch.tensor(0.0, device=device)
+            first_cos_mean = 0.0
+            for t_idx, (t_name, t_weight) in enumerate(teacher_weights.items()):
+                t_cache_dir = TEACHER_REGISTRY[t_name]["cache_dir"]
+                t_emb = load_teacher_embeddings(paths, teachers[t_name], device, t_cache_dir, teacher_name=t_name)
+                if hasattr(model, 'proj_heads') and model.proj_heads is not None:
+                    backbone_feat = model.forward_backbone(images)
+                    s_proj = model.proj_heads[t_name](backbone_feat)
+                    s_proj = functional.normalize(s_proj, p=2, dim=1)
+                else:
+                    s_proj = student_emb  # single teacher, already projected + normalized
+                t_emb = t_emb.to(device=device, dtype=s_proj.dtype)
+                cos = functional.cosine_similarity(s_proj, t_emb, dim=1)
+                total_distill_loss = total_distill_loss + t_weight * (1.0 - cos).mean()
+                if t_idx == 0:
+                    first_cos_mean = float(cos.mean().item())
+            distill_loss = total_distill_loss
+            batch_align = first_cos_mean
 
             # --- ArcFace Loss (from retail dataset) ---
             arc_loss = torch.tensor(0.0, device=device)
@@ -846,16 +857,49 @@ def main() -> None:
             collate_fn=collate_arcface,
         )
 
+    # Resolve active teachers (per D-03, D-05)
+    teacher_names, teacher_weights = _get_active_teachers()
+
+    # Validate teacher dimensions
+    teacher_dims: dict[str, int] = {}
+    for name in teacher_names:
+        dim = TEACHER_REGISTRY[name]["embedding_dim"]
+        if dim is None:
+            raise ValueError(f"Teacher {name} has no embedding_dim set -- is it a stub?")
+        teacher_dims[name] = dim
+
+    # Build caches sequentially (per D-11, VRAM safety)
+    all_image_paths = [s[0] for s in distill_dataset.samples]
+    if distill_dataset.retail_samples:
+        all_image_paths += [s[0] for s in distill_dataset.retail_samples]
+    build_all_teacher_caches(teacher_names, all_image_paths, device=str(device))
+
+    # Initialize teachers for online inference during training
+    teachers_dict = init_teachers(teacher_names, device=str(device))
+    logger.info(f"Teachers: {teacher_names} weights={teacher_weights}")
+
     # Model
-    model = LCNet(
-        scale=LCNET_SCALE,
-        se_start_block=SE_START_BLOCK,
-        se_reduction=SE_REDUCTION,
-        activation=ACTIVATION,
-        kernel_sizes=KERNEL_SIZES,
-        embedding_dim=EMBEDDING_DIM,
-        device=str(device),
-    ).to(device)
+    if len(teacher_names) > 1:
+        model = LCNet(
+            scale=LCNET_SCALE,
+            se_start_block=SE_START_BLOCK,
+            se_reduction=SE_REDUCTION,
+            activation=ACTIVATION,
+            kernel_sizes=KERNEL_SIZES,
+            embedding_dim=EMBEDDING_DIM,
+            device=str(device),
+            teacher_dims=teacher_dims,
+        ).to(device)
+    else:
+        model = LCNet(
+            scale=LCNET_SCALE,
+            se_start_block=SE_START_BLOCK,
+            se_reduction=SE_REDUCTION,
+            activation=ACTIVATION,
+            kernel_sizes=KERNEL_SIZES,
+            embedding_dim=EMBEDDING_DIM,
+            device=str(device),
+        ).to(device)
 
     if USE_PRETRAINED:
         load_pretrained_lcnet(model, LCNET_SCALE)
@@ -883,9 +927,6 @@ def main() -> None:
         ).to(device)
         logger.info(f"ArcFace enabled: {num_arcface_classes} classes, s={ARCFACE_S}, m={ARCFACE_M}")
 
-    # Teacher model
-    teacher = init_teacher(str(device))
-
     # Unfreeze backbone (per D-02, UNFREEZE_EPOCH=0 means unfreeze from start)
     backbone_unfrozen = False
     if UNFREEZE_EPOCH == 0:
@@ -894,11 +935,17 @@ def main() -> None:
 
     # Optimizer with differential LR
     # Backbone: conv_stem, bn1, blocks (frozen initially, unfrozen at UNFREEZE_EPOCH)
-    # Head: proj, conv_head
+    # Head: proj (or proj_heads in multi-teacher mode), conv_head
     backbone_params = [p for p in list(model.conv_stem.parameters()) +
                        list(model.bn1.parameters()) +
                        list(model.blocks.parameters()) if p.requires_grad]
-    head_params = list(model.proj.parameters()) + list(model.conv_head.parameters()) + list(model.head_act.parameters())
+    if hasattr(model, 'proj_heads') and model.proj_heads is not None:
+        proj_params: list = []
+        for ph in model.proj_heads.values():
+            proj_params += list(ph.parameters())
+    else:
+        proj_params = list(model.proj.parameters())
+    head_params = proj_params + list(model.conv_head.parameters()) + list(model.head_act.parameters())
     if arc_margin is not None:
         head_params += list(arc_margin.parameters())
     if ssl_head is not None:
@@ -950,7 +997,13 @@ def main() -> None:
             backbone_params = [p for p in list(model.conv_stem.parameters()) +
                                list(model.bn1.parameters()) +
                                list(model.blocks.parameters()) if p.requires_grad]
-            head_params = list(model.proj.parameters()) + list(model.conv_head.parameters()) + list(model.head_act.parameters())
+            if hasattr(model, 'proj_heads') and model.proj_heads is not None:
+                proj_params_rebuild: list = []
+                for ph in model.proj_heads.values():
+                    proj_params_rebuild += list(ph.parameters())
+            else:
+                proj_params_rebuild = list(model.proj.parameters())
+            head_params = proj_params_rebuild + list(model.conv_head.parameters()) + list(model.head_act.parameters())
             if arc_margin is not None:
                 head_params += list(arc_margin.parameters())
             if ssl_head is not None:
@@ -982,12 +1035,12 @@ def main() -> None:
             optimizer=optimizer,
             scheduler=scheduler,
             scaler=scaler,
-            teacher=teacher,
+            teachers=teachers_dict,
+            teacher_weights=teacher_weights,
             device=device,
             amp=(device.type == "cuda"),
             arc_margin=arc_margin,
             arc_loss_weight=effective_arc_weight,
-            cache_dir=TEACHER_CACHE_DIR,
             drop_hard_ratio=DROP_HARD_RATIO,
             vat_weight=VAT_WEIGHT,
             vat_epsilon=VAT_EPSILON,
@@ -1057,13 +1110,15 @@ def main() -> None:
 
         # Re-evaluate with SWA weights
         if val_dataset is not None:
-            # Get mean_cosine from a quick forward pass on distill data
+            # Get mean_cosine from a quick forward pass on distill data (use first/default teacher)
+            default_t_name = teacher_names[0]
+            default_t_cache = TEACHER_REGISTRY[default_t_name]["cache_dir"]
             model.eval()
             cos_sum, cos_n = 0.0, 0
             with torch.no_grad():
                 for images, labels, paths in distill_loader:
                     images = images.to(device, non_blocking=True)
-                    teacher_emb = load_teacher_embeddings(paths, teacher, device, TEACHER_CACHE_DIR)
+                    teacher_emb = load_teacher_embeddings(paths, teachers_dict[default_t_name], device, default_t_cache, teacher_name=default_t_name)
                     student_emb = model.encode(images)
                     teacher_emb = teacher_emb.to(device=device, dtype=student_emb.dtype)
                     cos = functional.cosine_similarity(student_emb, teacher_emb, dim=1)
