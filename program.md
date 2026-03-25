@@ -58,8 +58,20 @@ depth:            8
 Note that the script is configured to always stop after 5 minutes, so depending on the computing platform of this computer the numbers might look different. You can extract the key metric from the log file:
 
 ```
-grep "^val_bpb:" run.log
+grep "^val_bpb:\|^peak_vram_mb:" run.log
 ```
+
+### Diagnostics
+
+After the summary, the script writes **`diagnostics.log`** with richer signal about what the model is actually doing:
+
+1. **Training curve** — loss at ~50-step intervals. Shows the learning trajectory, not just the final number.
+2. **Convergence signal** — early vs late loss, improvement rate, whether the model was still improving when time ran out.
+3. **Per-position loss** — mean loss bucketed by sequence position (0-64, 64-256, 256-512, 512-1024, 1024-2048). Reveals if the model struggles with long-range dependencies.
+4. **Attention patterns** — per-head entropy (spread of attention), mean attention distance (how far back each head looks), and max attention weight (peakiness). Computed by capturing Q/K before flash attention and reconstructing the attention matrix for a single example. Reveals dead heads, redundant heads, and whether window/global attention layers are behaving as expected.
+5. **Model text samples** — 5 unconditional generations of 200 tokens each. The single most informative diagnostic: shows what the model has actually learned.
+
+Read `diagnostics.log` after every run. It gives you qualitative signal that a single val_bpb number cannot.
 
 ## Logging results
 
@@ -97,13 +109,34 @@ LOOP FOREVER:
 2. Tune `train.py` with an experimental idea by directly hacking the code.
 3. git commit
 4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
+5. Read the results:
+   - `grep "^val_bpb:\|^peak_vram_mb:" run.log` — the key metrics for keep/discard decisions.
+   - `cat diagnostics.log` — the rich diagnostic output. **Read this every run.** Use it to inform your next hypothesis: training curve shape, position loss patterns, and what the model's text actually looks like all carry signal that val_bpb alone cannot.
 6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
 7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
 8. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
 9. If val_bpb is equal or worse, you git reset back to where you started
 
 The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
+
+## Using diagnostics to guide experiments
+
+The diagnostics give you qualitative signal. Use them to form better hypotheses:
+
+- **Still improving at cutoff**: The model could have gone further. Consider making it smaller (more steps in the same time budget) or adjusting the LR schedule to converge faster.
+- **Plateaued early**: The model saturated. Consider making it larger, increasing LR, or trying a more expressive architecture.
+- **Position loss much higher at early positions**: The model struggles with beginning-of-sequence. May indicate issues with embeddings or warmup.
+- **Position loss much higher at late positions**: Long-range dependency issue. Consider more global attention layers, different positional encoding, or longer window sizes.
+- **Low-entropy attention heads**: Some heads have collapsed to very peaked attention (always attending to the same position). These are likely dead — the model might benefit from fewer heads, or the head dim / initialization needs tuning.
+- **All heads similar mean_dist in a layer**: Heads are redundant, not specializing. Consider fewer heads, or different head dimensions, or attention diversity regularization.
+- **Window heads attending at max distance**: The sliding window is the bottleneck — the head wants to attend further back. Consider increasing window size or adding more global layers.
+- **Global heads attending very locally**: Wasted capacity — a global layer is behaving like a local one. The model might do better with more sliding window layers and fewer global ones.
+- **Repetitive/looping text samples**: The model might be collapsing. Check if temperature, softcap, or activation function is causing degenerate behavior.
+- **Garbled/incoherent samples**: Model too small for the task, learning rate too high, or not enough training steps.
+- **Fluent text but high val_bpb**: The model understands language structure but is inefficient. Try architectural efficiency improvements (better attention patterns, larger batch size, etc).
+- **Large gap between final train loss and val_bpb**: Overfitting. Try more regularization, smaller model, or weight decay.
+
+The text samples are especially valuable — they show failure modes that a single number hides. Two models with identical val_bpb can produce very different text (one repetitive, one incoherent), suggesting completely different fixes.
 
 **Timeout**: Each experiment should take ~5 minutes total (+ a few seconds for startup and eval overhead). If a run exceeds 10 minutes, kill it and treat it as a failure (discard and revert).
 

@@ -90,6 +90,10 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
+        if getattr(self, '_diag_store', False):
+            self._diag_q = q.detach()
+            self._diag_k = k.detach()
+
         y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
         y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
@@ -539,6 +543,7 @@ t_start_training = time.time()
 smooth_train_loss = 0
 total_training_time = 0
 step = 0
+loss_history = []
 
 while True:
     torch.cuda.synchronize()
@@ -582,6 +587,8 @@ while True:
     ema_beta = 0.9
     smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
+    if step % 50 == 0:
+        loss_history.append((step, round(progress * 100, 1), round(debiased_smooth_loss, 6)))
     pct_done = 100 * progress
     tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
     mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
@@ -628,3 +635,140 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
+
+# ---------------------------------------------------------------------------
+# Diagnostics — richer feedback for the experiment loop
+# ---------------------------------------------------------------------------
+
+try:
+    final_train_loss = debiased_smooth_loss
+
+    with open("diagnostics.log", "w") as diag:
+        # --- Training curve ---
+        diag.write("=== TRAINING CURVE ===\n")
+        for s, pct, lv in loss_history:
+            diag.write(f"  step={s:5d}  progress={pct:5.1f}%  loss={lv:.6f}\n")
+
+        diag.write(f"\nfinal_train_loss: {final_train_loss:.6f}\n")
+        diag.write(f"val_bpb:          {val_bpb:.6f}\n")
+
+        if len(loss_history) >= 4:
+            early = [l for _, p, l in loss_history if p < 30]
+            late = [l for _, p, l in loss_history if p > 70]
+            if early and late:
+                early_avg = sum(early) / len(early)
+                late_avg = sum(late) / len(late)
+                diag.write(f"early_avg_loss:   {early_avg:.6f}  (progress < 30%)\n")
+                diag.write(f"late_avg_loss:    {late_avg:.6f}  (progress > 70%)\n")
+                diag.write(f"improvement_rate: {(early_avg - late_avg) / early_avg * 100:.1f}%\n")
+            last_losses = [l for _, _, l in loss_history[-3:]]
+            delta = last_losses[0] - last_losses[-1]
+            diag.write(f"still_improving:  {'yes' if delta > 0.001 else 'plateaued'} (last 3 checkpoints delta={delta:.6f})\n")
+
+        # --- Per-position loss analysis ---
+        diag.write("\n=== POSITION LOSS ===\n")
+        diag_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "val")
+        pos_losses = torch.zeros(MAX_SEQ_LEN, device='cuda')
+        n_pos_batches = 4
+        for _ in range(n_pos_batches):
+            xd, yd, _ = next(diag_loader)
+            with autocast_ctx:
+                loss_flat = model(xd, yd, reduction='none')
+            pos_losses += loss_flat.view(DEVICE_BATCH_SIZE, MAX_SEQ_LEN).mean(dim=0)
+        pos_losses /= n_pos_batches
+
+        buckets = [(0, 64), (64, 256), (256, 512), (512, 1024), (1024, 2048)]
+        for start, end in buckets:
+            end = min(end, MAX_SEQ_LEN)
+            if start < MAX_SEQ_LEN:
+                bucket_mean = pos_losses[start:end].mean().item()
+                diag.write(f"  positions [{start:4d}-{end:4d}): {bucket_mean:.4f}\n")
+
+        pos_all = pos_losses.float()
+        diag.write(f"  overall_mean: {pos_all.mean().item():.4f}\n")
+        diag.write(f"  overall_std:  {pos_all.std().item():.4f}\n")
+
+        # --- Attention pattern analysis ---
+        raw_model = model._orig_mod if hasattr(model, '_orig_mod') else model
+        raw_model.eval()
+
+        diag.write("\n=== ATTENTION PATTERNS ===\n")
+        diag.write("(per-head: entropy=spread of attention, mean_dist=avg tokens back, max_wt=peakiness)\n")
+        try:
+            for block in raw_model.transformer.h:
+                block.attn._diag_store = True
+
+            xa, _, _ = next(diag_loader)
+            xa = xa[:1]
+            with torch.no_grad(), torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
+                raw_model(xa)
+
+            T_diag = xa.size(1)
+            positions = torch.arange(T_diag, device='cuda', dtype=torch.float32)
+            causal_mask = torch.triu(torch.ones(T_diag, T_diag, device='cuda', dtype=torch.bool), diagonal=1)
+            dist_matrix = (positions.unsqueeze(0) - positions.unsqueeze(1)).abs()
+
+            for layer_i, block in enumerate(raw_model.transformer.h):
+                q = block.attn._diag_q.permute(0, 2, 1, 3).float()  # (1, n_head, T, d)
+                k = block.attn._diag_k.permute(0, 2, 1, 3).float()  # (1, n_kv, T, d)
+                n_h, n_kv, hd = q.size(1), k.size(1), q.size(3)
+                if n_kv < n_h:
+                    k = k.repeat_interleave(n_h // n_kv, dim=1)
+
+                attn = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(hd)
+                attn.masked_fill_(causal_mask, float('-inf'))
+
+                window = raw_model.window_sizes[layer_i][0]
+                if window < T_diag:
+                    win_mask = positions.unsqueeze(1) - positions.unsqueeze(0) >= window
+                    attn.masked_fill_(win_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+
+                attn = torch.softmax(attn, dim=-1)
+
+                entropy = -(attn * torch.log(attn.clamp(min=1e-10))).sum(-1).mean(-1)[0]
+                mean_dist = (attn * dist_matrix).sum(-1).mean(-1)[0]
+                max_wt = attn.max(-1).values.mean(-1)[0]
+
+                ent_s = " ".join(f"{v:.2f}" for v in entropy)
+                dist_s = " ".join(f"{v:.0f}" for v in mean_dist)
+                max_s = " ".join(f"{v:.3f}" for v in max_wt)
+                w_label = f"win={window}" if window < T_diag else "global"
+                diag.write(f"  layer {layer_i:2d} ({w_label:>10s}): entropy=[{ent_s}]  mean_dist=[{dist_s}]  max_wt=[{max_s}]\n")
+
+                del block.attn._diag_q, block.attn._diag_k
+                block.attn._diag_store = False
+                del q, k, attn
+
+            del causal_mask, dist_matrix
+        except Exception as e_attn:
+            diag.write(f"  FAILED: {e_attn}\n")
+            for block in raw_model.transformer.h:
+                block.attn._diag_store = False
+                for attr in ('_diag_q', '_diag_k'):
+                    if hasattr(block.attn, attr):
+                        delattr(block.attn, attr)
+
+        # --- Model text samples ---
+        diag.write("\n=== MODEL SAMPLES ===\n")
+        diag.write("(unconditional generation, temperature=0.8, 200 tokens each)\n\n")
+        bos = tokenizer.get_bos_token_id()
+        for sample_idx in range(5):
+            ids = torch.tensor([[bos]], dtype=torch.long, device='cuda')
+            for _ in range(200):
+                ctx = ids if ids.size(1) <= MAX_SEQ_LEN else ids[:, -MAX_SEQ_LEN:]
+                with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    logits = raw_model(ctx)
+                next_logits = logits[0, -1].float() / 0.8
+                probs = torch.softmax(next_logits, dim=-1)
+                next_id = torch.multinomial(probs, 1)
+                ids = torch.cat([ids, next_id.unsqueeze(0)], dim=1)
+            text = tokenizer.decode(ids[0, 1:].tolist())
+            diag.write(f"--- sample {sample_idx + 1} ---\n")
+            diag.write(text[:600] + "\n\n")
+
+        diag.write("=== END DIAGNOSTICS ===\n")
+
+    print("diagnostics:      diagnostics.log")
+
+except Exception as e:
+    print(f"diagnostics:      FAILED ({e})")
