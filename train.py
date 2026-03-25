@@ -29,7 +29,6 @@ from prepare import (
 
 import sys
 import time
-import timm
 import numpy as np
 import random
 import torch
@@ -72,24 +71,267 @@ OUTPUT_DIR = "workspace/output/distill_trendyol_lcnet050_retail"
 RETRIEVAL_MAX_SAMPLES = 5000
 RETRIEVAL_TOPK = 5
 
+# --- Custom LCNet Backbone ---
+LCNET_SCALE = 0.5             # Width multiplier (0.5 matches current lcnet_050)
+SE_START_BLOCK = 10           # Block index where SE begins (0-indexed, 13 total blocks)
+SE_REDUCTION = 0.25           # SE squeeze ratio
+ACTIVATION = "h_swish"        # "h_swish" | "relu" | "gelu"
+KERNEL_SIZES = [3, 3, 3, 3, 3, 3, 5, 5, 5, 5, 5, 5, 5]  # Per-block kernel sizes (13 blocks)
+USE_PRETRAINED = True          # Load timm pretrained weights when scale matches
+
 
 # ============================================================
 # MODEL (agent edits architecture)
 # ============================================================
 
-class ProjectionHead(nn.Module):
-    def __init__(self, in_features: int, out_features: int) -> None:
+def make_divisible(v: float, divisor: int = 8, min_value: int | None = None) -> int:
+    """Round channel count to nearest divisor (matches timm implementation)."""
+    min_value = min_value or divisor
+    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
+    if new_v < 0.9 * v:
+        new_v += divisor
+    return new_v
+
+
+class SqueezeExcite(nn.Module):
+    """Squeeze-and-Excitation block (SE) with Hardsigmoid gating."""
+
+    def __init__(self, channels: int, reduced_ch: int) -> None:
         super().__init__()
-        hidden_dim = 512
-        self.net = nn.Sequential(
-            nn.Linear(in_features, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, out_features),
-        )
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.conv_reduce = nn.Conv2d(channels, reduced_ch, 1, bias=True)
+        self.act = nn.ReLU(inplace=True)
+        self.conv_expand = nn.Conv2d(reduced_ch, channels, 1, bias=True)
+        self.gate = nn.Hardsigmoid()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        scale = self.pool(x)
+        scale = self.act(self.conv_reduce(scale))
+        scale = self.gate(self.conv_expand(scale))
+        return x * scale
+
+
+class DepthwiseSeparableConv(nn.Module):
+    """Depthwise separable convolution block (DSConv) for LCNet."""
+
+    def __init__(
+        self,
+        in_ch: int,
+        out_ch: int,
+        kernel_size: int = 3,
+        stride: int = 1,
+        use_se: bool = False,
+        se_ratio: float = 0.25,
+        act_layer: type = nn.Hardswish,
+    ) -> None:
+        super().__init__()
+        padding = kernel_size // 2
+        # Depthwise conv
+        self.conv_dw = nn.Conv2d(in_ch, in_ch, kernel_size, stride, padding, groups=in_ch, bias=False)
+        self.bn1 = nn.BatchNorm2d(in_ch)
+        self.act1 = act_layer()
+        # Squeeze-and-Excitation (optional)
+        if use_se:
+            mid_ch = max(1, int(in_ch * se_ratio))
+            self.se = SqueezeExcite(in_ch, mid_ch)
+        else:
+            self.se = nn.Identity()
+        # Pointwise conv
+        self.conv_pw = nn.Conv2d(in_ch, out_ch, 1, 1, 0, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_ch)
+        self.act2 = act_layer()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.act1(self.bn1(self.conv_dw(x)))
+        x = self.se(x)
+        x = self.act2(self.bn2(self.conv_pw(x)))
+        return x
+
+
+# Per-stage config: list of (kernel_size, stride, out_channels_base) per block
+# Verified against timm lcnet_050 block-by-block output
+LCNET_ARCH = [
+    # Stage 0: 1 block
+    [(3, 1, 32)],
+    # Stage 1: 2 blocks
+    [(3, 2, 64), (3, 1, 64)],
+    # Stage 2: 2 blocks
+    [(3, 2, 128), (3, 1, 128)],
+    # Stage 3: 2 blocks
+    [(3, 2, 256), (5, 1, 256)],
+    # Stage 4: 4 blocks
+    [(5, 1, 256), (5, 1, 256), (5, 1, 256), (5, 1, 256)],
+    # Stage 5: 2 blocks (with SE)
+    [(5, 2, 512), (5, 1, 512)],
+]
+
+
+class LCNet(nn.Module):
+    """Custom LCNet backbone with agent-tunable architecture parameters.
+
+    Reimplemented from scratch based on PP-LCNet paper + timm source.
+    Uses timm-compatible naming for pretrained weight loading.
+    """
+
+    def __init__(
+        self,
+        scale: float = LCNET_SCALE,
+        se_start_block: int = SE_START_BLOCK,
+        se_reduction: float = SE_REDUCTION,
+        activation: str = ACTIVATION,
+        kernel_sizes: list[int] = KERNEL_SIZES,
+        embedding_dim: int = 256,
+        device: str = "cuda",
+    ) -> None:
+        super().__init__()
+        act_lookup = {"h_swish": nn.Hardswish, "relu": nn.ReLU, "gelu": nn.GELU}
+        act_layer = act_lookup.get(activation, nn.Hardswish)
+
+        # Stem: Conv2d(3, stem_ch, 3x3, s=2) + BN + activation
+        stem_ch = make_divisible(16 * scale)
+        self.conv_stem = nn.Conv2d(3, stem_ch, 3, stride=2, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(stem_ch)
+        self.stem_act = act_layer()
+
+        # Build blocks: stages of DepthwiseSeparableConv
+        stages = []
+        in_ch = stem_ch
+        flat_block_idx = 0
+        kernel_iter = iter(kernel_sizes)
+        for stage_blocks in LCNET_ARCH:
+            stage = []
+            for _default_ks, stride, out_base in stage_blocks:
+                out_ch = make_divisible(out_base * scale)
+                # Use agent-tunable kernel size if available, else default
+                try:
+                    ks = next(kernel_iter)
+                except StopIteration:
+                    ks = _default_ks
+                use_se = flat_block_idx >= se_start_block
+                stage.append(DepthwiseSeparableConv(
+                    in_ch, out_ch, kernel_size=ks, stride=stride,
+                    use_se=use_se, se_ratio=se_reduction, act_layer=act_layer,
+                ))
+                in_ch = out_ch
+                flat_block_idx += 1
+            stages.append(nn.Sequential(*stage))
+        self.blocks = nn.Sequential(*stages)
+
+        # Conv head: 1x1 conv to 1280 (no BN per paper)
+        self.conv_head = nn.Conv2d(in_ch, 1280, 1, bias=False)
+        self.head_act = act_layer()
+        self.num_features = 1280
+
+        # Global average pooling
+        self.gap = nn.AdaptiveAvgPool2d(1)
+
+        # Projection: Linear(1280, embedding_dim) + BN
+        self.proj = nn.Sequential(
+            nn.Linear(1280, embedding_dim),
+            nn.BatchNorm1d(embedding_dim),
+        )
+
+        # Weight initialization
+        self._init_weights()
+
+        # Freeze backbone (all conv_stem, bn1, blocks params) -- unfrozen at UNFREEZE_EPOCH
+        for p in self.conv_stem.parameters():
+            p.requires_grad = False
+        for p in self.bn1.parameters():
+            p.requires_grad = False
+        for p in self.blocks.parameters():
+            p.requires_grad = False
+
+    def _init_weights(self) -> None:
+        """Initialize weights: kaiming for Conv2d, xavier for Linear, ones/zeros for BN."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, (nn.BatchNorm2d, nn.BatchNorm1d)):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
+
+    def _forward_stem_blocks(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward through stem + all blocks (spatial features here)."""
+        x = self.stem_act(self.bn1(self.conv_stem(x)))
+        x = self.blocks(x)
+        return x
+
+    def forward_features(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return (spatial: [B, C, H, W], summary: [B, 1280]).
+
+        spatial is the pre-conv_head feature map (output of last stage).
+        summary is after conv_head + GAP.
+        """
+        spatial = self._forward_stem_blocks(x)
+        x = self.head_act(self.conv_head(spatial))
+        x = self.gap(x).flatten(1)
+        return spatial, x
+
+    def forward_embeddings_train(self, images: torch.Tensor) -> torch.Tensor:
+        """Forward pass with gradients for training. Returns L2-normalized [B, 256]."""
+        _spatial, summary = self.forward_features(images)
+        emb = self.proj(summary)
+        return functional.normalize(emb, p=2, dim=1)
+
+    def encode(self, images: torch.Tensor) -> torch.Tensor:
+        """Encode images to L2-normalized embeddings [B, 256]. No gradients."""
+        was_training = self.training
+        self.eval()
+        with torch.no_grad():
+            _spatial, summary = self.forward_features(images)
+            emb = self.proj(summary)
+            result = functional.normalize(emb, p=2, dim=1)
+        if was_training:
+            self.train()
+        return result
+
+    def encode_with_spatial(self, images: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return (embedding: [B, 256], spatial: [B, C, H, W]). No gradients."""
+        self.eval()
+        with torch.no_grad():
+            spatial, summary = self.forward_features(images)
+            emb = self.proj(summary)
+            emb = functional.normalize(emb, p=2, dim=1)
+            return emb, spatial
+
+    def unfreeze_last_stage(self) -> None:
+        """Unfreeze last 2 stages and conv_head for fine-tuning."""
+        # Unfreeze last 2 stages (blocks[-1] = stage 5, blocks[-2] = stage 4)
+        for i in [-1, -2]:
+            for p in self.blocks[i].parameters():
+                p.requires_grad = True
+        for p in self.conv_head.parameters():
+            p.requires_grad = True
+
+
+def load_pretrained_lcnet(model: LCNet, scale: float) -> None:
+    """Load timm pretrained weights into custom LCNet."""
+    import timm as _timm
+    scale_to_variant = {0.5: "lcnet_050", 0.75: "lcnet_075", 1.0: "lcnet_100"}
+    variant = scale_to_variant.get(scale)
+    if variant is None:
+        logger.warning(f"No pretrained weights for scale={scale}, training from scratch")
+        return
+
+    timm_model = _timm.create_model(f"hf-hub:timm/{variant}.ra2_in1k", pretrained=True, num_classes=0)
+    timm_sd = timm_model.state_dict()
+
+    model_sd = model.state_dict()
+    loaded = 0
+    for k, v in timm_sd.items():
+        if k in model_sd and model_sd[k].shape == v.shape:
+            model_sd[k] = v
+            loaded += 1
+    model.load_state_dict(model_sd, strict=False)
+    logger.info(f"Loaded {loaded}/{len(timm_sd)} pretrained weights from {variant}")
+    del timm_model
 
 
 class ArcMarginProduct(nn.Module):
@@ -112,70 +354,6 @@ class ArcMarginProduct(nn.Module):
         output = (one_hot * phi) + ((1.0 - one_hot) * cosine)
         output *= self.s
         return output
-
-
-class FrozenBackboneWithHead(nn.Module):
-    """Student model with frozen backbone + trainable projection head."""
-
-    def __init__(
-        self,
-        model_name: str,
-        embedding_dim: int = 256,
-        device: str = "cuda",
-    ) -> None:
-        super().__init__()
-        self.device = device
-        self.backbone = timm.create_model(model_name, pretrained=True, num_classes=0)
-        self.backbone.eval()
-        for p in self.backbone.parameters():
-            p.requires_grad = False
-
-        # Infer feature dimension
-        with torch.no_grad():
-            dummy = torch.zeros(1, 3, 224, 224)
-            out = self.backbone(dummy)
-            in_features = out.shape[-1]
-        logger.info(f"Backbone {model_name} output dim: {in_features}")
-
-        self.proj = ProjectionHead(in_features, embedding_dim)
-
-    def train(self, mode: bool = True) -> "FrozenBackboneWithHead":
-        super().train(mode)
-        self.backbone.eval()
-        return self
-
-    def unfreeze_last_stage(self) -> None:
-        """Unfreeze the last stage of the backbone."""
-        for i in [-1, -2, -3, -4]:
-            if hasattr(self.backbone, "stages"):
-                for p in self.backbone.stages[i].parameters():
-                    p.requires_grad = True
-            elif hasattr(self.backbone, "features"):
-                for p in self.backbone.features[i].parameters():
-                    p.requires_grad = True
-            elif hasattr(self.backbone, "blocks"):
-                for p in self.backbone.blocks[i].parameters():
-                    p.requires_grad = True
-        self.backbone.train()
-
-    def forward_embeddings_train(self, images: torch.Tensor) -> torch.Tensor:
-        has_trainable = any(p.requires_grad for p in self.backbone.parameters())
-        if has_trainable:
-            features = self.backbone(images)
-        else:
-            with torch.no_grad():
-                features = self.backbone(images)
-        emb = self.proj(features)
-        emb = functional.normalize(emb, p=2, dim=1)
-        return emb
-
-    def encode(self, images: torch.Tensor) -> torch.Tensor:
-        self.eval()
-        with torch.no_grad():
-            features = self.backbone(images)
-            emb = self.proj(features)
-            emb = functional.normalize(emb, p=2, dim=1)
-        return emb
 
 
 # ============================================================
@@ -208,14 +386,11 @@ class RandomQualityDegradation:
         return img
 
 
-def build_train_transform(model_name: str, image_size: int) -> transforms.Compose:
+def build_train_transform(image_size: int) -> transforms.Compose:
     """Build training transform (agent-editable augmentations)."""
-    tmp_model = timm.create_model(model_name, pretrained=True)
-    from timm.data import resolve_data_config
-    data_config = resolve_data_config(tmp_model.pretrained_cfg)
-    mean = data_config["mean"]
-    std = data_config["std"]
-    del tmp_model
+    # ImageNet normalization (used by all lcnet variants)
+    mean = (0.485, 0.456, 0.406)
+    std = (0.229, 0.224, 0.225)
     return transforms.Compose([
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.5),
@@ -301,7 +476,7 @@ def save_batch_visualization(
 # ============================================================
 
 def vat_embedding_loss(
-    model: FrozenBackboneWithHead,
+    model: LCNet,
     x: torch.Tensor,
     epsilon: float = 2.0,
     xi: float = 0.1,
@@ -309,14 +484,14 @@ def vat_embedding_loss(
 ) -> torch.Tensor:
     """Feature-level VAT loss (Miyato et al., 2018 -- arXiv 1704.03976).
 
-    Perturbs backbone features (not raw pixels) to find adversarial
+    Perturbs summary features (post-GAP, pre-projection) to find adversarial
     direction, then penalises cosine distance between clean and perturbed
-    embeddings.  Operating in ~512-dim feature space instead of 150K-dim
+    embeddings.  Operating in 1280-dim feature space instead of 150K-dim
     pixel space is faster and finds better adversarial directions.
     """
-    # Get clean backbone features and embedding
+    # Get clean summary features and embedding
     with torch.no_grad():
-        feat_clean = model.backbone(x)
+        _spatial, feat_clean = model.forward_features(x)
         emb_clean = functional.normalize(model.proj(feat_clean), p=2, dim=1)
 
     # Random unit vector in feature space
@@ -352,7 +527,7 @@ class EpochStats:
 
 
 def run_train_epoch(
-    model: FrozenBackboneWithHead,
+    model: LCNet,
     distill_loader: DataLoader,
     arcface_loader: DataLoader | None,
     optimizer: torch.optim.Optimizer,
@@ -522,7 +697,7 @@ def main() -> None:
     device = torch.device(DEVICE if torch.cuda.is_available() else "cpu")
 
     # Build training augmentations (agent controls these)
-    train_transform = build_train_transform(MODEL_NAME, IMAGE_SIZE)
+    train_transform = build_train_transform(IMAGE_SIZE)
     quality_degradation = RandomQualityDegradation(prob=QUALITY_DEGRADATION_PROB)
 
     # Build datasets (prepare.py controls data, train.py controls transforms)
@@ -561,11 +736,18 @@ def main() -> None:
         )
 
     # Model
-    model = FrozenBackboneWithHead(
-        model_name=MODEL_NAME,
+    model = LCNet(
+        scale=LCNET_SCALE,
+        se_start_block=SE_START_BLOCK,
+        se_reduction=SE_REDUCTION,
+        activation=ACTIVATION,
+        kernel_sizes=KERNEL_SIZES,
         embedding_dim=EMBEDDING_DIM,
         device=str(device),
     ).to(device)
+
+    if USE_PRETRAINED:
+        load_pretrained_lcnet(model, LCNET_SCALE)
 
     # ArcFace head
     arc_margin: ArcMarginProduct | None = None
@@ -588,8 +770,12 @@ def main() -> None:
         backbone_unfrozen = True
 
     # Optimizer with differential LR
-    backbone_params = [p for p in model.backbone.parameters() if p.requires_grad]
-    head_params = list(model.proj.parameters())
+    # Backbone: conv_stem, bn1, blocks (frozen initially, unfrozen at UNFREEZE_EPOCH)
+    # Head: proj, conv_head
+    backbone_params = [p for p in list(model.conv_stem.parameters()) +
+                       list(model.bn1.parameters()) +
+                       list(model.blocks.parameters()) if p.requires_grad]
+    head_params = list(model.proj.parameters()) + list(model.conv_head.parameters()) + list(model.head_act.parameters())
     if arc_margin is not None:
         head_params += list(arc_margin.parameters())
 
@@ -634,8 +820,10 @@ def main() -> None:
             model.unfreeze_last_stage()
             backbone_unfrozen = True
             # Rebuild optimizer with backbone params
-            backbone_params = [p for p in model.backbone.parameters() if p.requires_grad]
-            head_params = list(model.proj.parameters())
+            backbone_params = [p for p in list(model.conv_stem.parameters()) +
+                               list(model.bn1.parameters()) +
+                               list(model.blocks.parameters()) if p.requires_grad]
+            head_params = list(model.proj.parameters()) + list(model.conv_head.parameters()) + list(model.head_act.parameters())
             if arc_margin is not None:
                 head_params += list(arc_margin.parameters())
             optimizer = torch.optim.AdamW(
