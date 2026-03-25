@@ -65,8 +65,8 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **RADIO-01**: RADIOTeacher class supporting all C-RADIO variants with adaptor selection
 - [x] **RADIO-02**: 3 adaptor outputs: backbone, dino_v3, siglip2-g -- agent selects which to distill from
 - [x] **RADIO-03**: Each adaptor's summary features cached with native dim, projection in train.py
-- [ ] **RADIO-04**: Spatial features cached separately with memory-mapped storage
-- [ ] **RADIO-05**: Spatial distillation loss in train.py
+- [x] **RADIO-04**: Spatial features cached separately with memory-mapped storage
+- [x] **RADIO-05**: Spatial distillation loss in train.py
 - [x] **RADIO-06**: `RADIO_VARIANT` and `RADIO_ADAPTORS` as tunable constants
 
 ### DINOv3 Fine-tuned Teacher
@@ -159,8 +159,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RADIO-01 | Phase 8 | Complete |
 | RADIO-02 | Phase 8 | Complete |
 | RADIO-03 | Phase 8 | Complete |
-| RADIO-04 | Phase 8 | Pending |
-| RADIO-05 | Phase 8 | Pending |
+| RADIO-04 | Phase 8 | Complete |
+| RADIO-05 | Phase 8 | Complete |
 | RADIO-06 | Phase 8 | Complete |
 | TRAIN-01 | Phase 9 | Pending |
 | TRAIN-02 | Phase 9 | Pending |

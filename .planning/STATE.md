@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Expanded Search Space
-status: Ready to execute
-stopped_at: Completed 08-01-PLAN.md
-last_updated: "2026-03-25T13:45:12.759Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 08-02-PLAN.md
+last_updated: "2026-03-25T13:54:31.145Z"
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 12
-  completed_plans: 8
+  completed_plans: 9
 ---
 
 # Project State
@@ -50,6 +50,7 @@ Plan: 2 of 2
 | Phase 07 P02 | 3min | 1 tasks | 1 files |
 | Phase 07 P03 | 2min | 2 tasks | 3 files |
 | Phase 08 P01 | 5min | 2 tasks | 2 files |
+| Phase 08 P02 | 5min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -88,6 +89,9 @@ v2.0 decisions:
 - [Phase 08]: RADIO backbone summary_dim=2304 for SO400M (runtime discovered, not hardcoded)
 - [Phase 08]: RADIO teachers use pre-cached embeddings only (no online inference during training)
 - [Phase 08]: Per-adaptor distillation equally weighted within RADIO teacher weight allocation
+- [Phase 08]: On-the-fly spatial extraction instead of disk caching (417GB per adaptor vs 329GB available)
+- [Phase 08]: L2-normalize spatial features before MSE loss to handle scale mismatch
+- [Phase 08]: Reverse ImageNet normalization to [0,1] for RADIO spatial input
 
 ### Pending Todos
 
@@ -102,6 +106,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-25T13:45:12.757Z
-Stopped at: Completed 08-01-PLAN.md
+Last session: 2026-03-25T13:54:31.143Z
+Stopped at: Completed 08-02-PLAN.md
 Resume file: None
