@@ -49,7 +49,7 @@ from torchvision import transforms
 MODEL_NAME = "hf-hub:timm/lcnet_050.ra2_in1k"
 BATCH_SIZE = 256
 ARCFACE_BATCH_SIZE = 128
-LR = 1e-1
+LR = 1e-3
 WEIGHT_DECAY = 1e-5
 NUM_WORKERS = 16
 SEED = 42
@@ -587,7 +587,7 @@ def main() -> None:
     if arc_margin is not None:
         head_params += list(arc_margin.parameters())
 
-    optimizer = torch.optim.SGD(
+    optimizer = torch.optim.AdamW(
         [
             {"params": head_params, "lr": LR},
             {"params": backbone_params, "lr": LR * BACKBONE_LR_MULT},
@@ -626,7 +626,7 @@ def main() -> None:
             head_params = list(model.proj.parameters())
             if arc_margin is not None:
                 head_params += list(arc_margin.parameters())
-            optimizer = torch.optim.SGD(
+            optimizer = torch.optim.AdamW(
                 [
                     {"params": head_params, "lr": LR},
                     {"params": backbone_params, "lr": LR * BACKBONE_LR_MULT},
