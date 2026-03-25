@@ -313,16 +313,361 @@ class DINOv3FTTeacher:
         return [e.cpu().numpy() for e in cls_emb]
 
 
+# ---------------------------------------------------------------------------
+# RADIO Teacher (C-RADIOv4 with adaptor-aware summary caching)
+# ---------------------------------------------------------------------------
+
+RADIO_VERSION_MAP: dict[str, str] = {
+    "so400m": "c-radio_v4-so400m",
+    "h": "c-radio_v4-h",
+}
+
+# Default adaptors available for C-RADIOv4 models
+RADIO_DEFAULT_ADAPTORS = ["backbone", "dino_v3", "siglip2-g"]
+
+
 class RADIOTeacher:
-    """C-RADIO teacher. Stub -- will be implemented in Phase 8."""
+    """C-RADIO teacher with adaptor-aware summary extraction.
 
-    embedding_dim = None  # unknown until Phase 8 runtime verification
+    Loads C-RADIOv4 models (SO400M or H) from local RADIO/ clone via torch.hub.load.
+    Extracts summary features from one or more adaptors (backbone, dino_v3, siglip2-g).
+    Feature dimensions are discovered at init via dummy forward pass (never hardcoded).
 
-    def __init__(self, version: str = "c-radio_v4-so400m", device: str = "cuda", **kwargs) -> None:
-        raise NotImplementedError("RADIOTeacher will be implemented in Phase 8")
+    CRITICAL: Images must be in [0, 1] range. RADIO has its own InputConditioner
+    that applies CLIP normalization internally.
+    """
 
-    def encode_batch(self, images: list[np.ndarray | Image.Image]) -> list[np.ndarray | None]:
-        raise NotImplementedError("RADIOTeacher will be implemented in Phase 8")
+    def __init__(
+        self,
+        variant: str = "so400m",
+        adaptor_names: list[str] | None = None,
+        device: str = "cuda",
+        **kwargs,
+    ) -> None:
+        import torch.nn.functional as F
+        from torchvision.transforms.functional import pil_to_tensor
+
+        if adaptor_names is None:
+            adaptor_names = ["backbone"]
+
+        # Resolve version string
+        if variant in RADIO_VERSION_MAP:
+            version = RADIO_VERSION_MAP[variant]
+        else:
+            # Allow passing raw version string (e.g. "c-radio_v4-so400m")
+            version = variant
+            # Reverse lookup for short name
+            for k, v in RADIO_VERSION_MAP.items():
+                if v == variant:
+                    variant = k
+                    break
+
+        self.variant = variant
+        self.adaptor_names = adaptor_names
+        self.device = device
+
+        # Load non-backbone adaptors for the model
+        hub_adaptor_names = [a for a in adaptor_names if a != "backbone"]
+
+        logger.info(f"RADIOTeacher: loading {version} with adaptors={adaptor_names}...")
+        self.model = torch.hub.load(
+            "RADIO",
+            "radio_model",
+            source="local",
+            version=version,
+            adaptor_names=hub_adaptor_names if hub_adaptor_names else None,
+            progress=True,
+            skip_validation=True,
+        )
+        self.model.to(device).eval()
+        for p in self.model.parameters():
+            p.requires_grad_(False)
+
+        # Discover feature dimensions via dummy forward pass
+        # Images in [0, 1] range -- RADIO's InputConditioner normalizes internally
+        dummy = torch.rand(1, 3, 224, 224, device=device)
+        nearest_res = self.model.get_nearest_supported_resolution(*dummy.shape[-2:])
+        dummy = F.interpolate(dummy, nearest_res, mode="bilinear", align_corners=False)
+
+        with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16):
+            output = self.model(dummy)
+
+        self.feature_dims: dict[str, dict[str, int]] = {}
+
+        if isinstance(output, dict):
+            # Adaptors loaded -- output is dict with "backbone" + adaptor keys
+            for name in adaptor_names:
+                if name in output:
+                    summary, features = output[name]
+                    self.feature_dims[name] = {
+                        "summary_dim": summary.shape[-1],
+                        "spatial_dim": features.shape[-1],
+                        "spatial_tokens": features.shape[1] if features.ndim == 3 else features.shape[2] * features.shape[3],
+                    }
+                else:
+                    logger.warning(f"RADIOTeacher: adaptor '{name}' not found in output keys: {list(output.keys())}")
+        else:
+            # No adaptors loaded -- output is (summary, features) tuple
+            summary, features = output
+            self.feature_dims["backbone"] = {
+                "summary_dim": summary.shape[-1],
+                "spatial_dim": features.shape[-1],
+                "spatial_tokens": features.shape[1] if features.ndim == 3 else features.shape[2] * features.shape[3],
+            }
+
+        # Set embedding_dim to backbone summary dim for registry compatibility
+        self.embedding_dim = self.feature_dims.get("backbone", next(iter(self.feature_dims.values())))["summary_dim"]
+
+        logger.info(f"RADIOTeacher: {version} loaded on {device}")
+        for name, dims in self.feature_dims.items():
+            logger.info(f"  {name}: summary_dim={dims['summary_dim']}, spatial_dim={dims['spatial_dim']}, spatial_tokens={dims['spatial_tokens']}")
+
+    def get_feature_dim(self, adaptor: str = "backbone") -> int:
+        """Return summary dimension for the given adaptor."""
+        return self.feature_dims[adaptor]["summary_dim"]
+
+    @torch.no_grad()
+    def encode_batch(
+        self,
+        images: list[np.ndarray | Image.Image],
+        adaptor: str = "backbone",
+    ) -> list[np.ndarray | None]:
+        """Encode a batch of images and return summary features for one adaptor.
+
+        Images are converted to [0, 1] range tensors. RADIO's InputConditioner
+        handles normalization internally.
+        """
+        if not images:
+            return []
+        result = self.encode_batch_all_adaptors(images)
+        return result.get(adaptor, [None] * len(images))
+
+    @torch.no_grad()
+    def encode_batch_all_adaptors(
+        self,
+        images: list[np.ndarray | Image.Image],
+    ) -> dict[str, list[np.ndarray | None]]:
+        """Encode a batch and return ALL loaded adaptors' summaries in one forward pass.
+
+        Returns dict mapping adaptor_name -> list of numpy summary arrays (float32).
+        """
+        import torch.nn.functional as F
+        from torchvision.transforms.functional import pil_to_tensor
+
+        if not images:
+            return {name: [] for name in self.adaptor_names}
+
+        try:
+            # Convert images to [0, 1] range tensors
+            tensors = []
+            for img in images:
+                if isinstance(img, np.ndarray):
+                    img = Image.fromarray(img)
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                # PadToSquare then resize BEFORE converting to tensor
+                img = PadToSquare()(img)
+                img = img.resize((224, 224), Image.Resampling.BILINEAR)
+                # pil_to_tensor gives [0, 255] uint8 -> div by 255 for [0, 1]
+                t = pil_to_tensor(img).float().div_(255.0)
+                tensors.append(t)
+
+            batch = torch.stack(tensors).to(self.device)
+
+            # Adjust to nearest supported resolution
+            nearest_res = self.model.get_nearest_supported_resolution(*batch.shape[-2:])
+            if nearest_res != (batch.shape[-2], batch.shape[-1]):
+                batch = F.interpolate(batch, nearest_res, mode="bilinear", align_corners=False)
+
+            with torch.autocast(self.device, dtype=torch.bfloat16):
+                output = self.model(batch)
+
+            results: dict[str, list[np.ndarray | None]] = {}
+
+            if isinstance(output, dict):
+                for name in self.adaptor_names:
+                    if name in output:
+                        summary, _features = output[name]
+                        summary = summary.float().cpu().numpy()
+                        results[name] = [summary[i] for i in range(len(images))]
+                    else:
+                        results[name] = [None] * len(images)
+            else:
+                summary, _features = output
+                summary = summary.float().cpu().numpy()
+                results["backbone"] = [summary[i] for i in range(len(images))]
+
+            return results
+
+        except Exception as e:
+            logger.error(f"RADIOTeacher.encode_batch_all_adaptors error: {e}")
+            return {name: [None] * len(images) for name in self.adaptor_names}
+
+
+def build_radio_summary_cache(
+    variant: str,
+    adaptor_names: list[str],
+    image_paths: list[str],
+    cache_base: str,
+    batch_size: int = 32,
+    device: str = "cuda",
+) -> dict[str, int]:
+    """Build per-sample .npy summary caches for RADIO adaptors.
+
+    Creates cache directories: {cache_base}/radio_{variant}/{adaptor}/
+    Each adaptor dir gets a metadata.json and per-sample {md5_hash}.npy files.
+    Skips already-cached samples. Returns dict of adaptor -> summary_dim.
+
+    Args:
+        variant: "so400m" or "h"
+        adaptor_names: List of adaptor names (e.g. ["backbone", "dino_v3", "siglip2-g"])
+        image_paths: List of image file paths to cache
+        cache_base: Base directory for caches (e.g. "workspace/output/teacher_cache")
+        batch_size: Inference batch size
+        device: torch device
+
+    Returns:
+        Dict mapping adaptor name to summary dimension.
+    """
+    import gc
+    import json
+    from datetime import datetime
+
+    teacher = RADIOTeacher(variant=variant, adaptor_names=adaptor_names, device=device)
+
+    # Create cache dirs and check which samples need caching per adaptor
+    cache_dirs: dict[str, Path] = {}
+    uncached_per_adaptor: dict[str, set[int]] = {}
+
+    for adaptor in adaptor_names:
+        cache_dir = Path(cache_base) / f"radio_{variant}" / adaptor
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_dirs[adaptor] = cache_dir
+
+        # Find uncached samples
+        uncached = set()
+        for i, path in enumerate(image_paths):
+            npy_name = f"{hashlib.md5(path.encode()).hexdigest()}.npy"
+            if not (cache_dir / npy_name).exists():
+                uncached.add(i)
+        uncached_per_adaptor[adaptor] = uncached
+
+    # Union of all uncached indices (process once, save to all adaptors)
+    all_uncached = sorted(set().union(*uncached_per_adaptor.values()))
+    logger.info(
+        f"build_radio_summary_cache: {len(all_uncached)}/{len(image_paths)} samples need caching "
+        f"for {len(adaptor_names)} adaptors"
+    )
+
+    if all_uncached:
+        for start in range(0, len(all_uncached), batch_size):
+            batch_indices = all_uncached[start : start + batch_size]
+            batch_images = []
+            for idx in batch_indices:
+                try:
+                    img = Image.open(image_paths[idx]).convert("RGB")
+                    batch_images.append(img)
+                except Exception as e:
+                    logger.warning(f"Failed to open {image_paths[idx]}: {e}")
+                    batch_images.append(None)
+
+            # Filter out failed images
+            valid_mask = [img is not None for img in batch_images]
+            valid_images = [img for img in batch_images if img is not None]
+
+            if valid_images:
+                all_summaries = teacher.encode_batch_all_adaptors(valid_images)
+
+                valid_j = 0
+                for batch_j, idx in enumerate(batch_indices):
+                    if not valid_mask[batch_j]:
+                        continue
+                    npy_name = f"{hashlib.md5(image_paths[idx].encode()).hexdigest()}.npy"
+                    for adaptor in adaptor_names:
+                        if idx in uncached_per_adaptor[adaptor]:
+                            emb = all_summaries[adaptor][valid_j]
+                            if emb is not None:
+                                np.save(cache_dirs[adaptor] / npy_name, emb.astype(np.float32))
+                    valid_j += 1
+
+            if (start // batch_size) % 100 == 0 and start > 0:
+                logger.info(f"  radio_{variant}: {min(start + batch_size, len(all_uncached))}/{len(all_uncached)}")
+
+    # Write metadata.json for each adaptor
+    dims: dict[str, int] = {}
+    for adaptor in adaptor_names:
+        cache_dir = cache_dirs[adaptor]
+        npy_count = len(list(cache_dir.glob("*.npy")))
+        adaptor_dims = teacher.feature_dims[adaptor]
+        dims[adaptor] = adaptor_dims["summary_dim"]
+
+        metadata = {
+            "model_version": RADIO_VERSION_MAP.get(variant, variant),
+            "adaptor_name": adaptor,
+            "summary_dim": adaptor_dims["summary_dim"],
+            "spatial_dim": adaptor_dims["spatial_dim"],
+            "spatial_tokens": adaptor_dims["spatial_tokens"],
+            "num_samples": npy_count,
+            "cache_date": datetime.utcnow().isoformat(),
+        }
+        with open(cache_dir / "metadata.json", "w") as f:
+            json.dump(metadata, f, indent=2)
+        logger.info(f"  {adaptor}: {npy_count} cached, summary_dim={adaptor_dims['summary_dim']}")
+
+    # Cleanup GPU
+    del teacher
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    return dims
+
+
+def load_radio_teacher_embeddings(
+    image_paths: Sequence[str],
+    adaptor: str,
+    cache_dir: str,
+    device: torch.device,
+) -> torch.Tensor:
+    """Load pre-cached RADIO summary embeddings from per-adaptor cache directory.
+
+    Uses per-teacher memory cache keyed by "radio:{adaptor}:{path}" to avoid
+    collisions with other teachers.
+
+    Args:
+        image_paths: Sequence of image file paths
+        adaptor: Adaptor name (e.g. "backbone", "dino_v3", "siglip2-g")
+        cache_dir: Path to adaptor's cache directory (e.g. ".../radio_so400m/backbone/")
+        device: Target device for output tensor
+
+    Returns:
+        Tensor of shape [N, summary_dim] on the specified device.
+    """
+    cache_key = f"radio:{adaptor}"
+    if cache_key not in _TEACHER_MEM_CACHES:
+        _TEACHER_MEM_CACHES[cache_key] = {}
+    mem_cache = _TEACHER_MEM_CACHES[cache_key]
+
+    cache_path = Path(cache_dir)
+    embeddings: list[np.ndarray] = []
+
+    for path in image_paths:
+        if path in mem_cache:
+            embeddings.append(mem_cache[path])
+            continue
+
+        npy_name = f"{hashlib.md5(path.encode()).hexdigest()}.npy"
+        npy_path = cache_path / npy_name
+        if npy_path.exists():
+            emb = np.load(npy_path)
+            mem_cache[path] = emb
+            embeddings.append(emb)
+        else:
+            raise FileNotFoundError(
+                f"RADIO cache miss: {npy_path} not found. "
+                f"Run build_radio_summary_cache first."
+            )
+
+    return torch.tensor(np.stack(embeddings), device=device, dtype=torch.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -350,15 +695,15 @@ TEACHER_REGISTRY: dict[str, dict] = {
     },
     "radio_so400m": {
         "class": RADIOTeacher,
-        "embedding_dim": None,  # determined at init time per Phase 8
+        "embedding_dim": None,  # determined at init time -- read from metadata.json
         "cache_dir": "workspace/output/teacher_cache/radio_so400m",
-        "init_kwargs": {"version": "c-radio_v4-so400m"},
+        "init_kwargs": {"variant": "so400m"},
     },
     "radio_h": {
         "class": RADIOTeacher,
-        "embedding_dim": None,
+        "embedding_dim": None,  # determined at init time -- read from metadata.json
         "cache_dir": "workspace/output/teacher_cache/radio_h",
-        "init_kwargs": {"version": "c-radio_v4-h"},
+        "init_kwargs": {"variant": "h"},
     },
 }
 
