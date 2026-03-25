@@ -58,8 +58,8 @@ Plans:
 
 - [ ] **Phase 5: SSL + Custom LCNet** - Add InfoNCE contrastive loss and custom LCNet backbone with agent-tunable architecture (zero prepare.py changes)
 - [ ] **Phase 6: Multi-Teacher Infrastructure** - Expand prepare.py to support 5+ teachers with independent caches and multi-teacher combos
-- [ ] **Phase 7: DINOv3 Fine-tune** - Fine-tune DINOv3 ViT-g on product dataset using autoresearch pattern (separate sub-project)
-- [ ] **Phase 8: RADIO Integration** - Add RADIO teacher with adaptor selection, summary caching, and on-the-fly spatial distillation
+- [ ] **Phase 7: DINOv3 Fine-tune** - Fine-tune DINOv3 ViT-H+ (840M) on product dataset using autoresearch pattern (separate sub-project)
+- [ ] **Phase 8: RADIO Integration** - Add RADIO teacher with adaptor selection and spatial distillation via memory-mapped cache
 - [ ] **Phase 9: RADIO Training Techniques + Wrap-up** - Implement RADIO-inspired training techniques and update program.md with expanded search space
 
 ## Phase Details
@@ -91,29 +91,30 @@ Plans:
 - [ ] 06-02-PLAN.md -- TEACHER/TEACHERS constants and multi-teacher training loop in train.py
 
 ### Phase 7: DINOv3 Fine-tune
-**Goal**: A DINOv3 ViT-g model is fine-tuned on the product dataset using its own autoresearch loop, producing a teacher checkpoint that integrates into the main system
+**Goal**: A DINOv3 ViT-H+ (840M) model is fine-tuned on the product dataset using its own autoresearch loop, producing a teacher checkpoint that integrates into the main system
 **Depends on**: Phase 6 (multi-teacher infra to integrate the result)
 **Requirements**: DINO3-01, DINO3-02, DINO3-03, DINO3-04
 **Success Criteria** (what must be TRUE):
-  1. A separate autoresearch sub-project exists (prepare_dino.py + train_dino.py) that fine-tunes DINOv3 ViT-g 1.1B with LoRA on the product dataset within RTX 4090 VRAM
+  1. A separate autoresearch sub-project exists (prepare_dino.py + train_dino.py + program_dino.md) that fine-tunes DINOv3 ViT-H+ 840M with LoRA on the product dataset within RTX 4090 VRAM
   2. The fine-tuned DINOv3 model is exported to a format loadable by the main system's teacher infrastructure
   3. DINOv3-ft embeddings are cached to disk like other teachers and produce valid cosine similarities with student embeddings
-**Plans**: TBD
+**Plans:** 3 plans
+Plans:
+- [ ] 07-01-PLAN.md -- Create dino_finetune/ sub-project (prepare_dino.py + train_dino.py)
+- [ ] 07-02-PLAN.md -- Create program_dino.md agent instructions
+- [ ] 07-03-PLAN.md -- Integrate DINOv3FTTeacher into main prepare.py + add peft dependency
 
 ### Phase 8: RADIO Integration
-**Goal**: RADIO models are fully integrated as teachers with adaptor selection, summary feature caching, and spatial distillation loss -- all agent-tunable
+**Goal**: RADIO models are fully integrated as teachers with adaptor selection, spatial feature caching, and spatial distillation loss -- all agent-tunable
 **Depends on**: Phase 5 (LCNet spatial features), Phase 6 (multi-teacher infra)
 **Requirements**: RADIO-01, RADIO-02, RADIO-03, RADIO-04, RADIO-05, RADIO-06
 **Success Criteria** (what must be TRUE):
   1. A RADIOTeacher class supports both C-RADIOv4-SO400M and C-RADIOv4-H, with 3 adaptor outputs (backbone, dino_v3, siglip2-g) selectable at init time
   2. Each adaptor's summary features are cached with native dimension, and projection to student dimension happens in train.py (not in the cache)
-  3. Spatial features are computed on-the-fly during training (full spatial caching infeasible: ~417GB per adaptor vs 329GB disk available), enabling spatial distillation without disk exhaustion
-  4. train.py includes a spatial distillation loss that aligns student spatial features (from custom LCNet) with teacher spatial features (from on-the-fly RADIO inference)
+  3. Spatial features are cached separately using memory-mapped storage (.npy), enabling spatial distillation without re-running RADIO inference
+  4. train.py includes a spatial distillation loss that aligns student spatial features (from custom LCNet) with teacher spatial features (from RADIO cache)
   5. `RADIO_VARIANT` and `RADIO_ADAPTORS` are module-level constants in train.py that the agent can tune
-**Plans:** 2 plans
-Plans:
-- [ ] 08-01-PLAN.md -- RADIOTeacher class with adaptor-aware summary caching
-- [ ] 08-02-PLAN.md -- Spatial distillation with on-the-fly RADIO inference
+**Plans**: TBD
 
 ### Phase 9: RADIO Training Techniques + Wrap-up
 **Goal**: RADIO-inspired training techniques are available as agent-tunable options, and program.md is updated with the full v2.0 search space documentation
@@ -140,6 +141,6 @@ Phases execute in numeric order: 5 -> 6 -> 7 -> 8 -> 9
 | 4. Validation | v1.0 | 2/2 | Complete | - |
 | 5. SSL + Custom LCNet | v2.0 | 0/? | Not started | - |
 | 6. Multi-Teacher Infrastructure | v2.0 | 0/2 | Planned | - |
-| 7. DINOv3 Fine-tune | v2.0 | 0/? | Not started | - |
-| 8. RADIO Integration | v2.0 | 0/2 | Planned | - |
+| 7. DINOv3 Fine-tune | v2.0 | 0/3 | Planned | - |
+| 8. RADIO Integration | v2.0 | 0/? | Not started | - |
 | 9. RADIO Training Techniques + Wrap-up | v2.0 | 0/? | Not started | - |
