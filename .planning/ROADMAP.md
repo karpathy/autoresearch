@@ -129,7 +129,11 @@ Plans:
   3. Per-teacher adaptor MLP v2 (LayerNorm+GELU+residual) replaces simple linear projection when enabled, and FeatSharp is implemented (deferred if VRAM-constrained)
   4. Shift Equivariant Loss for spatial distillation is implemented and toggleable
   5. program.md documents the full v2.0 search space (5 teachers, SSL, custom LCNet params, RADIO adaptors, all training techniques) with prioritized experiment strategy, and the evaluation metric remains unchanged (trust boundary preserved)
-**Plans**: TBD
+**Plans:** 3 plans
+Plans:
+- [ ] 09-01-PLAN.md -- Feature processing modules (PHI-S, Feature Normalizer, Adaptor MLP v2)
+- [ ] 09-02-PLAN.md -- Loss functions (L_angle, Hybrid Loss, FeatSharp, Shift Equivariant)
+- [ ] 09-03-PLAN.md -- Wire techniques into training loop + rewrite program.md for v2.0
 
 ## Progress
 
@@ -146,4 +150,4 @@ Phases execute in numeric order: 5 -> 6 -> 7 -> 8 -> 9
 | 6. Multi-Teacher Infrastructure | v2.0 | 0/2 | Planned | - |
 | 7. DINOv3 Fine-tune | v2.0 | 0/3 | Planned | - |
 | 8. RADIO Integration | v2.0 | 0/? | Not started | - |
-| 9. RADIO Training Techniques + Wrap-up | v2.0 | 0/? | Not started | - |
+| 9. RADIO Training Techniques + Wrap-up | v2.0 | 0/3 | Planned | - |
