@@ -611,6 +611,12 @@ def main() -> None:
     # Training state
     wl_centroid_ema: dict = {"centroid": None}
 
+    # SWA: accumulate model weights from last SWA_EPOCHS epochs
+    SWA_EPOCHS = 3
+    swa_start = EPOCHS - SWA_EPOCHS
+    swa_state: dict | None = None
+    swa_count = 0
+
     # Training loop (fixed epoch budget)
     t_start = time.time()
     recall_at_1 = 0.0
@@ -682,6 +688,17 @@ def main() -> None:
             f"{elapsed_epoch:.1f}s"
         )
 
+        # SWA: accumulate weights from last N epochs
+        if epoch >= swa_start:
+            sd = {k: v.clone() for k, v in model.state_dict().items()}
+            if swa_state is None:
+                swa_state = sd
+            else:
+                for k in swa_state:
+                    swa_state[k] += sd[k]
+            swa_count += 1
+            logger.info(f"  SWA: accumulated epoch {epoch+1} ({swa_count}/{SWA_EPOCHS})")
+
         # Retrieval evaluation
         recall_at_1 = 0.0
         recall_at_5 = 0.0
@@ -707,6 +724,40 @@ def main() -> None:
 
         combined = compute_combined_metric(recall_at_1, mean_cos)
         logger.info(f"  Combined metric: {combined:.6f}")
+
+    # Apply SWA averaged weights and re-evaluate
+    if swa_state is not None and swa_count > 0:
+        logger.info(f"Applying SWA weights (averaged over {swa_count} epochs)...")
+        for k in swa_state:
+            swa_state[k] /= swa_count
+        model.load_state_dict(swa_state)
+
+        # Re-evaluate with SWA weights
+        if val_dataset is not None:
+            # Get mean_cosine from a quick forward pass on distill data
+            model.eval()
+            cos_sum, cos_n = 0.0, 0
+            with torch.no_grad():
+                for images, labels, paths in distill_loader:
+                    images = images.to(device, non_blocking=True)
+                    teacher_emb = load_teacher_embeddings(paths, teacher, device, TEACHER_CACHE_DIR)
+                    student_emb = model.encode(images)
+                    teacher_emb = teacher_emb.to(device=device, dtype=student_emb.dtype)
+                    cos = functional.cosine_similarity(student_emb, teacher_emb, dim=1)
+                    cos_sum += cos.sum().item()
+                    cos_n += len(cos)
+            mean_cos = cos_sum / max(cos_n, 1)
+
+            retrieval_metrics = run_retrieval_eval(
+                model=model, dataset=val_dataset, device=device,
+                amp=(device.type == "cuda"), max_samples=RETRIEVAL_MAX_SAMPLES,
+                topk=RETRIEVAL_TOPK, seed=SEED, batch_size=BATCH_SIZE,
+                num_workers=NUM_WORKERS,
+            )
+            recall_at_1 = retrieval_metrics["recall@1"]
+            recall_at_5 = retrieval_metrics.get(f"recall@{RETRIEVAL_TOPK}", 0.0)
+            combined = compute_combined_metric(recall_at_1, mean_cos)
+            logger.info(f"SWA: recall@1={recall_at_1:.4f} mean_cos={mean_cos:.4f} combined={combined:.6f}")
 
     # Save model checkpoint
     ckpt = {
