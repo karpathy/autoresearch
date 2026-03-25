@@ -1,0 +1,9 @@
+loguru
+numpy
+onnxruntime-gpu>=1.17,<1.20
+Pillow
+timm
+torch
+torchvision
+transformers
+matplotlib
