@@ -49,10 +49,10 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **SSL-03**: `SSL_WEIGHT` is a module-level constant agent can tune
 
 ### Custom LCNet Backbone
-- [ ] **LCNET-01**: Custom LCNet backbone in train.py replacing timm, `.encode()` contract preserved
-- [ ] **LCNET-02**: Agent can tune LCNET_SCALE, SE_START_BLOCK, SE_REDUCTION, kernel sizes, ACTIVATION
-- [ ] **LCNET-03**: Optional timm pretrained weight initialization
-- [ ] **LCNET-04**: Exposes pre-GAP spatial features for RADIO spatial distillation
+- [x] **LCNET-01**: Custom LCNet backbone in train.py replacing timm, `.encode()` contract preserved
+- [x] **LCNET-02**: Agent can tune LCNET_SCALE, SE_START_BLOCK, SE_REDUCTION, kernel sizes, ACTIVATION
+- [x] **LCNET-03**: Optional timm pretrained weight initialization
+- [x] **LCNET-04**: Exposes pre-GAP spatial features for RADIO spatial distillation
 
 ### Multi-Teacher Infrastructure
 - [ ] **TEACH-01**: prepare.py supports 5+ teachers: Trendyol ONNX, DINOv2, DINOv3-ft, all C-RADIO variants
@@ -86,7 +86,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Updated Infrastructure
 - [ ] **INFRA-08**: program.md updated with expanded search space
-- [ ] **INFRA-09**: `einops` added to pyproject.toml
+- [x] **INFRA-09**: `einops` added to pyproject.toml
 - [ ] **INFRA-10**: Evaluation metric unchanged -- trust boundary preserved
 
 ## v3 Requirements (Deferred)
@@ -142,11 +142,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SSL-01 | Phase 5 | Pending |
 | SSL-02 | Phase 5 | Pending |
 | SSL-03 | Phase 5 | Pending |
-| LCNET-01 | Phase 5 | Pending |
-| LCNET-02 | Phase 5 | Pending |
-| LCNET-03 | Phase 5 | Pending |
-| LCNET-04 | Phase 5 | Pending |
-| INFRA-09 | Phase 5 | Pending |
+| LCNET-01 | Phase 5 | Complete |
+| LCNET-02 | Phase 5 | Complete |
+| LCNET-03 | Phase 5 | Complete |
+| LCNET-04 | Phase 5 | Complete |
+| INFRA-09 | Phase 5 | Complete |
 | TEACH-01 | Phase 6 | Pending |
 | TEACH-02 | Phase 6 | Pending |
 | TEACH-03 | Phase 6 | Pending |

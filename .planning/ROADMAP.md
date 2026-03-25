@@ -76,7 +76,7 @@ Plans:
   5. `einops` is added to pyproject.toml and importable
 **Plans:** 2 plans
 Plans:
-- [ ] 05-01-PLAN.md -- Custom LCNet backbone with tunable architecture + einops dependency
+- [x] 05-01-PLAN.md -- Custom LCNet backbone with tunable architecture + einops dependency
 - [ ] 05-02-PLAN.md -- SSL InfoNCE contrastive loss with projection head and training loop integration
 
 ### Phase 6: Multi-Teacher Infrastructure
