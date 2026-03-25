@@ -77,7 +77,7 @@ Plans:
 **Plans:** 2 plans
 Plans:
 - [x] 05-01-PLAN.md -- Custom LCNet backbone with tunable architecture + einops dependency
-- [ ] 05-02-PLAN.md -- SSL InfoNCE contrastive loss with projection head and training loop integration
+- [x] 05-02-PLAN.md -- SSL InfoNCE contrastive loss with projection head and training loop integration
 
 ### Phase 6: Multi-Teacher Infrastructure
 **Goal**: prepare.py supports 5+ teachers with independent caches, and the agent can select which teacher(s) to distill from via module-level constants in train.py

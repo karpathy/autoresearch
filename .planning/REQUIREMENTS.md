@@ -44,9 +44,9 @@ Requirements for initial release. Each maps to roadmap phases.
 ## v2 Requirements -- Expanded Search Space
 
 ### SSL Contrastive Loss
-- [ ] **SSL-01**: train.py includes InfoNCE contrastive loss
-- [ ] **SSL-02**: SSL uses a separate projection head
-- [ ] **SSL-03**: `SSL_WEIGHT` is a module-level constant agent can tune
+- [x] **SSL-01**: train.py includes InfoNCE contrastive loss
+- [x] **SSL-02**: SSL uses a separate projection head
+- [x] **SSL-03**: `SSL_WEIGHT` is a module-level constant agent can tune
 
 ### Custom LCNet Backbone
 - [x] **LCNET-01**: Custom LCNet backbone in train.py replacing timm, `.encode()` contract preserved
@@ -139,9 +139,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VALD-01 | Phase 4 | Complete |
 | VALD-02 | Phase 4 | Complete |
 | VALD-03 | Phase 4 | Complete |
-| SSL-01 | Phase 5 | Pending |
-| SSL-02 | Phase 5 | Pending |
-| SSL-03 | Phase 5 | Pending |
+| SSL-01 | Phase 5 | Complete |
+| SSL-02 | Phase 5 | Complete |
+| SSL-03 | Phase 5 | Complete |
 | LCNET-01 | Phase 5 | Complete |
 | LCNET-02 | Phase 5 | Complete |
 | LCNET-03 | Phase 5 | Complete |
