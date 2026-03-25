@@ -10,11 +10,13 @@ dependencies = [
     "matplotlib>=3.10.8",
     "numpy>=2.2.6",
     "pandas>=2.3.3",
+    "peft>=0.12.0",
     "pyarrow>=21.0.0",
     "requests>=2.32.0",
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
     "torch==2.9.1",
+    "transformers>=4.45.0",
 ]
 
 [tool.uv.sources]
