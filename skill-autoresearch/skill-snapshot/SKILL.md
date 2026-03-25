@@ -95,14 +95,13 @@ Categorize all recommendations into exactly three named groups. **All three grou
 
 Generate a polished, standalone HTML file following the template in `references/output-template.html`. The report should be professional enough for client-facing delivery.
 
-**Report structure (all 7 sections are required):**
-1. Executive Summary — one-paragraph diagnosis with root cause classification badge
-2. Key Metrics Snapshot — top-line KPI tiles/cards (e.g., current lead volume, win rate, impression share, CPA) shown as a distinct visual section
-3. Campaign Trend Dashboard — monthly metrics table with baseline comparisons and gap indicators
-4. Source Performance Matrix — source-by-source breakdown with problem classification and current vs. recommended bids
-5. Market Position Map — effective bids plotted against RightPricing positions (when data available; if RightPricing is missing, show a gap callout)
-6. Recommendations Table — prioritized by impact, categorized into bid adjustments (base bid and/or multiplier changes), investigations, and hold-steady
-7. Methodology Notes — brief explanation of the analysis framework for client transparency
+**Report structure:**
+1. Executive Summary — one-paragraph diagnosis with root cause classification
+2. Campaign Trend Dashboard — monthly metrics table with baseline comparisons and gap indicators
+3. Source Performance Matrix — source-by-source breakdown with problem classification and current vs. recommended bids
+4. Market Position Map — effective bids plotted against RightPricing positions (when data available)
+5. Recommendations Table — prioritized by impact, categorized into bid adjustments (base bid and/or multiplier changes), investigations, and hold-steady
+6. Methodology Notes — brief explanation of the analysis framework for client transparency
 
 **Styling:**
 - GOAL brand blue (#0479DF) as primary accent
