@@ -72,8 +72,8 @@ Requirements for initial release. Each maps to roadmap phases.
 ### DINOv3 Fine-tuned Teacher
 - [x] **DINO3-01**: Fine-tune largest DINO variant fitting RTX 4090 (ViT-g 1.1B + LoRA) on product dataset
 - [x] **DINO3-02**: Uses autoresearch pattern (prepare_dino.py + train_dino.py)
-- [ ] **DINO3-03**: Fine-tuned model exported and integrated as teacher
-- [ ] **DINO3-04**: Embeddings cached to disk like other teachers
+- [x] **DINO3-03**: Fine-tuned model exported and integrated as teacher
+- [x] **DINO3-04**: Embeddings cached to disk like other teachers
 
 ### RADIO Training Techniques
 - [ ] **TRAIN-01**: PHI-S distribution balancing (Hadamard isotropic standardization)
@@ -154,8 +154,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TEACH-05 | Phase 6 | Complete |
 | DINO3-01 | Phase 7 | Complete |
 | DINO3-02 | Phase 7 | Complete |
-| DINO3-03 | Phase 7 | Pending |
-| DINO3-04 | Phase 7 | Pending |
+| DINO3-03 | Phase 7 | Complete |
+| DINO3-04 | Phase 7 | Complete |
 | RADIO-01 | Phase 8 | Pending |
 | RADIO-02 | Phase 8 | Pending |
 | RADIO-03 | Phase 8 | Pending |
