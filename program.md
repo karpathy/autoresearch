@@ -112,3 +112,24 @@ The idea is that you are a completely autonomous researcher trying things out. I
 **NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
 
 As an example use case, a user might leave you running while they sleep. If each experiment takes you ~5 minutes then you can run approx 12/hour, for a total of about 100 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
+
+## Meta-Research
+
+Every 20 experiments, pause before proposing the next hypothesis and run a strategy review. The goal: avoid repeating mistakes from the last 20 experiments, and let your research strategy evolve based on what you have learned.
+
+**Review procedure:**
+
+1. **Identify dead-ends.** Scan `results.tsv` for hypothesis classes that appear as `discard` or `crash` three or more times (e.g. "increased FFN ratio", "switched to GeLU"). Append each to `hypotheses_blacklist.md` with a one-line reason. This file is untracked, like `results.tsv`.
+
+2. **Assess phase productivity.** Group your recent experiments into rough categories (architecture, optimizer, regularization, data pipeline, etc). Which category last produced a `keep`? If a category has 5+ consecutive discards, deprioritize it for the next batch.
+
+3. **Update your approach.** Based on (1) and (2), write one sentence describing what you will focus on next and why. You do not need to record this anywhere. It is for your own planning.
+
+**Constraints (do not violate):**
+
+- Never modify `evaluate_bpb` in `prepare.py`. The evaluation metric is fixed.
+- Never change the 5-minute wall-clock training budget.
+- The blacklist only informs your hypothesis generation. It does not invalidate previous `keep` results.
+- If the blacklist is growing fast and few productive directions remain, that is useful signal. You may be near the limits of what this architecture can achieve in 5 minutes. Try more radical changes or combinations of previous near-misses.
+
+The principle: optimize not only `train.py` but also how you decide what to try next. The evaluation stays fixed. The research strategy evolves.
