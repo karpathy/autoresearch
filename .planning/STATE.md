@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Expanded Search Space
-status: Ready to execute
-stopped_at: Completed 09-01-PLAN.md
-last_updated: "2026-03-26T01:52:28.126Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 09-03-PLAN.md
+last_updated: "2026-03-26T02:09:42.907Z"
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 12
-  completed_plans: 10
+  completed_plans: 12
 ---
 
 # Project State
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-03-25)
 ## Current Position
 
 Phase: 9 (RADIO Training Techniques + Wrap-up) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 
 ## Performance Metrics
 
@@ -52,6 +52,8 @@ Plan: 2 of 3
 | Phase 08 P01 | 5min | 2 tasks | 2 files |
 | Phase 08 P02 | 5min | 2 tasks | 2 files |
 | Phase 09 P01 | 2min | 3 tasks | 1 files |
+| Phase 09 P02 | 3min | 2 tasks | 1 files |
+| Phase 09 P03 | 7min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -95,6 +97,9 @@ v2.0 decisions:
 - [Phase 08]: Reverse ImageNet normalization to [0,1] for RADIO spatial input
 - [Phase 09]: FeatureNormalizer warmup set to 200 batches (~1 epoch for 50k/256)
 - [Phase 09]: All RADIO technique modules placed in MODEL section with ENABLE_* toggle pattern
+- [Phase 09]: L_angle, Hybrid Loss, FeatSharp, Shift Equivariant Loss implemented as standalone ENABLE-gated components in train.py
+- [Phase 09]: Technique objects passed to run_train_epoch via optional None-default params for backward compatibility
+- [Phase 09]: program.md v2.0 rewritten with 7-phase experiment playbook (A-G) covering full expanded search space
 
 ### Pending Todos
 
@@ -109,6 +114,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-26T01:52:28.123Z
-Stopped at: Completed 09-01-PLAN.md
+Last session: 2026-03-26T02:09:42.905Z
+Stopped at: Completed 09-03-PLAN.md
 Resume file: None

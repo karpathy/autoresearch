@@ -78,16 +78,16 @@ Requirements for initial release. Each maps to roadmap phases.
 ### RADIO Training Techniques
 - [x] **TRAIN-01**: PHI-S distribution balancing (Hadamard isotropic standardization)
 - [x] **TRAIN-02**: Feature Normalizer (per-teacher whitening + rotation)
-- [ ] **TRAIN-03**: Balanced Summary Loss L_angle (normalize by angular dispersion)
-- [ ] **TRAIN-04**: Hybrid Loss (0.9*cosine + 0.1*smooth-L1 for spatial features)
+- [x] **TRAIN-03**: Balanced Summary Loss L_angle (normalize by angular dispersion)
+- [x] **TRAIN-04**: Hybrid Loss (0.9*cosine + 0.1*smooth-L1 for spatial features)
 - [x] **TRAIN-05**: Per-teacher adaptor MLP v2 (LayerNorm+GELU+residual)
-- [ ] **TRAIN-06**: FeatSharp spatial feature sharpening (deferred if VRAM-constrained)
-- [ ] **TRAIN-07**: Shift Equivariant Loss for spatial distillation
+- [x] **TRAIN-06**: FeatSharp spatial feature sharpening (deferred if VRAM-constrained)
+- [x] **TRAIN-07**: Shift Equivariant Loss for spatial distillation
 
 ### Updated Infrastructure
-- [ ] **INFRA-08**: program.md updated with expanded search space
+- [x] **INFRA-08**: program.md updated with expanded search space
 - [x] **INFRA-09**: `einops` added to pyproject.toml
-- [ ] **INFRA-10**: Evaluation metric unchanged -- trust boundary preserved
+- [x] **INFRA-10**: Evaluation metric unchanged -- trust boundary preserved
 
 ## v3 Requirements (Deferred)
 
@@ -164,13 +164,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RADIO-06 | Phase 8 | Complete |
 | TRAIN-01 | Phase 9 | Complete |
 | TRAIN-02 | Phase 9 | Complete |
-| TRAIN-03 | Phase 9 | Pending |
-| TRAIN-04 | Phase 9 | Pending |
+| TRAIN-03 | Phase 9 | Complete |
+| TRAIN-04 | Phase 9 | Complete |
 | TRAIN-05 | Phase 9 | Complete |
-| TRAIN-06 | Phase 9 | Pending |
-| TRAIN-07 | Phase 9 | Pending |
-| INFRA-08 | Phase 9 | Pending |
-| INFRA-10 | Phase 9 | Pending |
+| TRAIN-06 | Phase 9 | Complete |
+| TRAIN-07 | Phase 9 | Complete |
+| INFRA-08 | Phase 9 | Complete |
+| INFRA-10 | Phase 9 | Complete |
 
 **Coverage:**
 - v1 requirements: 22 total (all complete)

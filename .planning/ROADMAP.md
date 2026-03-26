@@ -60,7 +60,7 @@ Plans:
 - [x] **Phase 6: Multi-Teacher Infrastructure** - Expand prepare.py to support 5+ teachers with independent caches and multi-teacher combos (completed 2026-03-25)
 - [x] **Phase 7: DINOv3 Fine-tune** - Fine-tune DINOv3 ViT-H+ (840M) on product dataset using autoresearch pattern (separate sub-project) (completed 2026-03-25)
 - [x] **Phase 8: RADIO Integration** - Add RADIO teacher with adaptor selection and spatial distillation via memory-mapped cache (completed 2026-03-25)
-- [ ] **Phase 9: RADIO Training Techniques + Wrap-up** - Implement RADIO-inspired training techniques and update program.md with expanded search space
+- [x] **Phase 9: RADIO Training Techniques + Wrap-up** - Implement RADIO-inspired training techniques and update program.md with expanded search space (completed 2026-03-26)
 
 ## Phase Details
 
@@ -129,11 +129,11 @@ Plans:
   3. Per-teacher adaptor MLP v2 (LayerNorm+GELU+residual) replaces simple linear projection when enabled, and FeatSharp is implemented (deferred if VRAM-constrained)
   4. Shift Equivariant Loss for spatial distillation is implemented and toggleable
   5. program.md documents the full v2.0 search space (5 teachers, SSL, custom LCNet params, RADIO adaptors, all training techniques) with prioritized experiment strategy, and the evaluation metric remains unchanged (trust boundary preserved)
-**Plans:** 1/3 plans executed
+**Plans:** 3/3 plans complete
 Plans:
 - [x] 09-01-PLAN.md -- Feature processing modules (PHI-S, Feature Normalizer, Adaptor MLP v2)
-- [ ] 09-02-PLAN.md -- Loss functions (L_angle, Hybrid Loss, FeatSharp, Shift Equivariant)
-- [ ] 09-03-PLAN.md -- Wire techniques into training loop + rewrite program.md for v2.0
+- [x] 09-02-PLAN.md -- Loss functions (L_angle, Hybrid Loss, FeatSharp, Shift Equivariant)
+- [x] 09-03-PLAN.md -- Wire techniques into training loop + rewrite program.md for v2.0
 
 ## Progress
 
@@ -150,4 +150,4 @@ Phases execute in numeric order: 5 -> 6 -> 7 -> 8 -> 9
 | 6. Multi-Teacher Infrastructure | v2.0 | 2/2 | Complete    | 2026-03-25 |
 | 7. DINOv3 Fine-tune | v2.0 | 1/3 | Complete    | 2026-03-25 |
 | 8. RADIO Integration | v2.0 | 2/2 | Complete    | 2026-03-25 |
-| 9. RADIO Training Techniques + Wrap-up | v2.0 | 1/3 | In Progress|  |
+| 9. RADIO Training Techniques + Wrap-up | v2.0 | 3/3 | Complete   | 2026-03-26 |
