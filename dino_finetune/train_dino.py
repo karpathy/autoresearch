@@ -39,7 +39,7 @@ WARMUP_RATIO = 0.2                   # Fraction of total steps for LR warmup
 TEMPERATURE = 0.15                   # InfoNCE temperature
 
 # ArcFace metric learning
-ARCFACE_WEIGHT = 0.5                 # Weight of ArcFace loss (0.0 = disabled)
+ARCFACE_WEIGHT = 0.0                 # Weight of ArcFace loss (0.0 = disabled)
 ARCFACE_SCALE = 30.0                 # ArcFace scale parameter
 ARCFACE_MARGIN = 0.3                 # ArcFace angular margin (radians)
 
