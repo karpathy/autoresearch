@@ -33,7 +33,7 @@ LORA_TARGET_MODULES = ["q_proj", "v_proj"]  # DINOv3 attention projections (per 
 
 BATCH_SIZE = 8                       # Physical batch size (VRAM safe for 24GB)
 GRADIENT_ACCUMULATION_STEPS = 16     # Effective batch = 128
-LR = 2e-4                           # Learning rate for AdamW
+LR = 5e-4                           # Learning rate for AdamW
 WEIGHT_DECAY = 0.01                  # AdamW weight decay
 WARMUP_RATIO = 0.1                   # Fraction of total steps for LR warmup
 TEMPERATURE = 0.15                   # InfoNCE temperature
