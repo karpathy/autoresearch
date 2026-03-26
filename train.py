@@ -106,6 +106,8 @@ ENABLE_PHI_S = False
 # Feature Normalizer: per-teacher whitening + rotation
 ENABLE_FEATURE_NORMALIZER = False
 NORMALIZER_WARMUP_BATCHES = 200  # ~1 full epoch for 50k images / 256 batch size
+# Adaptor MLP v2: LayerNorm+GELU+residual projection (replaces simple linear when enabled)
+ENABLE_ADAPTOR_MLP_V2 = False
 
 
 def _load_radio_metadata(
@@ -557,6 +559,33 @@ class FeatureNormalizer(nn.Module):
             return features  # passthrough during warmup
         # Numerical stability: epsilon prevents NaN from near-zero variance (Pitfall 3)
         return (features - self.running_mean) / (self.running_var.sqrt() + 1e-6)
+
+
+class AdaptorMLPv2(nn.Module):
+    """2-layer MLP adaptor with LayerNorm + GELU + conditional residual.
+
+    Per RADIOv2.5 Section 2.2: "Our adaptor is a 2-layer MLP with a LayerNorm
+    and a GeLU in between." Replaces simple linear projection heads when
+    ENABLE_ADAPTOR_MLP_V2=True.
+
+    Residual connection is only used when in_features == out_features,
+    as skip-connection requires matching dimensions.
+    """
+
+    def __init__(self, in_features: int, out_features: int) -> None:
+        super().__init__()
+        self.layer1 = nn.Linear(in_features, out_features)
+        self.norm = nn.LayerNorm(out_features)
+        self.act = nn.GELU()
+        self.layer2 = nn.Linear(out_features, out_features)
+        self.use_residual = in_features == out_features
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.act(self.norm(self.layer1(x)))
+        h = self.layer2(h)
+        if self.use_residual:
+            h = h + x
+        return h
 
 
 class ArcMarginProduct(nn.Module):
