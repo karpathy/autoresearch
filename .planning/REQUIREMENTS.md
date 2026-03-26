@@ -76,11 +76,11 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **DINO3-04**: Embeddings cached to disk like other teachers
 
 ### RADIO Training Techniques
-- [ ] **TRAIN-01**: PHI-S distribution balancing (Hadamard isotropic standardization)
-- [ ] **TRAIN-02**: Feature Normalizer (per-teacher whitening + rotation)
+- [x] **TRAIN-01**: PHI-S distribution balancing (Hadamard isotropic standardization)
+- [x] **TRAIN-02**: Feature Normalizer (per-teacher whitening + rotation)
 - [ ] **TRAIN-03**: Balanced Summary Loss L_angle (normalize by angular dispersion)
 - [ ] **TRAIN-04**: Hybrid Loss (0.9*cosine + 0.1*smooth-L1 for spatial features)
-- [ ] **TRAIN-05**: Per-teacher adaptor MLP v2 (LayerNorm+GELU+residual)
+- [x] **TRAIN-05**: Per-teacher adaptor MLP v2 (LayerNorm+GELU+residual)
 - [ ] **TRAIN-06**: FeatSharp spatial feature sharpening (deferred if VRAM-constrained)
 - [ ] **TRAIN-07**: Shift Equivariant Loss for spatial distillation
 
@@ -162,11 +162,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RADIO-04 | Phase 8 | Complete |
 | RADIO-05 | Phase 8 | Complete |
 | RADIO-06 | Phase 8 | Complete |
-| TRAIN-01 | Phase 9 | Pending |
-| TRAIN-02 | Phase 9 | Pending |
+| TRAIN-01 | Phase 9 | Complete |
+| TRAIN-02 | Phase 9 | Complete |
 | TRAIN-03 | Phase 9 | Pending |
 | TRAIN-04 | Phase 9 | Pending |
-| TRAIN-05 | Phase 9 | Pending |
+| TRAIN-05 | Phase 9 | Complete |
 | TRAIN-06 | Phase 9 | Pending |
 | TRAIN-07 | Phase 9 | Pending |
 | INFRA-08 | Phase 9 | Pending |
