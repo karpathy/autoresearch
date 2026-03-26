@@ -41,6 +41,7 @@ TEMPERATURE = 0.07                   # InfoNCE temperature
 SEED = 42
 USE_GRADIENT_CHECKPOINTING = True
 EVAL_EVERY_N_EPOCHS = 1              # Evaluate after every N epochs
+MAX_STEPS_PER_EPOCH = 1000           # Cap steps per epoch (0 = no cap). Keeps experiments ~30min.
 NUM_WORKERS = 4                      # DataLoader workers
 DEVICE = "cuda"
 
@@ -153,7 +154,14 @@ def train_one_epoch(model, train_loader: DataLoader, optimizer, scheduler,
     num_batches = 0
     optimizer.zero_grad()
 
+    effective_steps = len(train_loader)
+    if MAX_STEPS_PER_EPOCH > 0:
+        effective_steps = min(len(train_loader), MAX_STEPS_PER_EPOCH)
+
     for step, (images, labels) in enumerate(train_loader):
+        if MAX_STEPS_PER_EPOCH > 0 and step >= MAX_STEPS_PER_EPOCH:
+            break
+
         images = images.to(device, dtype=torch.bfloat16)
         labels = labels.to(device)
 
@@ -181,12 +189,12 @@ def train_one_epoch(model, train_loader: DataLoader, optimizer, scheduler,
             avg = total_loss / num_batches
             lr_now = scheduler.get_last_lr()[0]
             logger.info(
-                f"Epoch {epoch} step {step + 1}/{len(train_loader)}: "
+                f"Epoch {epoch} step {step + 1}/{effective_steps}: "
                 f"loss={avg:.4f}  lr={lr_now:.2e}"
             )
 
     # Handle remaining accumulated gradients
-    if len(train_loader) % GRADIENT_ACCUMULATION_STEPS != 0:
+    if num_batches % GRADIENT_ACCUMULATION_STEPS != 0:
         optimizer.step()
         optimizer.zero_grad()
         scheduler.step()
@@ -261,7 +269,8 @@ def main():
 
     # -- Build optimizer and scheduler --
     optimizer = build_optimizer(model)
-    num_training_steps = (len(train_loader) // GRADIENT_ACCUMULATION_STEPS) * EPOCHS
+    steps_per_epoch = min(len(train_loader), MAX_STEPS_PER_EPOCH) if MAX_STEPS_PER_EPOCH > 0 else len(train_loader)
+    num_training_steps = (steps_per_epoch // GRADIENT_ACCUMULATION_STEPS) * EPOCHS
     scheduler = build_scheduler(optimizer, num_training_steps)
 
     # -- Training loop --
