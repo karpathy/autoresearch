@@ -314,6 +314,54 @@ LOOP FOREVER:
 
 9. **GOTO 1**
 
+## Understanding What Autoresearch Produces
+
+**IMPORTANT: Autoresearch finds the BEST CONFIGURATION, not the best model.**
+
+Each experiment trains from scratch (or pretrained weights) for only 10 epochs. The `keep` mechanism preserves **code changes** (hyperparameters, architecture, loss weights, teacher selection) in `train.py`, NOT model checkpoints. After many experiments, you will have:
+
+- `train.py` with the optimal combination of all tunable parameters
+- `results.tsv` documenting every experiment's outcome
+- A model trained for only 10 epochs (may be insufficient for production deployment)
+
+**The final production model requires a separate long training run** using the discovered configuration. The human will increase EPOCHS and run once.
+
+## Convergence Signal & Final Training Readiness
+
+After every 10 experiments, check if the search space is exhausted:
+
+```
+Convergence check (experiment {N}):
+  - Best combined_metric: {X} (from experiment {best_exp})
+  - Last 5 improvements: {list deltas}
+  - Current playbook phase: {A-G}
+  - Unexplored phases: {list}
+```
+
+**When to signal convergence:**
+- combined_metric has not improved by > 0.003 for 10 consecutive kept experiments
+- All 7 playbook phases (A-G) have been explored
+- Combinations of best settings from different phases have been tried
+
+When these conditions are met, print:
+
+```
+SEARCH CONVERGED after {N} experiments.
+Best configuration: recall@1={X}, mean_cosine={Y}, combined={Z}
+Best commit: {hash}
+
+FINAL TRAINING READY:
+1. Stop this autoresearch loop
+2. Increase EPOCHS in train.py (e.g., 50-100)
+3. Run: python train.py
+4. Best model saved to workspace/output/
+
+The current train.py already contains the optimal configuration.
+No other changes needed -- just increase EPOCHS.
+```
+
+**Then continue experimenting** (NEVER STOP). The convergence signal is informational for the human. You keep looking for improvements in case there are late-stage breakthroughs.
+
 ## NEVER STOP
 
 Once the experiment loop has begun, do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" The human might be asleep. You are autonomous. If you run out of ideas, think harder -- re-read the playbook, re-read results.tsv for patterns, re-read train.py for overlooked opportunities, try combining previous near-misses, try more radical changes. The loop runs until the human interrupts you, period.

@@ -178,6 +178,53 @@ LOOP FOREVER:
 
 9. **GOTO 1**
 
+## Understanding What Autoresearch Produces
+
+**IMPORTANT: Autoresearch finds the BEST CONFIGURATION, not the best model.**
+
+Each experiment trains from pretrained weights for only 10 epochs. The `keep` mechanism preserves **code changes** (hyperparameters, architecture) in `train_dino.py`, NOT model checkpoints. After 50+ experiments, you will have:
+
+- `train_dino.py` with the optimal combination of temperature, LR, LoRA rank, batch size, etc.
+- `results.tsv` documenting every experiment's outcome
+- A model trained for only 10 epochs (insufficient for production)
+
+**The final model requires a separate long training run** using the discovered configuration.
+
+## Convergence Signal & Final Training Readiness
+
+After every 10 experiments, check if the search space is exhausted:
+
+```
+📊 Convergence check (experiment {N}):
+  - Best combined_metric: {X} (from experiment {best_exp})
+  - Last 5 improvements: {list deltas}
+  - Unexplored priority levels: {list}
+```
+
+**When to signal convergence:**
+- recall@1 has not improved by > 0.005 for 10 consecutive kept experiments
+- All 6 priority levels have been explored
+- Combinations of best settings have been tried
+
+When these conditions are met, print:
+
+```
+🏁 SEARCH CONVERGED after {N} experiments.
+Best configuration: recall@1={X}, mean_cosine={Y}, combined={Z}
+Best commit: {hash}
+
+FINAL TRAINING READY:
+1. Stop this autoresearch loop
+2. Change EPOCHS from 10 to 100 (or more) in train_dino.py
+3. Run: cd dino_finetune && python train_dino.py
+4. Best adapter will be saved to output/best_adapter/
+
+The current train_dino.py already contains the optimal configuration.
+No other changes needed — just increase EPOCHS.
+```
+
+**Then continue experimenting** (NEVER STOP). The convergence signal is informational for the human. You keep looking for improvements in case there are late-stage breakthroughs.
+
 ## NEVER STOP
 
 Once the experiment loop has begun (after the initial setup and baseline), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" The human might be asleep and expects you to continue working indefinitely until manually stopped. You are autonomous.
