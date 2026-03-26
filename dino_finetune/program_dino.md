@@ -67,6 +67,20 @@ These are all the tunable constants at the top of `train_dino.py`. Read the file
 | `WARMUP_RATIO` | 0.1 | [0.0, 0.3] | Fraction of total training steps used for linear LR warmup. 0.1 means first 10% of steps ramp up LR linearly. Higher warmup is safer for large learning rates. |
 | `TEMPERATURE` | 0.07 | [0.03, 0.2] | **CRITICAL** -- InfoNCE temperature scaling. Controls the sharpness of the similarity distribution. Lower = sharper (harder positives/negatives), higher = softer. This is the single most impactful parameter for contrastive learning. |
 
+### ArcFace Metric Learning
+
+| Constant | Default | Safe Range | What It Controls |
+|----------|---------|------------|------------------|
+| `ARCFACE_WEIGHT` | 0.5 | [0.0, 2.0] | Weight of ArcFace loss relative to InfoNCE. 0.0 = InfoNCE only. Higher values make class boundaries sharper. |
+| `ARCFACE_SCALE` | 30.0 | [16, 64] | Cosine similarity scaling. Higher = sharper probability distribution. 30 is standard. |
+| `ARCFACE_MARGIN` | 0.3 | [0.1, 0.5] | Angular margin in radians. Larger margin = more separation between classes but harder to converge. |
+
+**ArcFace vs InfoNCE:**
+- InfoNCE: learns "same vs different" from embedding distances — good at general structure
+- ArcFace: forces explicit angular class boundaries — good at fine-grained discrimination
+- Combined: best of both worlds. Recommended starting ratio: `ARCFACE_WEIGHT=0.5`
+- Try InfoNCE-only (`ARCFACE_WEIGHT=0.0`) and ArcFace-heavy (`ARCFACE_WEIGHT=1.0`) to compare
+
 ### Other Constants
 
 | Constant | Default | Notes |
@@ -92,9 +106,24 @@ Temperature is the single most impactful hyperparameter in contrastive learning.
 
 **What to expect:** Small temperature changes produce large metric swings. If loss goes to NaN, temperature is too low.
 
-### Priority 2: Learning Rate Sweep
+### Priority 2: ArcFace Weight Tuning
 
-After finding optimal temperature, sweep learning rate.
+ArcFace adds explicit class boundaries on top of InfoNCE's contrastive signal. Test the balance.
+
+**Suggested experiments:**
+- ARCFACE_WEIGHT=0.0 (InfoNCE only -- baseline comparison)
+- ARCFACE_WEIGHT=0.3 (light ArcFace)
+- ARCFACE_WEIGHT=0.5 (default, balanced)
+- ARCFACE_WEIGHT=1.0 (ArcFace-heavy)
+- ARCFACE_WEIGHT=1.5 (ArcFace-dominant)
+
+**Then tune margin/scale on the best weight:**
+- ARCFACE_MARGIN=0.1 (easier convergence) vs 0.5 (stronger separation)
+- ARCFACE_SCALE=16 (soft) vs 64 (sharp)
+
+### Priority 3: Learning Rate Sweep
+
+After finding optimal temperature and ArcFace balance, sweep learning rate.
 
 **Suggested experiments:**
 - LR=5e-5 (conservative)
@@ -104,7 +133,7 @@ After finding optimal temperature, sweep learning rate.
 
 **Combine with warmup:** If using high LR (5e-4+), increase WARMUP_RATIO to 0.2 or 0.3.
 
-### Priority 3: LoRA Rank Exploration
+### Priority 4: LoRA Rank Exploration
 
 Test whether more or less LoRA capacity helps.
 
@@ -116,7 +145,7 @@ Test whether more or less LoRA capacity helps.
 
 **Rule of thumb:** Keep LORA_ALPHA = 2 * LORA_R for consistent effective scaling.
 
-### Priority 4: Effective Batch Size
+### Priority 5: Effective Batch Size
 
 Contrastive learning benefits from larger batches (more negatives per anchor).
 
@@ -127,7 +156,7 @@ Contrastive learning benefits from larger batches (more negatives per anchor).
 
 **Note:** Larger effective batch means fewer optimizer steps per epoch. Compensate with higher LR if needed.
 
-### Priority 5: Target Module Expansion
+### Priority 6: Target Module Expansion
 
 Add more LoRA adapters to increase model capacity.
 
@@ -138,7 +167,7 @@ Add more LoRA adapters to increase model capacity.
 
 **Warning:** Combining target module expansion with high LORA_R (32+) can cause OOM. Test incrementally.
 
-### Priority 6: Augmentation Changes
+### Priority 7: Augmentation Changes
 
 Modify data augmentation in train_dino.py if you add custom transforms.
 

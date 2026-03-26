@@ -38,6 +38,11 @@ WEIGHT_DECAY = 0.01                  # AdamW weight decay
 WARMUP_RATIO = 0.2                   # Fraction of total steps for LR warmup
 TEMPERATURE = 0.15                   # InfoNCE temperature
 
+# ArcFace metric learning
+ARCFACE_WEIGHT = 0.5                 # Weight of ArcFace loss (0.0 = disabled)
+ARCFACE_SCALE = 30.0                 # ArcFace scale parameter
+ARCFACE_MARGIN = 0.3                 # ArcFace angular margin (radians)
+
 SEED = 42
 USE_GRADIENT_CHECKPOINTING = True
 EVAL_EVERY_N_EPOCHS = 1              # Evaluate after every N epochs
@@ -96,13 +101,41 @@ def info_nce_loss(embeddings: torch.Tensor, labels: torch.Tensor,
     return loss
 
 
+class ArcFaceHead(torch.nn.Module):
+    """ArcFace angular margin classification head for metric learning.
+
+    Forces embeddings to have clear angular separation between classes.
+    Complements InfoNCE which only learns relative distances.
+    """
+
+    def __init__(self, embedding_dim: int, num_classes: int,
+                 scale: float = 30.0, margin: float = 0.3):
+        super().__init__()
+        self.scale = scale
+        self.margin = margin
+        self.weight = torch.nn.Parameter(torch.randn(num_classes, embedding_dim))
+        torch.nn.init.xavier_normal_(self.weight)
+
+    def forward(self, embeddings: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        embeddings = F.normalize(embeddings, dim=1)
+        weight = F.normalize(self.weight, dim=1)
+        cosine = F.linear(embeddings, weight)
+        theta = torch.acos(cosine.clamp(-1.0 + 1e-7, 1.0 - 1e-7))
+        one_hot = F.one_hot(labels, num_classes=self.weight.shape[0]).float()
+        target_logits = torch.cos(theta + self.margin * one_hot)
+        logits = self.scale * target_logits
+        return F.cross_entropy(logits, labels)
+
+
 # ============================================================
 # Optimizer and scheduler
 # ============================================================
 
-def build_optimizer(model) -> torch.optim.Optimizer:
-    """Create AdamW optimizer for trainable (LoRA) parameters only."""
+def build_optimizer(model, arcface_head=None) -> torch.optim.Optimizer:
+    """Create AdamW optimizer for trainable (LoRA + ArcFace) parameters."""
     trainable_params = [p for p in model.parameters() if p.requires_grad]
+    if arcface_head is not None:
+        trainable_params += list(arcface_head.parameters())
     optimizer = torch.optim.AdamW(
         trainable_params,
         lr=LR,
@@ -136,7 +169,8 @@ def build_scheduler(optimizer, num_training_steps: int):
 # ============================================================
 
 def train_one_epoch(model, train_loader: DataLoader, optimizer, scheduler,
-                    device: str, epoch: int) -> float:
+                    device: str, epoch: int,
+                    arcface_head: "ArcFaceHead | None" = None) -> float:
     """Train one epoch with gradient accumulation and bf16 autocast.
 
     Args:
@@ -146,6 +180,7 @@ def train_one_epoch(model, train_loader: DataLoader, optimizer, scheduler,
         scheduler: LR scheduler (stepped per optimizer step).
         device: CUDA device string.
         epoch: Current epoch number (for logging).
+        arcface_head: Optional ArcFace classification head.
 
     Returns:
         Average loss for the epoch.
@@ -170,7 +205,11 @@ def train_one_epoch(model, train_loader: DataLoader, optimizer, scheduler,
         with torch.amp.autocast("cuda", dtype=torch.bfloat16):
             outputs = model(images)
             cls_emb = extract_cls_embedding(outputs)
-            loss = info_nce_loss(cls_emb, labels)
+            loss_nce = info_nce_loss(cls_emb, labels)
+            loss = loss_nce
+            if arcface_head is not None and ARCFACE_WEIGHT > 0:
+                loss_arc = arcface_head(cls_emb.float(), labels)
+                loss = loss_nce + ARCFACE_WEIGHT * loss_arc
             loss = loss / GRADIENT_ACCUMULATION_STEPS  # Scale for accumulation
 
         # Backward (no GradScaler needed for bfloat16)
@@ -222,7 +261,8 @@ def main():
     logger.info("=" * 60)
     logger.info(
         f"Config: LoRA r={LORA_R} alpha={LORA_ALPHA} targets={LORA_TARGET_MODULES} "
-        f"BS={BATCH_SIZE}x{GRADIENT_ACCUMULATION_STEPS} LR={LR} T={TEMPERATURE}"
+        f"BS={BATCH_SIZE}x{GRADIENT_ACCUMULATION_STEPS} LR={LR} T={TEMPERATURE} "
+        f"ArcFace={ARCFACE_WEIGHT} margin={ARCFACE_MARGIN} scale={ARCFACE_SCALE}"
     )
 
     # -- Load base model --
@@ -268,8 +308,15 @@ def main():
         collate_fn=collate_fn,
     )
 
+    # -- ArcFace head (optional) --
+    arcface_head = None
+    if ARCFACE_WEIGHT > 0:
+        arcface_head = ArcFaceHead(EMBEDDING_DIM, num_train_classes,
+                                    ARCFACE_SCALE, ARCFACE_MARGIN).to(DEVICE)
+        logger.info(f"ArcFace enabled: weight={ARCFACE_WEIGHT} scale={ARCFACE_SCALE} margin={ARCFACE_MARGIN} classes={num_train_classes}")
+
     # -- Build optimizer and scheduler --
-    optimizer = build_optimizer(model)
+    optimizer = build_optimizer(model, arcface_head=arcface_head)
     steps_per_epoch = min(len(train_loader), MAX_STEPS_PER_EPOCH) if MAX_STEPS_PER_EPOCH > 0 else len(train_loader)
     num_training_steps = (steps_per_epoch // GRADIENT_ACCUMULATION_STEPS) * EPOCHS
     scheduler = build_scheduler(optimizer, num_training_steps)
@@ -286,7 +333,8 @@ def main():
 
         epoch_start = time.time()
         avg_loss = train_one_epoch(
-            model, train_loader, optimizer, scheduler, DEVICE, epoch
+            model, train_loader, optimizer, scheduler, DEVICE, epoch,
+            arcface_head=arcface_head,
         )
         epoch_time = time.time() - epoch_start
         logger.info(f"Epoch {epoch}/{EPOCHS}: loss={avg_loss:.4f}  time={epoch_time:.1f}s  total={time.time() - start_time:.0f}s")
