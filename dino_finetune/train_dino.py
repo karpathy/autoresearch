@@ -11,17 +11,22 @@ from prepare_dino import (
     load_base_model, get_image_processor, build_dataset,
     extract_cls_embedding, evaluate_dino, save_adapter,
     EPOCHS, EMBEDDING_DIM, ADAPTER_OUTPUT_DIR,
-    TRAIN_DIR, VAL_DIR,
+    TRAIN_DIR, VAL_DIR, SKIP_CLASSES,
     set_seed, collate_fn,
 )
 
 import math
+import random
 import time
+from pathlib import Path
+
 import torch
 import torch.nn.functional as F
 from loguru import logger
 from peft import LoraConfig, get_peft_model
-from torch.utils.data import DataLoader
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms
 
 # ============================================================
 # EXPERIMENT VARIABLES (agent edits these)
@@ -50,6 +55,156 @@ MAX_STEPS_PER_EPOCH = 0              # Cap steps per epoch (0 = no cap)
 MAX_TRAINING_SECONDS = 1800          # Hard time limit: 30 minutes per experiment
 NUM_WORKERS = 4                      # DataLoader workers
 DEVICE = "cuda"
+
+# Combined dataset paths (richer training data)
+USE_COMBINED_DATASET = True                  # Use combined data from multiple sources
+REID_PRODUCTS_DIR = "/data/mnt/mnt_ml_shared/joesu/reid/data/reid_train/train/products"
+RETAIL_DIR = "/data/mnt/mnt_ml_shared/Vic/retail_product_checkout_crop"
+RETAIL_MAX_PER_CLASS = 100                   # Cap retail samples per class
+
+
+# ============================================================
+# Combined dataset (multi-source training data)
+# ============================================================
+
+class CombinedDinoDataset(Dataset):
+    """Combine product_code + REID products + retail data for DINOv3 training.
+
+    Merges multiple data sources with unified class indexing.
+    Excludes val barcodes to prevent data leakage.
+    Returns (image_tensor, label) matching prepare_dino's collate_fn.
+    """
+
+    def __init__(self, primary_roots: list[str], retail_root: str,
+                 transform, retail_max_per_class: int = 100,
+                 skip_classes: set[str] | None = None):
+        self.transform = transform
+        self.samples: list[tuple[str, int]] = []
+        _skip = skip_classes or set()
+
+        # Collect all class IDs from primary roots (union)
+        ref_class_ids: set[str] = set()
+        for root in primary_roots:
+            root_path = Path(root)
+            if not root_path.exists():
+                continue
+            for d in root_path.iterdir():
+                if d.is_dir() and not d.name.startswith((".", "@", "__")) and d.name not in _skip:
+                    ref_class_ids.add(d.name)
+
+        # Build class list: primary classes first, then retail
+        all_classes: list[str] = []
+        primary_class_dirs: list[Path] = []
+
+        for root in primary_roots:
+            root_path = Path(root)
+            if not root_path.exists():
+                logger.warning(f"Primary root not found: {root}")
+                continue
+            for d in sorted(root_path.iterdir()):
+                if d.is_dir() and not d.name.startswith((".", "@", "__")) and d.name in ref_class_ids:
+                    primary_class_dirs.append(d)
+
+        seen_class_names: set[str] = set()
+        for d in primary_class_dirs:
+            class_name = f"primary_{d.name}"
+            if class_name not in seen_class_names:
+                all_classes.append(class_name)
+                seen_class_names.add(class_name)
+
+        # Retail classes
+        retail_path = Path(retail_root)
+        retail_class_dirs: list[Path] = []
+        if retail_path.exists():
+            retail_class_dirs = sorted(
+                [d for d in retail_path.iterdir()
+                 if d.is_dir() and not d.name.startswith((".", "@", "__"))]
+            )
+            for d in retail_class_dirs:
+                all_classes.append(f"retail_{d.name}")
+
+        self.classes = all_classes
+        self.class_to_idx = {name: idx for idx, name in enumerate(all_classes)}
+
+        # Load primary samples
+        primary_count = 0
+        for class_dir in primary_class_dirs:
+            class_name = f"primary_{class_dir.name}"
+            if class_name not in self.class_to_idx:
+                continue
+            class_idx = self.class_to_idx[class_name]
+            for ext in ("*.jpg", "*.png", "*.jpeg", "*.JPEG"):
+                for img_path in class_dir.glob(ext):
+                    self.samples.append((str(img_path), class_idx))
+                    primary_count += 1
+
+        # Load retail samples (capped per class)
+        retail_count = 0
+        for class_dir in retail_class_dirs:
+            class_name = f"retail_{class_dir.name}"
+            class_idx = self.class_to_idx[class_name]
+            image_files = []
+            for ext in ("*.jpg", "*.png", "*.jpeg", "*.JPEG"):
+                image_files.extend(class_dir.glob(ext))
+            if len(image_files) > retail_max_per_class:
+                image_files = random.sample(image_files, retail_max_per_class)
+            for img_path in image_files:
+                self.samples.append((str(img_path), class_idx))
+                retail_count += 1
+
+        logger.info(
+            f"CombinedDinoDataset: {len(self.classes)} classes "
+            f"(primary={len(seen_class_names)}, retail={len(retail_class_dirs)}), "
+            f"{len(self.samples)} samples (primary={primary_count}, retail={retail_count})"
+        )
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
+        path, target = self.samples[index]
+        try:
+            img = Image.open(path).convert("RGB")
+        except Exception:
+            path, target = random.choice(self.samples)
+            img = Image.open(path).convert("RGB")
+        if self.transform is not None:
+            img = self.transform(img)
+        return img, target
+
+
+def build_combined_train_dataset(processor) -> tuple[Dataset, int]:
+    """Build combined training dataset from multiple sources.
+
+    Excludes val barcodes to prevent data leakage.
+    """
+    val_dir = Path(VAL_DIR)
+    val_barcodes = {
+        d.name for d in val_dir.iterdir()
+        if d.is_dir() and not d.name.startswith(".")
+    } if val_dir.exists() else set()
+    skip = SKIP_CLASSES | val_barcodes
+    logger.info(f"Combined dataset: skipping {len(skip)} classes ({len(SKIP_CLASSES)} skip + {len(val_barcodes)} val barcodes)")
+
+    # Build DINOv3-compatible train transform
+    mean = processor.image_mean
+    std = processor.image_std
+    size = processor.size.get("shortest_edge", 518)
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop(size, scale=(0.5, 1.0)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=mean, std=std),
+    ])
+
+    dataset = CombinedDinoDataset(
+        primary_roots=[TRAIN_DIR, REID_PRODUCTS_DIR],
+        retail_root=RETAIL_DIR,
+        transform=train_transform,
+        retail_max_per_class=RETAIL_MAX_PER_CLASS,
+        skip_classes=skip,
+    )
+    return dataset, len(dataset.classes)
 
 
 # ============================================================
@@ -286,7 +441,10 @@ def main():
 
     # -- Build datasets and DataLoaders --
     processor = get_image_processor()
-    train_dataset, num_train_classes = build_dataset(TRAIN_DIR, processor, split="train")
+    if USE_COMBINED_DATASET:
+        train_dataset, num_train_classes = build_combined_train_dataset(processor)
+    else:
+        train_dataset, num_train_classes = build_dataset(TRAIN_DIR, processor, split="train")
     val_dataset, num_val_classes = build_dataset(VAL_DIR, processor, split="val")
 
     train_loader = DataLoader(
