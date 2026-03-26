@@ -889,6 +889,104 @@ def hybrid_loss(
     return beta * cos_loss + (1 - beta) * sml1_loss
 
 
+def shift_equivariant_loss(
+    student_spatial: torch.Tensor,
+    teacher_spatial: torch.Tensor,
+    max_shift: int = 2,
+) -> torch.Tensor:
+    """Spatial distillation loss with random shift for equivariance.
+
+    Per C-RADIOv4 Section 2.3.1 Eq. 1: Randomly shifts student and teacher
+    spatial features independently to prevent the student from learning
+    fixed positional noise patterns from teachers.
+
+    IMPORTANT per Pitfall 6: This requires spatial (patch-level) features
+    from the Phase 8 RADIO-04 spatial cache. Gate on availability at runtime.
+    When spatial features are not available, this loss should not be called.
+
+    Args:
+        student_spatial: (B, C, H, W) student spatial features
+        teacher_spatial: (B, C, H, W) teacher spatial features
+        max_shift: maximum shift in patch units (default 2)
+
+    Returns:
+        MSE loss between overlapping shifted regions, or 0 if no overlap.
+    """
+    B, C, H, W = student_spatial.shape
+
+    # Random shift for student and teacher independently (in patch increments)
+    sh_s = torch.randint(-max_shift, max_shift + 1, (2,))
+    sh_t = torch.randint(-max_shift, max_shift + 1, (2,))
+
+    # Compute overlap region in the shared coordinate frame
+    h_start = max(sh_s[0].item(), sh_t[0].item(), 0)
+    h_end = min(H + sh_s[0].item(), H + sh_t[0].item(), H)
+    w_start = max(sh_s[1].item(), sh_t[1].item(), 0)
+    w_end = min(W + sh_s[1].item(), W + sh_t[1].item(), W)
+
+    if h_end <= h_start or w_end <= w_start:
+        return torch.tensor(0.0, device=student_spatial.device)
+
+    # Extract overlapping regions (offset by respective shifts)
+    s_region = student_spatial[
+        :, :,
+        h_start - sh_s[0].item() : h_end - sh_s[0].item(),
+        w_start - sh_s[1].item() : w_end - sh_s[1].item(),
+    ]
+    t_region = teacher_spatial[
+        :, :,
+        h_start - sh_t[0].item() : h_end - sh_t[0].item(),
+        w_start - sh_t[1].item() : w_end - sh_t[1].item(),
+    ]
+
+    return functional.mse_loss(s_region, t_region)
+
+
+class FeatSharpModule(nn.Module):
+    """Lightweight attention-based spatial feature sharpening.
+
+    Per FeatSharp paper (ICML 2025) Section 3.3: simplified tile-guided
+    attentional refinement for CNN spatial features. Uses multi-head
+    self-attention with residual connection to sharpen spatial feature maps.
+
+    OPTIONAL per D-01. Default ENABLE_FEATSHARP=False. This module adds
+    significant VRAM overhead due to the attention computation over all
+    spatial positions. If OOM occurs, the crash recovery system handles it.
+
+    Depends on Phase 8 spatial feature cache (RADIO-04). Only activates
+    when spatial features are available at runtime.
+    """
+
+    def __init__(self, channels: int, num_heads: int = 4) -> None:
+        super().__init__()
+        self.channels = channels
+        self.num_heads = num_heads
+        self.norm = nn.LayerNorm(channels)
+        self.attn = nn.MultiheadAttention(
+            embed_dim=channels, num_heads=num_heads, batch_first=False
+        )
+
+    def forward(self, spatial_features: torch.Tensor) -> torch.Tensor:
+        """Sharpen spatial features via self-attention + residual.
+
+        Args:
+            spatial_features: (B, C, H, W) spatial feature map
+
+        Returns:
+            (B, C, H, W) sharpened spatial feature map (same shape)
+        """
+        B, C, H, W = spatial_features.shape
+        # Reshape to sequence: (B, C, H, W) -> (H*W, B, C) for MHA
+        x = spatial_features.reshape(B, C, H * W).permute(2, 0, 1)  # (H*W, B, C)
+        # LayerNorm -> self-attention -> residual
+        x_norm = self.norm(x)
+        attn_out, _ = self.attn(x_norm, x_norm, x_norm, need_weights=False)
+        x = x + attn_out  # residual connection
+        # Reshape back: (H*W, B, C) -> (B, C, H, W)
+        out = x.permute(1, 2, 0).reshape(B, C, H, W)
+        return out
+
+
 class InfoNCELoss(nn.Module):
     """InfoNCE contrastive loss with learnable temperature (CLIP-style).
 
