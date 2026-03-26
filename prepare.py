@@ -183,14 +183,18 @@ def train_tokenizer():
 
     # --- Build token_bytes lookup for BPB evaluation ---
     print("Tokenizer: building token_bytes lookup...")
-    special_set = set(SPECIAL_TOKENS)
+    # Build reverse mapping: token_id -> raw bytes length.
+    # Using mergeable_ranks directly avoids tiktoken's decode replacing
+    # invalid UTF-8 sequences with U+FFFD (3 bytes), which would inflate
+    # the byte count and produce artificially low BPB scores.
+    rank_to_bytes = {rank: raw for raw, rank in mergeable_ranks.items()}
     token_bytes_list = []
     for token_id in range(enc.n_vocab):
-        token_str = enc.decode([token_id])
-        if token_str in special_set:
-            token_bytes_list.append(0)
+        if token_id in rank_to_bytes:
+            token_bytes_list.append(len(rank_to_bytes[token_id]))
         else:
-            token_bytes_list.append(len(token_str.encode("utf-8")))
+            # Special tokens contribute 0 bytes to BPB
+            token_bytes_list.append(0)
     token_bytes_tensor = torch.tensor(token_bytes_list, dtype=torch.int32)
     torch.save(token_bytes_tensor, token_bytes_path)
     print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
