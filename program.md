@@ -36,6 +36,8 @@ Each experiment runs on a single GPU. The training script runs for a **fixed tim
 
 **Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome — that's a simplification win. When evaluating whether to keep a change, weigh the complexity cost against the improvement magnitude. A 0.001 val_bpb improvement that adds 20 lines of hacky code? Probably not worth it. A 0.001 val_bpb improvement from deleting code? Definitely keep. An improvement of ~0 but much simpler code? Keep.
 
+**Exploration diversity**: Don't just tweak hyperparameters. Alternate between categories: architecture (depth, width, attention), optimization (LR, batch size, schedules), regularization, and simplification (removing components). If your last 3 experiments were all in the same category, try a different one.
+
 **The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
 
 ## Output format
