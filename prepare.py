@@ -365,6 +365,76 @@ def evaluate_bpb(model, tokenizer, batch_size):
     return total_nats / (math.log(2) * total_bytes)
 
 # ---------------------------------------------------------------------------
+# MLX / Apple Silicon runtime utilities (imported by train_mlx.py)
+# ---------------------------------------------------------------------------
+
+def _document_batches_mlx(split, tokenizer_batch_size=128):
+    """Same as _document_batches but lives here for MLX import clarity."""
+    yield from _document_batches(split, tokenizer_batch_size)
+
+
+def make_dataloader_mlx(tokenizer, B, T, split, buffer_size=1000):
+    """
+    Numpy-based BOS-aligned dataloader with best-fit packing.
+    Yields (inputs, targets, epoch) as numpy int32 arrays of shape (B, T).
+    No CUDA / pin-memory dependencies — works on Apple Silicon via MLX.
+    """
+    import numpy as np
+    assert split in ["train", "val"]
+    row_capacity = T + 1
+    batches = _document_batches(split)
+    bos_token = tokenizer.get_bos_token_id()
+    doc_buffer = []
+    epoch = 1
+
+    def refill_buffer():
+        nonlocal epoch
+        doc_batch, epoch = next(batches)
+        token_lists = tokenizer.encode(doc_batch, prepend=bos_token)
+        doc_buffer.extend(token_lists)
+
+    row_buf = np.empty((B, row_capacity), dtype=np.int32)
+
+    while True:
+        for row_idx in range(B):
+            pos = 0
+            while pos < row_capacity:
+                while len(doc_buffer) < buffer_size:
+                    refill_buffer()
+                remaining = row_capacity - pos
+
+                # Best-fit: largest doc that fits entirely
+                best_idx, best_len = -1, 0
+                for i, doc in enumerate(doc_buffer):
+                    dl = len(doc)
+                    if dl <= remaining and dl > best_len:
+                        best_idx, best_len = i, dl
+
+                if best_idx >= 0:
+                    doc = doc_buffer.pop(best_idx)
+                    row_buf[row_idx, pos:pos + len(doc)] = doc
+                    pos += len(doc)
+                else:
+                    # Crop shortest to fill remaining space
+                    si = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
+                    doc = doc_buffer.pop(si)
+                    row_buf[row_idx, pos:pos + remaining] = doc[:remaining]
+                    pos += remaining
+
+        yield row_buf[:, :-1].copy(), row_buf[:, 1:].copy(), epoch
+
+
+def get_token_bytes_np():
+    """Return token byte-lengths as a numpy array (no CUDA required)."""
+    import numpy as np
+    path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
+    import torch
+    with open(path, "rb") as f:
+        t = torch.load(f, map_location="cpu")
+    return t.numpy()
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
