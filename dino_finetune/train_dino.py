@@ -41,7 +41,8 @@ TEMPERATURE = 0.07                   # InfoNCE temperature
 SEED = 42
 USE_GRADIENT_CHECKPOINTING = True
 EVAL_EVERY_N_EPOCHS = 1              # Evaluate after every N epochs
-MAX_STEPS_PER_EPOCH = 1000           # Cap steps per epoch (0 = no cap). Keeps experiments ~30min.
+MAX_STEPS_PER_EPOCH = 0              # Cap steps per epoch (0 = no cap)
+MAX_TRAINING_SECONDS = 1800          # Hard time limit: 30 minutes per experiment
 NUM_WORKERS = 4                      # DataLoader workers
 DEVICE = "cuda"
 
@@ -278,12 +279,17 @@ def main():
     start_time = time.time()
 
     for epoch in range(1, EPOCHS + 1):
+        elapsed = time.time() - start_time
+        if MAX_TRAINING_SECONDS > 0 and elapsed >= MAX_TRAINING_SECONDS:
+            logger.info(f"Time limit reached ({elapsed:.0f}s >= {MAX_TRAINING_SECONDS}s) after {epoch - 1} epochs")
+            break
+
         epoch_start = time.time()
         avg_loss = train_one_epoch(
             model, train_loader, optimizer, scheduler, DEVICE, epoch
         )
         epoch_time = time.time() - epoch_start
-        logger.info(f"Epoch {epoch}/{EPOCHS}: loss={avg_loss:.4f}  time={epoch_time:.1f}s")
+        logger.info(f"Epoch {epoch}/{EPOCHS}: loss={avg_loss:.4f}  time={epoch_time:.1f}s  total={time.time() - start_time:.0f}s")
 
         # -- Evaluation --
         if epoch % EVAL_EVERY_N_EPOCHS == 0:
