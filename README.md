@@ -86,6 +86,7 @@ I think these would be the reasonable hyperparameters to play with. Ask your fav
 - [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
 - [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
 - [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
+- [ottogin/auto-log-research/](https://github.com/ottogin/auto-log-research) (60% more efficient autoresearch via better training analysis)
 
 ## License
 
