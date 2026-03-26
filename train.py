@@ -1082,6 +1082,12 @@ def run_train_epoch(
     spatial_grid_w: int = 0,
     imagenet_mean: tuple[float, ...] = (0.485, 0.456, 0.406),
     imagenet_std: tuple[float, ...] = (0.229, 0.224, 0.225),
+    # --- RADIO technique objects (Plan 09-03 integration) ---
+    phi_s: "PHISTransform | None" = None,
+    feat_normalizer: "FeatureNormalizer | None" = None,
+    featsharp: "FeatSharpModule | None" = None,
+    teacher_mean_dir: torch.Tensor | None = None,
+    teacher_angular_dispersion: float = 0.0,
 ) -> EpochStats:
     """Run one training epoch with separate distillation and ArcFace data."""
     model.train()
@@ -1141,10 +1147,23 @@ def run_train_epoch(
                 else:
                     s_proj = student_emb  # single teacher, already projected + normalized
                 t_emb = t_emb.to(device=device, dtype=s_proj.dtype)
-                cos = functional.cosine_similarity(s_proj, t_emb, dim=1)
-                total_distill_loss = total_distill_loss + t_weight * (1.0 - cos).mean()
+                # Apply PHI-S to teacher features before loss (per D-03, D-06)
+                if ENABLE_PHI_S and phi_s is not None:
+                    t_emb = phi_s(t_emb)
+                # Apply Feature Normalizer to teacher features (per D-04, D-07)
+                if ENABLE_FEATURE_NORMALIZER and feat_normalizer is not None:
+                    t_emb = feat_normalizer(t_emb)
+                # Summary distillation loss: L_angle or cosine (per D-03)
+                if ENABLE_L_ANGLE and teacher_mean_dir is not None:
+                    teacher_loss = l_angle_loss(s_proj, t_emb, teacher_mean_dir, teacher_angular_dispersion)
+                else:
+                    cos = functional.cosine_similarity(s_proj, t_emb, dim=1)
+                    teacher_loss = (1.0 - cos).mean()
+                total_distill_loss = total_distill_loss + t_weight * teacher_loss
+                # Track alignment (always use cosine for monitoring)
+                cos_monitor = functional.cosine_similarity(s_proj, t_emb, dim=1)
                 if _loss_idx == 0:
-                    first_cos_mean = float(cos.mean().item())
+                    first_cos_mean = float(cos_monitor.mean().item())
                 _loss_idx += 1
 
             # RADIO teachers: per-adaptor distillation via cached summaries
@@ -1160,10 +1179,22 @@ def run_train_epoch(
                         r_proj = radio_proj_heads[adaptor](backbone_feat)
                         r_proj = functional.normalize(r_proj, p=2, dim=1)
                         r_emb = r_emb.to(device=device, dtype=r_proj.dtype)
-                        cos = functional.cosine_similarity(r_proj, r_emb, dim=1)
-                        total_distill_loss = total_distill_loss + adaptor_weight * (1.0 - cos).mean()
+                        # Apply PHI-S to RADIO teacher features (per D-03, D-06)
+                        if ENABLE_PHI_S and phi_s is not None:
+                            r_emb = phi_s(r_emb)
+                        # Apply Feature Normalizer to RADIO teacher features (per D-04)
+                        if ENABLE_FEATURE_NORMALIZER and feat_normalizer is not None:
+                            r_emb = feat_normalizer(r_emb)
+                        # Summary distillation loss: L_angle or cosine (per D-03)
+                        if ENABLE_L_ANGLE and teacher_mean_dir is not None:
+                            radio_teacher_loss = l_angle_loss(r_proj, r_emb, teacher_mean_dir, teacher_angular_dispersion)
+                        else:
+                            cos = functional.cosine_similarity(r_proj, r_emb, dim=1)
+                            radio_teacher_loss = (1.0 - cos).mean()
+                        total_distill_loss = total_distill_loss + adaptor_weight * radio_teacher_loss
                         if _loss_idx == 0:
-                            first_cos_mean = float(cos.mean().item())
+                            cos_monitor = functional.cosine_similarity(r_proj, r_emb, dim=1)
+                            first_cos_mean = float(cos_monitor.mean().item())
                         _loss_idx += 1
 
             distill_loss = total_distill_loss
@@ -1259,13 +1290,57 @@ def run_train_epoch(
                     images_01, adaptor=radio_adaptors[0] if radio_adaptors else "backbone"
                 )
 
-                spatial_loss_val = spatial_distillation_loss(
-                    student_spatial=student_spatial,
-                    teacher_spatial=teacher_spatial,
-                    adapter=spatial_adapter,
-                    teacher_grid_h=spatial_grid_h,
-                    teacher_grid_w=spatial_grid_w,
-                )
+                # Apply FeatSharp to student spatial features (per D-04)
+                if ENABLE_FEATSHARP and featsharp is not None:
+                    # FeatSharp expects [B, N, C] format; student_spatial is [B, C, H, W]
+                    B_s, C_s, H_s, W_s = student_spatial.shape
+                    student_spatial_seq = student_spatial.flatten(2).permute(0, 2, 1)  # [B, H*W, C]
+                    student_spatial_seq = featsharp(student_spatial_seq)
+                    student_spatial = student_spatial_seq.permute(0, 2, 1).reshape(B_s, C_s, H_s, W_s)
+
+                # Choose spatial loss: Shift Equivariant, Hybrid, or default MSE-based
+                if ENABLE_SHIFT_EQUIVARIANT:
+                    # Shift equivariant loss operates on NCHW spatial feature maps
+                    # Reshape teacher from NLC to NCHW first
+                    B_sp = teacher_spatial.shape[0]
+                    teacher_nchw = teacher_spatial.reshape(B_sp, spatial_grid_h, spatial_grid_w, -1)
+                    teacher_nchw = teacher_nchw.permute(0, 3, 1, 2).contiguous()
+                    # Interpolate student to match teacher grid
+                    student_interp = functional.interpolate(
+                        student_spatial, size=(spatial_grid_h, spatial_grid_w),
+                        mode="bilinear", align_corners=False,
+                    )
+                    student_proj_sp = spatial_adapter(student_interp)
+                    # L2-normalize before loss
+                    student_proj_sp = functional.normalize(student_proj_sp, p=2, dim=1)
+                    teacher_nchw = functional.normalize(teacher_nchw, p=2, dim=1)
+                    spatial_loss_val = shift_equivariant_loss(
+                        student_proj_sp, teacher_nchw, SHIFT_EQUIVARIANT_MAX_SHIFT
+                    )
+                elif ENABLE_HYBRID_LOSS:
+                    # Hybrid loss on flattened spatial features
+                    B_sp = teacher_spatial.shape[0]
+                    teacher_nchw = teacher_spatial.reshape(B_sp, spatial_grid_h, spatial_grid_w, -1)
+                    teacher_nchw = teacher_nchw.permute(0, 3, 1, 2).contiguous()
+                    student_interp = functional.interpolate(
+                        student_spatial, size=(spatial_grid_h, spatial_grid_w),
+                        mode="bilinear", align_corners=False,
+                    )
+                    student_proj_sp = spatial_adapter(student_interp)
+                    student_proj_sp = functional.normalize(student_proj_sp, p=2, dim=1)
+                    teacher_nchw = functional.normalize(teacher_nchw, p=2, dim=1)
+                    # Flatten to [B, D*H*W] for hybrid loss
+                    spatial_loss_val = hybrid_loss(
+                        student_proj_sp.flatten(1), teacher_nchw.flatten(1), HYBRID_LOSS_BETA
+                    )
+                else:
+                    spatial_loss_val = spatial_distillation_loss(
+                        student_spatial=student_spatial,
+                        teacher_spatial=teacher_spatial,
+                        adapter=spatial_adapter,
+                        teacher_grid_h=spatial_grid_h,
+                        teacher_grid_w=spatial_grid_w,
+                    )
                 if n == 0:
                     logger.info(f"spatial_distill_loss={spatial_loss_val.item():.6f}")
 
@@ -1494,6 +1569,126 @@ def main() -> None:
             f"grid={spatial_grid_h}x{spatial_grid_w}"
         )
 
+    # --- RADIO Training Techniques initialization (Plan 09-03) ---
+    # PHI-S: Hadamard isotropic standardization for multi-teacher gradient balancing
+    phi_s: PHISTransform | None = None
+    if ENABLE_PHI_S:
+        phi_s = PHISTransform(EMBEDDING_DIM).to(device)
+        logger.info("PHI-S enabled: will fit on teacher embeddings before training")
+
+    # Feature Normalizer: per-teacher whitening during warmup
+    feat_normalizer: FeatureNormalizer | None = None
+    if ENABLE_FEATURE_NORMALIZER:
+        feat_normalizer = FeatureNormalizer(EMBEDDING_DIM, NORMALIZER_WARMUP_BATCHES).to(device)
+        logger.info(f"Feature Normalizer enabled: warmup_batches={NORMALIZER_WARMUP_BATCHES}")
+
+    # AdaptorMLPv2: replace projection heads with LayerNorm+GELU+residual (per D-05)
+    if ENABLE_ADAPTOR_MLP_V2:
+        if hasattr(model, 'proj_heads') and model.proj_heads is not None:
+            # Multi-teacher mode: replace each projection head
+            for t_name in list(model.proj_heads.keys()):
+                old_proj = model.proj_heads[t_name]
+                in_feat = old_proj[0].in_features if isinstance(old_proj, nn.Sequential) else old_proj.in_features
+                out_feat = old_proj[0].out_features if isinstance(old_proj, nn.Sequential) else old_proj.out_features
+                model.proj_heads[t_name] = AdaptorMLPv2(in_feat, out_feat).to(device)
+            # Update self.proj reference to first head
+            first_name = next(iter(model.proj_heads))
+            model.proj = model.proj_heads[first_name]
+        else:
+            # Single-teacher mode: replace model.proj
+            old_proj = model.proj
+            in_feat = old_proj[0].in_features if isinstance(old_proj, nn.Sequential) else old_proj.in_features
+            out_feat = old_proj[0].out_features if isinstance(old_proj, nn.Sequential) else old_proj.out_features
+            model.proj = AdaptorMLPv2(in_feat, out_feat).to(device)
+        # Also replace RADIO projection heads if they exist
+        if radio_proj_heads is not None:
+            for adaptor in list(radio_proj_heads.keys()):
+                old_rp = radio_proj_heads[adaptor]
+                in_feat = old_rp[0].in_features if isinstance(old_rp, nn.Sequential) else old_rp.in_features
+                out_feat = old_rp[0].out_features if isinstance(old_rp, nn.Sequential) else old_rp.out_features
+                radio_proj_heads[adaptor] = AdaptorMLPv2(in_feat, out_feat).to(device)
+        logger.info("Adaptor MLP v2 enabled: replaced projection heads with LayerNorm+GELU+residual")
+
+    # FeatSharp: spatial feature sharpening (OPTIONAL)
+    featsharp: FeatSharpModule | None = None
+    if ENABLE_FEATSHARP:
+        student_spatial_ch = make_divisible(512 * LCNET_SCALE)
+        featsharp = FeatSharpModule(student_spatial_ch, num_heads=4).to(device)
+        logger.info(f"FeatSharp enabled: channels={student_spatial_ch}")
+
+    # L_angle: pre-compute teacher angular dispersion from cached embeddings
+    teacher_mean_dir: torch.Tensor | None = None
+    teacher_angular_dispersion: float = 0.0
+    if ENABLE_L_ANGLE:
+        # Use first non-RADIO teacher's cached embeddings for angular stats
+        default_t_name = teacher_names[0]
+        if not default_t_name.startswith("radio_"):
+            t_cache_dir = TEACHER_REGISTRY[default_t_name]["cache_dir"]
+            # Load all cached teacher embeddings to compute stats
+            cache_path = Path(t_cache_dir)
+            emb_files = sorted(cache_path.glob("*.npy"))
+            if emb_files:
+                all_embs = []
+                for ef in emb_files:
+                    all_embs.append(torch.from_numpy(np.load(str(ef))))
+                all_teacher_embs = torch.cat(all_embs, dim=0).to(device) if all_embs[0].dim() > 0 else torch.stack(all_embs).to(device)
+                # Compute mean direction and angular dispersion
+                teacher_mean = all_teacher_embs.mean(dim=0)
+                teacher_mean_dir = functional.normalize(teacher_mean.unsqueeze(0), dim=1).squeeze(0)
+                cos_to_mean = functional.cosine_similarity(
+                    all_teacher_embs, teacher_mean_dir.unsqueeze(0), dim=1
+                )
+                angles = torch.acos(cos_to_mean.clamp(-1 + 1e-6, 1 - 1e-6))
+                teacher_angular_dispersion = float(angles.mean().item())
+                logger.info(
+                    f"L_angle enabled: teacher={default_t_name}, "
+                    f"angular_dispersion={teacher_angular_dispersion:.4f}"
+                )
+                del all_teacher_embs, all_embs  # free memory
+            else:
+                logger.warning(f"L_angle: no cached embeddings found in {t_cache_dir}, disabling")
+                teacher_mean_dir = None
+        else:
+            logger.warning("L_angle: first teacher is RADIO (cached separately), using RADIO cache")
+            # For RADIO teachers, load from RADIO cache
+            first_adaptor = RADIO_ADAPTORS[0]
+            radio_cache_dir = Path(RADIO_CACHE_BASE) / f"radio_{RADIO_VARIANT}" / first_adaptor
+            emb_files = sorted(radio_cache_dir.glob("*.npy"))
+            if emb_files:
+                all_embs = [torch.from_numpy(np.load(str(ef))) for ef in emb_files]
+                all_teacher_embs = torch.cat(all_embs, dim=0).to(device) if all_embs[0].dim() > 0 else torch.stack(all_embs).to(device)
+                teacher_mean = all_teacher_embs.mean(dim=0)
+                teacher_mean_dir = functional.normalize(teacher_mean.unsqueeze(0), dim=1).squeeze(0)
+                cos_to_mean = functional.cosine_similarity(
+                    all_teacher_embs, teacher_mean_dir.unsqueeze(0), dim=1
+                )
+                angles = torch.acos(cos_to_mean.clamp(-1 + 1e-6, 1 - 1e-6))
+                teacher_angular_dispersion = float(angles.mean().item())
+                logger.info(
+                    f"L_angle enabled: RADIO adaptor={first_adaptor}, "
+                    f"angular_dispersion={teacher_angular_dispersion:.4f}"
+                )
+                del all_teacher_embs, all_embs
+            else:
+                logger.warning(f"L_angle: no RADIO cache found in {radio_cache_dir}, disabling")
+                teacher_mean_dir = None
+
+    # PHI-S: fit on teacher embeddings before training starts (per D-06)
+    if ENABLE_PHI_S and phi_s is not None:
+        default_t_name = teacher_names[0]
+        if not default_t_name.startswith("radio_"):
+            t_cache_dir = TEACHER_REGISTRY[default_t_name]["cache_dir"]
+            cache_path = Path(t_cache_dir)
+            emb_files = sorted(cache_path.glob("*.npy"))
+            if emb_files:
+                all_embs = [torch.from_numpy(np.load(str(ef))) for ef in emb_files]
+                all_teacher_embs = torch.cat(all_embs, dim=0).to(device) if all_embs[0].dim() > 0 else torch.stack(all_embs).to(device)
+                phi_s.fit(all_teacher_embs)
+                logger.info(f"PHI-S fitted on {len(all_teacher_embs)} teacher embeddings from {default_t_name}")
+                del all_teacher_embs, all_embs
+            else:
+                logger.warning(f"PHI-S: no cached embeddings found in {t_cache_dir}")
+
     # SSL components (per D-01, D-02, D-04)
     ssl_head: SSLProjectionHead | None = None
     info_nce_loss: InfoNCELoss | None = None
@@ -1546,6 +1741,9 @@ def main() -> None:
         head_params += list(ssl_head.parameters())
     if info_nce_loss is not None:
         head_params += list(info_nce_loss.parameters())  # learnable temperature
+    # RADIO technique learnable parameters
+    if featsharp is not None:
+        head_params += list(featsharp.parameters())
 
     optimizer = torch.optim.AdamW(
         [
@@ -1608,6 +1806,8 @@ def main() -> None:
                 head_params += list(ssl_head.parameters())
             if info_nce_loss is not None:
                 head_params += list(info_nce_loss.parameters())
+            if featsharp is not None:
+                head_params += list(featsharp.parameters())
             optimizer = torch.optim.AdamW(
                 [
                     {"params": head_params, "lr": LR},
@@ -1660,6 +1860,12 @@ def main() -> None:
             spatial_radio_teacher=spatial_radio_teacher,
             spatial_grid_h=spatial_grid_h,
             spatial_grid_w=spatial_grid_w,
+            # RADIO technique objects (Plan 09-03)
+            phi_s=phi_s,
+            feat_normalizer=feat_normalizer,
+            featsharp=featsharp,
+            teacher_mean_dir=teacher_mean_dir,
+            teacher_angular_dispersion=teacher_angular_dispersion,
         )
         elapsed_epoch = time.time() - t0
 
