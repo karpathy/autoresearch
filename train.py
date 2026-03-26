@@ -569,7 +569,7 @@ while True:
     # Fast fail: abort if loss is exploding or NaN
     if math.isnan(train_loss_f) or train_loss_f > 100:
         print("FAIL")
-        exit(1)
+        raise RuntimeError("Loss exploded")
 
     torch.cuda.synchronize()
     t1 = time.time()
