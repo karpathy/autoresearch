@@ -108,6 +108,16 @@ ENABLE_FEATURE_NORMALIZER = False
 NORMALIZER_WARMUP_BATCHES = 200  # ~1 full epoch for 50k images / 256 batch size
 # Adaptor MLP v2: LayerNorm+GELU+residual projection (replaces simple linear when enabled)
 ENABLE_ADAPTOR_MLP_V2 = False
+# L_angle: balanced summary loss normalized by angular dispersion (per D-03)
+ENABLE_L_ANGLE = False
+# Hybrid Loss: 0.9*cosine + 0.1*smooth-L1 for spatial features (per D-03)
+ENABLE_HYBRID_LOSS = False
+HYBRID_LOSS_BETA = 0.9  # Cosine weight in hybrid loss (1-beta = smooth-L1 weight)
+# FeatSharp: spatial feature sharpening -- OPTIONAL, may OOM (per D-01)
+ENABLE_FEATSHARP = False
+# Shift Equivariant Loss: random-shift spatial MSE -- OPTIONAL (per D-01)
+ENABLE_SHIFT_EQUIVARIANT = False
+SHIFT_EQUIVARIANT_MAX_SHIFT = 2  # Max shift in patches for shift equivariant loss
 
 
 def _load_radio_metadata(
@@ -821,6 +831,62 @@ def vat_embedding_loss(
     r_adv = epsilon * d.detach()
     emb_adv = functional.normalize(model.proj(feat_clean.detach() + r_adv), p=2, dim=1)
     return (1.0 - functional.cosine_similarity(emb_clean, emb_adv, dim=1)).mean()
+
+
+def l_angle_loss(
+    student: torch.Tensor,
+    teacher: torch.Tensor,
+    teacher_mean_dir: torch.Tensor,
+    teacher_angular_dispersion: float,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """Balanced summary loss normalized by angular dispersion.
+
+    Per C-RADIOv4 Section 2.5 Eq. 3-7: Prevents teachers with large angular
+    spread from dominating the loss in multi-teacher distillation.
+
+    The teacher_mean_dir (E[y]/||E[y]||) and teacher_angular_dispersion
+    (Disp(theta_y)) must be pre-computed from the training set before
+    training begins. Plan 09-03 handles this computation during training init.
+
+    Args:
+        student: (B, D) student predictions
+        teacher: (B, D) teacher targets
+        teacher_mean_dir: (D,) mean direction of teacher features (unused in
+            loss computation but kept for API consistency with C-RADIOv4)
+        teacher_angular_dispersion: scalar Disp(theta_y), pre-computed per teacher
+        eps: numerical stability epsilon (Pitfall 4: prevents division by zero
+            when teacher features are tightly clustered)
+    """
+    cos_sim = functional.cosine_similarity(student, teacher, dim=1)
+    theta = torch.acos(cos_sim.clamp(-1 + eps, 1 - eps))
+    return (theta ** 2).mean() / (teacher_angular_dispersion + eps)
+
+
+def hybrid_loss(
+    student: torch.Tensor,
+    teacher: torch.Tensor,
+    beta: float = 0.9,
+) -> torch.Tensor:
+    """Hybrid cosine + smooth-L1 loss for spatial feature distillation.
+
+    Per PHI-S paper Section 2.1 Eq. 3 and AM-RADIO: combines direction
+    (cosine) and magnitude (smooth-L1) signals. AM-RADIO uses beta=0.9
+    (90% cosine, 10% smooth-L1).
+
+    IMPORTANT per Pitfall 5: This loss is designed for SPATIAL (patch-level)
+    features, not summary features. For summary features, use cosine or
+    l_angle_loss instead. Using smooth-L1 on summary embeddings where
+    cosine is more appropriate will regress metrics.
+
+    Args:
+        student: (B, D) or (B, C, H, W) student features
+        teacher: (B, D) or (B, C, H, W) teacher features
+        beta: cosine weight (1-beta = smooth-L1 weight). Default 0.9.
+    """
+    cos_loss = (1.0 - functional.cosine_similarity(student, teacher, dim=-1)).mean()
+    sml1_loss = functional.smooth_l1_loss(student, teacher)
+    return beta * cos_loss + (1 - beta) * sml1_loss
 
 
 class InfoNCELoss(nn.Module):
