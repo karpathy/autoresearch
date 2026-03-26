@@ -1,0 +1,56 @@
+<section
+  id="dashboard-board"
+  data-dashboard-partial-url="{{ request.url_for('dashboard_board') }}"
+  {% if oob %}hx-swap-oob="outerHTML"{% endif %}
+  class="space-y-4"
+>
+  <div class="flex items-center justify-between">
+    <h2 class="text-lg font-semibold text-white">
+      Dashboard <span class="text-sm font-normal text-slate-400">{{ dashboard.seed_count }} seed{{ 's' if dashboard.seed_count != 1 else '' }} across all stages</span>
+    </h2>
+  </div>
+  <div class="grid gap-4 xl:grid-cols-4">
+    {% for column in dashboard.columns %}
+    <section class="flex min-h-0 flex-col rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-sm">
+      <div class="mb-3">
+        <h3 class="font-medium text-white">{{ column.title }}</h3>
+        <p class="mt-0.5 text-xs text-slate-500">{{ column.description }}</p>
+      </div>
+      <div class="scroll-pane scroll-pane-stage space-y-1.5 pr-1">
+        {% if column.seeds %}
+          {% for seed in column.seeds %}
+          {% set is_promoted = column.id == 'completed' and seed.status.value == 'promoted' %}
+          <a
+            class="seed-card block rounded-lg border px-2.5 py-2 transition
+              {% if is_promoted %}border-emerald-500/50 bg-emerald-500/10 hover:border-emerald-500/70
+              {% else %}border-slate-700 bg-slate-950/80 hover:border-slate-600{% endif %}"
+            data-seed-id="{{ seed.seed_id }}"
+            aria-current="false"
+            href="{{ request.url_for('seed_detail_page', seed_id=seed.seed_id) }}"
+            hx-get="{{ request.url_for('seed_detail_partial', seed_id=seed.seed_id) }}"
+            hx-target="#seed-detail"
+            hx-push-url="{{ request.url_for('dashboard') }}?seed_id={{ seed.seed_id }}"
+          >
+            <div class="flex items-start justify-between gap-2">
+              <p class="font-mono-id min-w-0 truncate text-sm font-medium text-white">{{ seed.seed_id }}</p>
+              <span class="status-pill status-{{ seed.status.value }} shrink-0">{{ seed.status.value|replace('_', ' ')|title }}</span>
+            </div>
+            <p class="mt-1 min-w-0 line-clamp-1 text-xs text-slate-400">{{ seed.prompt }}</p>
+            {% if seed.plan %}
+            <p class="mt-1 truncate text-xs text-slate-500" title="{{ seed.plan.title }}">{{ seed.plan.title }}</p>
+            {% endif %}
+            {% if seed.latest_metrics and seed.latest_metrics.get(dashboard.target_metric_key) is not none %}
+            <p class="mt-1 text-xs text-slate-500">{{ dashboard.target_metric_label }} {{ "%.4f"|format(seed.latest_metrics.get(dashboard.target_metric_key)) }}{% if seed.latest_signal %} · {{ seed.latest_signal }}{% endif %}</p>
+            {% endif %}
+          </a>
+          {% endfor %}
+        {% else %}
+        <div class="rounded-lg border border-dashed border-slate-700 bg-slate-950/50 py-6 text-center text-sm text-slate-500">
+          No seeds in this stage.
+        </div>
+        {% endif %}
+      </div>
+    </section>
+    {% endfor %}
+  </div>
+</section>

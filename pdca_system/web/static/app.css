@@ -1,0 +1,154 @@
+[x-cloak] {
+  display: none !important;
+}
+
+:root {
+  color-scheme: dark;
+  --card-bg: rgb(15 23 42 / 0.6);
+  --card-border: rgb(51 65 85);
+  --muted: rgb(148 163 184);
+}
+
+body {
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* IDs and branch names */
+.font-mono-id {
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  letter-spacing: 0.02em;
+}
+
+.line-clamp-3 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* Card hover for clickable seed cards */
+.seed-card {
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.seed-card:hover {
+  border-color: rgb(56 189 248 / 0.5);
+  background-color: rgb(15 23 42 / 0.9);
+}
+.seed-card.is-selected {
+  border-color: rgb(14 165 233);
+  background-color: rgb(14 165 233 / 0.14);
+  box-shadow: inset 0 0 0 1px rgb(14 165 233 / 0.35);
+}
+
+/* Status pills */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid transparent;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1;
+  padding: 0.2rem 0.5rem;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+.status-draft { background: rgb(51 65 85 / 0.62); border-color: rgb(148 163 184 / 0.4); color: rgb(226 232 240); }
+.status-queued { background: rgb(146 64 14 / 0.45); border-color: rgb(245 158 11 / 0.45); color: rgb(253 230 138); }
+.status-planning { background: rgb(30 64 175 / 0.4); border-color: rgb(96 165 250 / 0.45); color: rgb(191 219 254); }
+.status-generated { background: rgb(15 118 110 / 0.38); border-color: rgb(45 212 191 / 0.4); color: rgb(153 246 228); }
+.status-ca_queued { background: rgb(8 145 178 / 0.33); border-color: rgb(34 211 238 / 0.38); color: rgb(165 243 252); }
+.status-adapting,
+.status-running { background: rgb(109 40 217 / 0.35); border-color: rgb(192 132 252 / 0.42); color: rgb(233 213 255); }
+.status-passed { background: rgb(21 128 61 / 0.28); border-color: rgb(74 222 128 / 0.4); color: rgb(187 247 208); }
+.status-failed { background: rgb(153 27 27 / 0.34); border-color: rgb(248 113 113 / 0.42); color: rgb(254 202 202); }
+.status-promoted { background: rgb(22 163 74 / 0.28); border-color: rgb(74 222 128 / 0.42); color: rgb(187 247 208); }
+
+/* Empty state placeholder */
+.empty-value {
+  color: rgb(100 116 139);
+  font-style: normal;
+}
+
+/* Section headers */
+.section-label {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgb(100 116 139);
+}
+
+/* Scroll containers for long dashboard lists */
+.scroll-pane {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.scroll-pane-stage {
+  max-height: min(32rem, 68vh);
+}
+
+.scroll-pane-detail {
+  max-height: min(30rem, 62vh);
+}
+
+.run-log-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 4fr) minmax(0, 4fr);
+}
+
+.run-log-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Long prompts: cap height, scroll overflow; pair with .prompt-field--readonly for pre-wrap */
+.prompt-field {
+  max-height: min(24rem, 50vh);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  min-height: 0;
+}
+.prompt-field--readonly {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.run-log-pre {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  border: 1px solid rgb(30 41 59);
+  border-radius: 0.25rem;
+  background: rgb(0 0 0 / 0.3);
+  padding: 0.5rem;
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.25rem;
+  color: rgb(226 232 240);
+}
+
+@media (max-width: 1024px) {
+  .run-log-grid {
+    grid-template-columns: 1fr;
+  }
+}

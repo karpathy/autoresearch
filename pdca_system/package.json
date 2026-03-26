@@ -1,0 +1,13 @@
+{
+  "name": "autoresearch-pdca-system-ui",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./web/static/tailwind.input.css -o ./web/static/app.css --minify",
+    "watch:css": "tailwindcss -i ./web/static/tailwind.input.css -o ./web/static/app.css --watch"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17"
+  }
+}
