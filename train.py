@@ -17,11 +17,24 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+
+class _SDPAFlashAttnCompat:
+    """Drop-in replacement for fa3.flash_attn_func using PyTorch SDPA.
+    Handles (B, T, n_head, head_dim) layout. Uses is_causal=True for all
+    layers (ignores window_size) to keep memory usage low via FA2 kernel.
+    """
+    @staticmethod
+    def flash_attn_func(q, k, v, causal=True, window_size=(-1, 0)):
+        B, T, nh, hd = q.shape
+        # SDPA expects (B, nh, T, hd)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=causal)
+        return out.transpose(1, 2)
+
+
+fa3 = _SDPAFlashAttnCompat()
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -305,8 +318,8 @@ polar_express_coeffs = [
 @torch.compile(dynamic=False, fullgraph=True)
 def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t):
     p.mul_(1 - lr_t * wd_t)
-    exp_avg.lerp_(grad, 1 - beta1_t)
-    exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
+    exp_avg.lerp_(grad, (1 - beta1_t).to(dtype=exp_avg.dtype))
+    exp_avg_sq.lerp_(grad.square(), (1 - beta2_t).to(dtype=exp_avg_sq.dtype))
     bias1 = 1 - beta1_t ** step_t
     bias2 = 1 - beta2_t ** step_t
     denom = (exp_avg_sq / bias2).sqrt() + eps_t
@@ -316,8 +329,8 @@ def adamw_step_fused(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_
 @torch.compile(dynamic=False, fullgraph=True)
 def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momentum_buffer,
                     momentum_t, lr_t, wd_t, beta2_t, ns_steps, red_dim):
-    # Nesterov momentum
-    momentum = momentum_t.to(stacked_grads.dtype)
+    # Nesterov momentum (keep momentum_t as float32 — torch 2.6 lerp_ requires float32 weight)
+    momentum = momentum_t
     momentum_buffer.lerp_(stacked_grads, 1 - momentum)
     g = stacked_grads.lerp_(momentum_buffer, momentum)
     # Polar express orthogonalization
@@ -334,8 +347,8 @@ def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momen
             B = b * A + c * (A @ A)
             X = a * X + B @ X
     g = X
-    # NorMuon variance reduction
-    beta2 = beta2_t.to(g.dtype)
+    # NorMuon variance reduction (keep beta2_t as float32 — torch 2.6 lerp_ requires float32 weight)
+    beta2 = beta2_t
     v_mean = g.float().square().mean(dim=red_dim, keepdim=True)
     red_dim_size = g.size(red_dim)
     v_norm_sq = v_mean.sum(dim=(-2, -1), keepdim=True) * red_dim_size
@@ -448,7 +461,7 @@ FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
 DEPTH = 8               # number of transformer layers
-DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
+DEVICE_BATCH_SIZE = 16   # per-device batch size (reduced for A10G 22GB; original 128 OOMs)
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
