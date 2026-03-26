@@ -41,7 +41,7 @@ GRADIENT_ACCUMULATION_STEPS = 16     # Effective batch = 128
 LR = 1e-3                           # Learning rate for AdamW
 WEIGHT_DECAY = 0.01                  # AdamW weight decay
 WARMUP_RATIO = 0.2                   # Fraction of total steps for LR warmup
-TEMPERATURE = 0.15                   # InfoNCE temperature
+TEMPERATURE = 0.20                   # InfoNCE temperature (softer for combined dataset)
 
 # ArcFace metric learning
 ARCFACE_WEIGHT = 0.0                 # Weight of ArcFace loss (0.0 = disabled)
