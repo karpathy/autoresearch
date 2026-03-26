@@ -108,6 +108,16 @@ ENABLE_FEATURE_NORMALIZER = False
 NORMALIZER_WARMUP_BATCHES = 200  # ~1 full epoch for 50k images / 256 batch size
 # Adaptor MLP v2: LayerNorm+GELU+residual projection (replaces simple linear when enabled)
 ENABLE_ADAPTOR_MLP_V2 = False
+# L_angle: balanced summary loss normalized by angular dispersion (per D-03)
+ENABLE_L_ANGLE = False
+# Hybrid Loss: 0.9*cosine + 0.1*smooth-L1 for spatial features (per D-03)
+ENABLE_HYBRID_LOSS = False
+HYBRID_LOSS_BETA = 0.9  # Cosine weight in hybrid loss (1-beta = smooth-L1 weight)
+# FeatSharp: spatial feature sharpening -- OPTIONAL, may OOM (per D-01)
+ENABLE_FEATSHARP = False
+# Shift Equivariant Loss: random-shift spatial MSE -- OPTIONAL (per D-01)
+ENABLE_SHIFT_EQUIVARIANT = False
+SHIFT_EQUIVARIANT_MAX_SHIFT = 2  # Max shift in patches for shift equivariant loss
 
 
 def _load_radio_metadata(
@@ -821,6 +831,160 @@ def vat_embedding_loss(
     r_adv = epsilon * d.detach()
     emb_adv = functional.normalize(model.proj(feat_clean.detach() + r_adv), p=2, dim=1)
     return (1.0 - functional.cosine_similarity(emb_clean, emb_adv, dim=1)).mean()
+
+
+def l_angle_loss(
+    student: torch.Tensor,
+    teacher: torch.Tensor,
+    teacher_mean_dir: torch.Tensor,
+    teacher_angular_dispersion: float,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """Balanced summary loss normalized by angular dispersion.
+
+    Per C-RADIOv4 Section 2.5 Eq. 3-7: Prevents teachers with large angular
+    spread from dominating the loss in multi-teacher distillation.
+
+    The teacher_mean_dir (E[y]/||E[y]||) and teacher_angular_dispersion
+    (Disp(theta_y)) must be pre-computed from the training set before
+    training begins. Plan 09-03 handles this computation during training init.
+
+    Args:
+        student: (B, D) student predictions
+        teacher: (B, D) teacher targets
+        teacher_mean_dir: (D,) mean direction of teacher features (unused in
+            loss computation but kept for API consistency with C-RADIOv4)
+        teacher_angular_dispersion: scalar Disp(theta_y), pre-computed per teacher
+        eps: numerical stability epsilon (Pitfall 4: prevents division by zero
+            when teacher features are tightly clustered)
+    """
+    cos_sim = functional.cosine_similarity(student, teacher, dim=1)
+    theta = torch.acos(cos_sim.clamp(-1 + eps, 1 - eps))
+    return (theta ** 2).mean() / (teacher_angular_dispersion + eps)
+
+
+def hybrid_loss(
+    student: torch.Tensor,
+    teacher: torch.Tensor,
+    beta: float = 0.9,
+) -> torch.Tensor:
+    """Hybrid cosine + smooth-L1 loss for spatial feature distillation.
+
+    Per PHI-S paper Section 2.1 Eq. 3 and AM-RADIO: combines direction
+    (cosine) and magnitude (smooth-L1) signals. AM-RADIO uses beta=0.9
+    (90% cosine, 10% smooth-L1).
+
+    IMPORTANT per Pitfall 5: This loss is designed for SPATIAL (patch-level)
+    features, not summary features. For summary features, use cosine or
+    l_angle_loss instead. Using smooth-L1 on summary embeddings where
+    cosine is more appropriate will regress metrics.
+
+    Args:
+        student: (B, D) or (B, C, H, W) student features
+        teacher: (B, D) or (B, C, H, W) teacher features
+        beta: cosine weight (1-beta = smooth-L1 weight). Default 0.9.
+    """
+    cos_loss = (1.0 - functional.cosine_similarity(student, teacher, dim=-1)).mean()
+    sml1_loss = functional.smooth_l1_loss(student, teacher)
+    return beta * cos_loss + (1 - beta) * sml1_loss
+
+
+def shift_equivariant_loss(
+    student_spatial: torch.Tensor,
+    teacher_spatial: torch.Tensor,
+    max_shift: int = 2,
+) -> torch.Tensor:
+    """Spatial distillation loss with random shift for equivariance.
+
+    Per C-RADIOv4 Section 2.3.1 Eq. 1: Randomly shifts student and teacher
+    spatial features independently to prevent the student from learning
+    fixed positional noise patterns from teachers.
+
+    IMPORTANT per Pitfall 6: This requires spatial (patch-level) features
+    from the Phase 8 RADIO-04 spatial cache. Gate on availability at runtime.
+    When spatial features are not available, this loss should not be called.
+
+    Args:
+        student_spatial: (B, C, H, W) student spatial features
+        teacher_spatial: (B, C, H, W) teacher spatial features
+        max_shift: maximum shift in patch units (default 2)
+
+    Returns:
+        MSE loss between overlapping shifted regions, or 0 if no overlap.
+    """
+    B, C, H, W = student_spatial.shape
+
+    # Random shift for student and teacher independently (in patch increments)
+    sh_s = torch.randint(-max_shift, max_shift + 1, (2,))
+    sh_t = torch.randint(-max_shift, max_shift + 1, (2,))
+
+    # Compute overlap region in the shared coordinate frame
+    h_start = max(sh_s[0].item(), sh_t[0].item(), 0)
+    h_end = min(H + sh_s[0].item(), H + sh_t[0].item(), H)
+    w_start = max(sh_s[1].item(), sh_t[1].item(), 0)
+    w_end = min(W + sh_s[1].item(), W + sh_t[1].item(), W)
+
+    if h_end <= h_start or w_end <= w_start:
+        return torch.tensor(0.0, device=student_spatial.device)
+
+    # Extract overlapping regions (offset by respective shifts)
+    s_region = student_spatial[
+        :, :,
+        h_start - sh_s[0].item() : h_end - sh_s[0].item(),
+        w_start - sh_s[1].item() : w_end - sh_s[1].item(),
+    ]
+    t_region = teacher_spatial[
+        :, :,
+        h_start - sh_t[0].item() : h_end - sh_t[0].item(),
+        w_start - sh_t[1].item() : w_end - sh_t[1].item(),
+    ]
+
+    return functional.mse_loss(s_region, t_region)
+
+
+class FeatSharpModule(nn.Module):
+    """Lightweight attention-based spatial feature sharpening.
+
+    Per FeatSharp paper (ICML 2025) Section 3.3: simplified tile-guided
+    attentional refinement for CNN spatial features. Uses multi-head
+    self-attention with residual connection to sharpen spatial feature maps.
+
+    OPTIONAL per D-01. Default ENABLE_FEATSHARP=False. This module adds
+    significant VRAM overhead due to the attention computation over all
+    spatial positions. If OOM occurs, the crash recovery system handles it.
+
+    Depends on Phase 8 spatial feature cache (RADIO-04). Only activates
+    when spatial features are available at runtime.
+    """
+
+    def __init__(self, channels: int, num_heads: int = 4) -> None:
+        super().__init__()
+        self.channels = channels
+        self.num_heads = num_heads
+        self.norm = nn.LayerNorm(channels)
+        self.attn = nn.MultiheadAttention(
+            embed_dim=channels, num_heads=num_heads, batch_first=False
+        )
+
+    def forward(self, spatial_features: torch.Tensor) -> torch.Tensor:
+        """Sharpen spatial features via self-attention + residual.
+
+        Args:
+            spatial_features: (B, C, H, W) spatial feature map
+
+        Returns:
+            (B, C, H, W) sharpened spatial feature map (same shape)
+        """
+        B, C, H, W = spatial_features.shape
+        # Reshape to sequence: (B, C, H, W) -> (H*W, B, C) for MHA
+        x = spatial_features.reshape(B, C, H * W).permute(2, 0, 1)  # (H*W, B, C)
+        # LayerNorm -> self-attention -> residual
+        x_norm = self.norm(x)
+        attn_out, _ = self.attn(x_norm, x_norm, x_norm, need_weights=False)
+        x = x + attn_out  # residual connection
+        # Reshape back: (H*W, B, C) -> (B, C, H, W)
+        out = x.permute(1, 2, 0).reshape(B, C, H, W)
+        return out
 
 
 class InfoNCELoss(nn.Module):
