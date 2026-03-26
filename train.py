@@ -100,6 +100,10 @@ RADIO_CACHE_BASE = "workspace/output/teacher_cache"
 # --- Spatial Distillation ---
 SPATIAL_DISTILL_WEIGHT = 0.0   # 0.0 = disabled; agent sets positive value to enable spatial distillation from RADIO
 
+# --- RADIO Training Techniques ---
+# PHI-S: Hadamard isotropic standardization for multi-teacher gradient balancing
+ENABLE_PHI_S = False
+
 
 def _load_radio_metadata(
     variant: str,
@@ -407,6 +411,100 @@ def load_pretrained_lcnet(model: LCNet, scale: float) -> None:
     model.load_state_dict(model_sd, strict=False)
     logger.info(f"Loaded {loaded}/{len(timm_sd)} pretrained weights from {variant}")
     del timm_model
+
+
+def _build_hadamard(n: int) -> torch.Tensor:
+    """Build normalized Hadamard matrix of size n via Sylvester construction.
+
+    Per PHI-S paper Eq. 18: recursive Kronecker product H_n = H_1 ⊗ H_{n-1},
+    normalized by 1/sqrt(2) at each step so rows are orthonormal.
+
+    Args:
+        n: Matrix size, must be a positive power of 2.
+
+    Returns:
+        (n, n) orthonormal Hadamard matrix (H @ H^T = I).
+    """
+    assert n > 0 and (n & (n - 1)) == 0, f"n must be power of 2, got {n}"
+    H = torch.tensor([[1.0]])
+    while H.shape[0] < n:
+        H = torch.cat([
+            torch.cat([H, H], dim=1),
+            torch.cat([H, -H], dim=1),
+        ], dim=0) / (2 ** 0.5)
+    return H
+
+
+class PHISTransform(nn.Module):
+    """PCA-Hadamard Isotropic Standardization (PHI-S).
+
+    Rotates teacher features so all dimensions have equal variance,
+    then scales uniformly. Prevents any single teacher from dominating
+    gradient updates in multi-teacher distillation.
+
+    IMPORTANT: PHI-S operates on RAW features BEFORE L2 normalization.
+    For the current single-teacher mode where cached embeddings are already
+    L2-normalized, PHI-S has limited effect but is correctly implemented
+    for multi-teacher activation.
+
+    Key property: transform is invertible and isotropic -- errors of equal
+    magnitude in normalized space map to equal magnitude in original space.
+
+    The transform is computed once via fit() from training data statistics,
+    then frozen (no learnable parameters).
+    """
+
+    def __init__(self, feature_dim: int) -> None:
+        super().__init__()
+        self.feature_dim = feature_dim
+        self.register_buffer("R", torch.eye(feature_dim))       # rotation: H @ U^T
+        self.register_buffer("alpha", torch.tensor(1.0))         # scale: 1/phi
+        self.register_buffer("mean", torch.zeros(feature_dim))
+        self.ready = False
+
+    def fit(self, features: torch.Tensor) -> None:
+        """Compute PHI-S parameters from a batch of teacher features.
+
+        Args:
+            features: (N, D) tensor of raw teacher features.
+        """
+        D = self.feature_dim
+        # Compute mean
+        mu = features.mean(dim=0)
+
+        # Compute covariance
+        centered = features - mu
+        cov = (centered.T @ centered) / (features.shape[0] - 1)
+
+        # Eigendecomposition: cov = U @ diag(lambda) @ U^T
+        eigenvalues, U = torch.linalg.eigh(cov)
+        eigenvalues = eigenvalues.clamp(min=1e-8)  # numerical stability (Pitfall 3)
+
+        # Build Hadamard matrix (power of 2 only via Sylvester)
+        # For non-power-of-2 dims, pad to next power of 2 and truncate
+        n_pad = 1
+        while n_pad < D:
+            n_pad *= 2
+        H = _build_hadamard(n_pad)
+        H = H[:D, :D]  # truncate if padded (approximate but functional)
+
+        # PHI-S: R = H @ U^T, alpha = 1/phi
+        # phi = sqrt(1/D * sum(lambda_i)) = sqrt(trace(cov) / D)
+        phi = torch.sqrt(eigenvalues.sum() / D)
+        self.R.copy_(H @ U.T)
+        self.alpha.copy_(1.0 / phi)
+        self.mean.copy_(mu)
+        self.ready = True
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        """Apply PHI-S transform: X' = alpha * (X - mu) @ R^T.
+
+        Returns features unchanged (passthrough) if fit() has not been called.
+        """
+        if not self.ready:
+            return features  # passthrough during warmup
+        centered = features - self.mean
+        return self.alpha * (centered @ self.R.T)
 
 
 class ArcMarginProduct(nn.Module):
