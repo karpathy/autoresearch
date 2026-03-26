@@ -52,7 +52,7 @@ SEED = 42
 USE_GRADIENT_CHECKPOINTING = True
 EVAL_EVERY_N_EPOCHS = 1              # Evaluate after every N epochs
 MAX_STEPS_PER_EPOCH = 0              # Cap steps per epoch (0 = no cap)
-MAX_TRAINING_SECONDS = 1800          # Hard time limit: 30 minutes per experiment
+MAX_TRAINING_SECONDS = 7200          # Hard time limit: 2 hours per experiment (larger combined dataset)
 NUM_WORKERS = 4                      # DataLoader workers
 DEVICE = "cuda"
 
