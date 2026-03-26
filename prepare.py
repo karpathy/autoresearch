@@ -226,15 +226,23 @@ class Tokenizer:
         return self.bos_token_id
 
     def encode(self, text, prepend=None, num_threads=8):
+        prepend_id = None
         if prepend is not None:
-            prepend_id = prepend if isinstance(prepend, int) else self.enc.encode_single_token(prepend)
+            if isinstance(prepend, int):
+                prepend_id = prepend
+            else:
+                try:
+                    prepend_id = self.enc.encode_single_token(prepend)
+                except ValueError:
+                    fallback = self.enc.encode_ordinary(prepend)
+                    prepend_id = fallback[0] if fallback else None
         if isinstance(text, str):
             ids = self.enc.encode_ordinary(text)
-            if prepend is not None:
+            if prepend_id is not None:
                 ids.insert(0, prepend_id)
         elif isinstance(text, list):
             ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
-            if prepend is not None:
+            if prepend_id is not None:
                 for row in ids:
                     row.insert(0, prepend_id)
         else:
