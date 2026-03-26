@@ -76,7 +76,7 @@
       >
         <label class="block text-xs font-medium uppercase tracking-[0.2em] text-slate-500" for="seed_prompt_{{ seed.seed_id }}">Seed prompt (editable before Plan-Do starts)</label>
         <textarea
-          class="min-h-24 w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none ring-0 placeholder:text-slate-500 focus:border-sky-500"
+          class="prompt-field min-h-24 w-full min-w-0 resize-y rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none ring-0 placeholder:text-slate-500 focus:border-sky-500"
           id="seed_prompt_{{ seed.seed_id }}"
           name="prompt"
           required
@@ -86,7 +86,7 @@
         </button>
       </form>
       {% else %}
-      <p class="text-sm leading-6 text-slate-300">{{ seed.prompt }}</p>
+      <div class="prompt-field prompt-field--readonly rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm leading-6 text-slate-300">{{ seed.prompt }}</div>
       {% endif %}
     </div>
   </div>

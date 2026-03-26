@@ -860,10 +860,53 @@ def _invoke_agent(
         return agent_name, ret, stdout, stderr, stdout_path, stderr_path
 
 
+
+
+def _ca_plan_do_summary_block(task: dict[str, Any]) -> str:
+    """Labeled Plan-Do excerpt for CA prompts (after baseline notes, before inline task JSON)."""
+    pds = task.get("pd_summary")
+    if not isinstance(pds, dict) or not pds:
+        return ""
+    body = json.dumps(pds, indent=2, ensure_ascii=False)
+    return (
+        "Plan-Do summary (authoritative: what Plan-Do implemented in this seed worktree). "
+        "Use this to understand the code under test. The \"prompt\" field inside the task JSON below is the original user request "
+        "and may be broader or worded differently than what was actually built.\n\n"
+        f"{body}\n\n"
+    )
+
+
+def _ca_task_json_for_agent_prompt(task: dict[str, Any], *, plan_do_rendered: bool) -> str:
+    """Serialize CA task for the agent-facing prompt (not necessarily identical to the queue file).
+
+    When ``plan_do_rendered`` is True, ``pd_summary`` is omitted here because it already appears in
+    :func:`_ca_plan_do_summary_block` above. Otherwise empty or invalid ``pd_summary`` keys are
+    dropped so the inline JSON stays tidy (direct CA / no PD handoff).
+    """
+    payload = dict(task)
+    if plan_do_rendered:
+        payload.pop("pd_summary", None)
+    elif "pd_summary" in payload:
+        raw = payload.get("pd_summary")
+        if not isinstance(raw, dict) or not raw:
+            payload.pop("pd_summary", None)
+    return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+def _ca_plan_do_block_and_task_json(task: dict[str, Any]) -> tuple[str, str]:
+    """One pipeline for CA-class prompts: optional Plan-Do block + inline task JSON without repeating ``pd_summary``.
+
+    The workflow keeps the full task (including ``pd_summary``) on the queue JSON for tooling;
+    this builds the derived view shown to the model.
+    """
+    block = _ca_plan_do_summary_block(task)
+    return block, _ca_task_json_for_agent_prompt(task, plan_do_rendered=bool(block))
+
+
 def _build_metrics_recovery_prompt(task: dict[str, Any]) -> str:
     """Lightweight prompt for metrics-recovery CA: no protocol/docs, just task, log paths, report shape."""
     # Keep any non-ASCII characters readable (e.g. Chinese) inside the generated prompt.
-    task_json = json.dumps(task, indent=2, ensure_ascii=False)
+    plan_do_block, task_json = _ca_plan_do_block_and_task_json(task)
     source_run_id = task.get("source_run_id", "unknown")
     stdout_log = task.get("source_stdout_log_path", "missing")
     stderr_log = task.get("source_stderr_log_path", "missing")
@@ -887,6 +930,7 @@ def _build_metrics_recovery_prompt(task: dict[str, Any]) -> str:
     }, indent=2, ensure_ascii=False)
     return (
         "METRICS RECOVERY (focused task). Do not read protocol or stage docs.\n\n"
+        f"{plan_do_block}"
         "Task (inline):\n"
         f"{task_json}\n\n"
         "Do not rerun training. Do not edit code. Do not create a commit.\n\n"
@@ -921,7 +965,6 @@ def _build_sync_resolution_prompt(task: dict[str, Any]) -> str:
 def _build_merge_resolution_prompt(task: dict[str, Any]) -> str:
     """Lightweight prompt for merge-resolution CA: no protocol/docs, just commit, merge, report."""
     # Keep any non-ASCII characters readable (e.g. Chinese) inside the generated prompt.
-    task_json = json.dumps(task, indent=2, ensure_ascii=False)
     target_branch = task.get("baseline_branch", "master")  # branch we want to merge into (e.g. master)
     worktree_path = task.get("worktree_path") or ""
     seed_id = task.get("seed_id", "")
@@ -980,8 +1023,10 @@ def _build_merge_resolution_prompt(task: dict[str, Any]) -> str:
             f"4. Write the summary JSON to the file named {SUMMARY_FILENAME} in your current working directory (same metrics as the previous run; metrics must include the target metric key {TARGET_METRIC_KEY!r}). Use the merge commit SHA from the baseline branch (after the merge, from project root: git rev-parse HEAD). Do not print this JSON to stdout or stderr.\n\n"
         )
 
+    plan_do_block, task_json = _ca_plan_do_block_and_task_json(task)
     return (
         "MERGE RESOLUTION (focused task). Do not read protocol or stage docs.\n\n"
+        f"{plan_do_block}"
         "Task (inline):\n"
         f"{task_json}\n\n"
         f"{cwd_note}"
@@ -1000,7 +1045,11 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
     - CA normal: full header + adapt/run/commit/report. Heavy.
     """
     # Keep any non-ASCII characters readable (e.g. Chinese) inside the generated prompt.
-    task_json = json.dumps(task, indent=2, ensure_ascii=False)
+    if stage == "ca":
+        plan_do_block, task_json = _ca_plan_do_block_and_task_json(task)
+    else:
+        plan_do_block = ""
+        task_json = json.dumps(task, indent=2, ensure_ascii=False)
     rel_task = task_path.relative_to(PROJECT_ROOT).as_posix()
     worktree_path = task.get("worktree_path", "pdca_system/history/worktrees")
     agent_cwd = _agent_cwd(worktree_path)
@@ -1043,6 +1092,7 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
         "You are working on the autoresearch pdca-system workflow.\n\n"
         f"{required_context}\n"
         f"{baseline_files_note}"
+        f"{plan_do_block}"
         f"{task_block}"
         f"{worktree_note}"
         f"{scope_note}"
@@ -1101,6 +1151,7 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
                 "You must retry until the run completes successfully and you can report real metrics. Do not report empty metrics and stop.\n"
                 "If training fails with CUDA out of memory (OOM): the default batch size is for H100. Reduce DEVICE_BATCH_SIZE (and if needed TOTAL_BATCH_SIZE) in train.py so training fits in available VRAM, then rerun until the baseline run completes. Only trivial execution fixes (e.g. batch size) are allowed; do not change model architecture or training logic.\n"
                 "If you modified any files (e.g. batch size for OOM), you must commit those changes on the baseline branch before reporting. An uncommitted worktree causes the follow-up merge to fail.\n"
+                "Run the canonical training command promptly after orienting to the script name; avoid a long preamble of analysis before the first execution attempt.\n"
                 f"Use this Python executable for the canonical run: `{runner_label}` ({ca_note}). Run the project's canonical command (see protocol; e.g. train.py or the script your project uses) with it, e.g. `{python_exe} <script> > training.log 2>&1`. Set your command/tool timeout to at least {_get_timeout('ca')} seconds. After the run, inspect training.log to confirm completion and recover or verify metrics.\n"
                 f"Write the final result JSON to the file named {SUMMARY_FILENAME} in your current working directory once training has completed successfully. The metrics object must include the target metric key {TARGET_METRIC_KEY!r}. Include the current commit SHA in the summary (commit any changes first). Do not print this JSON to stdout or stderr. Use this shape (reference): "
                 f'{{"checks":["baseline_measurement"],"notes":"Measured the current baseline in the dedicated baseline worktree.","completed_at":"YYYY-MM-DD HH:MM:SS","commit_sha":"...","metrics":{{"{TARGET_METRIC_KEY}":1.239972,"training_seconds":300.1,"total_seconds":360.4,"startup_seconds":25.8,"peak_vram_mb":11967.8,"mfu_percent":2.15,"total_tokens_M":140.5,"num_steps":268,"num_params_M":11.5,"depth":4}}}}\n'
@@ -1112,8 +1163,10 @@ def _build_prompt(stage: str, task: dict[str, Any], task_path: Path) -> str:
             '"Adapt or fix" means: fix bugs, import/runtime errors, OOM (e.g. reduce batch size), and config/path issues only. '
             "Do not change model architecture, optimizer logic, hyperparameters, or training logic to improve results. "
             "The task \"prompt\" is for context only; do not treat it as a goal to achieve in this stage.\n\n"
+            "Execution style: after skimming protocol and stage doc only as needed to locate the canonical command, run that training command in the worktree first. "
+            "Do not begin with a long exploratory code review or redesign; if the run fails, use the error output to apply minimal fixes and rerun.\n\n"
             "Workflow:\n"
-            "1. Adapt or fix the generated code in the seed worktree until it runs.\n"
+            "1. Adapt or fix the generated code in the seed worktree only as needed so the canonical command can run (or fix failures from the first run).\n"
             f"2. Use this Python executable for the canonical run: `{runner_label}` ({ca_note}). Run the project's canonical command (see protocol; e.g. train.py or the script your project uses) with it, e.g. `{python_exe} <script> > training.log 2>&1` (or `... 2>&1 | tee training.log` to also see output). Set your command/tool timeout to at least {_get_timeout('ca')} seconds. After the run, inspect training.log to confirm completion and recover or verify metrics.\n"
             "3. If it fails for a simple reason, fix and rerun.\n"
             "4. Create a git commit in the seed branch for your changes.\n"

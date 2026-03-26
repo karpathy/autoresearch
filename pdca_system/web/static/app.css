@@ -116,6 +116,19 @@ body {
   flex-direction: column;
 }
 
+/* Long prompts: cap height, scroll overflow; pair with .prompt-field--readonly for pre-wrap */
+.prompt-field {
+  max-height: min(24rem, 50vh);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  min-height: 0;
+}
+.prompt-field--readonly {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .run-log-pre {
   min-width: 0;
   min-height: 0;

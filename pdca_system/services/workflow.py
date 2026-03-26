@@ -48,6 +48,23 @@ from pdca_system.task import (
     write_task,
 )
 
+
+def _pd_summary_for_ca_task(summary: dict[str, Any], pd_run_id: str) -> dict[str, Any]:
+    """Compact Plan-Do outcome for Check-Action task JSON and prompts."""
+    refs = summary.get("source_refs")
+    if not isinstance(refs, list):
+        refs = []
+    return {
+        "idea": summary.get("idea"),
+        "target_component": summary.get("target_component", "model"),
+        "description": summary.get("description", ""),
+        "source_refs": refs,
+        "commit_sha": summary.get("commit_sha"),
+        "completed_at": summary.get("completed_at"),
+        "pd_run_id": pd_run_id,
+    }
+
+
 BASELINE_SEED_ID = "__baseline__"
 LOGGER = get_logger(__name__)
 
@@ -809,6 +826,33 @@ class WorkflowService:
             raise RuntimeError(setup_error)
         return self._enqueue_plan_do_run(seed)
 
+    def _pd_summary_from_seed(self, seed: SeedRecord) -> dict[str, Any] | None:
+        """Build Plan-Do summary for CA when not passed explicitly (e.g. manual queue)."""
+        if seed.seed_id == BASELINE_SEED_ID or seed.plan is None:
+            return None
+        plan = seed.plan
+        if not (plan.title or plan.description or plan.commit_sha):
+            return None
+        out: dict[str, Any] = {
+            "idea": plan.title,
+            "target_component": plan.target_component,
+            "description": plan.description,
+            "source_refs": list(plan.source_refs) if plan.source_refs else [],
+            "commit_sha": plan.commit_sha,
+        }
+        pd_runs = [
+            r
+            for r in self.run_repo.list(seed.seed_id)
+            if r.stage == StageName.pd and r.status == RunStatus.succeeded
+        ]
+        if pd_runs:
+            best = max(pd_runs, key=lambda r: r.updated_at)
+            ca = best.summary.get("completed_at")
+            if ca:
+                out["completed_at"] = ca
+            out["pd_run_id"] = best.run_id
+        return out
+
     def queue_ca(
         self,
         seed_id: str,
@@ -820,6 +864,7 @@ class WorkflowService:
         last_metrics: dict[str, Any] | None = None,
         last_summary: dict[str, Any] | None = None,
         commit_sha_before_pd: str | None = None,
+        pd_summary: dict[str, Any] | None = None,
     ) -> StageRun:
         seed = self.require_seed(seed_id)
         if not metrics_recovery and seed.status in {SeedStatus.draft, SeedStatus.queued, SeedStatus.planning}:
@@ -881,6 +926,11 @@ class WorkflowService:
             payload["source_stdout_log_path"] = source_stdout_log_path
             payload["source_stderr_log_path"] = source_stderr_log_path
             payload["worktree_path"] = None
+        resolved_pd_summary = pd_summary if pd_summary is not None else self._pd_summary_from_seed(seed)
+        # pd_summary lives on the queue JSON for tooling; daemon builds the agent prompt as a derived
+        # view (labeled Plan-Do block + inline task JSON without repeating this key).
+        if resolved_pd_summary:
+            payload["pd_summary"] = resolved_pd_summary
         write_task("ca", payload, task_id=run.task_id)
         LOGGER.info(
             "queued CA run %s for seed %s (merge_resolution=%s, metrics_recovery=%s)",
@@ -1310,6 +1360,7 @@ class WorkflowService:
         self.queue_ca(
             seed.seed_id,
             commit_sha_before_pd=run.summary.get("commit_sha_before_pd"),
+            pd_summary=_pd_summary_for_ca_task(summary, run_id),
         )
         return run
 

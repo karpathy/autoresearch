@@ -109,6 +109,58 @@ class DaemonTests(unittest.TestCase):
         )
         self.assertIn("Do not put forward new ideas or optimize for better metrics", prompt)
         self.assertIn("The task \"prompt\" is for context only", prompt)
+        self.assertIn("Execution style:", prompt)
+
+    def test_build_prompt_ca_without_pd_summary_no_plan_do_block(self) -> None:
+        """Direct CA (no PD handoff): no Plan-Do block; task JSON still carries seed prompt; run-first guidance remains."""
+        task = {
+            "seed_id": "seed-no-pdsum",
+            "run_id": "ca-20990101-000111-nopd",
+            "prompt": "Original user seed text only",
+            "worktree_path": None,
+            "merge_resolution": False,
+            "metrics_recovery": False,
+        }
+        self.assertNotIn("pd_summary", task)
+        prompt = _build_prompt("ca", task, PDCA_SYSTEM_ROOT / "queue" / "ca" / "fake-task.json")
+        self.assertNotIn("Plan-Do summary (authoritative", prompt)
+        self.assertIn("You are working on the Check-Action stage.", prompt)
+        self.assertIn("Execution style:", prompt)
+        self.assertIn("Original user seed text only", prompt)
+        task_tail = prompt.split("Task content:", 1)[1]
+        self.assertNotIn('"pd_summary"', task_tail)
+
+    def test_build_prompt_ca_worktree_without_pd_summary(self) -> None:
+        """CA in worktree context without pd_summary: inline task only, no Plan-Do preface."""
+        with tempfile.TemporaryDirectory(prefix="ca_no_pdsum_") as tmp:
+            task = {
+                "seed_id": "seed-wt-nopd",
+                "run_id": "ca-20990101-000112-wt",
+                "prompt": "Worktree seed prompt",
+                "worktree_path": tmp,
+                "merge_resolution": False,
+                "metrics_recovery": False,
+            }
+            prompt = _build_prompt("ca", task, PDCA_SYSTEM_ROOT / "queue" / "ca" / "fake-task.json")
+            self.assertNotIn("Plan-Do summary (authoritative", prompt)
+            self.assertIn("Task content (provided inline", prompt)
+            self.assertIn("Worktree seed prompt", prompt)
+            self.assertIn("Execution style:", prompt)
+
+    def test_build_prompt_ca_empty_pd_summary_strips_inline_key(self) -> None:
+        """Empty pd_summary must not render a Plan-Do block or a useless key in inline JSON."""
+        task = {
+            "seed_id": "seed-empty-pd",
+            "run_id": "ca-20990101-000113-empty",
+            "prompt": "p",
+            "worktree_path": None,
+            "merge_resolution": False,
+            "metrics_recovery": False,
+            "pd_summary": {},
+        }
+        prompt = _build_prompt("ca", task, PDCA_SYSTEM_ROOT / "queue" / "ca" / "fake-task.json")
+        self.assertNotIn("Plan-Do summary (authoritative", prompt)
+        self.assertNotIn('"pd_summary"', prompt.split("Task content:", 1)[1])
 
     def test_daemon_submits_two_plan_do_workers(self) -> None:
         class ExecutorSpy:

@@ -20,7 +20,8 @@ from pdca_system.services.workflow import BASELINE_SEED_ID
 # Canonical list of every prompt type the daemon can produce. Must match all code paths that build
 # prompts: _build_direct_code_prompt; _build_prompt(PD root/worktree); _build_sync_resolution_prompt;
 # _build_merge_resolution_prompt (normal seed only in audit); _build_metrics_recovery_prompt;
-# _build_prompt(CA baseline_measurement); _build_prompt(CA normal); _build_stuck_check_prompt.
+# _build_prompt(CA baseline_measurement); _build_prompt(CA normal); _build_prompt(CA normal, no pd_summary);
+# _build_stuck_check_prompt.
 # If you add a new prompt builder or path in daemon.py, add a corresponding entry here and generate it below.
 ALL_DAEMON_PROMPT_TYPES = (
     "direct",
@@ -31,6 +32,7 @@ ALL_DAEMON_PROMPT_TYPES = (
     "ca_metrics_recovery",
     "ca_baseline_measurement",
     "ca_normal",
+    "ca_normal_no_pd_summary",
     "stuck_check",
 )
 EXPECTED_PROMPT_COUNT = len(ALL_DAEMON_PROMPT_TYPES)
@@ -141,19 +143,39 @@ class PromptAuditTests(unittest.TestCase):
             "run_id": "ca-normal-001",
             "prompt": "Try a small learning rate change.",
             "worktree_path": "pdca_system/history/worktrees/seed-abc",
+            "pd_summary": {
+                "idea": "Audit PD idea",
+                "target_component": "model",
+                "description": "What PD built",
+                "commit_sha": "auditdeadbeef",
+                "pd_run_id": "pd-audit-pdsum",
+            },
         }
         prompt_ca_normal = run_module._build_prompt("ca", task_ca_normal, task_path_ca)
         _write_audit_file("08_ca_normal", prompt_ca_normal)
         generated.append("08_ca_normal")
 
-        # 9. Stuck check (abnormal agent exit: backup agent decides if previous agent was stuck)
+        # 9. CA normal without pd_summary (direct / manual CA; no Plan-Do handoff block)
+        task_ca_no_pd = {
+            "seed_id": "seed-audit-no-pd",
+            "run_id": "ca-normal-no-pd-001",
+            "prompt": "Audit: CA queued with no Plan-Do summary (seed prompt only).",
+            "worktree_path": "pdca_system/history/worktrees/seed-audit-no-pd",
+            "merge_resolution": False,
+            "metrics_recovery": False,
+        }
+        prompt_ca_no_pd = run_module._build_prompt("ca", task_ca_no_pd, task_path_ca)
+        _write_audit_file("09_ca_normal_no_pd_summary", prompt_ca_no_pd)
+        generated.append("09_ca_normal_no_pd_summary")
+
+        # 10. Stuck check (abnormal agent exit: backup agent decides if previous agent was stuck)
         prompt_stuck = run_module._build_stuck_check_prompt(
             prev_agent="claude",
             stdout_path=None,
             stderr_path=None,
         )
-        _write_audit_file("09_stuck_check", prompt_stuck)
-        generated.append("09_stuck_check")
+        _write_audit_file("10_stuck_check", prompt_stuck)
+        generated.append("10_stuck_check")
 
         self.assertEqual(len(generated), EXPECTED_PROMPT_COUNT)
         types_generated = {name[3:] for name in generated}  # "01_direct" -> "direct", etc.
@@ -172,6 +194,7 @@ class PromptAuditTests(unittest.TestCase):
             "06_ca_metrics_recovery",
             "07_ca_baseline_measurement",
             "08_ca_normal",
+            "09_ca_normal_no_pd_summary",
         )
         for name in metric_prompt_files:
             path = self.audit_dir / f"{name}.txt"
@@ -183,9 +206,29 @@ class PromptAuditTests(unittest.TestCase):
                 f"Prompt {name} must contain the target metric key {TARGET_METRIC_KEY!r} directly (config.py); got audit file {path}",
             )
 
+        ca_normal_path = self.audit_dir / "08_ca_normal.txt"
+        ca_normal_content = ca_normal_path.read_text(encoding="utf-8")
+        self.assertIn("Plan-Do summary (authoritative", ca_normal_content)
+        self.assertIn("Audit PD idea", ca_normal_content)
+        self.assertIn("auditdeadbeef", ca_normal_content)
+        _ca_task_tail = ca_normal_content.split("Task content:", 1)[1]
+        self.assertNotIn(
+            '"pd_summary"',
+            _ca_task_tail,
+            "pd_summary must appear only in the Plan-Do block above, not duplicated in inline task JSON",
+        )
+
+        ca_no_pd_path = self.audit_dir / "09_ca_normal_no_pd_summary.txt"
+        ca_no_pd_content = ca_no_pd_path.read_text(encoding="utf-8")
+        self.assertNotIn("Plan-Do summary (authoritative", ca_no_pd_content)
+        self.assertIn("Execution style:", ca_no_pd_content)
+        self.assertIn("CA queued with no Plan-Do summary", ca_no_pd_content)
+        _no_pd_tail = ca_no_pd_content.split("Task content:", 1)[1]
+        self.assertNotIn('"pd_summary"', _no_pd_tail)
+
         # Stuck-check prompt must require the backup agent to output previous_agent_stuck / reason / checks
-        stuck_path = self.audit_dir / "09_stuck_check.txt"
-        self.assertTrue(stuck_path.exists(), "09_stuck_check audit file should exist")
+        stuck_path = self.audit_dir / "10_stuck_check.txt"
+        self.assertTrue(stuck_path.exists(), "10_stuck_check audit file should exist")
         stuck_content = stuck_path.read_text(encoding="utf-8")
         self.assertIn("previous_agent_stuck", stuck_content)
         self.assertIn("stuck_check", stuck_content)

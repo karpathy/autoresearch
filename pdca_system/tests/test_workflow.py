@@ -7,7 +7,7 @@ from pathlib import Path
 from pdca_system.config import TARGET_METRIC_KEY, TARGET_METRIC_LOWER_IS_BETTER, best_target_metric_key
 from pdca_system.domain.models import RunStatus, SeedRecord, SeedStatus, StageName, StageRun
 from pdca_system.services.workflow import BASELINE_SEED_ID, DuplicateRunStartError, GitCommandError, WorkflowService
-from pdca_system.task import ERROR_DIR, PDCA_SYSTEM_ROOT, list_pending, read_task, write_task
+from pdca_system.task import ERROR_DIR, PDCA_SYSTEM_ROOT, list_pending, now_ts, read_task, write_task
 
 from .test_helpers import (
     MergeFailingGitService,
@@ -221,6 +221,25 @@ class WorkflowTests(unittest.TestCase):
         add_calls = [cmd for cmd, _ in git_service.commands if cmd[:2] == ("worktree", "add")]
         self.assertEqual(len(add_calls), 1)
         self.assertIn(BASELINE_SEED_ID, add_calls[0])
+
+    def test_queue_ca_omits_pd_summary_when_seed_has_no_plan(self) -> None:
+        """Manual/direct CA queue with no Plan-Do plan: task payload has no pd_summary (auto-fill returns None)."""
+        git_service = RecordingGitService()
+        service = WorkflowService(git_service=git_service)
+        seed = service.create_seed("direct ca no pd plan", baseline_branch="master")
+        seed.status = SeedStatus.generated
+        seed.plan = None
+        seed.updated_at = now_ts()
+        service.seed_repo.save(seed)
+        ca_run = service.queue_ca(seed.seed_id)
+        ca_task = None
+        for path in list_pending("ca"):
+            payload = read_task(path)
+            if payload.get("run_id") == ca_run.run_id and payload.get("seed_id") == seed.seed_id:
+                ca_task = payload
+                break
+        self.assertIsNotNone(ca_task, "expected queued CA task")
+        self.assertNotIn("pd_summary", ca_task)
 
     def test_ensure_baseline_result_does_not_queue_when_branch_has_baseline_data(self) -> None:
         best_key = best_target_metric_key()
@@ -689,6 +708,48 @@ class AgentTypeTests(unittest.TestCase):
         updated = service.require_run(pd_run.run_id)
         self.assertEqual(updated.agent_type, "claude")
         self.assertEqual(updated.summary.get("agent_type"), "claude")
+
+    def test_finish_pd_run_queues_ca_with_pd_summary(self) -> None:
+        git_service = RecordingGitService()
+        service = WorkflowService(git_service=git_service)
+        seed = service.create_seed("pd summary handoff", baseline_branch="master")
+        pd_run = StageRun(
+            run_id="pd-20990101-000097-pdsum",
+            seed_id=seed.seed_id,
+            stage=StageName.pd,
+            status=RunStatus.running,
+            task_id="task-pd-097",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        service.run_repo.save(pd_run)
+        seed.latest_run_id = pd_run.run_id
+        service.seed_repo.save(seed)
+        summary_path = write_summary_file({
+            "idea": "bounded router",
+            "target_component": "model",
+            "description": "ST Gumbel router",
+            "source_refs": ["ref-a"],
+            "commit_sha": "8263fc573a915bd6995b862b8a614de4de2694d4",
+            "completed_at": "2099-01-02 00:00:00",
+        })
+        service.finish_pd_run(seed.seed_id, pd_run.run_id, summary_path)
+        seed_after = service.require_seed(seed.seed_id)
+        ca_run_id = seed_after.latest_run_id
+        self.assertIsNotNone(ca_run_id)
+        ca_task = None
+        for path in list_pending("ca"):
+            payload = read_task(path)
+            if payload.get("run_id") == ca_run_id and payload.get("seed_id") == seed.seed_id:
+                ca_task = payload
+                break
+        self.assertIsNotNone(ca_task, "expected a queued CA task for the new run")
+        pd_sum = ca_task.get("pd_summary")
+        self.assertIsInstance(pd_sum, dict)
+        self.assertEqual(pd_sum.get("idea"), "bounded router")
+        self.assertEqual(pd_sum.get("commit_sha"), "8263fc573a915bd6995b862b8a614de4de2694d4")
+        self.assertEqual(pd_sum.get("pd_run_id"), pd_run.run_id)
+        self.assertEqual(pd_sum.get("completed_at"), "2099-01-02 00:00:00")
 
     def test_finish_ca_run_stores_agent_type(self) -> None:
         service = WorkflowService()

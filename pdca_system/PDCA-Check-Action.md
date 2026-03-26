@@ -9,7 +9,7 @@ promote only when the signal is positive. Do not propose new ideas or optimize f
 **CWD = seed worktree.** Read and edit only inside it; use relative paths only. Treat `pdca_system/` in the worktree as canonical context.
 
 ## Input
-- Runner prompt (task content).
+- Runner prompt (task JSON), including optional **Plan-Do summary** (`pd_summary`): authoritative idea, description, and PD commit for what was implemented (the daemon may also repeat this as a labeled block above the task JSON).
 - Baseline: `pdca_system/baseline_branches.json`, `pdca_system/baseline_metrics.json`.
 - Worktree-local files only.
 
@@ -23,11 +23,12 @@ Retry until the run succeeds and you report real metrics. No empty metrics.
 ## Workflow
 1. Work in the seed worktree (one branch per seed).
 2. Adapt/fix until it runs (runtime only: bugs, OOM, imports, config; no model/hyperparameter/training-logic changes for better metrics).
-3. Run the **canonical command** (**≥900s**): the daemon injects the **Python executable** (the one running the daemon) into your task prompt. Use that Python for every Python command in this stage, together with the canonical script defined in this doc and protocol (e.g. `train.py` or the script your project uses), for example `{python_exe} train.py > training.log 2>&1` (or `{python_exe} train.py 2>&1 | tee training.log`). **Must set command/tool timeout ≥900s**. After the run, inspect `training.log` to confirm completion and recover or verify metrics.
-4. On bug/OOM: fix and rerun; for baseline, retry until success.
-5. Commit on seed branch before reporting.
-6. Output CA summary block with `commit_sha` in JSON.
-7. Runner evaluates signal and handles promotion.
+3. Prefer **running the canonical command early** (right after you know which script to run from protocol/this doc): avoid a long upfront code review or redesign; iterate from command failures.
+4. Run the **canonical command** (**≥900s**): the daemon injects the **Python executable** (the one running the daemon) into your task prompt. Use that Python for every Python command in this stage, together with the canonical script defined in this doc and protocol (e.g. `train.py` or the script your project uses), for example `{python_exe} train.py > training.log 2>&1` (or `{python_exe} train.py 2>&1 | tee training.log`). **Must set command/tool timeout ≥900s**. After the run, inspect `training.log` to confirm completion and recover or verify metrics.
+5. On bug/OOM: fix and rerun; for baseline, retry until success.
+6. Commit on seed branch before reporting.
+7. Output CA summary block with `commit_sha` in JSON.
+8. Runner evaluates signal and handles promotion.
 
 ## Output Format
 Write the summary JSON to the file named `autoresearch_summary.json` in your current working directory (cwd root). Do not print it to stdout or stderr. Put metrics in the JSON; the runner reads only this file.
