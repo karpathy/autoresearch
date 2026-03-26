@@ -103,6 +103,9 @@ SPATIAL_DISTILL_WEIGHT = 0.0   # 0.0 = disabled; agent sets positive value to en
 # --- RADIO Training Techniques ---
 # PHI-S: Hadamard isotropic standardization for multi-teacher gradient balancing
 ENABLE_PHI_S = False
+# Feature Normalizer: per-teacher whitening + rotation
+ENABLE_FEATURE_NORMALIZER = False
+NORMALIZER_WARMUP_BATCHES = 200  # ~1 full epoch for 50k images / 256 batch size
 
 
 def _load_radio_metadata(
@@ -505,6 +508,55 @@ class PHISTransform(nn.Module):
             return features  # passthrough during warmup
         centered = features - self.mean
         return self.alpha * (centered @ self.R.T)
+
+
+class FeatureNormalizer(nn.Module):
+    """Per-teacher feature normalizer with online statistics warmup.
+
+    During warmup (first `warmup_batches` forward calls), accumulates running
+    mean and variance using Welford's online algorithm, passing features through
+    unchanged. After warmup, standardizes features to zero mean and unit variance.
+
+    Each teacher should have its own FeatureNormalizer instance (handled in
+    Plan 03 integration).
+    """
+
+    def __init__(self, feature_dim: int, warmup_batches: int = 200) -> None:
+        super().__init__()
+        self.warmup_batches = warmup_batches
+        self.register_buffer("running_mean", torch.zeros(feature_dim))
+        self.register_buffer("running_var", torch.ones(feature_dim))
+        self.register_buffer("count", torch.tensor(0, dtype=torch.long))
+        self.ready = False
+
+    def _update_stats(self, features: torch.Tensor) -> None:
+        """Update running mean/variance using Welford's online algorithm."""
+        batch_mean = features.mean(dim=0)
+        batch_var = features.var(dim=0, unbiased=False)
+        n = self.count.item()
+        self.count += 1
+        # Welford's online update for running mean
+        delta = batch_mean - self.running_mean
+        self.running_mean += delta / (n + 1)
+        # Online variance update (weighted combination)
+        if n > 0:
+            self.running_var = (n * self.running_var + batch_var) / (n + 1)
+        else:
+            self.running_var = batch_var
+        if self.count >= self.warmup_batches:
+            self.ready = True
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        """Normalize features after warmup, passthrough before.
+
+        During warmup: updates statistics from detached features, returns input unchanged.
+        After warmup: returns (features - mean) / (sqrt(var) + eps).
+        """
+        if not self.ready:
+            self._update_stats(features.detach())
+            return features  # passthrough during warmup
+        # Numerical stability: epsilon prevents NaN from near-zero variance (Pitfall 3)
+        return (features - self.running_mean) / (self.running_var.sqrt() + 1e-6)
 
 
 class ArcMarginProduct(nn.Module):
