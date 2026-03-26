@@ -36,7 +36,7 @@ GRADIENT_ACCUMULATION_STEPS = 16     # Effective batch = 128
 LR = 2e-4                           # Learning rate for AdamW
 WEIGHT_DECAY = 0.01                  # AdamW weight decay
 WARMUP_RATIO = 0.1                   # Fraction of total steps for LR warmup
-TEMPERATURE = 0.07                   # InfoNCE temperature
+TEMPERATURE = 0.10                   # InfoNCE temperature
 
 SEED = 42
 USE_GRADIENT_CHECKPOINTING = True
