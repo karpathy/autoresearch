@@ -227,7 +227,9 @@ class Tokenizer:
 
     def encode(self, text, prepend=None, num_threads=8):
         if prepend is not None:
-            prepend_id = prepend if isinstance(prepend, int) else self.enc.encode_single_token(prepend)
+            if not isinstance(prepend, int):
+                raise TypeError(f"prepend must be an int token id, got {type(prepend)}")
+            prepend_id = prepend
         if isinstance(text, str):
             ids = self.enc.encode_ordinary(text)
             if prepend is not None:
