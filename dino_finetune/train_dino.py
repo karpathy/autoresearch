@@ -134,7 +134,7 @@ def build_scheduler(optimizer, num_training_steps: int):
 # ============================================================
 
 def train_one_epoch(model, train_loader: DataLoader, optimizer, scheduler,
-                    scaler, device: str, epoch: int) -> float:
+                    device: str, epoch: int) -> float:
     """Train one epoch with gradient accumulation and bf16 autocast.
 
     Args:
@@ -142,7 +142,6 @@ def train_one_epoch(model, train_loader: DataLoader, optimizer, scheduler,
         train_loader: Training DataLoader.
         optimizer: AdamW optimizer.
         scheduler: LR scheduler (stepped per optimizer step).
-        scaler: GradScaler for mixed precision.
         device: CUDA device string.
         epoch: Current epoch number (for logging).
 
@@ -165,13 +164,12 @@ def train_one_epoch(model, train_loader: DataLoader, optimizer, scheduler,
             loss = info_nce_loss(cls_emb, labels)
             loss = loss / GRADIENT_ACCUMULATION_STEPS  # Scale for accumulation
 
-        # Backward with gradient scaling
-        scaler.scale(loss).backward()
+        # Backward (no GradScaler needed for bfloat16)
+        loss.backward()
 
         # Optimizer step after accumulation
         if (step + 1) % GRADIENT_ACCUMULATION_STEPS == 0:
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.step()
             optimizer.zero_grad()
             scheduler.step()
 
@@ -189,8 +187,7 @@ def train_one_epoch(model, train_loader: DataLoader, optimizer, scheduler,
 
     # Handle remaining accumulated gradients
     if len(train_loader) % GRADIENT_ACCUMULATION_STEPS != 0:
-        scaler.step(optimizer)
-        scaler.update()
+        optimizer.step()
         optimizer.zero_grad()
         scheduler.step()
 
@@ -267,9 +264,6 @@ def main():
     num_training_steps = (len(train_loader) // GRADIENT_ACCUMULATION_STEPS) * EPOCHS
     scheduler = build_scheduler(optimizer, num_training_steps)
 
-    # -- GradScaler for mixed precision --
-    scaler = torch.amp.GradScaler("cuda")
-
     # -- Training loop --
     best_combined = -1.0
     start_time = time.time()
@@ -277,7 +271,7 @@ def main():
     for epoch in range(1, EPOCHS + 1):
         epoch_start = time.time()
         avg_loss = train_one_epoch(
-            model, train_loader, optimizer, scheduler, scaler, DEVICE, epoch
+            model, train_loader, optimizer, scheduler, DEVICE, epoch
         )
         epoch_time = time.time() - epoch_start
         logger.info(f"Epoch {epoch}/{EPOCHS}: loss={avg_loss:.4f}  time={epoch_time:.1f}s")
