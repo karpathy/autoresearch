@@ -1292,11 +1292,8 @@ def run_train_epoch(
 
                 # Apply FeatSharp to student spatial features (per D-04)
                 if ENABLE_FEATSHARP and featsharp is not None:
-                    # FeatSharp expects [B, N, C] format; student_spatial is [B, C, H, W]
-                    B_s, C_s, H_s, W_s = student_spatial.shape
-                    student_spatial_seq = student_spatial.flatten(2).permute(0, 2, 1)  # [B, H*W, C]
-                    student_spatial_seq = featsharp(student_spatial_seq)
-                    student_spatial = student_spatial_seq.permute(0, 2, 1).reshape(B_s, C_s, H_s, W_s)
+                    # FeatSharpModule expects (B, C, H, W) — pass directly
+                    student_spatial = featsharp(student_spatial)
 
                 # Choose spatial loss: Shift Equivariant, Hybrid, or default MSE-based
                 if ENABLE_SHIFT_EQUIVARIANT:
