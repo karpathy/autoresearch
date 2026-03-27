@@ -19,9 +19,12 @@ import torch.nn.functional as F
 
 from kernels import get_kernel
 cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+# Flash Attention 3 is Hopper only; use SDPA elsewhere.
+USE_FLASH_ATTN3 = cap == (9, 0)
+if USE_FLASH_ATTN3:
+    fa3 = get_kernel("varunneal/flash-attention-3").flash_attn_interface
+else:
+    fa3 = None
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -58,6 +61,23 @@ def apply_rotary_emb(x, cos, sin):
     return torch.cat([y1, y2], 3)
 
 
+def make_sliding_window_mask(seq_len, left_window, device):
+    q_idx = torch.arange(seq_len, device=device)[:, None]
+    k_idx = torch.arange(seq_len, device=device)[None, :]
+    return (k_idx <= q_idx) & (k_idx >= q_idx - (left_window - 1))
+
+
+def run_attention(q, k, v, window_size, attn_mask=None):
+    if USE_FLASH_ATTN3:
+        return fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+
+    q = q.transpose(1, 2)
+    k = k.transpose(1, 2)
+    v = v.transpose(1, 2)
+    y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=attn_mask is None)
+    return y.transpose(1, 2)
+
+
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
@@ -74,7 +94,7 @@ class CausalSelfAttention(nn.Module):
         self.ve_gate_channels = 32
         self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
-    def forward(self, x, ve, cos_sin, window_size):
+    def forward(self, x, ve, cos_sin, window_size, attn_mask):
         B, T, C = x.size()
         q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
         k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
@@ -90,7 +110,7 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        y = run_attention(q, k, v, window_size, attn_mask=attn_mask)
         y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
@@ -115,8 +135,8 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
-    def forward(self, x, ve, cos_sin, window_size):
-        x = x + self.attn(norm(x), ve, cos_sin, window_size)
+    def forward(self, x, ve, cos_sin, window_size, attn_mask):
+        x = x + self.attn(norm(x), ve, cos_sin, window_size, attn_mask)
         x = x + self.mlp(norm(x))
         return x
 
@@ -126,6 +146,7 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
         self.window_sizes = self._compute_window_sizes(config)
+        self.sdpa_mask_names = self._build_sdpa_mask_names()
         self.transformer = nn.ModuleDict({
             "wte": nn.Embedding(config.vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
@@ -145,6 +166,10 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
+        if not USE_FLASH_ATTN3:
+            for mask_name, left_window in self.sdpa_mask_names.items():
+                mask = make_sliding_window_mask(config.sequence_len, left_window, device="cpu")
+                self.register_buffer(mask_name, mask, persistent=False)
 
     @torch.no_grad()
     def init_weights(self):
@@ -204,6 +229,24 @@ class GPT(nn.Module):
             window_sizes.append(char_to_window[char])
         window_sizes[-1] = (long_window, 0)
         return window_sizes
+
+    def _build_sdpa_mask_names(self):
+        mask_names = {}
+        if USE_FLASH_ATTN3:
+            return mask_names
+        for left_window, _ in self.window_sizes:
+            if left_window < self.config.sequence_len:
+                mask_names[f"sdpa_mask_{left_window}"] = left_window
+        return mask_names
+
+    def _get_sdpa_attn_mask(self, window_size, seq_len):
+        if USE_FLASH_ATTN3:
+            return None
+        left_window = window_size[0]
+        if left_window >= self.config.sequence_len or left_window >= seq_len:
+            return None
+        mask = getattr(self, f"sdpa_mask_{left_window}")
+        return mask[:seq_len, :seq_len]
 
     def estimate_flops(self):
         """Estimated FLOPs per token (forward + backward)."""
@@ -276,7 +319,8 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[i])
+            attn_mask = self._get_sdpa_attn_mask(self.window_sizes[i], T)
+            x = block(x, ve, cos_sin, self.window_sizes[i], attn_mask)
         x = norm(x)
 
         softcap = 15
