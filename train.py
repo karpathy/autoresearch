@@ -16,6 +16,7 @@ from dataclasses import dataclass, asdict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.cuda.amp import GradScaler
 
 from kernels import get_kernel
 cap = torch.cuda.get_device_capability()
@@ -460,6 +461,7 @@ torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 device = torch.device("cuda")
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+scaler = GradScaler()  # AMP gradient scaler for mixed precision training
 H100_BF16_PEAK_FLOPS = 989.5e12
 
 tokenizer = Tokenizer.from_directory()
@@ -548,7 +550,7 @@ while True:
             loss = model(x, y)
         train_loss = loss.detach()
         loss = loss / grad_accum_steps
-        loss.backward()
+        scaler.scale(loss).backward()  # Scale loss for gradient scaling
         x, y, epoch = next(train_loader)
 
     # Progress and schedules
@@ -561,7 +563,15 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
+    
+    # Unscale gradients before optimizer step
+    scaler.unscale_(optimizer)
+    
+    # Gradient clipping (optional, helps with stability)
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    
     optimizer.step()
+    scaler.update()  # Update the scaler state
     model.zero_grad(set_to_none=True)
 
     train_loss_f = train_loss.item()
