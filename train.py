@@ -460,8 +460,8 @@ WARMDOWN_RATIO = 0.1    # push further: only 30s cooldown, 270s at peak LR
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
-DEPTH = 8               # number of transformer layers
-DEVICE_BATCH_SIZE = 32   # increased from 16 — more GPU utilization, same total tokens
+DEPTH = 6               # smaller model (dim=384): faster steps, more total tokens
+DEVICE_BATCH_SIZE = 32   # same
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
