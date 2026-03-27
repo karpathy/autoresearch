@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Autoresearch Proposal Override",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["ok", "need_input"],
+      "description": "Set to 'ok' when proposal is actionable; 'need_input' when additional context is required."
+    },
+    "description": {
+      "type": "string",
+      "description": "Short plain-language description of the experiment."
+    },
+    "change_plan": {
+      "type": "string",
+      "description": "Specific edits to apply in train.py."
+    },
+    "commit_description": {
+      "type": "string",
+      "description": "Short commit-style message for the experiment." 
+    }
+  },
+  "required": ["status", "description", "change_plan", "commit_description"],
+  "additionalProperties": false
+}
