@@ -87,6 +87,42 @@ c3d4e5f	1.005000	44.0	discard	switch to GeLU activation
 d4e5f6g	0.000000	0.0	crash	double model width (OOM)
 ```
 
+
+## Experiment strategies
+
+Over time, you should diversify your experiments across these orthogonal axes:
+
+### Architecture experiments
+- **Depth vs width**: Try deeper/narrower or shallower/wider models
+- **Attention patterns**: Modify `window_pattern` (e.g., "SSSL", "SSLL", "SSSSL")
+- **Activation functions**: Current uses ReLU² (Parabolic). Alternatives: SwiGLU, GeGLU
+- **Normalization**: Current uses RMSNorm. Alternative: LayerNorm
+- **Value Embeddings**: Current alternates every other layer. Try different patterns
+
+### Optimization experiments
+- **Learning rates**: Current has separate LRs for embeddings, unembedding, and matrices. Try different ratios
+- **Batch size**: Current is fixed by time budget. Try gradient accumulation changes
+- **Weight decay**: Current decays over training. Try different schedules
+- **Muon momentum**: Current increases over training. Try different schedules
+
+### Regularization experiments
+- **Dropout**: Currently not used. Try adding dropout after attention/MLP
+- **Dropout schedule**: If adding dropout, consider decreasing it over training
+
+### Efficiency experiments
+- **Flash Attention window sizes**: Current uses sliding window. Try full attention or different window sizes
+- **Gradient checkpointing**: Can reduce VRAM at cost of compute
+
+### Search strategies
+- **Grid search**: When you find a good change, do a binary search on the magnitude
+- **Ablation**: When a combination works, test each component individually
+- **Simplification**: Periodically try removing things to see if they're actually helping
+
+### Anti-patterns to avoid
+- **Compounding changes**: Don't stack multiple untested changes together
+- **Overfitting to noise**: A 0.0001 improvement is likely noise. Trust 0.001+ improvements
+- **Complexity addiction**: Simple is better. A complex change that gives +0.0005 is worse than a simple change that gives +0.001
+
 ## The experiment loop
 
 The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
