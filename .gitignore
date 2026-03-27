@@ -21,3 +21,6 @@ dev/
 
 # Results file
 results.tsv
+
+# Observability module state (persisted locally, not tracked)
+.autoresearch/
