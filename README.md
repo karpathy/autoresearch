@@ -86,6 +86,7 @@ I think these would be the reasonable hyperparameters to play with. Ask your fav
 - [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
 - [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
 - [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
+- [kcxain/autoresearch-slurm](https://github.com/kcxain/autoresearch-slurm) (Slurm / HPC clusters)
 - [PsychQuant/autoresearch-swift](https://github.com/PsychQuant/autoresearch-swift) (Apple Silicon, Swift + MLX) — Native Swift implementation with Muon + AdamW optimizer, ~50K tok/sec on M4 Max
 
 ## License
