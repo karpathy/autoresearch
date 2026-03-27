@@ -451,7 +451,7 @@ WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
 TOTAL_BATCH_SIZE = 2**16 # minimum: no grad accum, max update frequency
 EMBEDDING_LR = 0.6      # restore original: embeddings need higher LR (sparse updates)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
-MATRIX_LR = 0.03        # try between 0.02 and 0.04
+MATRIX_LR = 0.04        # test higher with new warmdown
 SCALAR_LR = 0.5         # learning rate for per-layer scalars (Adam)
 WEIGHT_DECAY = 0.0      # no weight decay: limited budget, avoid over-regularizing
 ADAM_BETAS = (0.8, 0.95) # Adam beta1, beta2
