@@ -2,7 +2,7 @@
 
 *One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
 
-This fork is set up to run autoresearch loops through a lightweight local Modal control shim. The goal is still the same: let an agent edit `train.py`, run a fixed-budget training experiment, compare the result, and iterate. The difference is that the local machine is only the orchestrator. GPU training happens remotely on Modal, so the local agent can drive long-running experiments without needing a local NVIDIA box.
+This fork is set up to run autoresearch loops through lightweight local control shims. The goal is still the same: let an agent edit `train.py`, run a fixed-budget training experiment, compare the result, and iterate. The difference is that the local machine is only the orchestrator. GPU training happens remotely, so the local agent can drive long-running experiments without needing a local NVIDIA box.
 
 The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching most of the Python files manually. Instead, you are programming the `program.md` file that tells the agent how to run the loop and evaluate experiments. A bit more context on the original project is in this [tweet](https://x.com/karpathy/status/2029701092347630069).
 
@@ -16,7 +16,9 @@ The repo is deliberately kept small and only really has a few files that matter:
 - **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
 - **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
 - **`modal_control.py`** — local control surface for `start`, `status`, `logs`, `result`, and `stop`.
+- **`tempo_modal_control.py`** — parallel control surface for the same lifecycle, but paid through a Tempo wallet over MPP.
 - **`modal_train.py`** — Modal-backed remote runner implementation. This is infrastructure, not the main experiment surface.
+- **`tempo_modal_run.py`** — Tempo-backed remote runner implementation. This is infrastructure, not the main experiment surface.
 
 By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
 
@@ -24,7 +26,12 @@ If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/s
 
 ## Quick start
 
-**Requirements:** Python 3.10+ locally, a Modal account, and a GPU-backed Modal runtime. The current default training profile is H100-oriented.
+**Requirements:** Python 3.10+ locally and one of these remote execution paths:
+
+- Modal account plus `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`
+- Tempo wallet with enough balance to pay for the MPP-backed Modal endpoint
+
+The current default training profile is H100-oriented.
 
 ```bash
 # 1. Install/authenticate Modal locally
@@ -73,6 +80,41 @@ lightweight via `uv run render_progress.py`.
 
 The agent should use `modal_control.py`, not `modal_train.py`, as the main execution surface.
 
+## Tempo-paid local control
+
+This fork also includes a parallel Tempo-backed control path. It keeps the same
+`start` / `status` / `logs` / `result` / `stop` lifecycle, but pays for remote
+GPU execution through a Tempo wallet against the Modal MPP endpoint.
+
+```bash
+# 1. Install/authenticate Tempo locally
+curl -fsSL https://tempo.xyz/install | bash
+tempo wallet login
+tempo wallet whoami
+
+# 2. Start a Tempo-paid run in the background
+python3 tempo_modal_control.py start
+
+# Warm runs can still skip data prep
+python3 tempo_modal_control.py start --skip-prepare
+
+# Inspect a run
+python3 tempo_modal_control.py status <run_id>
+python3 tempo_modal_control.py logs <run_id> --tail 80
+python3 tempo_modal_control.py result <run_id>
+
+# Stop a run
+python3 tempo_modal_control.py stop <run_id>
+```
+
+The Tempo path stores controller state separately under
+`.modal-control/tempo-runs.json` and `.modal-control/tempo-logs/` so it does
+not collide with the direct Modal controller. The remote runner still emits the
+same `AUTORESEARCH_MODAL_RESULT ...` contract, so `parse_run.py` can parse both
+paths.
+
+Use `tempo_modal_control.py` when you want to pay with an existing Tempo wallet
+instead of local Modal credentials.
 
 ## Project structure
 
@@ -82,6 +124,8 @@ train.py           — model, optimizer, training loop (agent modifies this)
 program.md         — agent instructions
 modal_control.py   — local control surface for Modal-backed runs
 modal_train.py     — remote Modal runner
+tempo_modal_control.py — local control surface for Tempo-backed runs
+tempo_modal_run.py     — remote Tempo-paid runner
 parse_run.py       — parses run logs into deterministic JSON
 pyproject.toml     — optional local research dependencies if you want to run directly
 ```
@@ -92,6 +136,7 @@ pyproject.toml     — optional local research dependencies if you want to run d
 - **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
 - **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
 - **Local control, remote execution.** The local machine just starts, polls, and evaluates runs. Modal owns the GPU runtime and persistent cache volume.
+- **Parallel payment paths.** The repo now supports both direct Modal auth and a Tempo-wallet-backed MPP path without changing the experiment contract.
 
 ## Platform support
 
