@@ -41,8 +41,36 @@ X_train, X_test, y_train, y_test = load_data()
 # Feature Engineering
 # ---------------------------------------------------------------------------
 
+def add_features(df):
+    df = df.copy()
+    # House age and remodel age at time of sale
+    df["house_age"]   = df["YrSold"] - df["YearBuilt"]
+    df["remodel_age"] = df["YrSold"] - df["YearRemodAdd"]
+    # Total square footage
+    df["total_sf"]    = df["TotalBsmtSF"].fillna(0) + df["1stFlrSF"] + df["2ndFlrSF"]
+    # Total bathrooms
+    df["total_baths"] = (df["FullBath"] + 0.5 * df["HalfBath"]
+                         + df.get("BsmtFullBath", pd.Series(0, index=df.index)).fillna(0)
+                         + 0.5 * df.get("BsmtHalfBath", pd.Series(0, index=df.index)).fillna(0))
+    # Porch area
+    df["total_porch"] = (df.get("OpenPorchSF", 0) + df.get("EnclosedPorch", 0)
+                         + df.get("3SsnPorch", 0) + df.get("ScreenPorch", 0))
+    # Overall quality * living area interaction
+    df["qual_sf"]     = df["OverallQual"] * df["GrLivArea"]
+    return df
+
+X_train = add_features(X_train)
+X_test  = add_features(X_test)
+
 # Log-transform target to reduce skew (common for price prediction)
 y_train_log = np.log1p(y_train)
+
+# Log-transform skewed numeric features
+skewed_feats = ["GrLivArea", "LotArea", "total_sf", "qual_sf", "TotalBsmtSF", "1stFlrSF"]
+for feat in skewed_feats:
+    for df in [X_train, X_test]:
+        if feat in df.columns:
+            df[feat] = np.log1p(df[feat].clip(lower=0))
 
 # Identify column types
 num_cols = X_train.select_dtypes(include="number").columns.tolist()
