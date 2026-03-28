@@ -15,17 +15,15 @@ evaluate(y_test, y_pred) using the fixed harness from prepare.py.
 """
 
 import time
-import math
 import numpy as np
 import pandas as pd
 
-from sklearn.linear_model import Ridge
-from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OrdinalEncoder
 from sklearn.model_selection import cross_val_score
+import xgboost as xgb
 
 from prepare import load_data, evaluate, METRIC
 
@@ -43,49 +41,34 @@ X_train, X_test, y_train, y_test = load_data()
 
 def add_features(df):
     df = df.copy()
-    # House age and remodel age at time of sale
     df["house_age"]   = df["YrSold"] - df["YearBuilt"]
     df["remodel_age"] = df["YrSold"] - df["YearRemodAdd"]
-    # Total square footage
     df["total_sf"]    = df["TotalBsmtSF"].fillna(0) + df["1stFlrSF"] + df["2ndFlrSF"]
-    # Total bathrooms
     df["total_baths"] = (df["FullBath"] + 0.5 * df["HalfBath"]
                          + df.get("BsmtFullBath", pd.Series(0, index=df.index)).fillna(0)
                          + 0.5 * df.get("BsmtHalfBath", pd.Series(0, index=df.index)).fillna(0))
-    # Porch area
-    df["total_porch"] = (df.get("OpenPorchSF", 0) + df.get("EnclosedPorch", 0)
-                         + df.get("3SsnPorch", 0) + df.get("ScreenPorch", 0))
-    # Overall quality * living area interaction
     df["qual_sf"]     = df["OverallQual"] * df["GrLivArea"]
     return df
 
 X_train = add_features(X_train)
 X_test  = add_features(X_test)
 
-# Log-transform target to reduce skew (common for price prediction)
+# Log-transform target
 y_train_log = np.log1p(y_train)
-
-# Log-transform skewed numeric features
-skewed_feats = ["GrLivArea", "LotArea", "total_sf", "qual_sf", "TotalBsmtSF", "1stFlrSF"]
-for feat in skewed_feats:
-    for df in [X_train, X_test]:
-        if feat in df.columns:
-            df[feat] = np.log1p(df[feat].clip(lower=0))
 
 # Identify column types
 num_cols = X_train.select_dtypes(include="number").columns.tolist()
 cat_cols = X_train.select_dtypes(exclude="number").columns.tolist()
 
-# Numeric: median imputation + standard scaling
+# Numeric: median imputation (XGBoost handles missing natively but pipeline needs it)
 num_pipeline = Pipeline([
     ("imputer", SimpleImputer(strategy="median")),
-    ("scaler",  StandardScaler()),
 ])
 
-# Categorical: constant imputation + one-hot encoding
+# Categorical: ordinal encode (XGBoost handles categories as ints)
 cat_pipeline = Pipeline([
     ("imputer", SimpleImputer(strategy="constant", fill_value="missing")),
-    ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+    ("encoder", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)),
 ])
 
 preprocessor = ColumnTransformer([
@@ -94,49 +77,79 @@ preprocessor = ColumnTransformer([
 ])
 
 # ---------------------------------------------------------------------------
-# Model
+# Model — XGBoost
 # ---------------------------------------------------------------------------
 
-model = Pipeline([
-    ("preprocessor", preprocessor),
-    ("regressor",    Ridge(alpha=10.0)),
-])
+regressor = xgb.XGBRegressor(
+    n_estimators=1000,
+    learning_rate=0.05,
+    max_depth=5,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    reg_alpha=0.1,
+    reg_lambda=1.0,
+    random_state=42,
+    n_jobs=-1,
+    early_stopping_rounds=50,
+    eval_metric="rmse",
+)
 
 # ---------------------------------------------------------------------------
 # Cross-validation (on log-transformed target)
 # ---------------------------------------------------------------------------
 
+X_train_proc = preprocessor.fit_transform(X_train)
+X_test_proc  = preprocessor.transform(X_test)
+
 cv_scores = cross_val_score(
-    model, X_train, y_train_log,
+    xgb.XGBRegressor(
+        n_estimators=500,
+        learning_rate=0.05,
+        max_depth=5,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
+        random_state=42,
+        n_jobs=-1,
+    ),
+    X_train_proc, y_train_log,
     cv=5, scoring="neg_root_mean_squared_error",
 )
-# RMSE in log space; convert back to original scale for interpretability
 cv_rmse_log = -cv_scores.mean()
 
 # ---------------------------------------------------------------------------
-# Final fit + evaluation
+# Final fit + evaluation (with early stopping on a validation split)
 # ---------------------------------------------------------------------------
 
-model.fit(X_train, y_train_log)
+from sklearn.model_selection import train_test_split
 
-y_pred_log = model.predict(X_test)
-y_pred     = np.expm1(y_pred_log)   # invert log1p
+X_tr, X_val, y_tr, y_val = train_test_split(
+    X_train_proc, y_train_log, test_size=0.15, random_state=42
+)
+
+regressor.fit(
+    X_tr, y_tr,
+    eval_set=[(X_val, y_val)],
+    verbose=False,
+)
+
+y_pred_log = regressor.predict(X_test_proc)
+y_pred     = np.expm1(y_pred_log)
 
 val_rmse = evaluate(y_test, y_pred)
 
 t_end = time.time()
 
 # ---------------------------------------------------------------------------
-# Summary (format preserved for grep and results.tsv)
+# Summary
 # ---------------------------------------------------------------------------
-
-num_features_out = model.named_steps["preprocessor"].transform(X_train[:1]).shape[1]
 
 print("---")
 print(f"val_rmse:         {val_rmse:.6f}")
 print(f"cv_rmse_log:      {cv_rmse_log:.6f}")
 print(f"total_seconds:    {t_end - t_start:.1f}")
-print(f"num_features:     {num_features_out}")
-print(f"model:            {model.named_steps['regressor'].__class__.__name__}")
+print(f"num_features:     {X_train_proc.shape[1]}")
+print(f"model:            XGBRegressor")
 print(f"train_rows:       {len(X_train)}")
 print(f"test_rows:        {len(X_test)}")
