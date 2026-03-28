@@ -60,7 +60,7 @@ GPU: Tesla V100S-PCIE-32GB
 Compute capability: 7.0
 
 Example successful run summary:
-```bash
+
 val_bpb: 1.394976
 training_seconds: 300.2
 total_seconds: 312.0
@@ -70,7 +70,7 @@ total_tokens_M: 17.0
 num_steps: 1038
 num_params_M: 11.5
 depth: 4
-```
+
 ## Differences from upstream
 V100-safe training path
 no FlashAttention dependency for bring-up
