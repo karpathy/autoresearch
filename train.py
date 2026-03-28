@@ -76,59 +76,23 @@ X_train["Neighborhood_enc"], X_test["Neighborhood_enc"] = target_encode_oof(
 )
 
 # ---------------------------------------------------------------------------
-# Feature Engineering — extended interactions + more derived features
+# Feature Engineering — exact e021644 set (best so far)
 # ---------------------------------------------------------------------------
 
 def add_features(df):
     df = df.copy()
-    # Age features
     df["house_age"]      = df["YrSold"] - df["YearBuilt"]
     df["remodel_age"]    = df["YrSold"] - df["YearRemodAdd"]
-    df["is_remodeled"]   = (df["YearRemodAdd"] != df["YearBuilt"]).astype(int)
-
-    # Area
-    bsmt_sf = df["TotalBsmtSF"].fillna(0)
-    df["total_sf"]       = bsmt_sf + df["1stFlrSF"] + df["2ndFlrSF"]
-    df["bsmt_sf"]        = bsmt_sf
-    df["has_bsmt"]       = (bsmt_sf > 0).astype(int)
-
-    # Bathrooms
-    bsmt_full = df.get("BsmtFullBath", pd.Series(0, index=df.index)).fillna(0)
-    bsmt_half = df.get("BsmtHalfBath", pd.Series(0, index=df.index)).fillna(0)
-    df["total_baths"]    = df["FullBath"] + 0.5 * df["HalfBath"] + bsmt_full + 0.5 * bsmt_half
-
-    # Garage
-    garage_cars = df.get("GarageCars", pd.Series(0, index=df.index)).fillna(0)
-    garage_area = df.get("GarageArea", pd.Series(0, index=df.index)).fillna(0)
-    df["garage_cars"]    = garage_cars
-    df["garage_area"]    = garage_area
-    df["has_garage"]     = (garage_area > 0).astype(int)
-
-    # Quality interactions
+    df["total_sf"]       = df["TotalBsmtSF"].fillna(0) + df["1stFlrSF"] + df["2ndFlrSF"]
+    df["total_baths"]    = (df["FullBath"] + 0.5 * df["HalfBath"]
+                            + df.get("BsmtFullBath", pd.Series(0, index=df.index)).fillna(0)
+                            + 0.5 * df.get("BsmtHalfBath", pd.Series(0, index=df.index)).fillna(0))
     df["qual_sf"]        = df["OverallQual"] * df["GrLivArea"]
     df["qual_total_sf"]  = df["OverallQual"] * df["total_sf"]
     df["qual2"]          = df["OverallQual"] ** 2
-    df["cond2"]          = df["OverallCond"] ** 2
-    df["qual_cond"]      = df["OverallQual"] * df["OverallCond"]
-
-    # Ratio features
     df["liv_lot_ratio"]  = df["GrLivArea"] / (df["LotArea"].clip(lower=1))
     df["sf_per_room"]    = df["GrLivArea"] / (df["TotRmsAbvGrd"].clip(lower=1))
-    df["bsmt_living_ratio"] = bsmt_sf / (df["GrLivArea"].clip(lower=1))
-
-    # Age x quality
     df["age_qual"]       = df["house_age"] * df["OverallQual"]
-    df["remod_qual"]     = df["remodel_age"] * df["OverallQual"]
-
-    # Neighborhood price x quality interaction (using target-enc)
-    df["neigh_qual"]     = df["Neighborhood_enc"] * df["OverallQual"]
-    df["neigh_sf"]       = df["Neighborhood_enc"] * df["GrLivArea"]
-
-    # Porch
-    porch = sum(df.get(c, pd.Series(0, index=df.index)) for c in
-                ["OpenPorchSF", "EnclosedPorch", "3SsnPorch", "ScreenPorch"])
-    df["total_porch"]    = porch
-
     return df
 
 X_train = add_features(X_train)
@@ -153,7 +117,7 @@ preprocessor = ColumnTransformer([
 ])
 
 # ---------------------------------------------------------------------------
-# Model — Ridge with tuned alpha
+# Model — fine-grained alpha grid around 10
 # ---------------------------------------------------------------------------
 
 model = Pipeline([
@@ -161,7 +125,7 @@ model = Pipeline([
     ("regressor",    Ridge()),
 ])
 
-param_grid = {"regressor__alpha": [5.0, 10.0, 20.0, 50.0, 100.0]}
+param_grid = {"regressor__alpha": [6.0, 8.0, 10.0, 12.0, 15.0, 18.0, 25.0]}
 grid_search = GridSearchCV(
     model, param_grid, cv=5,
     scoring="neg_root_mean_squared_error",
@@ -190,6 +154,6 @@ print(f"val_rmse:         {val_rmse:.6f}")
 print(f"cv_rmse_log:      {cv_rmse_log:.6f}")
 print(f"total_seconds:    {t_end - t_start:.1f}")
 print(f"num_features:     {num_features_out}")
-print(f"model:            Ridge(alpha={best_alpha}) + extended interactions + neigh_qual neigh_sf")
+print(f"model:            Ridge(alpha={best_alpha}) fine-tuned on e021644 features")
 print(f"train_rows:       {len(X_train)}")
 print(f"test_rows:        {len(X_test)}")
