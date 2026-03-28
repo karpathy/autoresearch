@@ -1,0 +1,20 @@
+commit	val_rmse	cv_rmse_log	status	description
+6c894cf	25169.987156	0.145376	keep	baseline Ridge alpha=10 log1p target
+8c3a178	25807.120493	0.129373	discard	feature engineering + log-skewed feats — cv better but val_rmse worse
+c373da1	26102.403119	0.126573	discard	XGBoost n_estimators=1000 lr=0.05 early stopping — cv ok but val_rmse worse
+38d3f12	30562.604406	0.128785	discard	LightGBM n_estimators=2000 lr=0.03 — worse, small dataset favors linear
+53475c4	25368.110073	0.140594	discard	Ridge GridSearchCV alpha + more derived features — marginal regression worse than baseline
+bdac140	26122.893868	0.140688	discard	ElasticNet GridSearchCV alpha+l1_ratio — worse than Ridge
+04979f6	22111.143042	0.113305	keep	Ridge alpha=10 + outlier removal (2 outliers removed) — big improvement
+5385537	22236.923049	0.112932	discard	Ridge GridSearchCV alpha=20 + outlier removal — cv marginal gain but val_rmse worse
+b74c758	26203.139853	0.119169	discard	XGBoost + outlier removal — tree models still underperform Ridge on this small dataset
+a9d357e	22280.678436	0.112120	discard	rich features + target-enc Neighborhood — cv better but multicollinearity hurts val
+b0bb437	23210.050611	0.111868	discard	Lasso + log-only area features + target enc — log drops too much info
+1656564	21959.847366	0.113332	keep	Ridge alpha=10 + outlier removal + Neighborhood target enc — new best
+5d967cd	22291.159903	0.112590	discard	target enc for 5 cols — extra cols add noise over Neighborhood-only
+e021644	21421.561443	0.111865	keep	poly interactions (qual_total_sf qual2 liv_lot_ratio sf_per_room age_qual) — new best
+b030892	21499.592894	0.111754	discard	extended interactions neigh_qual neigh_sf remod_qual — cv marginal gain val worse
+ff714b8	21436.526035	0.111416	discard	fine alpha grid alpha=25 on e021644 features — cv improved but val marginal worse
+893fe5a	21234.237840	0.113193	keep	ordinal quality encoding Ex=5..Po=1 + kitchen_qual_sf exter_qual_sf — new best
+fd52106	21484.694919	0.112217	discard	more ordinal interactions bsmt_qual_sf kitchen_qual_total — too many interactions
+d1d6498	21091.216738	0.112189	keep	research overhaul: RobustScaler LotArea outliers NA=None LotFrontage-by-neigh FinishedSF — new best
