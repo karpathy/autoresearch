@@ -1,0 +1,43 @@
+Human { # Human
+ n1: circle label:"Start"
+ n2: rectangle label:"Set up program.md"
+ n3: rectangle label:"Prepare data (prepare.py)"
+ n4: rectangle label:"Spin up AI Agent"
+ n5: circle label:"Setup Complete"
+ n1.handle(right) -> n2.handle(left)
+ n2.handle(right) -> n3.handle(left)
+ n3.handle(right) -> n4.handle(left)
+ n4.handle(right) -> n5.handle(left)
+ n5.handle(bottom) -> Agent.n6.handle(top) [label="Launch"]
+}
+
+Agent { # Agent
+ n6: rectangle label:"Read program.md"
+ n7: rectangle label:"Review train.py"
+ n8: rectangle label:"Modify train.py"
+ n9: rectangle label:"Evaluate val_bpb"
+ n10: diamond label:"Improved?"
+ n11: rectangle label:"Keep changes"
+ n12: rectangle label:"Discard changes"
+ n13: circle label:"Next Iteration"
+ n6.handle(right) -> n7.handle(left)
+ n7.handle(right) -> n8.handle(left)
+ n8.handle(bottom) -> System.n14.handle(top) [label="Run Training"]
+ n9.handle(right) -> n10.handle(left)
+ n10.handle(right) -> n11.handle(left) [label="Yes"]
+ n10.handle(bottom) -> n12.handle(top) [label="No"]
+ n11.handle(right) -> n13.handle(top)
+ n12.handle(right) -> n13.handle(bottom)
+ n13.handle(left) -> n6.handle(bottom) [label="Repeat"]
+}
+
+System { # System
+ n14: rectangle label:"Execute train.py (5 min)"
+ n15: rectangle label:"Train GPT model"
+ n16: rectangle label:"Calculate val_bpb"
+ n17: rectangle label:"Return result to Agent"
+ n14.handle(right) -> n15.handle(left)
+ n15.handle(right) -> n16.handle(left)
+ n16.handle(right) -> n17.handle(left)
+ n17.handle(top) -> Agent.n9.handle(bottom) [label="val_bpb score"]
+}
