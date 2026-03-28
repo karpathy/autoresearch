@@ -24,7 +24,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.model_selection import cross_val_score, KFold
+from sklearn.model_selection import cross_val_score, KFold, GridSearchCV
 
 from prepare import load_data, evaluate, METRIC
 
@@ -76,7 +76,7 @@ X_train["Neighborhood_enc"], X_test["Neighborhood_enc"] = target_encode_oof(
 )
 
 # ---------------------------------------------------------------------------
-# Ordinal encode quality/condition columns (replace string labels with ints)
+# Ordinal encode quality/condition columns
 # ---------------------------------------------------------------------------
 
 QUAL_MAP = {"Ex": 5, "Gd": 4, "TA": 3, "Fa": 2, "Po": 1}
@@ -93,7 +93,7 @@ for col in qual_cols:
             df[col] = df[col].map(QUAL_MAP).fillna(0)
 
 # ---------------------------------------------------------------------------
-# Feature Engineering — e021644 set
+# Feature Engineering — best config + more ordinal interactions
 # ---------------------------------------------------------------------------
 
 def add_features(df):
@@ -101,6 +101,7 @@ def add_features(df):
     df["house_age"]      = df["YrSold"] - df["YearBuilt"]
     df["remodel_age"]    = df["YrSold"] - df["YearRemodAdd"]
     df["total_sf"]       = df["TotalBsmtSF"].fillna(0) + df["1stFlrSF"] + df["2ndFlrSF"]
+    bsmt_sf              = df["TotalBsmtSF"].fillna(0)
     df["total_baths"]    = (df["FullBath"] + 0.5 * df["HalfBath"]
                             + df.get("BsmtFullBath", pd.Series(0, index=df.index)).fillna(0)
                             + 0.5 * df.get("BsmtHalfBath", pd.Series(0, index=df.index)).fillna(0))
@@ -110,11 +111,18 @@ def add_features(df):
     df["liv_lot_ratio"]  = df["GrLivArea"] / (df["LotArea"].clip(lower=1))
     df["sf_per_room"]    = df["GrLivArea"] / (df["TotRmsAbvGrd"].clip(lower=1))
     df["age_qual"]       = df["house_age"] * df["OverallQual"]
-    # Interactions using ordinal-encoded quality cols (now numeric)
+    # Ordinal quality interactions
     if "KitchenQual" in df.columns:
-        df["kitchen_qual_sf"] = df["KitchenQual"] * df["GrLivArea"]
+        df["kitchen_qual_sf"]    = df["KitchenQual"] * df["GrLivArea"]
+        df["kitchen_qual_total"] = df["KitchenQual"] * df["total_sf"]
     if "ExterQual" in df.columns:
-        df["exter_qual_sf"]   = df["ExterQual"] * df["GrLivArea"]
+        df["exter_qual_sf"]      = df["ExterQual"] * df["GrLivArea"]
+        df["exter_qual_age"]     = df["ExterQual"] / (df["house_age"] + 1)
+    if "BsmtQual" in df.columns:
+        df["bsmt_qual_sf"]       = df["BsmtQual"] * bsmt_sf
+    if "FireplaceQu" in df.columns:
+        fireplaces = df.get("Fireplaces", pd.Series(0, index=df.index)).fillna(0)
+        df["fireplace_qual"]     = df["FireplaceQu"] * fireplaces
     return df
 
 X_train = add_features(X_train)
@@ -139,23 +147,26 @@ preprocessor = ColumnTransformer([
 ])
 
 # ---------------------------------------------------------------------------
-# Model — Ridge alpha=10
+# Model — Ridge with alpha grid search
 # ---------------------------------------------------------------------------
 
 model = Pipeline([
     ("preprocessor", preprocessor),
-    ("regressor",    Ridge(alpha=10.0)),
+    ("regressor",    Ridge()),
 ])
 
-cv_scores = cross_val_score(
-    model, X_train, y_train_log,
-    cv=5, scoring="neg_root_mean_squared_error",
+param_grid = {"regressor__alpha": [5.0, 8.0, 10.0, 15.0, 20.0, 30.0]}
+grid_search = GridSearchCV(
+    model, param_grid, cv=5,
+    scoring="neg_root_mean_squared_error",
+    n_jobs=-1,
 )
-cv_rmse_log = -cv_scores.mean()
+grid_search.fit(X_train, y_train_log)
+best_model  = grid_search.best_estimator_
+best_alpha  = grid_search.best_params_["regressor__alpha"]
+cv_rmse_log = -grid_search.best_score_
 
-model.fit(X_train, y_train_log)
-
-y_pred_log = model.predict(X_test)
+y_pred_log = best_model.predict(X_test)
 y_pred     = np.expm1(y_pred_log)
 
 val_rmse = evaluate(y_test, y_pred)
@@ -166,13 +177,13 @@ t_end = time.time()
 # Summary
 # ---------------------------------------------------------------------------
 
-num_features_out = model.named_steps["preprocessor"].transform(X_train[:1]).shape[1]
+num_features_out = best_model.named_steps["preprocessor"].transform(X_train[:1]).shape[1]
 
 print("---")
 print(f"val_rmse:         {val_rmse:.6f}")
 print(f"cv_rmse_log:      {cv_rmse_log:.6f}")
 print(f"total_seconds:    {t_end - t_start:.1f}")
 print(f"num_features:     {num_features_out}")
-print(f"model:            Ridge(alpha=10) + ordinal quality encoding + kitchen/exter_qual_sf")
+print(f"model:            Ridge(alpha={best_alpha}) + extended ordinal interactions")
 print(f"train_rows:       {len(X_train)}")
 print(f"test_rows:        {len(X_test)}")
