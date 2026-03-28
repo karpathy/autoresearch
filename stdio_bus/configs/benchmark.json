@@ -1,0 +1,13 @@
+{
+  "pools": [
+    {
+      "id": "benchmark",
+      "command": "uv",
+      "args": [
+        "run",
+        "benchmark.py"
+      ],
+      "instances": 1
+    }
+  ]
+}
