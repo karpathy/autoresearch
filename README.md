@@ -13,7 +13,7 @@ Requirements:
 - Python 3.10+
 - [uv](https://docs.astral.sh/uv/)
 
-```bash
+
 # install dependencies
 uv sync
 
