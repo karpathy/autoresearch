@@ -428,6 +428,10 @@ def main():
         f"BS={BATCH_SIZE}x{GRADIENT_ACCUMULATION_STEPS} LR={LR} T={TEMPERATURE} "
         f"ArcFace={ARCFACE_WEIGHT} margin={ARCFACE_MARGIN} scale={ARCFACE_SCALE}"
     )
+    logger.info(
+        f"Early stopping: cosine>{EARLY_STOP_COSINE_THRESHOLD} "
+        f"patience={EARLY_STOP_PATIENCE} recall_drop>{EARLY_STOP_RECALL_DROP}"
+    )
 
     # -- Load base model --
     base_model = load_base_model(DEVICE)
@@ -490,6 +494,8 @@ def main():
 
     # -- Training loop --
     best_combined = -1.0
+    best_recall = -1.0
+    patience_counter = 0
     start_time = time.time()
 
     for epoch in range(1, EPOCHS + 1):
@@ -510,12 +516,47 @@ def main():
         if epoch % EVAL_EVERY_N_EPOCHS == 0:
             metrics = evaluate_dino(model, val_loader, DEVICE)
 
-            if metrics["combined"] > best_combined:
+            improved = metrics["combined"] > best_combined
+            if improved:
                 best_combined = metrics["combined"]
                 save_adapter(model)
-                logger.info(
-                    f"New best! combined={best_combined:.4f} -- adapter saved"
+                logger.info(f"New best! combined={best_combined:.4f} -- adapter saved")
+
+            # -- Early stopping checks --
+            current_recall = metrics["recall@1"]
+            current_cosine = metrics["mean_cosine"]
+
+            # Track best recall
+            if current_recall > best_recall:
+                best_recall = current_recall
+
+            # 1. Cosine collapse detection
+            if current_cosine > EARLY_STOP_COSINE_THRESHOLD:
+                logger.warning(
+                    f"EARLY STOP: cosine collapse detected "
+                    f"(mean_cosine={current_cosine:.4f} > {EARLY_STOP_COSINE_THRESHOLD})"
                 )
+                break
+
+            # 2. Patience: no improvement in combined metric
+            if improved:
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                if patience_counter >= EARLY_STOP_PATIENCE:
+                    logger.warning(
+                        f"EARLY STOP: no improvement for {EARLY_STOP_PATIENCE} epochs "
+                        f"(best_combined={best_combined:.4f})"
+                    )
+                    break
+
+            # 3. Recall drop from best
+            if best_recall > 0 and (best_recall - current_recall) > EARLY_STOP_RECALL_DROP:
+                logger.warning(
+                    f"EARLY STOP: recall@1 dropped {best_recall - current_recall:.4f} "
+                    f"from best={best_recall:.4f} (threshold={EARLY_STOP_RECALL_DROP})"
+                )
+                break
 
     # -- Final results --
     total_time = time.time() - start_time
