@@ -15,6 +15,9 @@ from prepare_dino import (
     set_seed, collate_fn,
 )
 
+# -- Production overrides (do NOT edit prepare_dino.py) --
+EPOCHS = 20                          # Override imported EPOCHS for production run
+
 import math
 import random
 import time
@@ -52,7 +55,13 @@ SEED = 42
 USE_GRADIENT_CHECKPOINTING = True
 EVAL_EVERY_N_EPOCHS = 1              # Evaluate after every N epochs
 MAX_STEPS_PER_EPOCH = 0              # Cap steps per epoch (0 = no cap)
-MAX_TRAINING_SECONDS = 7200          # Hard time limit: 2 hours per experiment (larger combined dataset)
+MAX_TRAINING_SECONDS = 0             # No time limit for production run (0 = disabled)
+
+# Early stopping
+EARLY_STOP_COSINE_THRESHOLD = 0.95   # Stop if mean_cosine exceeds this (cosine collapse)
+EARLY_STOP_PATIENCE = 10             # Stop if combined metric hasn't improved for N epochs
+EARLY_STOP_RECALL_DROP = 0.15        # Stop if recall@1 drops more than this from best
+
 NUM_WORKERS = 4                      # DataLoader workers
 DEVICE = "cuda"
 
