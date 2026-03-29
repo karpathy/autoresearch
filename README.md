@@ -87,6 +87,30 @@ I think these would be the reasonable hyperparameters to play with. Ask your fav
 - [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
 - [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
 
+
+## Troubleshooting
+
+**"No CUDA GPU detected"**
+- This script requires an NVIDIA GPU with CUDA support
+- Mac users: see the MLX forks in Notable forks section
+- Windows/Linux: ensure CUDA drivers are installed (`nvidia-smi` should work)
+
+**"CUDA out of memory"**
+- Reduce `DEVICE_BATCH_SIZE` in `train.py` (e.g., from 128 to 64)
+- For GPUs with <40GB VRAM, also consider reducing `DEPTH`
+
+**"kernels module not found" or Flash Attention errors**
+- Ensure you're using `uv run` (not plain `python`)
+- Try `uv sync --reinstall` to rebuild dependencies
+
+**Training runs but loss doesn't decrease**
+- This is expected for the first ~10 steps (warmup)
+- If loss stays flat after step 50+, the experiment may need different hyperparameters
+
+**Script hangs at startup**
+- First run compiles the model with `torch.compile`, which can take 1-2 minutes
+- Subsequent runs should start faster
+
 ## License
 
 MIT
