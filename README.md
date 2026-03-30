@@ -1,92 +1,191 @@
 # autoresearch
 
-![teaser](progress.png)
+This checkout now includes a Codex-driven research runner for long-form web research jobs. The original `prepare.py` / `train.py` demo from the upstream repo is still here, but the added workflow in this repo is aimed at prompts like large equipment inventories, consular directories, industry datasets, and similar structured research tasks.
 
-*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
+## What was added
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069).
+- `program.md` - reusable research instructions that every run prepends to your spec
+- `scripts/run_research.py` - `doctor`, one-shot `run`, and queued `queue` execution
+- `specs/heavy_construction_industrial_equipment.md` - your heavy construction example as a reusable template
+- `job_templates/*.json` - example queue jobs you can drop into `queue/pending/`
 
-## How it works
+## Requirements
 
-The repo is deliberately kept small and only really has three files that matter:
+- Python 3.10+
+- Codex CLI on `PATH`
+- Working Codex auth
+- Web search enabled at run time for research-heavy jobs
 
-- **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
-- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+## First check
 
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
+Run this once from the repo root:
 
-If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/status/2030720614752039185) looks pretty good for a lot more context.
-
-## Quick start
-
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
-
-```bash
-
-# 1. Install uv project manager (if you don't already have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Install dependencies
-uv sync
-
-# 3. Download data and train tokenizer (one-time, ~2 min)
-uv run prepare.py
-
-# 4. Manually run a single training experiment (~5 min)
-uv run train.py
+```powershell
+python scripts/run_research.py doctor --search
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
+That verifies Python, `codex`, and a live web-enabled `codex exec` call.
 
-## Running the agent
+## Run one job now
 
-Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
+Example using the tracked heavy-equipment template:
 
-```
-Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
-```
-
-The `program.md` file is essentially a super lightweight "skill".
-
-## Project structure
-
-```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
+```powershell
+python scripts/run_research.py run `
+  --spec specs/heavy_construction_industrial_equipment.md `
+  --phase "1: Heavy Equipment" `
+  --depth seed `
+  --tag heavy-equipment-phase1-seed
 ```
 
-## Design choices
+For a deeper pass:
 
-- **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
-- **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+```powershell
+python scripts/run_research.py run `
+  --spec specs/heavy_construction_industrial_equipment.md `
+  --phase "1: Heavy Equipment" `
+  --depth exhaustive `
+  --tag heavy-equipment-phase1-exhaustive
+```
 
-## Platform support
+You can also inject any template value with repeated `--var KEY=VALUE`.
 
-This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
+## Build a merged dataset
 
-Seeing as there seems to be a lot of interest in tinkering with autoresearch on much smaller compute platforms than an H100, a few extra words. If you're going to try running autoresearch on smaller computers (Macbooks etc.), I'd recommend one of the forks below. On top of this, here are some recommendations for how to tune the defaults for much smaller models for aspiring forks:
+This runs the heavy-equipment template phase by phase, then exports merged CSV, JSON, manifest, and combined markdown files under `results\datasets\`.
 
-1. To get half-decent results I'd use a dataset with a lot less entropy, e.g. this [TinyStories dataset](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean). These are GPT-4 generated short stories. Because the data is a lot narrower in scope, you will see reasonable results with a lot smaller models (if you try to sample from them after training).
-2. You might experiment with decreasing `vocab_size`, e.g. from 8192 down to 4096, 2048, 1024, or even - simply byte-level tokenizer with 256 possibly bytes after utf-8 encoding.
-3. In `prepare.py`, you'll want to lower `MAX_SEQ_LEN` a lot, depending on the computer even down to 256 etc. As you lower `MAX_SEQ_LEN`, you may want to experiment with increasing `DEVICE_BATCH_SIZE` in `train.py` slightly to compensate. The number of tokens per fwd/bwd pass is the product of these two.
-4. Also in `prepare.py`, you'll want to decrease `EVAL_TOKENS` so that your validation loss is evaluated on a lot less data.
-5. In `train.py`, the primary single knob that controls model complexity is the `DEPTH` (default 8, here). A lot of variables are just functions of this, so e.g. lower it down to e.g. 4.
-6. You'll want to most likely use `WINDOW_PATTERN` of just "L", because "SSSL" uses alternating banded attention pattern that may be very inefficient for you. Try it.
-7. You'll want to lower `TOTAL_BATCH_SIZE` a lot, but keep it powers of 2, e.g. down to `2**14` (~16K) or so even, hard to tell.
+The default path is intentionally fast and shallow: `--depth seed` plus the script default model (`gpt-5.4-mini`) is good for getting a structured inventory quickly, not for maximizing image coverage.
 
-I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
+```powershell
+python scripts/build_heavy_equipment_dataset.py --depth seed
+```
 
-## Notable forks
+If you want the builder to revisit only unresolved image rows after the first pass, enable the targeted recovery loop:
 
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
-- [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
-- [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
+```powershell
+python scripts/build_heavy_equipment_dataset.py `
+  --depth seed `
+  --image-followup `
+  --image-followup-rounds 2 `
+  --max-unconfirmed-images 150
+```
 
-## License
+Use `--max-unconfirmed-images` when you want the script to fail loudly instead of treating a partially covered dataset as success.
 
-MIT
+## Dashboard
+
+This repo now includes a lightweight run-history dashboard that reads the existing `results\` artifacts directly. It does not require pi, a web framework, or extra build steps.
+
+Print a terminal summary:
+
+```powershell
+python scripts/research_dashboard.py summary
+```
+
+Export the HTML dashboard:
+
+```powershell
+python scripts/research_dashboard.py export-html
+```
+
+Serve it locally from the repo root:
+
+```powershell
+python scripts/research_dashboard.py serve
+```
+
+By default that writes [results/dashboard/index.html](/C:/Users/uphol/Documents/Design/Coding/autoresearch/results/dashboard/index.html) and serves the repo at `http://127.0.0.1:8765/results/dashboard/index.html`.
+
+## PR Planning
+
+This repo also includes a commit-bundle planner for reviewable PRs. It looks at commits on the current branch that are not in the base ref, ignores metadata-heavy paths like `results/` and `.vscode/`, and groups selected commits into:
+
+- `consolidated` - one PR with all selected commits plus required dependencies
+- `stacked` - one PR per selected commit, subtracting commits already emitted in earlier PRs
+- `individual` - one independent PR bundle per selected commit
+
+List branch-only commits:
+
+```powershell
+python scripts/research_pr_plan.py list
+```
+
+Plan a consolidated PR from all branch-only commits:
+
+```powershell
+python scripts/research_pr_plan.py plan --all
+```
+
+Plan stacked PRs from specific commits:
+
+```powershell
+python scripts/research_pr_plan.py plan `
+  --hash abc1234 `
+  --hash def5678 `
+  --mode stacked
+```
+
+## Snapshot Helper
+
+To make the PR planner useful before you manually commit changes, there is also a worktree snapshot helper. It groups the current dirty tree into reviewable buckets such as `scripts`, `specs`, `job_templates`, and `docs`, while ignoring metadata-heavy paths like `results/` and `.history/` by default.
+
+Preview the proposed groups:
+
+```powershell
+python scripts/research_snapshot.py plan
+```
+
+Preview the commits for a subset of groups:
+
+```powershell
+python scripts/research_snapshot.py commit `
+  --group scripts `
+  --group docs
+```
+
+Actually create the snapshot commits:
+
+```powershell
+python scripts/research_snapshot.py commit --yes
+```
+
+The helper refuses to run if you already have staged changes, so it does not trample a manual commit in progress.
+
+## Queue mode
+
+1. Create `queue\pending\` if it does not exist.
+2. Drop JSON job files into it using the same shape as `job_templates\*.json`.
+3. Start the worker:
+
+```powershell
+python scripts/run_research.py queue --watch
+```
+
+Processed jobs are moved to:
+
+- `queue\completed\`
+- `queue\failed\`
+
+## Output layout
+
+Each run creates a timestamped folder under `results\` containing:
+
+- `prompt.txt` - full prompt sent to Codex
+- `resolved_spec.md` - spec after `${var}` substitution
+- `final_report.md` - last Codex message, intended as the deliverable
+- `codex.log` - streamed CLI output for debugging
+- `run.json` - metadata, paths, and exit code
+
+`results/` and `queue/` are already ignored by git.
+
+## How to customize
+
+- Edit `program.md` to change the baseline research behavior.
+- Add new templates under `specs/`.
+- Create queue jobs that point to those specs and inject variables through the `vars` object.
+
+## Notes
+
+- The runner uses `codex --search exec` so the model can browse during research.
+- The default model is `gpt-5.4`, but you can override it with `--model`.
+- The repo's original ML training files were left untouched, so you can still use the upstream experiment loop if needed.
