@@ -41,7 +41,7 @@ LORA_TARGET_MODULES = ["q_proj", "v_proj"]  # DINOv3 attention projections (per 
 
 BATCH_SIZE = 8                       # Physical batch size (VRAM safe for 24GB)
 GRADIENT_ACCUMULATION_STEPS = 16     # Effective batch = 128
-LR = 1e-3                           # Learning rate for AdamW
+LR = 5e-4                           # Learning rate for AdamW (reduced to prevent collapse)
 WEIGHT_DECAY = 0.01                  # AdamW weight decay
 WARMUP_RATIO = 0.2                   # Fraction of total steps for LR warmup
 TEMPERATURE = 0.20                   # InfoNCE temperature (softer for combined dataset)
@@ -464,14 +464,15 @@ def main():
     # -- Load base model --
     base_model = load_base_model(DEVICE)
 
-    # -- Check if resuming from checkpoint --
+    # -- Check if resuming or warm-starting from saved adapter --
     import os
-    resuming = os.path.exists(CHECKPOINT_PATH) and os.path.exists(LAST_ADAPTER_DIR)
+    has_adapter = os.path.exists(os.path.join(LAST_ADAPTER_DIR, "adapter_model.safetensors"))
+    has_checkpoint = os.path.exists(CHECKPOINT_PATH)
 
-    if resuming:
-        # Load adapter directly onto base model (avoid double PEFT wrapping)
+    if has_adapter:
+        # Load saved adapter onto base model (resume or warm start)
         from peft import PeftModel
-        logger.info(f"Resuming: loading adapter from {LAST_ADAPTER_DIR}")
+        logger.info(f"Loading saved adapter from {LAST_ADAPTER_DIR}")
         model = PeftModel.from_pretrained(base_model, LAST_ADAPTER_DIR, is_trainable=True)
     else:
         # Fresh run: inject new LoRA adapters
@@ -530,14 +531,15 @@ def main():
     num_training_steps = (steps_per_epoch // GRADIENT_ACCUMULATION_STEPS) * EPOCHS
     scheduler = build_scheduler(optimizer, num_training_steps)
 
-    # -- Resume from checkpoint if available --
+    # -- Resume or warm start --
     best_combined = -1.0
     best_recall = -1.0
     patience_counter = 0
     collapse_counter = 0
     start_epoch = 1
 
-    if resuming:
+    if has_adapter and has_checkpoint:
+        # Full resume: restore optimizer/scheduler/tracking state
         ckpt = torch.load(CHECKPOINT_PATH, map_location="cpu", weights_only=True)
         start_epoch = ckpt["epoch"] + 1
         best_combined = ckpt["best_combined"]
@@ -547,9 +549,12 @@ def main():
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         scheduler.load_state_dict(ckpt["scheduler_state_dict"])
         logger.info(
-            f"Resumed: epoch={start_epoch} best_combined={best_combined:.4f} "
+            f"Full resume: epoch={start_epoch} best_combined={best_combined:.4f} "
             f"best_recall={best_recall:.4f} patience={patience_counter} collapse={collapse_counter}"
         )
+    elif has_adapter:
+        # Warm start: adapter weights loaded, fresh optimizer/scheduler
+        logger.info("Warm start: adapter weights loaded, fresh optimizer + scheduler")
 
     # -- Training loop --
     start_time = time.time()
