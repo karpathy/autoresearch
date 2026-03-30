@@ -419,7 +419,8 @@ class MuonAdamW(torch.optim.Optimizer):
 # Model size: DEPTH controls everything else via ASPECT_RATIO and HEAD_DIM
 DEPTH         = 1         # number of transformer layers
 ASPECT_RATIO  = 64        # model_dim = round_up(DEPTH * ASPECT_RATIO, HEAD_DIM)
-HEAD_DIM      = 64        # target head dimension (must divide model_dim)
+HEAD_DIM      = 32        # target head dimension (must divide model_dim)
+KV_HEADS      = 1         # number of KV heads (GQA: < num_heads for sharing)
 WINDOW_PATTERN = "L"      # full attention — best for short sequences
 
 # Optimization
@@ -457,7 +458,7 @@ def build_model_config(depth):
     num_heads = model_dim // HEAD_DIM
     return GPTConfig(
         sequence_len=MAX_SEQ_LEN, vocab_size=vocab_size,
-        n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
+        n_layer=depth, n_head=num_heads, n_kv_head=KV_HEADS, n_embd=model_dim,
         window_pattern=WINDOW_PATTERN,
     )
 
