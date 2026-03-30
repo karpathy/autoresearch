@@ -151,6 +151,27 @@ python scripts/research_snapshot.py commit --yes
 
 The helper refuses to run if you already have staged changes, so it does not trample a manual commit in progress.
 
+## Review Branches
+
+To turn a PR plan into real local review branches, use the review-branch generator. It creates fresh branches from the base ref in temporary worktrees and cherry-picks exactly the bundle commits, so the branch contents match the planner output instead of inheriting unrelated local history.
+
+Dry-run a consolidated branch:
+
+```powershell
+python scripts/research_review_branches.py --all
+```
+
+Create stacked review branches:
+
+```powershell
+python scripts/research_review_branches.py `
+  --all `
+  --mode stacked `
+  --yes
+```
+
+By default the branches use a `review/<repo-name>/...` prefix. Use `--prefix` to override that, and `--force` if you need to recreate an existing review branch set.
+
 ## Queue mode
 
 1. Create `queue\pending\` if it does not exist.
