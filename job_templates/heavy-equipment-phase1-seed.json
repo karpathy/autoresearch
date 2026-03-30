@@ -1,0 +1,11 @@
+{
+  "name": "heavy-equipment-phase1-seed",
+  "spec": "specs/heavy_construction_industrial_equipment.md",
+  "vars": {
+    "phase": "1: Heavy Equipment",
+    "depth": "seed"
+  },
+  "model": "gpt-5.4",
+  "search": true,
+  "tag": "heavy-equipment-phase1-seed"
+}
