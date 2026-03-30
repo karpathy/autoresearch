@@ -419,7 +419,7 @@ class MuonAdamW(torch.optim.Optimizer):
 # Model size: DEPTH controls everything else via ASPECT_RATIO and HEAD_DIM
 DEPTH         = 1         # number of transformer layers
 ASPECT_RATIO  = 64        # model_dim = round_up(DEPTH * ASPECT_RATIO, HEAD_DIM)
-HEAD_DIM      = 32        # target head dimension (must divide model_dim)
+HEAD_DIM      = 16        # target head dimension (must divide model_dim)
 KV_HEADS      = 1         # number of KV heads (GQA: < num_heads for sharing)
 WINDOW_PATTERN = "L"      # full attention — best for short sequences
 
