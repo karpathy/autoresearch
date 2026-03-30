@@ -87,6 +87,9 @@ I think these would be the reasonable hyperparameters to play with. Ask your fav
 - [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
 - [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
 
+## Dashboards
+- [AutoResearch Cockpit](https://github.com/Pana-g/autoresearch-cockpit) (MacOS, Windows, Linux)
+
 ## License
 
 MIT
