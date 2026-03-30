@@ -354,17 +354,6 @@ def save_last_checkpoint(model, optimizer, scheduler, epoch: int,
     logger.info(f"Last adapter + checkpoint saved (epoch {epoch})")
 
 
-def load_checkpoint(optimizer, scheduler) -> dict | None:
-    """Load checkpoint for resume. Returns state dict or None."""
-    import os
-    if not os.path.exists(CHECKPOINT_PATH) or not os.path.exists(LAST_ADAPTER_DIR):
-        return None
-    ckpt = torch.load(CHECKPOINT_PATH, map_location="cpu", weights_only=True)
-    optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-    scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-    logger.info(f"Checkpoint loaded: resuming from epoch {ckpt['epoch'] + 1}")
-    return ckpt
-
 
 # ============================================================
 # Training loop
@@ -475,16 +464,26 @@ def main():
     # -- Load base model --
     base_model = load_base_model(DEVICE)
 
-    # -- Inject LoRA adapters --
-    lora_config = LoraConfig(
-        r=LORA_R,
-        lora_alpha=LORA_ALPHA,
-        lora_dropout=LORA_DROPOUT,
-        target_modules=LORA_TARGET_MODULES,
-        bias="none",
-    )
-    model = get_peft_model(base_model, lora_config)
-    model.print_trainable_parameters()  # Expected: ~0.2% of total
+    # -- Check if resuming from checkpoint --
+    import os
+    resuming = os.path.exists(CHECKPOINT_PATH) and os.path.exists(LAST_ADAPTER_DIR)
+
+    if resuming:
+        # Load adapter directly onto base model (avoid double PEFT wrapping)
+        from peft import PeftModel
+        logger.info(f"Resuming: loading adapter from {LAST_ADAPTER_DIR}")
+        model = PeftModel.from_pretrained(base_model, LAST_ADAPTER_DIR, is_trainable=True)
+    else:
+        # Fresh run: inject new LoRA adapters
+        lora_config = LoraConfig(
+            r=LORA_R,
+            lora_alpha=LORA_ALPHA,
+            lora_dropout=LORA_DROPOUT,
+            target_modules=LORA_TARGET_MODULES,
+            bias="none",
+        )
+        model = get_peft_model(base_model, lora_config)
+    model.print_trainable_parameters()
 
     # -- Enable gradient checkpointing for VRAM savings --
     if USE_GRADIENT_CHECKPOINTING:
@@ -538,24 +537,14 @@ def main():
     collapse_counter = 0
     start_epoch = 1
 
-    ckpt = load_checkpoint(optimizer, scheduler)
-    if ckpt is not None:
+    if resuming:
+        ckpt = torch.load(CHECKPOINT_PATH, map_location="cpu", weights_only=True)
         start_epoch = ckpt["epoch"] + 1
         best_combined = ckpt["best_combined"]
         best_recall = ckpt["best_recall"]
         patience_counter = ckpt["patience_counter"]
         collapse_counter = ckpt["collapse_counter"]
-        # Load last adapter weights into model for resume
-        from peft import PeftModel
-        logger.info(f"Loading last adapter from {LAST_ADAPTER_DIR} for resume...")
-        model = PeftModel.from_pretrained(model.base_model.model, LAST_ADAPTER_DIR)
-        model.to(DEVICE)
-        if USE_GRADIENT_CHECKPOINTING:
-            model.gradient_checkpointing_enable()
-        # Rebuild optimizer with resumed model params
-        optimizer = build_optimizer(model, arcface_head=arcface_head)
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-        scheduler = build_scheduler(optimizer, num_training_steps)
         scheduler.load_state_dict(ckpt["scheduler_state_dict"])
         logger.info(
             f"Resumed: epoch={start_epoch} best_combined={best_combined:.4f} "
