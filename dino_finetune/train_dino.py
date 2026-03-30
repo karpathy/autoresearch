@@ -65,6 +65,8 @@ EARLY_STOP_COLLAPSE_CONSECUTIVE = 3  # Stop only after N consecutive collapsed e
 
 NUM_WORKERS = 4                      # DataLoader workers
 DEVICE = "cuda"
+LAST_ADAPTER_DIR = "dino_finetune/output/last_adapter"   # Saved every epoch
+CHECKPOINT_PATH = "dino_finetune/output/last_adapter/checkpoint.pt"  # For resume
 
 # Combined dataset paths (richer training data)
 USE_COMBINED_DATASET = True                  # Use combined data from multiple sources
@@ -330,6 +332,41 @@ def build_scheduler(optimizer, num_training_steps: int):
 
 
 # ============================================================
+# Checkpoint save / load (for crash resume)
+# ============================================================
+
+def save_last_checkpoint(model, optimizer, scheduler, epoch: int,
+                         best_combined: float, best_recall: float,
+                         patience_counter: int, collapse_counter: int):
+    """Save last adapter + training state for crash resume."""
+    import os
+    os.makedirs(LAST_ADAPTER_DIR, exist_ok=True)
+    model.save_pretrained(LAST_ADAPTER_DIR)
+    torch.save({
+        "epoch": epoch,
+        "best_combined": best_combined,
+        "best_recall": best_recall,
+        "patience_counter": patience_counter,
+        "collapse_counter": collapse_counter,
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict(),
+    }, CHECKPOINT_PATH)
+    logger.info(f"Last adapter + checkpoint saved (epoch {epoch})")
+
+
+def load_checkpoint(optimizer, scheduler) -> dict | None:
+    """Load checkpoint for resume. Returns state dict or None."""
+    import os
+    if not os.path.exists(CHECKPOINT_PATH) or not os.path.exists(LAST_ADAPTER_DIR):
+        return None
+    ckpt = torch.load(CHECKPOINT_PATH, map_location="cpu", weights_only=True)
+    optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+    scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+    logger.info(f"Checkpoint loaded: resuming from epoch {ckpt['epoch'] + 1}")
+    return ckpt
+
+
+# ============================================================
 # Training loop
 # ============================================================
 
@@ -494,14 +531,41 @@ def main():
     num_training_steps = (steps_per_epoch // GRADIENT_ACCUMULATION_STEPS) * EPOCHS
     scheduler = build_scheduler(optimizer, num_training_steps)
 
-    # -- Training loop --
+    # -- Resume from checkpoint if available --
     best_combined = -1.0
     best_recall = -1.0
     patience_counter = 0
     collapse_counter = 0
+    start_epoch = 1
+
+    ckpt = load_checkpoint(optimizer, scheduler)
+    if ckpt is not None:
+        start_epoch = ckpt["epoch"] + 1
+        best_combined = ckpt["best_combined"]
+        best_recall = ckpt["best_recall"]
+        patience_counter = ckpt["patience_counter"]
+        collapse_counter = ckpt["collapse_counter"]
+        # Load last adapter weights into model for resume
+        from peft import PeftModel
+        logger.info(f"Loading last adapter from {LAST_ADAPTER_DIR} for resume...")
+        model = PeftModel.from_pretrained(model.base_model.model, LAST_ADAPTER_DIR)
+        model.to(DEVICE)
+        if USE_GRADIENT_CHECKPOINTING:
+            model.gradient_checkpointing_enable()
+        # Rebuild optimizer with resumed model params
+        optimizer = build_optimizer(model, arcface_head=arcface_head)
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        scheduler = build_scheduler(optimizer, num_training_steps)
+        scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+        logger.info(
+            f"Resumed: epoch={start_epoch} best_combined={best_combined:.4f} "
+            f"best_recall={best_recall:.4f} patience={patience_counter} collapse={collapse_counter}"
+        )
+
+    # -- Training loop --
     start_time = time.time()
 
-    for epoch in range(1, EPOCHS + 1):
+    for epoch in range(start_epoch, EPOCHS + 1):
         elapsed = time.time() - start_time
         if MAX_TRAINING_SECONDS > 0 and elapsed >= MAX_TRAINING_SECONDS:
             logger.info(f"Time limit reached ({elapsed:.0f}s >= {MAX_TRAINING_SECONDS}s) after {epoch - 1} epochs")
@@ -569,6 +633,12 @@ def main():
                     f"from best={best_recall:.4f} (threshold={EARLY_STOP_RECALL_DROP})"
                 )
                 break
+
+            # -- 5. Save last adapter + checkpoint (every epoch, for crash resume) --
+            save_last_checkpoint(
+                model, optimizer, scheduler, epoch,
+                best_combined, best_recall, patience_counter, collapse_counter,
+            )
 
     # -- Final results --
     total_time = time.time() - start_time
