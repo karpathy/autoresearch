@@ -112,8 +112,16 @@ None yet.
 - Spatial cache disk budget (~300GB estimate) needs validation
 - VRAM budget tight for DINOv3 ViT-g 1.1B with LoRA -- needs profiling
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260329-ux2 | Add early stopping and production training config | 2026-03-29 | d3880a1 | [260329-ux2](./quick/260329-ux2-add-early-stopping-and-production-traini/) |
+| 260330-e2u | Fix early stopping to prevent saving collapsed adapters | 2026-03-30 | 8a436a7 | [260330-e2u](./quick/260330-e2u-fix-early-stopping-to-prevent-saving-col/) |
+| 260330-e9t | Add best/last adapter saving and crash resume | 2026-03-30 | 7d9e942 | [260330-e9t](./quick/260330-e9t-add-best-last-adapter-saving-and-crash-r/) |
+
 ## Session Continuity
 
-Last session: 2026-03-26T02:09:42.905Z
+Last activity: 2026-03-30 - Completed quick task 260330-e9t: Add best/last adapter + crash resume
 Stopped at: Completed 09-03-PLAN.md
 Resume file: None
