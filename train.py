@@ -32,10 +32,14 @@ else:
 # Flash Attention 3 (CUDA only) or PyTorch SDPA fallback
 fa3 = None
 if device_type == "cuda":
-    from kernels import get_kernel
-    cap = torch.cuda.get_device_capability()
-    repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-    fa3 = get_kernel(repo).flash_attn_interface
+    try:
+        from kernels import get_kernel
+        cap = torch.cuda.get_device_capability()
+        repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+        fa3 = get_kernel(repo).flash_attn_interface
+    except ImportError:
+        print("Warning: 'kernels' package not found, using SDPA fallback for attention")
+        print("  Install for FA3: pip install kernels>=0.11.7 (requires CUDA)")
 
 print(f"Device: {device_type}")
 
@@ -109,7 +113,8 @@ class CausalSelfAttention(nn.Module):
         if fa3 is not None:
             y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
         else:
-            # SDPA fallback: (B, T, H, D) -> (B, H, T, D)
+            # SDPA fallback: full causal attention only (sliding window requires FA3)
+            # MPS defaults to WINDOW_PATTERN="L" so all layers use full attention
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
             y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
             y = y.transpose(1, 2)  # back to (B, T, H, D)
@@ -713,7 +718,8 @@ steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / 
 if device_type == "cuda":
     peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 elif device_type == "mps":
-    peak_vram_mb = torch.mps.current_allocated_memory() / 1024 / 1024
+    # MPS doesn't have a peak tracking API; driver_allocated_memory is closest to peak
+    peak_vram_mb = torch.mps.driver_allocated_memory() / 1024 / 1024
 else:
     peak_vram_mb = 0
 
