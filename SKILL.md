@@ -1,7 +1,7 @@
 ---
 name: autoresearch
 version: "1.0.0"
-description: "Autonomous Machine Learning Research Agent. Iteratively modifies train.py, runs experiments, and optimizes for the lowest val_bpb within strict VRAM constraints."
+description: "AI agents running research on single-GPU nanochat training automatically"
 argument-hint: 'Start autoresearch loop'
 allowed-tools: Bash, Read, Write
 author: karpathy-adapted
