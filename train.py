@@ -17,11 +17,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+# FA3 disabled — prebuilt kernels lack sm_120 (Blackwell) support.
+# Using PyTorch SDPA fallback instead.
+_USE_FA3 = False
+fa3 = None
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -90,7 +89,20 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        if _USE_FA3:
+            y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        else:
+            # SDPA fallback: expects (B, heads, T, head_dim)
+            q2 = q.transpose(1, 2)
+            k2 = k.transpose(1, 2)
+            v2 = v.transpose(1, 2)
+            # GQA: expand k/v heads to match q heads
+            if self.n_kv_head != self.n_head:
+                reps = self.n_head // self.n_kv_head
+                k2 = k2.repeat_interleave(reps, dim=1)
+                v2 = v2.repeat_interleave(reps, dim=1)
+            y = F.scaled_dot_product_attention(q2, k2, v2, is_causal=True)
+            y = y.transpose(1, 2)
         y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
@@ -448,7 +460,7 @@ FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
 DEPTH = 8               # number of transformer layers
-DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
+DEVICE_BATCH_SIZE = 32  # 64 OOMs, 16 used 6GB — 32 should be the sweet spot
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
