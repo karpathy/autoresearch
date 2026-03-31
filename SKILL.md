@@ -23,4 +23,4 @@ metadata:
       - autonomous
 ---
 
-@E:/SKILLS/autoresearch/program.md
+@./program.md
