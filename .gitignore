@@ -21,3 +21,8 @@ dev/
 
 # Results file
 results.tsv
+# FluxScore research data (generated, contains synthetic PII-free data)
+fluxscore-research/train.parquet
+fluxscore-research/holdout.parquet
+fluxscore-research/results.tsv
+run.log

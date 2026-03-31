@@ -1,0 +1,18 @@
+[project]
+name = "fluxscore-research"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+dependencies = [
+    "scikit-learn>=1.4",
+    "pandas>=2.0",
+    "numpy>=1.26",
+    "pyarrow>=14.0",      # parquet support
+    "lightgbm>=4.0",
+    "xgboost>=2.0",
+    "imbalanced-learn>=0.12",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
