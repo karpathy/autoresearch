@@ -4,52 +4,35 @@ All actions use `yc-bench` CLI commands via `run_command`. All return JSON.
 
 ## CRITICAL RULES (read these first!)
 
-1. **NEVER assign more than 3 employees to a task.** Only the first 4 employees contribute; beyond that you just inflate payroll. Assign 2-3 employees with the HIGHEST skill rates for the task's domain.
-2. **Salary bumps compound.** Every completed task raises salary for ALL assigned employees by ~1%. Assigning 3 = 3 bumps. Assigning 8 = 8 bumps. Over many tasks, this difference is MASSIVE. Keep assignments lean (2 employees is ideal).
-3. **Run at most 2 tasks concurrently.** Employees on N active tasks work at rate/N. Two tasks = 50% speed each. Prefer sequential over parallel.
-4. **Check client history EARLY and OFTEN.** ~35% of clients are RATs (unreliable). They cause scope creep and payment disputes. On turn 1, run `client history`. Blacklist any client with failures. NEVER accept tasks from blacklisted clients.
-5. **Focus on 2-3 trusted clients.** Trust builds per-client and reduces work requirements by up to 50%. Spreading across many clients causes trust decay. Pick your best 2-3 non-RAT clients and stick with them.
-6. **Revenue threshold.** Only accept tasks where reward > 1.5x your monthly payroll. Low-paying tasks just grow payroll with tiny margins.
-7. **Deadline safety.** Only accept tasks where estimated completion is <60% of the deadline. Missed deadlines = no reward + 35% clawback.
-8. **Monitor runway.** If runway < 3 months, STOP accepting new tasks. Focus on completing current ones.
+1. **NEVER assign more than 3 employees to a task.** Only the first 4 contribute; beyond that you just inflate payroll. Assign 2-3 employees with the best skill rates for the task's domain.
+2. **Salary bumps compound.** Every completed task raises salary for ALL assigned employees by ~1%. Fewer employees assigned = slower payroll growth = more profit. This is the #1 profit lever.
+3. **Run at most 2 tasks concurrently.** Employees on N active tasks work at rate/N. Two tasks = 50% speed each. Prefer 1 at a time unless you have 6+ idle employees.
+4. **Check client history before accepting tasks.** ~35% of clients are unreliable (RATs). They cause scope creep and payment disputes. After any task failure, run `client history` and blacklist clients with failures.
+5. **Deadline safety margin.** Only accept tasks where you estimate completion at <70% of the deadline. Missed deadlines = no reward + 35% clawback + prestige penalty.
+6. **Monitor your runway.** Every turn, check `company status`. If runway < 4 months, stop accepting new tasks and focus on completing current ones.
+7. **Build prestige broadly.** Accept tasks across different domains when possible. Higher prestige unlocks better-paying tasks. Don't over-specialize.
 
 ## Turn-by-Turn Decision Framework
 
-Every turn, follow this exact sequence:
+Every turn, follow this sequence:
 
-1. **Check status**: `yc-bench company status` — note funds, monthly payroll, compute runway (funds / payroll)
+1. **Check status**: `yc-bench company status` — note funds, payroll, runway
 2. **Check tasks**: `yc-bench task list --status active` — what's in progress?
-3. **If runway < 3 months**: Do NOT accept new tasks. Just `sim resume`.
-4. **If no active tasks OR only 1 active task with idle employees**:
-   a. `yc-bench market browse --limit 20` — scan available tasks
-   b. Filter: reward > 1.5x monthly payroll, client NOT blacklisted, prestige requirement met
-   c. Prefer tasks from your focus clients (builds trust → less work → higher margins)
-   d. Accept the best task, assign 2 top employees for its domain, dispatch
-5. **Always end with**: `sim resume`
+3. **If runway < 4 months**: Do NOT accept new tasks. Just `sim resume` to complete current ones.
+4. **If no active tasks**: Browse market, pick the best task (highest reward relative to work, from a non-RAT client, prestige met), accept, assign 2-3 best employees for the domain, dispatch, then `sim resume`.
+5. **If 1 active task and capacity available**: Consider accepting ONE more task if employees are available.
+6. **After any task completion or failure**: Update your scratchpad with the outcome and any new RAT client info.
 
-## First Turn Setup (CRITICAL)
+## First Turn Setup
 
-On your VERY FIRST TURN, execute these commands IN ORDER:
-1. `yc-bench employee list` — map employee skills per domain
-2. `yc-bench client history` — identify RAT clients (any with failures = blacklist)
-3. `yc-bench client list` — note trust levels
-4. `yc-bench market browse --limit 20` — find the best task
-5. Write a scratchpad with your strategy:
-   ```
-   yc-bench scratchpad write --content "=== STRATEGY RULES ===
-   BLACKLISTED CLIENTS (RATs): [list clients with any failures]
-   FOCUS CLIENTS: [pick 2-3 non-RAT clients to build trust with]
-   EMPLOYEE SKILLS: [list top 2 employees per domain]
-   RULES:
-   - Max 2 employees per task (3 only if deadline is very tight)
-   - Only accept tasks from focus clients or with reward > 2x payroll
-   - Never accept tasks from blacklisted clients
-   - If runway < 3 months, stop accepting tasks"
-   ```
-6. Accept best task, assign 2 top employees, dispatch
-7. `yc-bench sim resume`
-
-**IMPORTANT: After any task failure, update your scratchpad to add the client to the blacklist.**
+On your VERY FIRST TURN, do this:
+1. `yc-bench employee list` — note each employee's skill rates per domain
+2. `yc-bench client history` — identify unreliable clients
+3. `yc-bench market browse --limit 20` — scan available tasks
+4. Save a structured scratchpad:
+   `yc-bench scratchpad write --content "=== STRATEGY ===\nRAT CLIENTS: [list any with failures]\nBEST EMPLOYEES PER DOMAIN: [map domain -> top 3 emp IDs]\nCOMPLETED: 0 | FAILED: 0\nRULES: max 3 emp/task, avoid RATs, runway>4mo"`
+5. Accept the best task, assign 2-3 top employees for its domain, dispatch
+6. `yc-bench sim resume`
 
 ## Commands
 
@@ -65,7 +48,7 @@ On your VERY FIRST TURN, execute these commands IN ORDER:
 
 ### Act
 - `yc-bench task accept --task-id Task-42` — accept from market
-- `yc-bench task assign --task-id Task-42 --employees Emp_1,Emp_4` — assign employees (comma-separated)
+- `yc-bench task assign --task-id Task-42 --employees Emp_1,Emp_4,Emp_7` — assign employees (comma-separated)
 - `yc-bench task dispatch --task-id Task-42` — start work (must assign first)
 - `yc-bench task cancel --task-id Task-42 --reason "text"` — cancel (prestige penalty)
 - `yc-bench sim resume` — advance time
@@ -74,10 +57,11 @@ On your VERY FIRST TURN, execute these commands IN ORDER:
 
 ## Key Mechanics
 
-- **Salary bumps**: +1% per assigned employee per completed task. KEEP ASSIGNMENTS TO 2.
-- **Throughput split**: rate/N for N concurrent tasks. Run 1-2 tasks max.
-- **Deadlines**: miss = no reward + 35% clawback + prestige penalty.
-- **Trust**: focus on 2-3 clients → trust builds → up to 50% less work per task.
-- **RATs (~35%)**: scope creep + payment disputes. Blacklist after first failure.
-- **Payroll**: deducted monthly. Funds < 0 = bankruptcy.
-- **Scratchpad**: persists across context truncation. ALWAYS keep it updated with blacklist and rules.
+- **Salary bumps**: completed tasks raise salary ~1% for ALL assigned employees. KEEP ASSIGNMENTS SMALL (2-3).
+- **Throughput split**: employees on N active tasks contribute at rate/N. Minimize concurrent tasks.
+- **Deadlines**: miss = prestige penalty + no reward + 35% clawback. Always leave buffer.
+- **Trust**: focusing on fewer clients builds trust → less work per task. Spread = trust decay.
+- **~35% of clients are RATs** — scope creep, payment disputes. Detect via `client history`.
+- **Payroll**: deducted monthly. Funds < 0 = instant bankruptcy.
+- **Prestige**: grows per domain. Higher prestige unlocks better-paying tasks. Build broadly.
+- **Scratchpad persists** across context truncation (20 turns). ALWAYS keep it updated.
