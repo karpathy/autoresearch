@@ -20,9 +20,10 @@ Every turn, follow this sequence:
 1. **Check status**: `yc-bench company status` — note funds, payroll, runway
 2. **Check tasks**: `yc-bench task list --status active` — what's in progress?
 3. **If runway < 4 months**: Do NOT accept new tasks. Just `sim resume` to complete current ones.
-4. **If no active tasks**: Browse market, pick the best task (highest reward relative to work, from a non-RAT client, prestige met), accept, assign 2-3 best employees for the domain, dispatch, then `sim resume`.
-5. **If 1 active task and 4+ idle employees**: Accept a SECOND task using different employees than the first. Assign 2-3 idle employees, dispatch, then `sim resume`.
-6. **After any task completion or failure**: Update your scratchpad with the outcome and any new RAT client info.
+4. **LATE GAME (last 2 months before horizon)**: Only accept tasks you can DEFINITELY complete before the deadline. Prefer short, high-reward tasks. If unsure, just `sim resume` and bank profits.
+5. **If no active tasks**: Browse market, pick the best task (highest reward relative to work, from a non-RAT client, prestige met), accept, assign 2-3 best employees for the domain, dispatch, then `sim resume`.
+6. **If 1 active task and 4+ idle employees**: Accept a SECOND task using different employees than the first. Assign 2-3 idle employees, dispatch, then `sim resume`.
+7. **After any task completion or failure**: Update your scratchpad with the outcome and any new RAT client info.
 
 ## First Turn Setup
 
