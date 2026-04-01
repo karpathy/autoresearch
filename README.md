@@ -87,6 +87,10 @@ I think these would be the reasonable hyperparameters to play with. Ask your fav
 - [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
 - [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
 
+## Related projects
+
+- [autoloop](https://github.com/menonpg/autoloop) — generalizes the autoresearch loop beyond ML training. Point it at any file (system prompts, SQL queries, trading strategies, RAG pipelines) with any metric function, and it runs the same overnight experiment loop. Works with Anthropic, OpenAI, or Ollama locally. MIT.
+
 ## License
 
 MIT
