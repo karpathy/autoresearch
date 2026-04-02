@@ -84,6 +84,7 @@ I think these would be the reasonable hyperparameters to play with. Ask your fav
 
 - [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
 - [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
+- [SingggggYee/autoresearch-mlx](https://github.com/SingggggYee/autoresearch-mlx) (MacOS, MLX native — runs on 8GB+ Macs)
 - [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
 - [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
 
