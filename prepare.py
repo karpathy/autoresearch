@@ -251,7 +251,7 @@ def get_token_bytes(device="cpu"):
         return torch.load(f, map_location=device)
 
 
-def _document_batches(split, tokenizer_batch_size=128):
+def _document_batches(split, tokenizer_batch_size=128, rank=0, world_size=1):
     """Infinite iterator over document batches from parquet files."""
     parquet_paths = list_parquet_files()
     assert len(parquet_paths) > 0, "No parquet files found. Run prepare.py first."
@@ -259,6 +259,8 @@ def _document_batches(split, tokenizer_batch_size=128):
     if split == "train":
         parquet_paths = [p for p in parquet_paths if p != val_path]
         assert len(parquet_paths) > 0, "No training shards found."
+        if world_size > 1:
+            parquet_paths = parquet_paths[rank::world_size]
     else:
         parquet_paths = [val_path]
     epoch = 1
@@ -273,7 +275,7 @@ def _document_batches(split, tokenizer_batch_size=128):
         epoch += 1
 
 
-def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
+def make_dataloader(tokenizer, B, T, split, buffer_size=1000, rank=0, world_size=1):
     """
     BOS-aligned dataloader with best-fit packing.
     Every row starts with BOS. Documents packed using best-fit to minimize cropping.
@@ -282,7 +284,7 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
     """
     assert split in ["train", "val"]
     row_capacity = T + 1
-    batches = _document_batches(split)
+    batches = _document_batches(split, rank=rank, world_size=world_size)
     bos_token = tokenizer.get_bos_token_id()
     doc_buffer = []
     epoch = 1

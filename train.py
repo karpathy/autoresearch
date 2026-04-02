@@ -1,7 +1,7 @@
 """
-Autoresearch pretraining script. Single-GPU, single-file.
+Autoresearch pretraining script. Multi-GPU DDP.
 Cherry-picked and simplified from nanochat.
-Usage: uv run train.py
+Usage: torchrun --nproc_per_node=2 train.py
 """
 
 import os
@@ -11,11 +11,14 @@ os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 import gc
 import math
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass, asdict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from kernels import get_kernel
 cap = torch.cuda.get_device_capability()
@@ -291,7 +294,7 @@ class GPT(nn.Module):
         return logits
 
 # ---------------------------------------------------------------------------
-# Optimizer (MuonAdamW, single GPU only)
+# Optimizer (MuonAdamW)
 # ---------------------------------------------------------------------------
 
 polar_express_coeffs = [
@@ -448,23 +451,30 @@ FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
 DEPTH = 8               # number of transformer layers
-DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
+DEVICE_BATCH_SIZE = 32   # per-device batch size (reduced for RTX 4090 24GB VRAM)
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
 # ---------------------------------------------------------------------------
 
 t_start = time.time()
+dist.init_process_group(backend="nccl")
+rank = dist.get_rank()
+local_rank = int(os.environ.get("LOCAL_RANK", 0))
+world_size = dist.get_world_size()
+torch.cuda.set_device(local_rank)
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
-device = torch.device("cuda")
+device = torch.device(f"cuda:{local_rank}")
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-H100_BF16_PEAK_FLOPS = 989.5e12
+RTX4090_BF16_PEAK_FLOPS = 165.2e12  # RTX 4090 BF16 TensorCore TFLOPS (no sparsity)
+TOTAL_PEAK_FLOPS = RTX4090_BF16_PEAK_FLOPS * world_size
 
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
-print(f"Vocab size: {vocab_size:,}")
+if rank == 0:
+    print(f"Vocab size: {vocab_size:,}")
 
 def build_model_config(depth):
     base_dim = depth * ASPECT_RATIO
@@ -477,26 +487,29 @@ def build_model_config(depth):
     )
 
 config = build_model_config(DEPTH)
-print(f"Model config: {asdict(config)}")
+if rank == 0:
+    print(f"Model config: {asdict(config)}")
 
 with torch.device("meta"):
-    model = GPT(config)
-model.to_empty(device=device)
-model.init_weights()
+    raw_model = GPT(config)
+raw_model.to_empty(device=device)
+raw_model.init_weights()
 
-param_counts = model.num_scaling_params()
-print("Parameter counts:")
-for key, value in param_counts.items():
-    print(f"  {key:24s}: {value:,}")
+param_counts = raw_model.num_scaling_params()
+if rank == 0:
+    print("Parameter counts:")
+    for key, value in param_counts.items():
+        print(f"  {key:24s}: {value:,}")
 num_params = param_counts['total']
-num_flops_per_token = model.estimate_flops()
-print(f"Estimated FLOPs per token: {num_flops_per_token:e}")
+num_flops_per_token = raw_model.estimate_flops()
+if rank == 0:
+    print(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
-tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN
+tokens_per_fwdbwd = DEVICE_BATCH_SIZE * MAX_SEQ_LEN * world_size
 assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0
 grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
 
-optimizer = model.setup_optimizer(
+optimizer = raw_model.setup_optimizer(
     unembedding_lr=UNEMBEDDING_LR,
     embedding_lr=EMBEDDING_LR,
     scalar_lr=SCALAR_LR,
@@ -505,13 +518,15 @@ optimizer = model.setup_optimizer(
     weight_decay=WEIGHT_DECAY,
 )
 
+model = DDP(raw_model, device_ids=[local_rank])
 model = torch.compile(model, dynamic=False)
 
-train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
+train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train", rank=rank, world_size=world_size)
 x, y, epoch = next(train_loader)  # prefetch first batch
 
-print(f"Time budget: {TIME_BUDGET}s")
-print(f"Gradient accumulation steps: {grad_accum_steps}")
+if rank == 0:
+    print(f"Time budget: {TIME_BUDGET}s")
+    print(f"Gradient accumulation steps: {grad_accum_steps}")
 
 # Schedules (all based on progress = training_time / TIME_BUDGET)
 
@@ -544,11 +559,14 @@ while True:
     torch.cuda.synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
-        with autocast_ctx:
-            loss = model(x, y)
-        train_loss = loss.detach()
-        loss = loss / grad_accum_steps
-        loss.backward()
+        is_last_micro = (micro_step == grad_accum_steps - 1)
+        sync_ctx = nullcontext() if is_last_micro else model.no_sync()
+        with sync_ctx:
+            with autocast_ctx:
+                loss = model(x, y)
+            train_loss = loss.detach()
+            loss = loss / grad_accum_steps
+            loss.backward()
         x, y, epoch = next(train_loader)
 
     # Progress and schedules
@@ -584,10 +602,11 @@ while True:
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
     pct_done = 100 * progress
     tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
-    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
+    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / TOTAL_PEAK_FLOPS
     remaining = max(0, TIME_BUDGET - total_training_time)
 
-    print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
+    if rank == 0:
+        print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
 
     # GC management (Python's GC causes ~500ms stalls)
     if step == 0:
@@ -603,28 +622,32 @@ while True:
     if step > 10 and total_training_time >= TIME_BUDGET:
         break
 
-print()  # newline after \r training log
+if rank == 0:
+    print()  # newline after \r training log
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
-# Final eval
-model.eval()
-with autocast_ctx:
-    val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+# Final eval (rank 0 only, using unwrapped model)
+if rank == 0:
+    raw_model.eval()
+    with autocast_ctx:
+        val_bpb = evaluate_bpb(raw_model, tokenizer, DEVICE_BATCH_SIZE)
 
-# Final summary
-t_end = time.time()
-startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
-peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+    # Final summary
+    t_end = time.time()
+    startup_time = t_start_training - t_start
+    steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / TOTAL_PEAK_FLOPS if total_training_time > 0 else 0
+    peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
-print("---")
-print(f"val_bpb:          {val_bpb:.6f}")
-print(f"training_seconds: {total_training_time:.1f}")
-print(f"total_seconds:    {t_end - t_start:.1f}")
-print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
-print(f"mfu_percent:      {steady_state_mfu:.2f}")
-print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
-print(f"num_steps:        {step}")
-print(f"num_params_M:     {num_params / 1e6:.1f}")
-print(f"depth:            {DEPTH}")
+    print("---")
+    print(f"val_bpb:          {val_bpb:.6f}")
+    print(f"training_seconds: {total_training_time:.1f}")
+    print(f"total_seconds:    {t_end - t_start:.1f}")
+    print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
+    print(f"mfu_percent:      {steady_state_mfu:.2f}")
+    print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
+    print(f"num_steps:        {step}")
+    print(f"num_params_M:     {num_params / 1e6:.1f}")
+    print(f"depth:            {DEPTH}")
+
+dist.destroy_process_group()
