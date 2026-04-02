@@ -39,6 +39,23 @@ uv run train.py
 
 If the above commands all work ok, your setup is working and you can go into autonomous research mode.
 
+### Running via Singularity (SLURM / HPC clusters)
+
+If you are on a cluster with Singularity available, use `srun.sh` instead of `uv run` directly. It wraps the command with `singularity exec --nv` and bind-mounts the repo into the container:
+
+```bash
+# Build the image once (requires autoresearch.def)
+singularity build autoresearch.sif autoresearch.def
+
+# Run a training experiment inside the container
+./srun.sh uv run train.py
+
+# If autoresearch.sif lives in a different directory, pass it as the first argument
+./srun.sh /path/to/dir uv run train.py
+```
+
+`srun.sh` expects `autoresearch.sif` and the `autoresearch/` repo directory to both live under the same host path (defaults to the current directory).
+
 ## Running the agent
 
 Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
