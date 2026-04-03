@@ -1,12 +1,12 @@
 #!/bin/bash
-# Usage: srun.sh [host_path] <command>
+# Usage: run.sh [host_path] <command>
 #   host_path  Directory containing autoresearch.sif (default: current directory)
 #   command    Command to run inside /workspace in the container (uses container's Python venv)
 #
 # Examples:
-#   ./srun.sh python prepare.py
-#   ./srun.sh python train.py
-#   ./srun.sh /scratch/mydir python prepare.py
+#   ./run.sh python prepare.py
+#   ./run.sh python train.py
+#   ./run.sh /scratch/mydir python prepare.py
 
 SIF="/n/netscratch/kempner_dev/Lab/bdesinghu/images/autoresearch.sif"
 REPO="${PWD}"

@@ -20,7 +20,7 @@ Only three files matter for the research loop:
 
 Training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation). The `val_bpb` metric is vocab-size-independent, so architectural changes are fairly compared.
 
-Each training run is executed as `./srun.sh python train.py > run.log 2>&1`. The agent parses `val_bpb` and `peak_vram_mb` from `run.log` to decide whether to keep or revert the change. If the grep comes back empty, the run crashed — the agent reads the tail of `run.log` for the stack trace and attempts a fix.
+Each training run is executed as `./run.sh python train.py > run.log 2>&1`. The agent parses `val_bpb` and `peak_vram_mb` from `run.log` to decide whether to keep or revert the change. If the grep comes back empty, the run crashed — the agent reads the tail of `run.log` for the stack trace and attempts a fix.
 
 ## Setup
 
@@ -34,20 +34,20 @@ singularity build autoresearch.sif autoresearch.def
 
 This produces `autoresearch.sif` which bundles CUDA, Python, and all dependencies including Flash Attention 3.
 
-The SIF path is hardcoded in `srun.sh` — update it if you place the image elsewhere.
+The SIF path is hardcoded in `run.sh` — update it if you place the image elsewhere.
 
 ### 2. Prepare the data (one-time, ~2 min)
 
 ```bash
-./srun.sh python prepare.py
+./run.sh python prepare.py
 ```
 
-Data is cached at the `CACHE_DATA` path defined in `srun.sh` and bind-mounted into the container automatically.
+Data is cached at the `CACHE_DATA` path defined in `run.sh` and bind-mounted into the container automatically.
 
 ### 3. Test a single training run (~5 min)
 
 ```bash
-./srun.sh python train.py
+./run.sh python train.py
 ```
 
 If this completes and prints a `val_bpb` summary, your setup is working.
@@ -72,10 +72,10 @@ SLURM logs are written to `logs/` (created automatically). The working directory
 
 ## Running the container manually
 
-`srun.sh` is a thin wrapper around `singularity exec --nv`:
+`run.sh` is a thin wrapper around `singularity exec --nv`:
 
 ```bash
-./srun.sh python train.py
+./run.sh python train.py
 ```
 
 ## Project structure
@@ -85,7 +85,7 @@ prepare.py        — constants, data prep, runtime utilities (do not modify)
 train.py          — model, optimizer, training loop (agent modifies this)
 program.md        — agent instructions (human edits this)
 train_run.slrm    — SLURM job script (self-resubmitting)
-srun.sh           — Singularity wrapper script
+run.sh           — Singularity wrapper script
 autoresearch.def  — Singularity container definition
 pyproject.toml    — Python dependencies (baked into Singularity image)
 analysis.ipynb    — experiment analysis notebook
@@ -96,5 +96,5 @@ results.tsv       — experiment results log (not tracked in git)
 
 ## Upstream
 
-This repo tracks [karpathy/autoresearch](https://github.com/karpathy/autoresearch). The HPC-specific additions are `srun.sh`, `autoresearch.def`, and `train_run.slrm`. The core research loop (`prepare.py`, `train.py`, `program.md`) follows upstream conventions.
+This repo tracks [karpathy/autoresearch](https://github.com/karpathy/autoresearch). The HPC-specific additions are `run.sh`, `autoresearch.def`, and `train_run.slrm`. The core research loop (`prepare.py`, `train.py`, `program.md`) follows upstream conventions.
 
