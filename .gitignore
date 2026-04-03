@@ -8,6 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+uv.lock
 .cache
 worktrees/
 results/
