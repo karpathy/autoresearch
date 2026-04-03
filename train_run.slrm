@@ -1,0 +1,21 @@
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=64GB
+#SBATCH --gres=gpu:1
+#SBATCH --partition=kempner_eng
+#SBATCH --account=kempner_dev
+#SBATCH --time=72:00:00
+#SBATCH --job-name=test-auto
+#SBATCH --output=logs/%N.%x.%j.out
+#SBATCH --error=logs/%N.%x.%j.err
+
+cd /n/netscratch/kempner_dev/Lab/bdesinghu/Agent/prep-autoresearch/autoresearch
+mkdir -p logs
+
+claude --allowedTools "Bash,Read,Edit,Write,Glob,Grep" \
+  -p "follow program.md and run the training experiment loop"
+
+sbatch "$0"  # resubmit this script when done
+
