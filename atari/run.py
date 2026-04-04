@@ -149,39 +149,22 @@ Respond with the complete new agent.py file between ```python and ``` markers.""
 
 
 def call_llm(api_key, model, prompt, api_base=None):
-    """Call the LLM via litellm and return the response text."""
+    """Call the LLM via litellm with built-in retry/backoff for rate limits."""
     from litellm import completion
 
-    kwargs = {
-        "model": model,
-        "messages": [
+    response = completion(
+        model=model,
+        messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
-        "max_tokens": 4096,
-        "temperature": 0.7,
-        "api_key": api_key,
-        "api_base": api_base,
-    }
-
-    response = completion(**kwargs)
+        max_tokens=4096,
+        temperature=0.7,
+        api_key=api_key,
+        api_base=api_base,
+        num_retries=10,
+    )
     return response.choices[0].message.content
-
-
-def _parse_rate_limit_wait(error_str):
-    """Parse 'Limit resets at: YYYY-MM-DD HH:MM:SS UTC' from a rate limit error.
-    Returns seconds to wait, or None if not parseable."""
-    match = re.search(r"resets at:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s*UTC", error_str)
-    if not match:
-        return None
-    try:
-        from datetime import datetime, timezone
-        reset_time = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        wait = (reset_time - now).total_seconds() + 2  # 2s buffer
-        return max(wait, 5)  # at least 5s
-    except Exception:
-        return None
 
 
 def extract_code(response):
@@ -302,15 +285,9 @@ Examples:
         try:
             response = call_llm(args.api_key, args.model, prompt, args.api_base)
         except Exception as e:
-            error_str = str(e)
-            wait = _parse_rate_limit_wait(error_str)
-            if wait is not None:
-                print(f"[llm] Rate limited. Waiting {wait}s until reset...")
-                time.sleep(wait)
-            else:
-                print(f"[llm] Error: {e}")
-                print("[llm] Retrying in 30s...")
-                time.sleep(30)
+            print(f"[llm] Error: {e}")
+            print("[llm] Retrying in 30s...")
+            time.sleep(30)
             continue
 
         new_code = extract_code(response)
