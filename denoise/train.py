@@ -75,15 +75,20 @@ def train():
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Parameters: {n_params:,}")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
     loader = get_train_loader(batch_size=BATCH_SIZE)
+
+    # Estimate total steps for scheduler
+    steps_per_epoch = len(loader)
+    est_epochs = max(1, int(TIME_BUDGET / 3.5))  # rough estimate
+    total_steps = steps_per_epoch * est_epochs
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-5)
 
     # ── Training loop (time-budgeted) ─────────────────────────
     model.train()
     t_start = time.time()
     step = 0
     epoch = 0
-    best_loss = float("inf")
 
     while True:
         epoch += 1
@@ -100,11 +105,12 @@ def train():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
             step += 1
             if step % 100 == 0:
                 elapsed = time.time() - t_start
-                print(f"  step {step:5d}  loss {loss.item():.6f}  "
+                print(f"  step {step:5d}  loss {loss.item():.6f}  lr {scheduler.get_last_lr()[0]:.6f}  "
                       f"[{elapsed:.0f}s / {TIME_BUDGET}s]")
 
         if time.time() - t_start >= TIME_BUDGET:
