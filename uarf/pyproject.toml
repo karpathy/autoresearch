@@ -1,0 +1,54 @@
+[project]
+name = "uarf"
+version = "0.1.0.dev1"
+description = "Universal AutoResearch Framework - ML Training für alle Plattformen"
+authors = [
+    {name = "UARF Team"}
+]
+readme = "README_UARF.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.35.0",
+    "datasets>=2.14.0",
+    "accelerate>=0.24.0",
+    "tqdm>=4.66.0",
+    "psutil>=5.9.0",
+    "numpy>=1.24.0",
+    "huggingface-hub>=0.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+colab = [
+    "google-colab>=1.0.0",
+]
+export = [
+    "onnx>=1.15.0",
+    "onnxruntime>=1.16.0",
+]
+
+[project.scripts]
+uarf = "uarf.cli.uarf_cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["uarf"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I"]
+ignore = []
