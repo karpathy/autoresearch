@@ -5,17 +5,17 @@ Runs the full experiment loop: asks an LLM to modify agent.py,
 evaluates the result, keeps improvements, discards failures, repeats.
 
 Usage:
-    # Claude via Anthropic API
-    uv run run.py --api-key sk-ant-... --model claude-sonnet-4-20250514
+    # Default: uses ANTHROPIC_AUTH_TOKEN env var + Scale litellm proxy
+    uv run run.py
 
-    # Any model via LiteLLM (OpenAI, Anthropic, etc.)
-    uv run run.py --api-key <key> --model anthropic/claude-sonnet-4-20250514
+    # Explicit key
+    uv run run.py --api-key <token>
 
-    # Use environment variable instead
-    LITELLM_API_KEY=sk-ant-... uv run run.py
+    # Direct Anthropic API (no proxy)
+    uv run run.py --api-key sk-ant-... --api-base https://api.anthropic.com
 
     # Customize
-    uv run run.py --api-key <key> --tag apr4 --max-experiments 50
+    uv run run.py --model anthropic/claude-opus-4-6 --max-experiments 50
 """
 
 import argparse
@@ -161,9 +161,8 @@ def call_llm(api_key, model, prompt, api_base=None):
         "max_tokens": 4096,
         "temperature": 0.7,
         "api_key": api_key,
+        "api_base": api_base,
     }
-    if api_base:
-        kwargs["api_base"] = api_base
 
     response = completion(**kwargs)
     return response.choices[0].message.content
@@ -191,17 +190,27 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  uv run run.py --api-key sk-ant-...
-  uv run run.py --api-key sk-ant-... --model claude-sonnet-4-20250514
-  LITELLM_API_KEY=sk-ant-... uv run run.py --max-experiments 20
+  # Uses ANTHROPIC_AUTH_TOKEN env var + Scale litellm proxy by default
+  uv run run.py
+
+  # Explicit key
+  uv run run.py --api-key <token>
+
+  # Direct Anthropic API (no proxy)
+  uv run run.py --api-key sk-ant-... --api-base https://api.anthropic.com
+
+  # Custom model
+  uv run run.py --model anthropic/claude-opus-4-6
         """,
     )
-    parser.add_argument("--api-key", default=os.environ.get("LITELLM_API_KEY"),
-                        help="API key (or set LITELLM_API_KEY env var)")
+    parser.add_argument("--api-key",
+                        default=os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("LITELLM_API_KEY"),
+                        help="API key (or set ANTHROPIC_AUTH_TOKEN / LITELLM_API_KEY env var)")
     parser.add_argument("--model", default="anthropic/claude-sonnet-4-20250514",
                         help="LiteLLM model name (default: anthropic/claude-sonnet-4-20250514)")
-    parser.add_argument("--api-base", default=None,
-                        help="Custom API base URL (for proxies, local models, etc.)")
+    parser.add_argument("--api-base",
+                        default=os.environ.get("LITELLM_API_BASE", "https://litellm-proxy.ml-serving-internal.scale.com"),
+                        help="API base URL (default: Scale litellm proxy, or set LITELLM_API_BASE env var)")
     parser.add_argument("--tag", default=None,
                         help="Branch tag (default: today's date, e.g. apr4)")
     parser.add_argument("--max-experiments", type=int, default=0,
@@ -211,7 +220,7 @@ Examples:
     args = parser.parse_args()
 
     if not args.api_key:
-        print("Error: --api-key required (or set LITELLM_API_KEY env var)")
+        print("Error: --api-key required (or set ANTHROPIC_AUTH_TOKEN env var)")
         sys.exit(1)
 
     # --- Setup ---
