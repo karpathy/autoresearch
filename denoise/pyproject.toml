@@ -1,0 +1,12 @@
+[project]
+name = "autoresearch-denoise"
+version = "0.1.0"
+description = "Autonomous image denoising research"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib>=3.10.0",
+    "numpy>=2.2.0",
+    "Pillow>=10.0.0",
+    "requests>=2.32.0",
+    "torch==2.6.0",
+]
