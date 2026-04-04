@@ -7,6 +7,8 @@ Usage:
     python prepare.py --num-shards 8   # download only 8 shards (for testing)
 
 Data and tokenizer are stored in ~/.cache/autoresearch/.
+
+Supports: CUDA, MPS, CPU (auto-detect)
 """
 
 import os
@@ -22,6 +24,24 @@ import pyarrow.parquet as pq
 import rustbpe
 import tiktoken
 import torch
+
+# ---------------------------------------------------------------------------
+# Device Auto-Detection (FIX: Works on CPU/MPS/CUDA)
+# ---------------------------------------------------------------------------
+
+def get_device():
+    """Automatically detect best available device"""
+    if torch.cuda.is_available():
+        print("🔍 prepare.py: Detected NVIDIA GPU")
+        return torch.device("cuda")
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        print("🔍 prepare.py: Detected Apple Silicon (MPS)")
+        return torch.device("mps")
+    else:
+        print("🔍 prepare.py: No GPU detected, using CPU")
+        return torch.device("cpu")
+
+device = get_device()
 
 # ---------------------------------------------------------------------------
 # Constants (fixed, do not modify)
@@ -295,8 +315,15 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
 
     # Pre-allocate buffers: [inputs (B*T) | targets (B*T)]
     row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
-    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=True)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device="cuda")
+    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=False)  # pin_memory only for CUDA
+    
+    # Device-agnostic buffer allocation
+    try:
+        gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device)
+    except:
+        # Fallback to CPU if device allocation fails
+        gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device="cpu")
+    
     cpu_inputs = cpu_buffer[:B * T].view(B, T)
     cpu_targets = cpu_buffer[B * T:].view(B, T)
     inputs = gpu_buffer[:B * T].view(B, T)
@@ -333,7 +360,16 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
 
         cpu_inputs.copy_(row_buffer[:, :-1])
         cpu_targets.copy_(row_buffer[:, 1:])
-        gpu_buffer.copy_(cpu_buffer, non_blocking=True)
+        
+        # Device-agnostic buffer copy
+        if gpu_buffer.device.type != "cpu":
+            try:
+                gpu_buffer.copy_(cpu_buffer, non_blocking=True)
+            except:
+                gpu_buffer.copy_(cpu_buffer, non_blocking=False)
+        else:
+            gpu_buffer.copy_(cpu_buffer)
+        
         yield inputs, targets, epoch
 
 # ---------------------------------------------------------------------------
@@ -349,7 +385,17 @@ def evaluate_bpb(model, tokenizer, batch_size):
     are excluded from both sums.
     Uses fixed MAX_SEQ_LEN so results are comparable across configs.
     """
-    token_bytes = get_token_bytes(device="cuda")
+    # Device-agnostic token_bytes loading
+    device_type = "cpu"  # Default fallback
+    try:
+        if hasattr(torch.cuda, 'is_available') and torch.cuda.is_available():
+            device_type = "cuda"
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            device_type = "mps"
+    except:
+        pass
+    
+    token_bytes = get_token_bytes(device=device_type)
     val_loader = make_dataloader(tokenizer, batch_size, MAX_SEQ_LEN, "val")
     steps = EVAL_TOKENS // (batch_size * MAX_SEQ_LEN)
     total_nats = 0.0

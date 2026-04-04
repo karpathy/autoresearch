@@ -1,7 +1,9 @@
 """
-Autoresearch pretraining script. Single-GPU, single-file.
+Autoresearch pretraining script. Single-GPU/CPU, single-file.
 Cherry-picked and simplified from nanochat.
 Usage: uv run train.py
+
+Supports: CUDA, MPS, CPU (auto-detect)
 """
 
 import os
@@ -17,11 +19,76 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+# ---------------------------------------------------------------------------
+# Device Auto-Detection (FIX: Works on CPU/MPS/CUDA)
+# ---------------------------------------------------------------------------
+
+def get_device():
+    """Automatically detect best available device"""
+    if torch.cuda.is_available():
+        print("🔍 Detected NVIDIA GPU")
+        return torch.device("cuda")
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        print("🔍 Detected Apple Silicon (MPS)")
+        return torch.device("mps")
+    else:
+        print("🔍 No GPU detected, using CPU")
+        return torch.device("cpu")
+
+device = get_device()
+
+# ---------------------------------------------------------------------------
+# Flash Attention with Fallback (FIX: Works without FA3)
+# ---------------------------------------------------------------------------
+
+def get_flash_attention():
+    """Try to import Flash Attention, fallback to standard attention"""
+    try:
+        from kernels import get_kernel
+        if torch.cuda.is_available():
+            cap = torch.cuda.get_device_capability()
+            repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+            fa3 = get_kernel(repo).flash_attn_interface
+            print(f"✅ Using Flash Attention 3 ({repo})")
+            return fa3.flash_attn_func
+    except Exception as e:
+        print(f"⚠️  Flash Attention not available: {e}")
+    
+    # Fallback to standard scaled dot product attention
+    print("✅ Using standard PyTorch attention (scaled_dot_product_attention)")
+    
+    def flash_attn_fallback(q, k, v, causal=True, window_size=(-1, -1)):
+        """Fallback implementation using PyTorch's SDPA"""
+        # q, k, v shape: [B, T, H, D]
+        # Transpose to [B, H, T, D] for SDPA
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        
+        # Handle window size (sliding window)
+        if window_size[0] > 0:
+            # Sliding window attention
+            attn_mask = None
+            T = q.size(2)
+            # Create causal mask with sliding window
+            mask = torch.triu(torch.ones(T, T, device=q.device), diagonal=1).bool()
+            if window_size[0] > 0:
+                # Keep only last window_size tokens
+                window_mask = torch.tril(torch.ones(T, T, device=q.device), diagonal=window_size[0]).bool()
+                mask = mask | ~window_mask
+            attn_mask = mask.masked_fill(mask, float('-inf'))
+            
+            y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=False)
+        else:
+            # Standard causal attention
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=causal)
+        
+        # Transpose back to [B, T, H, D]
+        return y.transpose(1, 2).contiguous()
+    
+    return flash_attn_fallback
+
+fa3 = get_flash_attention()
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -456,11 +523,49 @@ DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
 
 t_start = time.time()
 torch.manual_seed(42)
-torch.cuda.manual_seed(42)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
-device = torch.device("cuda")
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-H100_BF16_PEAK_FLOPS = 989.5e12
+
+# Device already set at top of file via get_device()
+print(f"📍 Using device: {device}")
+
+# Auto-detect precision based on device
+if device.type == "cuda":
+    cap = torch.cuda.get_device_capability()
+    if cap[0] >= 8:  # Ampere or newer
+        dtype = torch.bfloat16
+        print("✅ Using BF16 precision (Ampere+)")
+    else:
+        dtype = torch.float16
+        print("✅ Using FP16 precision (pre-Ampere)")
+elif device.type == "mps":
+    dtype = torch.float16
+    print("✅ Using FP16 precision (MPS)")
+else:
+    dtype = torch.float32
+    print("✅ Using FP32 precision (CPU)")
+
+autocast_ctx = torch.amp.autocast(device_type=device.type, dtype=dtype)
+
+# Peak FLOPS estimation (approximate)
+if device.type == "cuda":
+    gpu_name = torch.cuda.get_device_name(0)
+    if "H100" in gpu_name:
+        H100_BF16_PEAK_FLOPS = 989.5e12
+    elif "A100" in gpu_name:
+        H100_BF16_PEAK_FLOPS = 312e12  # Approximate for A100 BF16
+    elif "RTX 4090" in gpu_name:
+        H100_BF16_PEAK_FLOPS = 165e12
+    elif "RTX 3090" in gpu_name:
+        H100_BF16_PEAK_FLOPS = 71e12
+    else:
+        H100_BF16_PEAK_FLOPS = 100e12  # Generic estimate
+elif device.type == "mps":
+    H100_BF16_PEAK_FLOPS = 50e12  # Rough estimate for M1/M2
+else:
+    # CPU FLOPS (very rough estimate)
+    H100_BF16_PEAK_FLOPS = 1e12
 
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
@@ -541,7 +646,12 @@ total_training_time = 0
 step = 0
 
 while True:
-    torch.cuda.synchronize()
+    # Device-agnostic synchronization
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elif device.type == "mps":
+        torch.mps.synchronize()
+    
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
@@ -571,7 +681,12 @@ while True:
         print("FAIL")
         exit(1)
 
-    torch.cuda.synchronize()
+    # Device-agnostic synchronization
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elif device.type == "mps":
+        torch.mps.synchronize()
+    
     t1 = time.time()
     dt = t1 - t0
 
@@ -616,13 +731,26 @@ with autocast_ctx:
 t_end = time.time()
 startup_time = t_start_training - t_start
 steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
-peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+
+# Device-agnostic memory reporting
+if device.type == "cuda":
+    peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+elif device.type == "mps":
+    peak_vram_mb = torch.mps.current_allocated_memory() / 1024 / 1024 if hasattr(torch.mps, 'current_allocated_memory') else 0
+else:
+    # CPU memory (approximate via psutil if available)
+    try:
+        import psutil
+        process = psutil.Process()
+        peak_vram_mb = process.memory_info().rss / 1024 / 1024
+    except:
+        peak_vram_mb = 0
 
 print("---")
 print(f"val_bpb:          {val_bpb:.6f}")
 print(f"training_seconds: {total_training_time:.1f}")
 print(f"total_seconds:    {t_end - t_start:.1f}")
-print(f"peak_vram_mb:     {peak_vram_mb:.1f}")
+print(f"peak_memory_mb:   {peak_vram_mb:.1f}")
 print(f"mfu_percent:      {steady_state_mfu:.2f}")
 print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
