@@ -1,0 +1,10 @@
+[project]
+name = "autoresearch-atari"
+version = "0.1.0"
+description = "Autonomous Atari agent research — autoresearch framework"
+requires-python = ">=3.9,<3.13"
+dependencies = [
+    "gymnasium>=1.0.0",
+    "ale-py>=0.9",
+    "numpy>=1.21.0",
+]

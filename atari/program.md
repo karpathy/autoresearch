@@ -12,7 +12,7 @@ To set up a new experiment, work with the user to:
    - `atari/prepare.py` — fixed evaluation harness, environment factory, constants. Do not modify.
    - `atari/agent.py` — the file you modify. Agent strategy, training, heuristics.
    - `atari/program.md` — these instructions.
-4. **Verify environment works**: Run `python atari/prepare.py` to confirm Gymnasium ALE is working.
+4. **Verify environment works**: Run `cd atari && uv run prepare.py` to confirm Gymnasium ALE is working.
 5. **Initialize results.tsv**: Create `atari/results.tsv` with just the header row. The baseline will be recorded after the first run.
 6. **Confirm and go**: Confirm setup looks good.
 
@@ -23,7 +23,7 @@ Once you get confirmation, kick off the experimentation.
 Each experiment modifies `atari/agent.py` and runs the evaluation. You launch it as:
 
 ```bash
-cd atari && python agent.py > run.log 2>&1
+cd atari && uv run agent.py > run.log 2>&1
 ```
 
 **What you CAN do:**
