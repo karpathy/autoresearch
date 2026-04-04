@@ -1,0 +1,25 @@
+A.L.E: Arcade Learning Environment (version 0.11.2+ecc1138)
+[Powered by Stella]
+==================================================
+PHASE 1: Training
+==================================================
+Training budget: 300s
+Current agent is heuristic-only, no training needed.
+(Modify this function to add learning: evolutionary search, policy gradients, parameter tuning, etc.)
+Training time: 0.0s
+
+==================================================
+PHASE 2: Evaluation
+==================================================
+
+---
+mean_reward:      3.0667
+std_reward:       0.4422
+min_reward:       2.0000
+max_reward:       4.0000
+mean_steps:       865.1
+total_steps:      25953
+episodes:         30
+training_seconds: 0.0
+eval_seconds:     8.8
+total_seconds:    8.8
