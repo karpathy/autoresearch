@@ -19,12 +19,18 @@ Usage:
 """
 
 import argparse
+import logging
 import os
 import re
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+
+# Suppress litellm's noisy logging
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("litellm").setLevel(logging.WARNING)
+os.environ["LITELLM_LOG"] = "ERROR"
 
 ATARI_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.dirname(ATARI_DIR)
@@ -61,6 +67,22 @@ def git_commit(message):
 
 def git_reset_hard(commit):
     git("reset", "--hard", commit)
+
+
+def git_checkout_branch(branch):
+    """Create or switch to branch. If it already exists, just switch."""
+    result = subprocess.run(
+        ["git", "checkout", "-b", branch],
+        cwd=REPO_DIR, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        if "already exists" in result.stderr:
+            subprocess.run(
+                ["git", "checkout", branch],
+                cwd=REPO_DIR, capture_output=True, text=True,
+            )
+        else:
+            print(f"  git checkout -b {branch} failed: {result.stderr.strip()}")
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +125,23 @@ def init_results():
 def log_result(commit, mean_reward, status, description):
     with open(RESULTS_FILE, "a") as f:
         f.write(f"{commit}\t{mean_reward:.4f}\t{status}\t{description}\n")
+
+
+# ---------------------------------------------------------------------------
+# Rate limit handling
+# ---------------------------------------------------------------------------
+
+def parse_rate_limit_reset(error_str):
+    """Parse 'resets at: YYYY-MM-DD HH:MM:SS UTC' and return seconds to wait, or None."""
+    match = re.search(r"resets at:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s*UTC", error_str)
+    if not match:
+        return None
+    try:
+        reset_time = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        wait = (reset_time - datetime.now(timezone.utc)).total_seconds() + 2
+        return max(wait, 5)
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +188,7 @@ Respond with the complete new agent.py file between ```python and ``` markers.""
 
 
 def call_llm(api_key, model, prompt, api_base=None):
-    """Call the LLM via litellm with built-in retry/backoff for rate limits."""
+    """Call the LLM via litellm. Retries are handled by the caller."""
     from litellm import completion
 
     response = completion(
@@ -162,9 +201,28 @@ def call_llm(api_key, model, prompt, api_base=None):
         temperature=0.7,
         api_key=api_key,
         api_base=api_base,
-        num_retries=10,
     )
     return response.choices[0].message.content
+
+
+def call_llm_with_retry(api_key, model, prompt, api_base=None, max_retries=10):
+    """Call LLM with smart retry: parse rate limit reset time, backoff on other errors."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            return call_llm(api_key, model, prompt, api_base)
+        except Exception as e:
+            error_str = str(e)
+            wait = parse_rate_limit_reset(error_str)
+            if wait is not None:
+                print(f"[llm] Rate limited. Waiting {wait:.0f}s until reset... (attempt {attempt}/{max_retries})")
+                time.sleep(wait)
+            else:
+                backoff = min(30 * attempt, 300)
+                print(f"[llm] Error: {e}")
+                print(f"[llm] Retrying in {backoff}s... (attempt {attempt}/{max_retries})")
+                time.sleep(backoff)
+
+    return None  # all retries exhausted
 
 
 def extract_code(response):
@@ -236,7 +294,7 @@ Examples:
     print()
 
     if not args.no_git:
-        git("checkout", "-b", branch)
+        git_checkout_branch(branch)
 
     init_results()
 
@@ -281,13 +339,10 @@ Examples:
         # Ask LLM for a modification
         print("[llm] Asking for modification...")
         prompt = build_prompt(best_code, results_history, best_reward, experiment)
+        response = call_llm_with_retry(args.api_key, args.model, prompt, args.api_base)
 
-        try:
-            response = call_llm(args.api_key, args.model, prompt, args.api_base)
-        except Exception as e:
-            print(f"[llm] Error: {e}")
-            print("[llm] Retrying in 30s...")
-            time.sleep(30)
+        if response is None:
+            print("[llm] All retries exhausted. Skipping experiment.")
             continue
 
         new_code = extract_code(response)
