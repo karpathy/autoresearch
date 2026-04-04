@@ -8,4 +8,5 @@ dependencies = [
     "ale-py>=0.9",
     "numpy>=1.21.0",
     "litellm>=1.0.0",
+    "tenacity>=8.0.0",
 ]
