@@ -21,3 +21,5 @@ dev/
 
 # Results file
 results.tsv
+atari/run.log
+atari/results.tsv
