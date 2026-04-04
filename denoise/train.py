@@ -53,7 +53,7 @@ class SimpleDenoiser(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x):
-        return self.net(x)
+        return x - self.net(x)  # residual learning: predict noise, subtract
 
 
 # ──────────────────────────────────────────────────────────────
