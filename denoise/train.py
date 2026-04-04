@@ -95,7 +95,7 @@ def train():
             clean = clean.to(device)
 
             pred = model(noisy)
-            loss = F.mse_loss(pred, clean)
+            loss = F.l1_loss(pred, clean)
 
             optimizer.zero_grad()
             loss.backward()
