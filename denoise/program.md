@@ -81,7 +81,15 @@ LOOP FOREVER:
 6. 空ならクラッシュ → `tail -n 50 run.log` でデバッグ
 7. results.tsv に記録
 8. val_psnr 改善 → コミット保持
-9. 同等以下 → `git reset --hard HEAD^`
+9. 同等以下 → **results.tsv を退避してから** `git reset --hard HEAD^` し、退避した results.tsv を書き戻す
+
+**重要: results.tsvの退避手順**（discardのとき）:
+```bash
+cp results.tsv /tmp/results.tsv.bak
+git reset --hard HEAD^
+cp /tmp/results.tsv.bak results.tsv
+```
+`git reset --hard` は results.tsv も巻き戻してしまうため、必ずこの手順を踏むこと。
 
 ## 改善戦略ガイド
 

@@ -1,1 +1,9 @@
 commit	val_psnr	params	status	description
+9cf29c6	30.2818	151K	keep	baseline (plain conv stack, 6 layers, 64ch, MSE loss)
+3c6c21c	30.3781	151K	keep	residual learning: predict noise and subtract
+13f5361	30.8169	151K	keep	L1 loss instead of MSE
+40f0197	30.7894	337K	discard	channels 64->96 (more params but worse convergence)
+0d0d33e	28.9737	151K	discard	BatchNorm2d after each conv (hurt PSNR)
+f88f06e	30.6123	3.7M	discard	U-Net 3-level (too large, slow convergence in 5min)
+cb319be	30.3497	933K	discard	2-level U-Net base_ch=64 (still too large)
+af872b1	30.3733	299K	discard	10 layers (slower per step, fewer steps)
