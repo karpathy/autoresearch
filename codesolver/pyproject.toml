@@ -1,0 +1,6 @@
+[project]
+name = "codesolver"
+version = "0.1.0"
+description = "Autonomous code solver self-improvement experiment"
+requires-python = ">=3.10"
+dependencies = []
