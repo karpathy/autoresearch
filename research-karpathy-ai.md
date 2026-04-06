@@ -235,6 +235,127 @@ Each of Karpathy's projects encodes a replicable pattern. Below are concrete way
 - Deploy the resulting model behind a simple API for your specific use case
 - For even cheaper experiments, start with microgpt to understand the full pipeline before scaling up
 
+## Automated Weekly Karpathy Tracker
+
+A practical guide to getting a weekly digest of Karpathy's latest work and forwarding a snapshot to a contact or outlet with minimal effort.
+
+### Step 1: RSS Feeds to Monitor
+
+Subscribe to all of these in a single RSS reader (NetNewsWire, Miniflux, Feedbin, or Feedly):
+
+| Source | Feed URL |
+|--------|----------|
+| Blog | `https://karpathy.bearblog.dev/feed/` |
+| GitHub activity | `https://github.com/karpathy.atom` |
+| AutoResearch releases | `https://github.com/karpathy/autoresearch/releases.atom` |
+| nanochat releases | `https://github.com/karpathy/nanochat/releases.atom` |
+| llm.c releases | `https://github.com/karpathy/llm.c/releases.atom` |
+| YouTube | `https://www.youtube.com/feeds/videos.xml?channel_id=UCXUPKJO5MZQN11PqgIvyuvQ` |
+| X/Twitter (via RSS bridge) | Use a Nitter instance or RSSHub: `https://rsshub.app/twitter/user/karpathy` |
+| Hacker News mentions | `https://hnrss.org/newest?q=karpathy` |
+
+**Quick start:** Import the feeds into any reader. Most readers support `.opml` import — save the above as an `.opml` file for one-click setup.
+
+### Step 2: Automate a Weekly Digest
+
+Pick the easiest option for your setup:
+
+**Option A: No-code (Zapier / Make.com / IFTTT)**
+1. Create a Zap/scenario triggered weekly (e.g., every Monday 9am)
+2. Action: "RSS by Zapier" → fetch new items from each feed above
+3. Action: "Filter" → deduplicate and limit to top 10 items
+4. Action: Send digest via your preferred channel (see Step 3)
+
+**Option B: Self-hosted (n8n or Python script)**
+```python
+# Minimal weekly digest script (~30 lines)
+import feedparser, datetime, smtplib
+from email.mime.text import MIMEText
+
+FEEDS = [
+    "https://karpathy.bearblog.dev/feed/",
+    "https://github.com/karpathy.atom",
+    "https://hnrss.org/newest?q=karpathy",
+]
+
+def get_weekly_items():
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=7)
+    items = []
+    for url in FEEDS:
+        feed = feedparser.parse(url)
+        for entry in feed.entries:
+            published = datetime.datetime(*entry.published_parsed[:6])
+            if published > cutoff:
+                items.append(f"- [{entry.title}]({entry.link})")
+    return items
+
+items = get_weekly_items()
+if items:
+    digest = "# Karpathy Weekly Update\n\n" + "\n".join(items)
+    # Send via your preferred method (see Step 3)
+    print(digest)
+```
+
+Run with cron: `0 9 * * 1 python3 karpathy_digest.py` (every Monday 9am)
+
+**Option C: LLM-enhanced digest**
+- Feed the raw items into an LLM (Claude API, OpenAI, or local model)
+- Prompt: "Summarize these updates in 3-5 bullet points. Highlight any new repos, releases, or major announcements."
+- Attach the summary to the delivery step below
+
+### Step 3: Send the Snapshot (Easiest Contact Methods)
+
+Pick the lowest-friction channel for your recipient:
+
+| Channel | How | Setup time |
+|---------|-----|------------|
+| **Email** | `smtplib` (Python), Zapier "Send Email", or Mailgun API | 5 min |
+| **WhatsApp** | Twilio WhatsApp API or WhatsApp Business Cloud API | 15 min |
+| **Telegram** | Bot API: `POST https://api.telegram.org/bot<TOKEN>/sendMessage` | 5 min |
+| **Slack** | Incoming webhook: `POST https://hooks.slack.com/services/...` | 5 min |
+| **SMS** | Twilio SMS API | 10 min |
+| **Twitter/X** | X API v2 `POST /tweets` (for media outlet accounts) | 15 min |
+
+**Fastest path (Telegram):**
+1. Create a bot via @BotFather on Telegram → get token
+2. Create a channel or group, add the bot
+3. Send digest with one HTTP POST:
+```bash
+curl -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+  -d chat_id="${CHAT_ID}" \
+  -d text="${DIGEST_TEXT}" \
+  -d parse_mode="Markdown"
+```
+
+**For media outlets:** Format the digest as a press-style brief:
+```
+WEEKLY AI UPDATE: Andrej Karpathy
+Week of [date]
+
+NEW THIS WEEK:
+• [headline 1]
+• [headline 2]
+
+KEY TAKEAWAY: [one sentence summary]
+
+Sources: [links]
+```
+
+### Step 4: Full Pipeline (End-to-End)
+
+Combine everything into one automated flow:
+
+```
+[Weekly cron trigger]
+    → [Fetch RSS feeds]
+    → [Filter to last 7 days]
+    → [LLM summarizes into 3-5 bullets]
+    → [Format as snapshot]
+    → [Send to Telegram/Slack/Email/WhatsApp]
+```
+
+Total setup time: ~30 minutes for the basic version, ~1 hour with LLM summarization.
+
 ## References
 
 - Karpathy's personal site: karpathy.ai
