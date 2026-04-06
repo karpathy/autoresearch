@@ -183,15 +183,7 @@ def train_tokenizer():
 
     # --- Build token_bytes lookup for BPB evaluation ---
     print("Tokenizer: building token_bytes lookup...")
-    special_set = set(SPECIAL_TOKENS)
-    token_bytes_list = []
-    for token_id in range(enc.n_vocab):
-        token_str = enc.decode([token_id])
-        if token_str in special_set:
-            token_bytes_list.append(0)
-        else:
-            token_bytes_list.append(len(token_str.encode("utf-8")))
-    token_bytes_tensor = torch.tensor(token_bytes_list, dtype=torch.int32)
+    token_bytes_tensor = build_token_bytes_lookup(enc, mergeable_ranks, special_tokens)
     torch.save(token_bytes_tensor, token_bytes_path)
     print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
 
@@ -205,6 +197,25 @@ def train_tokenizer():
 # ---------------------------------------------------------------------------
 # Runtime utilities (imported by train.py)
 # ---------------------------------------------------------------------------
+
+def build_token_bytes_lookup(enc, mergeable_ranks, special_tokens):
+    """Build true per-token raw-byte lengths for BPB evaluation.
+
+    `tiktoken.decode()` is lossy for tokens whose raw bytes are not valid standalone
+    UTF-8, so derive byte lengths from `mergeable_ranks` instead of decode/re-encode.
+    """
+    rank_to_bytes = {rank: raw_bytes for raw_bytes, rank in mergeable_ranks.items()}
+    special_token_ids = set(special_tokens.values())
+    token_bytes_list = []
+    for token_id in range(enc.n_vocab):
+        if token_id in rank_to_bytes:
+            token_bytes_list.append(len(rank_to_bytes[token_id]))
+        elif token_id in special_token_ids:
+            token_bytes_list.append(0)
+        else:
+            raise ValueError(f"Token ID {token_id} missing from mergeable_ranks and special_tokens")
+    return torch.tensor(token_bytes_list, dtype=torch.int32)
+
 
 class Tokenizer:
     """Minimal tokenizer wrapper. Training is handled above."""
