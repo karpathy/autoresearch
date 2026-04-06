@@ -21,3 +21,11 @@ dev/
 
 # Results file
 results.tsv
+
+# Credentials (never commit)
+.env
+
+# Generated images
+card.png
+timeline.png
+analogy.png

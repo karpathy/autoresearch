@@ -237,7 +237,123 @@ Each of Karpathy's projects encodes a replicable pattern. Below are concrete way
 
 ## Automated Weekly Karpathy Tracker
 
-A practical guide to getting a weekly digest of Karpathy's latest work and forwarding a snapshot to a contact or outlet with minimal effort.
+A practical guide to getting a weekly digest of Karpathy's latest work, auto-generating a funny X post with a social card, and posting it — all for $0.
+
+**The bot script is ready to use:** `karpathy-weekly-bot.py` (in this repo).
+
+### Quick Start (10 minutes)
+
+```bash
+# 1. Install dependencies (2 min)
+pip install feedparser tweepy pillow requests
+
+# 2. Optional: install Ollama for funny AI-generated posts (5 min)
+#    Without this, the bot uses a simple template — still works fine
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull llama3
+
+# 3. Set up X credentials (3 min — see "X Developer Setup" below)
+cp .env.example .env
+# Edit .env with your 4 API keys
+
+# 4. Dry run — see the post without tweeting
+python karpathy-weekly-bot.py
+
+# 5. Post for real
+python karpathy-weekly-bot.py --post
+
+# 6. Automate weekly (crontab -e, add this line)
+# 0 9 * * 1 cd /path/to/autoresearch && python karpathy-weekly-bot.py --post >> cron.log 2>&1
+```
+
+### X Developer Account Setup (Free, one-time, ~10 min)
+
+1. Go to **developer.x.com** → sign in with your X account
+2. Sign up for **Free tier** (1,500 tweets/month — plenty for weekly posts)
+3. Create a **Project** → create an **App** inside it
+4. Go to app **Settings** → **User authentication settings**:
+   - App permissions: **Read and Write**
+   - Type: **Web App**
+   - Callback URL: `https://localhost` (placeholder, not used for bot)
+5. Go to **Keys and Tokens** tab → generate all 4:
+   - **Consumer Key** (API Key)
+   - **Consumer Secret** (API Secret)
+   - **Access Token**
+   - **Access Token Secret**
+6. Copy these into your `.env` file:
+   ```
+   X_CONSUMER_KEY=abc123...
+   X_CONSUMER_SECRET=def456...
+   X_ACCESS_TOKEN=789ghi...
+   X_ACCESS_TOKEN_SECRET=jkl012...
+   ```
+7. Verify: `python karpathy-weekly-bot.py` → should show a generated post
+
+### What the Bot Does (4 steps, all $0)
+
+```
+[1] Fetch RSS    — feedparser pulls from 6 feeds (blog, GitHub, HN)
+[2] Write post   — Ollama generates funny commentary (or fallback template)
+[3] Make card    — Pillow creates a 1200x675 branded social card
+[4] Tweet        — tweepy posts text + image to X
+```
+
+### Resources Checklist
+
+| Resource | Where to get it | Cost | Time |
+|----------|----------------|------|------|
+| X Developer account | developer.x.com | $0 | 10 min |
+| Python 3.10+ | python.org or system package manager | $0 | 0 min (likely installed) |
+| feedparser | `pip install feedparser` | $0 | 30 sec |
+| tweepy | `pip install tweepy` | $0 | 30 sec |
+| Pillow | `pip install pillow` | $0 | 30 sec |
+| Ollama + llama3 | ollama.com (optional) | $0 | 5 min |
+| Cron (Linux/Mac) | Built into OS | $0 | 1 min |
+| Cron alt (Windows) | Task Scheduler | $0 | 2 min |
+| Server for always-on cron | Any old laptop, Raspberry Pi, or free Oracle Cloud VM | $0 | varies |
+
+### Hosting Options for Always-On Cron ($0)
+
+If your machine isn't always on, you need somewhere to run the Monday cron:
+
+| Option | Cost | Setup |
+|--------|------|-------|
+| **Old laptop / Raspberry Pi** | $0 (hardware you own) | Install Python, set cron |
+| **Oracle Cloud free tier** | $0 forever (1 GB RAM VM) | Sign up, SSH in, set cron |
+| **GitHub Actions** (scheduled workflow) | $0 (2,000 min/month free) | Add workflow YAML to repo |
+| **Render.com cron job** | $0 (free tier) | Connect repo, set schedule |
+
+**Simplest always-on option: GitHub Actions**
+```yaml
+# .github/workflows/karpathy-weekly.yml
+name: Karpathy Weekly Post
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Monday 9am UTC
+  workflow_dispatch:        # manual trigger for testing
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install feedparser tweepy pillow requests
+      - run: python karpathy-weekly-bot.py --post
+        env:
+          X_CONSUMER_KEY: ${{ secrets.X_CONSUMER_KEY }}
+          X_CONSUMER_SECRET: ${{ secrets.X_CONSUMER_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+```
+
+Note: GitHub Actions doesn't have Ollama, so the bot uses the fallback template. Still works. Add Ollama when you move to a dedicated server.
+
+---
+
+### Detailed Reference (below)
 
 ### Step 1: RSS Feeds to Monitor
 
