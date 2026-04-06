@@ -134,8 +134,6 @@ def text_iterator(max_chars=1_000_000_000, doc_cap=10_000):
                 doc = text[:doc_cap] if len(text) > doc_cap else text
                 nchars += len(doc)
                 yield doc
-                if nchars >= max_chars:
-                    return
 
 
 def train_tokenizer():
@@ -164,13 +162,11 @@ def train_tokenizer():
 
     # Build tiktoken encoding from trained merges
     pattern = tokenizer.get_pattern()
-    mergeable_ranks = {bytes(k): v for k, v in tokenizer.get_mergeable_ranks()}
     tokens_offset = len(mergeable_ranks)
     special_tokens = {name: tokens_offset + i for i, name in enumerate(SPECIAL_TOKENS)}
     enc = tiktoken.Encoding(
         name="rustbpe",
         pat_str=pattern,
-        mergeable_ranks=mergeable_ranks,
         special_tokens=special_tokens,
     )
 
