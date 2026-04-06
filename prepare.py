@@ -164,13 +164,11 @@ def train_tokenizer():
 
     # Build tiktoken encoding from trained merges
     pattern = tokenizer.get_pattern()
-    mergeable_ranks = {bytes(k): v for k, v in tokenizer.get_mergeable_ranks()}
     tokens_offset = len(mergeable_ranks)
     special_tokens = {name: tokens_offset + i for i, name in enumerate(SPECIAL_TOKENS)}
     enc = tiktoken.Encoding(
         name="rustbpe",
         pat_str=pattern,
-        mergeable_ranks=mergeable_ranks,
         special_tokens=special_tokens,
     )
 
