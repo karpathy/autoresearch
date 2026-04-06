@@ -424,7 +424,213 @@ The absolute cheapest end-to-end setup:
 
 If you want to add SMS for one VIP contact: +$0.03/month (4 texts).
 
-### Step 4: Full Pipeline (End-to-End)
+### Step 4: Auto-Generate Visuals and Analogies
+
+Posts with images get **2-3x more engagement** on X and **3-5x on LinkedIn**. Auto-generate them from your digest data so every weekly post ships with a visual.
+
+#### Tool Comparison (Cheapest First)
+
+| Tool | Cost | Output | Best for |
+|------|------|--------|----------|
+| **Mermaid** (CLI/API) | $0 | Flowcharts, timelines, diagrams | Architecture/relationship diagrams |
+| **matplotlib / Pillow** | $0 | Charts, branded cards | Data viz, social cards |
+| **Excalidraw** (auto via JSON) | $0 | Hand-drawn style diagrams | Approachable, informal look |
+| **AI image gen** (DALL-E) | ~$0.04/img | Analogy illustrations | Eye-catching metaphor visuals |
+| **Stable Diffusion** (local) | $0 | Analogy illustrations | Free if you have a GPU |
+| **Carbon** (code screenshots) | $0 | Pretty code snippets | Sharing code highlights |
+
+#### A. Auto-Generate a Timeline Diagram ($0 — Mermaid)
+
+Turn each week's digest into a visual timeline automatically:
+
+```python
+def generate_mermaid_timeline(items):
+    """Generate a Mermaid timeline from digest items."""
+    lines = ["timeline", "    title Karpathy This Week"]
+    for item in items:
+        # Truncate to fit diagram
+        title = item["title"][:50]
+        lines.append(f"    {item['date']} : {title}")
+    return "\n".join(lines)
+
+# Example output:
+# timeline
+#     title Karpathy This Week
+#     Apr 01 : AutoResearch v2 released
+#     Apr 03 : New blog post on agent patterns
+#     Apr 05 : Dobby gains pool temperature control
+```
+
+Render to PNG:
+```bash
+# Install: npm install -g @mermaid-js/mermaid-cli
+mmdc -i timeline.mmd -o timeline.png -t dark -b transparent
+```
+
+#### B. Auto-Generate a Social Media Card ($0 — Pillow)
+
+Branded image card for X/LinkedIn with the week's highlights:
+
+```python
+from PIL import Image, ImageDraw, ImageFont
+import textwrap
+
+def create_social_card(bullets, week_label, output_path="card.png"):
+    """Generate a branded social card from digest bullets."""
+    W, H = 1200, 675  # X/LinkedIn optimal size
+    img = Image.new("RGB", (W, H), color="#1a1a2e")
+    draw = ImageDraw.Draw(img)
+
+    # Header
+    try:
+        title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
+        body_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
+    except:
+        title_font = ImageFont.load_default()
+        body_font = ImageFont.load_default()
+
+    draw.text((60, 40), f"Karpathy Weekly — {week_label}", fill="#e94560", font=title_font)
+    draw.line([(60, 90), (W - 60, 90)], fill="#e94560", width=2)
+
+    # Bullets
+    y = 120
+    for bullet in bullets[:5]:
+        wrapped = textwrap.fill(f"• {bullet}", width=55)
+        draw.text((60, y), wrapped, fill="#ffffff", font=body_font)
+        y += len(wrapped.split("\n")) * 35 + 15
+
+    # Footer
+    draw.text((60, H - 50), "github.com/karpathy  •  karpathy.bearblog.dev",
+              fill="#888888", font=body_font)
+
+    img.save(output_path)
+    return output_path
+
+# Usage:
+create_social_card(
+    bullets=["Released AutoResearch v2 with multi-agent support",
+             "New blog: 'Why RSS beats algorithms'",
+             "Dobby now controls 12 device types"],
+    week_label="Week of Apr 7, 2026"
+)
+```
+
+#### C. Auto-Generate Analogy Graphics ($0.04/img or $0 local)
+
+Use LLM + image generation to create analogy-based visuals that make technical content accessible.
+
+**Step 1: LLM generates the analogy**
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=200,
+    messages=[{
+        "role": "user",
+        "content": f"""Given this AI update: "{digest_summary}"
+
+Generate a vivid visual analogy that a non-technical person would understand.
+Format: one sentence describing an image scene.
+Example: "A robot librarian sorting glowing books on infinite shelves while
+humans sip coffee and point at favorites"
+
+Keep it concrete, colorful, and shareable."""
+    }]
+)
+analogy_prompt = response.content[0].text
+```
+
+**Step 2: Generate the image**
+
+Option A — DALL-E (~$0.04/image):
+```python
+from openai import OpenAI
+client = OpenAI()
+result = client.images.generate(
+    model="dall-e-3",
+    prompt=f"Clean, modern illustration style: {analogy_prompt}. No text in image.",
+    size="1792x1024",  # Landscape for social
+    quality="standard",
+    n=1,
+)
+image_url = result.data[0].url
+```
+
+Option B — Stable Diffusion local ($0):
+```bash
+# Using ComfyUI or stable-diffusion-webui API
+curl -X POST "http://localhost:7860/sdapi/v1/txt2img" \
+  -H "Content-Type: application/json" \
+  -d "{\"prompt\": \"${analogy_prompt}, clean illustration style\",
+       \"width\": 1792, \"height\": 1024, \"steps\": 20}"
+```
+
+**Example analogies the LLM might generate:**
+
+| Update | Analogy | Visual |
+|--------|---------|--------|
+| "AutoResearch runs 700 experiments autonomously" | "A tireless chef tasting 700 soup variations while the head chef sleeps, leaving only the best recipe on the counter by morning" | Chef robot in kitchen with soup bowls |
+| "Dobby replaces 6 apps with one agent" | "A single universal remote that speaks every language, replacing a drawer full of remotes that each only control one thing" | Glowing remote vs. pile of old remotes |
+| "microgpt: full GPT in 200 lines" | "Fitting an entire engine into a matchbox — it actually runs" | Tiny engine inside an open matchbox |
+| "RSS revival over algorithmic feeds" | "Choosing to cook from a farmers market instead of eating from a mystery vending machine" | Farmers market vs. vending machine split |
+
+#### D. Auto-Generate Relationship Diagrams ($0 — Mermaid)
+
+Show how Karpathy's projects connect:
+
+```mermaid
+graph LR
+    A[nanoGPT] -->|simplified| B[nanochat]
+    B -->|distilled| C[microgpt]
+    A -->|C rewrite| D[llm.c]
+    B -->|capstone of| E[Eureka Labs / LLM101n]
+    F[AutoResearch] -->|agents run| A
+    G[Dobby] -->|agent as glue| H[IoT Devices]
+    I[RSS + LLM] -->|curates feed for| G
+    style F fill:#e94560
+    style G fill:#e94560
+    style I fill:#0f3460
+```
+
+Render: `mmdc -i projects.mmd -o projects.png -t dark`
+
+#### E. Attach Visuals to Posts
+
+Update your X and LinkedIn posting scripts to include images:
+
+```python
+# X/Twitter with image
+import tweepy
+
+client = tweepy.Client(...)
+auth = tweepy.OAuth1UserHandler(...)
+api = tweepy.API(auth)
+
+# Upload image first
+media = api.media_upload("card.png")
+# Then tweet with media
+client.create_tweet(text=post_text, media_ids=[media.media_id])
+
+# LinkedIn with image — use registerUpload + ugcPost with media
+# (see LinkedIn Marketing API docs for image upload flow)
+```
+
+#### F. Cost Summary for Visuals
+
+| Visual type | Cost per week | Engagement boost |
+|-------------|---------------|------------------|
+| Social card (Pillow) | $0 | ~2x on X, ~3x on LinkedIn |
+| Timeline (Mermaid) | $0 | Clear at-a-glance summary |
+| Relationship diagram (Mermaid) | $0 | Shows ecosystem/big picture |
+| Analogy illustration (DALL-E) | ~$0.04 | Highest engagement — emotional hook |
+| Analogy illustration (local SD) | $0 | Same as above, requires GPU |
+| Code screenshot (Carbon) | $0 | Dev audience engagement |
+
+**Recommended weekly visual kit:** 1 social card ($0) + 1 analogy image ($0.04) + 1 diagram ($0) = **$0.04/week total**.
+
+### Step 5: Full Pipeline (End-to-End)
 
 Combine everything into one automated flow:
 
@@ -433,11 +639,18 @@ Combine everything into one automated flow:
     → [Fetch RSS feeds]
     → [Filter to last 7 days]
     → [LLM summarizes into 3-5 bullets]
-    → [Format as snapshot]
-    → [Send to Telegram/Slack/Email/WhatsApp]
+    → [LLM generates analogy prompt]
+    → [Generate social card (Pillow)]         — $0
+    → [Generate analogy image (DALL-E/local)] — $0.04 or $0
+    → [Generate timeline diagram (Mermaid)]   — $0
+    → [Post to X with card + analogy image]   — $0
+    → [Post to LinkedIn with card]            — $0
+    → [Email digest + images to contacts]     — $0
+    → [SMS short summary to VIPs]             — $0.008
 ```
 
-Total setup time: ~30 minutes for the basic version, ~1 hour with LLM summarization.
+Total: **$0.04/week** with DALL-E analogies, **$0/week** with local Stable Diffusion.
+Total setup time: ~2 hours for the full visual pipeline.
 
 ## References
 
