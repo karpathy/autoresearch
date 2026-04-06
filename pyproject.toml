@@ -9,9 +9,9 @@ dependencies = [
     "matplotlib>=3.10.8",
     "numpy>=2.2.6",
     "pandas>=2.3.3",
-    "pyarrow>=21.0.0",
+    "pyarrow>=23.0.1",
     "requests>=2.32.0",
-    "rustbpe>=0.1.0",
+    "rustbpe>=0.1.1",
     "tiktoken>=0.11.0",
     "torch==2.9.1",
 ]
