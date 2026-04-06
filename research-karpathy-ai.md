@@ -303,43 +303,126 @@ Run with cron: `0 9 * * 1 python3 karpathy_digest.py` (every Monday 9am)
 - Prompt: "Summarize these updates in 3-5 bullet points. Highlight any new repos, releases, or major announcements."
 - Attach the summary to the delivery step below
 
-### Step 3: Send the Snapshot (Easiest Contact Methods)
+### Step 3: Send the Snapshot — Cost Comparison
 
-Pick the lowest-friction channel for your recipient:
+| Channel | Cost | Setup | Best for |
+|---------|------|-------|----------|
+| **Email** (Gmail smtplib) | **$0** | 5 min | Sending to anyone with an email address |
+| **Telegram** bot | **$0** | 5 min | Private groups, personal contacts |
+| **Slack** webhook | **$0** | 5 min | Team/workspace distribution |
+| **X/Twitter** post | **$0** (Free tier) | 15 min | Public reach, media outlets |
+| **LinkedIn** post | **$0** | 15 min | Professional network, industry contacts |
+| **SMS** (Twilio) | **~$0.008/msg** | 10 min | Direct to phone, guaranteed delivery |
+| **WhatsApp** (Twilio) | **~$0.005/msg** | 15 min | Personal contacts, international |
 
-| Channel | How | Setup time |
-|---------|-----|------------|
-| **Email** | `smtplib` (Python), Zapier "Send Email", or Mailgun API | 5 min |
-| **WhatsApp** | Twilio WhatsApp API or WhatsApp Business Cloud API | 15 min |
-| **Telegram** | Bot API: `POST https://api.telegram.org/bot<TOKEN>/sendMessage` | 5 min |
-| **Slack** | Incoming webhook: `POST https://hooks.slack.com/services/...` | 5 min |
-| **SMS** | Twilio SMS API | 10 min |
-| **Twitter/X** | X API v2 `POST /tweets` (for media outlet accounts) | 15 min |
+#### Cheapest: Email + X + LinkedIn ($0 total)
 
-**Fastest path (Telegram):**
-1. Create a bot via @BotFather on Telegram → get token
-2. Create a channel or group, add the bot
-3. Send digest with one HTTP POST:
-```bash
-curl -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-  -d chat_id="${CHAT_ID}" \
-  -d text="${DIGEST_TEXT}" \
-  -d parse_mode="Markdown"
+All three are free and cover personal contacts, public reach, and professional networks.
+
+#### Auto-Post to X/Twitter ($0)
+
+X API Free tier allows 1,500 tweets/month — more than enough for weekly digests.
+
+```python
+import tweepy
+
+client = tweepy.Client(
+    consumer_key="...",
+    consumer_secret="...",
+    access_token="...",
+    access_token_secret="...",
+)
+
+# Format for X (280 char limit — link to full digest)
+post = f"""🔬 Karpathy Weekly #{week_num}
+
+{bullet_1}
+{bullet_2}
+{bullet_3}
+
+Full digest: {link_to_digest}
+#AI #LLM"""
+
+client.create_tweet(text=post)
 ```
 
-**For media outlets:** Format the digest as a press-style brief:
+Setup:
+1. Go to developer.x.com → create a Free app
+2. Generate consumer keys + access tokens
+3. `pip install tweepy` → use the script above
+
+#### Auto-Post to LinkedIn ($0)
+
+LinkedIn API is free but requires an OAuth app.
+
+```python
+import requests
+
+LINKEDIN_ACCESS_TOKEN = "..."
+LINKEDIN_PERSON_URN = "urn:li:person:YOUR_ID"
+
+post_data = {
+    "author": LINKEDIN_PERSON_URN,
+    "lifecycleState": "PUBLISHED",
+    "specificContent": {
+        "com.linkedin.ugc.ShareContent": {
+            "shareCommentary": {
+                "text": f"Weekly AI Update: What Andrej Karpathy shipped this week\n\n{digest_text}\n\n#AI #MachineLearning"
+            },
+            "shareMediaCategory": "NONE"
+        }
+    },
+    "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"}
+}
+
+requests.post(
+    "https://api.linkedin.com/v2/ugcPosts",
+    headers={"Authorization": f"Bearer {LINKEDIN_ACCESS_TOKEN}",
+             "Content-Type": "application/json"},
+    json=post_data
+)
 ```
-WEEKLY AI UPDATE: Andrej Karpathy
-Week of [date]
 
-NEW THIS WEEK:
-• [headline 1]
-• [headline 2]
+Setup:
+1. Go to linkedin.com/developers → create an app
+2. Request `w_member_social` permission
+3. Generate an OAuth access token (refresh every 60 days, or use refresh tokens)
 
-KEY TAKEAWAY: [one sentence summary]
+#### SMS via Twilio (~$0.008/message)
 
-Sources: [links]
+Cheapest paid option. Good for sending a quick snapshot directly to someone's phone.
+
+```python
+from twilio.rest import Client
+
+client = Client("ACCOUNT_SID", "AUTH_TOKEN")
+client.messages.create(
+    body=f"Karpathy Weekly:\n{short_digest}",
+    from_="+1YOURTWILIONUMBER",
+    to="+1RECIPIENTPHONE"
+)
 ```
+
+Setup:
+1. Sign up at twilio.com (free trial includes $15 credit = ~1,800 SMS)
+2. Get a phone number (~$1.15/month)
+3. `pip install twilio` → use the script above
+
+### Step 3b: The $0 Weekly Pipeline (Recommended)
+
+The absolute cheapest end-to-end setup:
+
+```
+[Cron: Monday 9am]
+    → [Python script fetches RSS feeds]        — $0
+    → [Summarize with local LLM or free tier]  — $0 (Ollama local, or Claude free tier)
+    → [Post to X via tweepy]                   — $0
+    → [Post to LinkedIn via API]               — $0
+    → [Email to contact list via Gmail]         — $0
+                                         Total: $0/week
+```
+
+If you want to add SMS for one VIP contact: +$0.03/month (4 texts).
 
 ### Step 4: Full Pipeline (End-to-End)
 
