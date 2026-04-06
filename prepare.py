@@ -226,17 +226,26 @@ class Tokenizer:
         return self.bos_token_id
 
     def encode(self, text, prepend=None, num_threads=8):
+        prepend_ids = []
         if prepend is not None:
-            prepend_id = prepend if isinstance(prepend, int) else self.enc.encode_single_token(prepend)
+            if isinstance(prepend, int):
+                prepend_ids = [prepend]
+            elif isinstance(prepend, str):
+                try:
+                    prepend_ids = [self.enc.encode_single_token(prepend)]
+                except ValueError:
+                    prepend_ids = self.enc.encode_ordinary(prepend)
+            else:
+                raise ValueError(f"Invalid prepend type: {type(prepend)}")
         if isinstance(text, str):
             ids = self.enc.encode_ordinary(text)
-            if prepend is not None:
-                ids.insert(0, prepend_id)
+            if prepend_ids:
+                ids = prepend_ids + ids
         elif isinstance(text, list):
             ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
-            if prepend is not None:
+            if prepend_ids:
                 for row in ids:
-                    row.insert(0, prepend_id)
+                    row[:0] = prepend_ids
         else:
             raise ValueError(f"Invalid input type: {type(text)}")
         return ids
