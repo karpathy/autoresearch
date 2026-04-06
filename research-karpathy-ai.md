@@ -351,6 +351,110 @@ jobs:
 
 Note: GitHub Actions doesn't have Ollama, so the bot uses the fallback template. Still works. Add Ollama when you move to a dedicated server.
 
+### Security: Keeping API Keys Private
+
+#### What's already protected
+
+| Layer | Status | How |
+|-------|--------|-----|
+| `.env` gitignored | **YES** | `.gitignore` blocks `.env` from being committed |
+| `.env.example` has no real keys | **YES** | Only placeholder text, safe to commit |
+| Bot reads from env vars | **YES** | Keys loaded from `.env` or `$ENV`, never hardcoded in code |
+| GitHub Actions uses secrets | **YES** | Keys stored in encrypted repo secrets, never in YAML |
+
+#### What to watch out for
+
+1. **Never commit `.env`** — already gitignored, but double-check before pushing:
+   ```bash
+   git status   # .env should NOT appear here
+   ```
+
+2. **Never paste keys into the bot script** — always use `.env` or environment variables
+
+3. **If you accidentally commit keys:**
+   - Immediately revoke them at developer.x.com → regenerate new keys
+   - Git history retains deleted files — revoking is the only real fix
+   - Use `git log -- .env` to check if it was ever committed
+
+4. **GitHub repo visibility:** If your repo is **public**, ensure:
+   - `.env` is gitignored (it is)
+   - Use GitHub **Secrets** (Settings → Secrets and variables → Actions) for Actions workflows
+   - Secrets are encrypted, never shown in logs, never exposed to forks
+
+5. **X API key permissions:** At developer.x.com, set your app to **Read and Write** only — never enable Direct Messages or admin scopes unless needed
+
+#### Android-Specific Setup
+
+Since you're on Android, you have a few options for running the bot:
+
+**Option A: Termux (run directly on Android — $0)**
+```bash
+# Install Termux from F-Droid (not Play Store — Play Store version is outdated)
+# Inside Termux:
+pkg update && pkg install python git
+pip install feedparser tweepy pillow requests
+
+# Clone your repo
+git clone https://github.com/BIMGAI/autoresearch.git
+cd autoresearch
+git checkout claude/research-karpathy-ai-YdqP7
+
+# Create .env
+cp .env.example .env
+nano .env   # paste your keys
+
+# Test
+python karpathy-weekly-bot.py
+
+# Automate with Termux:Boot + cron
+pkg install cronie termux-services
+sv-enable crond
+crontab -e
+# Add: 0 9 * * 1 cd ~/autoresearch && python karpathy-weekly-bot.py --post
+```
+
+Termux security: `.env` file stays in Termux's private app storage (`/data/data/com.termux/`) — other Android apps cannot read it without root.
+
+**Option B: GitHub Actions (don't run anything on phone — $0, recommended)**
+
+This is the most secure option for Android users:
+- The bot runs on GitHub's servers, not your phone
+- Keys are stored in GitHub encrypted Secrets (never on your device)
+- You only need your phone's browser to set it up — no Termux needed
+
+Setup from Android browser:
+1. Go to your repo on github.com
+2. Settings → Secrets and variables → Actions
+3. Add 4 repository secrets:
+   - `X_CONSUMER_KEY`
+   - `X_CONSUMER_SECRET`
+   - `X_ACCESS_TOKEN`
+   - `X_ACCESS_TOKEN_SECRET`
+4. The workflow YAML (above) reads these secrets at runtime
+5. Keys never touch your phone, never appear in logs
+
+**Option C: Free cloud VM (Oracle Cloud — $0)**
+
+SSH from Android using Termux or JuiceSSH app:
+```bash
+# From JuiceSSH or Termux:
+ssh user@your-oracle-vm
+# Then same setup as any Linux machine
+```
+
+#### Security Summary
+
+| Scenario | Keys safe? | Notes |
+|----------|-----------|-------|
+| Bot runs on your machine with `.env` | **Yes** | File is gitignored, stays local |
+| Bot runs via GitHub Actions + Secrets | **Yes** | Keys encrypted on GitHub, never on device |
+| Bot runs in Termux on Android | **Yes** | Termux sandboxes files from other apps |
+| Repo is public on GitHub | **Yes** | `.env` gitignored, Actions secrets encrypted |
+| You accidentally `git add .env` | **NO** | Revoke keys immediately, regenerate |
+| You paste keys in bot script | **NO** | Never do this — always use `.env` or env vars |
+
+**Recommended for Android: GitHub Actions (Option B).** Zero keys on your phone, zero software to install, runs automatically every Monday.
+
 ---
 
 ### Detailed Reference (below)
