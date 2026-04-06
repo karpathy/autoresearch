@@ -87,6 +87,23 @@ The key insight: the human writes the research strategy (program.md), and the AI
 
 - Repository: github.com/karpathy/autoresearch
 
+### Dobby: Home Automation Agent (Early-April 2026)
+
+Karpathy used AI agents to take over his home's IoT ecosystem, replacing six separate vendor apps with a single natural language interface.
+
+**Lutron Discovery (early 2026):**
+Using Claude Code, an AI agent autonomously discovered Lutron home automation controllers on Karpathy's local WiFi network. It performed IP scans and port checks, retrieved hardware metadata and firmware versions, searched the internet for Lutron system documentation, configured pairing and certificates, and successfully controlled kitchen lights — all without manual setup.
+
+**Dobby the House Elf (April 2026):**
+A persistent AI agent named "Dobby the House Elf Claw" that consolidates smart home control across multiple manufacturers and protocols:
+
+- **Devices controlled:** Sonos sound system, lighting, security cameras, window shades, HVAC/climate, pool and spa heating, package detection
+- **How it works:** Scanned the local network, discovered devices (including unprotected Sonos endpoints), reverse-engineered undocumented device APIs, and searched the web for documentation — all autonomously
+- **Interface:** Natural language commands via WhatsApp (e.g., "bedtime" triggers a coordinated sequence of lights, blinds, and pool heating)
+- **Vision:** Integrated models like Qwen to monitor security cameras and detect events such as FedEx trucks arriving
+
+**Key insight:** Karpathy argued that software should expose clean API endpoints rather than complex GUIs, because the primary consumer of a system is increasingly an intelligent agent, not a human. The agent acts as the "glue" unifying fragmented ecosystems. As he put it: "I used to use six different apps, and I don't have to use these apps anymore."
+
 ### LLM Wiki (2026)
 
 A living archive for AI ideas using LLMs to generate, curate, and refine wiki-style articles. Treats AI-generated drafts as starting points for iterative refinement. Serves as an evolving "idea file" for the AI community.
@@ -122,6 +139,7 @@ Across all of Karpathy's 2024-2026 work, several consistent themes emerge:
 - **Education-first:** Every project doubles as a teaching tool. The code is the curriculum.
 - **Progressive minimalism:** The trajectory from nanoGPT to nanochat to microgpt represents a deliberate compression of ideas to their essence.
 - **From human to agent:** The progression from manually-run training scripts to fully autonomous research agents (AutoResearch) reflects his vision of AI-augmented scientific discovery.
+- **Agent as glue:** The Dobby project demonstrates agents unifying fragmented app ecosystems. Instead of six vendor apps, one conversational agent connects everything — a pattern Karpathy sees as the future of software interaction.
 - **Democratization:** Proving that meaningful AI work does not require massive scale, corporate resources, or complex infrastructure. A $100 budget and readable code are enough.
 
 ## References
@@ -135,3 +153,5 @@ Across all of Karpathy's 2024-2026 work, several consistent themes emerge:
 - Eureka Labs announcement: TechCrunch, July 16, 2024
 - 2025 LLM Year in Review: karpathy.bearblog.dev/year-in-review-2025/
 - Neural Networks: Zero to Hero: karpathy.ai/zero-to-hero.html
+- Dobby home automation agent: storyboard18.com (April 2026)
+- Lutron integration demo: x.com/karpathy/status/2005067301511630926
