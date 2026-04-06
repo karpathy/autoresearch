@@ -131,6 +131,18 @@ His key observation: humans have exploited less than 10% of this computing parad
 
 By early 2026, Karpathy noted feeling "dramatically behind" as a programmer, observing that the profession itself is being refactored as human contributions become "sparse and between." He expressed belief that he could be "10X more powerful" by properly orchestrating AI tools - a perspective that directly informed the creation of AutoResearch.
 
+### RSS Revival (February 2026)
+
+Karpathy publicly advocated for a return to RSS/Atom feeds as an antidote to algorithmic social media, noting he was "finding myself going back to RSS/Atom feeds a lot more recently" because there's "a lot more higher quality longform and a lot less slop intended to provoke."
+
+- Curated and shared a list of 92 RSS feeds from blogs popular on Hacker News in 2025, distributed as an importable .opml file
+- Recommended NetNewsWire as an RSS reader
+- Framed RSS as "open, pervasive, hackable" — a decentralized, user-controlled alternative to opaque algorithmic recommendation systems
+- Started his own Bear blog (karpathy.bearblog.dev) with native RSS support
+- His advocacy inspired community projects like "OneFeed," which combines RSS feeds with LLM agents for intelligent filtering and prioritization of content
+
+The underlying argument: as AI-generated content ("slop") floods algorithmic feeds, curation shifts back to the user. RSS gives that control natively, and LLM agents can layer intelligent filtering on top of open standards rather than proprietary algorithms.
+
 ## Themes and Patterns
 
 Across all of Karpathy's 2024-2026 work, several consistent themes emerge:
@@ -141,6 +153,87 @@ Across all of Karpathy's 2024-2026 work, several consistent themes emerge:
 - **From human to agent:** The progression from manually-run training scripts to fully autonomous research agents (AutoResearch) reflects his vision of AI-augmented scientific discovery.
 - **Agent as glue:** The Dobby project demonstrates agents unifying fragmented app ecosystems. Instead of six vendor apps, one conversational agent connects everything — a pattern Karpathy sees as the future of software interaction.
 - **Democratization:** Proving that meaningful AI work does not require massive scale, corporate resources, or complex infrastructure. A $100 budget and readable code are enough.
+
+## Lessons: How to Replicate These Approaches
+
+Each of Karpathy's projects encodes a replicable pattern. Below are concrete ways to apply them to your own work.
+
+### 1. Build a "Nano" Version First
+
+**What he did:** Rewrote GPT training in progressively fewer lines — nanoGPT, then microgpt (200 lines, zero deps).
+
+**The principle:** You don't understand a system until you can rebuild its core in minimal code. Stripping dependencies forces you to confront what actually matters.
+
+**How to apply:**
+- Pick your app's most complex subsystem (auth, data pipeline, inference engine)
+- Rewrite the core logic in a single file, under 500 lines, with minimal or zero dependencies
+- Use the result as an onboarding tool, a test harness, or a reference implementation
+- If a dependency does something you can write in 20 lines, write it yourself
+
+### 2. Use AI Agents as IoT/API Glue (Dobby Pattern)
+
+**What he did:** Pointed an LLM agent at his home network. It discovered devices, reverse-engineered APIs, and built a unified natural language interface replacing six vendor apps.
+
+**The principle:** Agents can autonomously discover, document, and integrate APIs that were never designed to work together. The agent is the universal adapter.
+
+**How to apply:**
+- Inventory your devices or services (smart home, office tools, SaaS APIs)
+- Give an LLM agent network access and ask it to discover available endpoints
+- Have it read manufacturer docs, reverse-engineer undocumented APIs, and write integration code
+- Build a single conversational interface (WhatsApp, Slack, CLI, or web) that controls everything
+- Add vision capabilities for camera feeds or visual monitoring if needed
+
+### 3. Autonomous Experimentation (AutoResearch Pattern)
+
+**What he did:** Wrote a research strategy in markdown (program.md). An AI agent ran hundreds of experiments autonomously, modifying code, evaluating results, and keeping improvements.
+
+**The principle:** Separate the research strategy (human) from the experiment execution (agent). The human defines what to optimize and the constraints; the agent runs the loop.
+
+**How to apply:**
+- Define your optimization target (latency, accuracy, cost, conversion rate)
+- Write a `program.md` describing: the goal metric, what the agent can modify, constraints, and evaluation criteria
+- Point the agent at your training script, config file, or deployment parameters
+- Let it run overnight — review the results.tsv in the morning
+- Start small: hyperparameter tuning before architecture search
+
+### 4. RSS + LLM for Information Curation
+
+**What he did:** Replaced algorithmic social media feeds with 92 curated RSS feeds + an RSS reader, advocating for open standards over opaque algorithms.
+
+**The principle:** As AI slop floods algorithmic feeds, reclaim control over your information diet. RSS gives you the raw stream; an LLM agent can filter, score, and summarize it.
+
+**How to apply:**
+- Export your current news sources as an .opml file (most readers support this)
+- Import into an RSS reader (NetNewsWire, Miniflux, Feedbin)
+- Build an LLM filter that scores articles by relevance to your interests and summarizes the top items daily
+- Combine RSS feeds from blogs, GitHub releases, arxiv, and niche forums into one prioritized stream
+- Share your curated .opml with your team to bootstrap their information diet
+
+### 5. Vibe-Code a Prototype, Then Harden
+
+**What he did:** Transitioned from 80% manual coding to 80% AI-generated code with 20% human review and refinement.
+
+**The principle:** Use natural language to scaffold quickly, then apply human judgment for correctness, security, and architecture. Speed on the first draft; rigor on the second pass.
+
+**How to apply:**
+- Describe your app or feature to an LLM agent in plain language
+- Let it generate a working prototype end-to-end
+- Review for: security vulnerabilities, edge cases, error handling, and architectural fit
+- Iterate conversationally — refine by describing what's wrong, not by rewriting from scratch
+- Reserve your manual coding effort for the parts that require deep domain knowledge
+
+### 6. The $100 AI Pipeline
+
+**What he did:** Built nanochat — a complete ChatGPT-style pipeline (tokenizer, training, inference, web UI) trainable for ~$100 on rented GPUs.
+
+**The principle:** A useful AI product does not require millions of dollars. Small models fine-tuned on domain-specific data can outperform large general models for narrow tasks.
+
+**How to apply:**
+- Clone nanochat as a starting template
+- Prepare your domain-specific dataset (support tickets, internal docs, product descriptions)
+- Rent an 8xH100 node for ~4 hours (~$100) and train your own small chat model
+- Deploy the resulting model behind a simple API for your specific use case
+- For even cheaper experiments, start with microgpt to understand the full pipeline before scaling up
 
 ## References
 
@@ -155,3 +248,5 @@ Across all of Karpathy's 2024-2026 work, several consistent themes emerge:
 - Neural Networks: Zero to Hero: karpathy.ai/zero-to-hero.html
 - Dobby home automation agent: storyboard18.com (April 2026)
 - Lutron integration demo: x.com/karpathy/status/2005067301511630926
+- RSS advocacy: x.com/karpathy/status/2018043254986703167
+- Karpathy's Bear blog: karpathy.bearblog.dev
