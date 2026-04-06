@@ -376,26 +376,75 @@ cp check-secrets.sh .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 ```
 
-#### What to watch out for
+#### Can someone fork the repo and steal my keys?
 
-1. **Never commit `.env`** — already gitignored, but double-check before pushing:
+**No.** Your keys are never in the repo. Here's why:
+
+| What a fork gets | What a fork does NOT get |
+|------------------|------------------------|
+| All committed code | Your `.env` file (never committed) |
+| `.env.example` (placeholder only) | Your GitHub Secrets (encrypted, owner-only) |
+| `.gitignore` rules | Your `.git/hooks/` (pre-commit scanner) |
+| `check-secrets.sh` (the script) | The installed hook (must be manually set up) |
+
+A fork contains **zero secrets**. The only way keys leak is if YOU commit them — and the pre-commit hook blocks that.
+
+#### Can someone bypass the pre-commit hook?
+
+Yes — git hooks are local and can be skipped with `--no-verify`. But that only matters on YOUR machine. It's a safety net for you, not a defense against others. The real defense is: **keys never enter git history in the first place.**
+
+#### What to watch out for (real threats)
+
+1. **YOU are the only leak risk** — never commit `.env`, never paste keys into code:
    ```bash
-   git status   # .env should NOT appear here
+   git status   # .env should NEVER appear here
    ```
 
-2. **Never paste keys into the bot script** — always use `.env` or environment variables
+2. **If you accidentally commit keys — revoke immediately:**
+   - Go to developer.x.com → regenerate all 4 keys
+   - Git history retains deleted files forever — revoking is the ONLY real fix
+   - `git log -- .env` to check if it was ever committed
+   - If it was: revoke keys, force-push a cleaned history with `git filter-branch` or BFG Repo Cleaner
 
-3. **If you accidentally commit keys:**
-   - Immediately revoke them at developer.x.com → regenerate new keys
-   - Git history retains deleted files — revoking is the only real fix
-   - Use `git log -- .env` to check if it was ever committed
+3. **Keep repo PRIVATE until you're ready:**
+   - GitHub → repo Settings → Danger Zone → Change visibility
+   - A private repo means nobody sees your code at all
+   - When you go public later, the pre-commit hook + gitignore ensure no keys are in history
 
-4. **GitHub repo visibility:** If your repo is **public**, ensure:
+4. **GitHub repo is public? Ensure:**
    - `.env` is gitignored (it is)
-   - Use GitHub **Secrets** (Settings → Secrets and variables → Actions) for Actions workflows
-   - Secrets are encrypted, never shown in logs, never exposed to forks
+   - Use GitHub **Secrets** (Settings → Secrets and variables → Actions) for workflows
+   - Secrets are encrypted, never shown in logs, **never exposed to forks or PRs from forks**
 
-5. **X API key permissions:** At developer.x.com, set your app to **Read and Write** only — never enable Direct Messages or admin scopes unless needed
+5. **X API key permissions — principle of least privilege:**
+   - At developer.x.com, set app to **Read and Write** only
+   - Never enable Direct Messages or admin scopes
+   - If keys leak, damage is limited to posting tweets (not reading DMs, changing account settings)
+
+6. **Rotate keys periodically:**
+   - Every 90 days, regenerate keys at developer.x.com
+   - Update `.env` and GitHub Secrets
+   - Old keys stop working immediately
+
+7. **GitHub Actions security for forks:**
+   - Secrets are **never** passed to workflows triggered by pull requests from forks
+   - This is a GitHub default — no configuration needed
+   - A malicious fork PR cannot read your secrets
+
+#### Threat model summary
+
+| Threat | Protected? | How |
+|--------|-----------|-----|
+| Someone forks repo and reads keys | **Yes** | Keys are not in the repo |
+| Someone clones repo and reads keys | **Yes** | Keys are not in the repo |
+| Someone sends a malicious PR to steal secrets | **Yes** | GitHub never passes secrets to fork PRs |
+| You accidentally `git add .env` | **Yes** | Pre-commit hook blocks the commit |
+| You paste a key into a .py file | **Yes** | Pre-commit hook scans for key patterns |
+| You force-skip the hook (`--no-verify`) | **Partial** | Your choice — but `.gitignore` still blocks `.env` |
+| Someone hacks your GitHub account | **Partial** | Enable 2FA on GitHub + X developer account |
+| Someone steals your phone (Android) | **Partial** | Use GitHub Actions (keys never on device) |
+
+**Bottom line:** The repo is safe to make public. Your keys live in exactly two places: your local `.env` (gitignored + hook-guarded) or GitHub Secrets (encrypted). Neither travels with forks, clones, or PRs.
 
 #### Android-Specific Setup
 
