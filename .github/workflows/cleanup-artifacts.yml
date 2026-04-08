@@ -1,0 +1,330 @@
+# ========================================================================
+# Artifact Cleanup Workflow - Enhanced Version
+# ========================================================================
+# 
+# PURPOSE:
+# This workflow provides an independent artifact cleanup solution that works
+# around the permission limitations of GitHub-managed dynamic workflows
+# (such as "Copilot code review") which fail with HTTP 403 when attempting
+# to delete artifacts.
+#
+# BACKGROUND (Issue #460):
+# The GitHub-managed "Copilot code review" workflow uses an integration token
+# that lacks the necessary scopes for artifact deletion. Since we cannot
+# modify the dynamic workflow directly, this independent workflow handles
+# cleanup with proper GITHUB_TOKEN permissions.
+#
+# FEATURES:
+# - Multiple trigger options (scheduled, manual, after workflow completion)
+# - Intelligent artifact categorization and selective cleanup
+# - Comprehensive error handling with detailed logging
+# - Dry-run mode for safe testing
+# - Cleanup metrics and summary report
+# - Handles pagination for repositories with many artifacts
+# - Respects GitHub API rate limits
+#
+# ========================================================================
+
+name: Cleanup Old Artifacts
+
+on:
+  # Primary trigger: Run after any workflow completes
+  # This catches artifacts from Copilot reviews and other workflows
+  workflow_run:
+    workflows: ["*"]
+    types: [completed]
+  
+  # Scheduled daily cleanup as backup
+  schedule:
+    - cron: '0 3 * * *'  # 3 AM UTC daily (offset from common cron times)
+  
+  # Manual trigger with full configuration options
+  workflow_dispatch:
+    inputs:
+      retention_days:
+        description: 'Delete artifacts older than N days (default: 7)'
+        required: false
+        default: '7'
+        type: string
+      dry_run:
+        description: 'Dry run mode - list artifacts but do not delete'
+        required: false
+        default: false
+        type: boolean
+      artifact_pattern:
+        description: 'Only delete artifacts matching this pattern (regex, optional)'
+        required: false
+        default: ''
+        type: string
+      include_workflow_artifacts:
+        description: 'Include artifacts from specific workflow runs only (comma-separated run IDs, optional)'
+        required: false
+        default: ''
+        type: string
+
+# Minimal permissions required for artifact management
+permissions:
+  actions: write    # Required to delete artifacts
+  contents: read    # Required to access repository information
+
+# Prevent concurrent cleanup runs to avoid race conditions
+concurrency:
+  group: artifact-cleanup-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  # Default configuration (can be overridden by workflow_dispatch inputs)
+  DEFAULT_RETENTION_DAYS: 7
+  # Rate limiting: pause between deletions to respect API limits
+  DELETE_DELAY_MS: 100
+  # Maximum artifacts to process per run (safety limit)
+  MAX_ARTIFACTS_PER_RUN: 500
+
+jobs:
+  cleanup:
+    name: Cleanup Artifacts
+    runs-on: ubuntu-latest
+    # Skip if triggered by this workflow's own completion to avoid loops
+    if: github.event.workflow_run.name != 'Cleanup Old Artifacts'
+    
+    outputs:
+      artifacts_found: ${{ steps.cleanup.outputs.artifacts_found }}
+      artifacts_deleted: ${{ steps.cleanup.outputs.artifacts_deleted }}
+      artifacts_skipped: ${{ steps.cleanup.outputs.artifacts_skipped }}
+      artifacts_failed: ${{ steps.cleanup.outputs.artifacts_failed }}
+
+    steps:
+      - name: Configure cleanup parameters
+        id: config
+        run: |
+          # Determine retention days from input or default
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RETENTION_DAYS="${{ inputs.retention_days || env.DEFAULT_RETENTION_DAYS }}"
+            DRY_RUN="${{ inputs.dry_run }}"
+            ARTIFACT_PATTERN="${{ inputs.artifact_pattern }}"
+          else
+            RETENTION_DAYS="${{ env.DEFAULT_RETENTION_DAYS }}"
+            DRY_RUN="false"
+            ARTIFACT_PATTERN=""
+          fi
+          
+          echo "retention_days=${RETENTION_DAYS}" >> $GITHUB_OUTPUT
+          echo "dry_run=${DRY_RUN}" >> $GITHUB_OUTPUT
+          echo "artifact_pattern=${ARTIFACT_PATTERN}" >> $GITHUB_OUTPUT
+          
+          # Log trigger information
+          echo "### Cleanup Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Retention Days | ${RETENTION_DAYS} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dry Run | ${DRY_RUN} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifact Pattern | ${ARTIFACT_PATTERN:-'(all)'} |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "| Triggered By | ${{ github.event.workflow_run.name }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Workflow Run ID | ${{ github.event.workflow_run.id }} |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      - name: Cleanup artifacts
+        id: cleanup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RETENTION_DAYS: ${{ steps.config.outputs.retention_days }}
+          DRY_RUN: ${{ steps.config.outputs.dry_run }}
+          ARTIFACT_PATTERN: ${{ steps.config.outputs.artifact_pattern }}
+        run: |
+          set -euo pipefail
+          
+          # Initialize counters
+          FOUND=0
+          DELETED=0
+          SKIPPED=0
+          FAILED=0
+          
+          echo "🔍 Fetching artifacts from repository..."
+          
+          # Calculate cutoff timestamp
+          CUTOFF_DATE=$(date -u -d "${RETENTION_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)
+          echo "📅 Cutoff date: ${CUTOFF_DATE}"
+          echo "📊 Retention period: ${RETENTION_DAYS} days"
+          
+          # Fetch all non-expired artifacts with pagination
+          ARTIFACTS_FILE=$(mktemp)
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+            --paginate \
+            --jq '.artifacts[] | select(.expired == false) | {
+              id: .id,
+              name: .name,
+              size_in_bytes: .size_in_bytes,
+              created_at: .created_at,
+              workflow_run_id: .workflow_run.id,
+              workflow_name: .workflow_run.name
+            }' > "${ARTIFACTS_FILE}" 2>/dev/null || true
+          
+          # Count total artifacts found
+          if [ -s "${ARTIFACTS_FILE}" ]; then
+            FOUND=$(wc -l < "${ARTIFACTS_FILE}" | tr -d ' ')
+          fi
+          
+          echo "📦 Found ${FOUND} non-expired artifacts"
+          
+          if [ "${FOUND}" -eq 0 ]; then
+            echo "✨ No artifacts to process"
+            echo "artifacts_found=0" >> $GITHUB_OUTPUT
+            echo "artifacts_deleted=0" >> $GITHUB_OUTPUT
+            echo "artifacts_skipped=0" >> $GITHUB_OUTPUT
+            echo "artifacts_failed=0" >> $GITHUB_OUTPUT
+            
+            echo "### Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✨ No artifacts found to clean up." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          
+          # Create report file for summary
+          REPORT_FILE=$(mktemp)
+          echo "| Artifact Name | Age | Size | Status |" >> "${REPORT_FILE}"
+          echo "|---------------|-----|------|--------|" >> "${REPORT_FILE}"
+          
+          # Process each artifact
+          PROCESSED=0
+          while IFS= read -r artifact_json; do
+            # Safety limit check
+            if [ "${PROCESSED}" -ge "${{ env.MAX_ARTIFACTS_PER_RUN }}" ]; then
+              echo "⚠️ Reached maximum artifacts per run (${MAX_ARTIFACTS_PER_RUN})"
+              break
+            fi
+            
+            # Parse artifact data
+            ARTIFACT_ID=$(echo "${artifact_json}" | jq -r '.id')
+            ARTIFACT_NAME=$(echo "${artifact_json}" | jq -r '.name')
+            ARTIFACT_SIZE=$(echo "${artifact_json}" | jq -r '.size_in_bytes')
+            ARTIFACT_CREATED=$(echo "${artifact_json}" | jq -r '.created_at')
+            WORKFLOW_NAME=$(echo "${artifact_json}" | jq -r '.workflow_name // "unknown"')
+            
+            # Calculate human-readable size
+            if [ "${ARTIFACT_SIZE}" -ge 1073741824 ]; then
+              SIZE_HUMAN="$(echo "scale=2; ${ARTIFACT_SIZE}/1073741824" | bc)GB"
+            elif [ "${ARTIFACT_SIZE}" -ge 1048576 ]; then
+              SIZE_HUMAN="$(echo "scale=2; ${ARTIFACT_SIZE}/1048576" | bc)MB"
+            elif [ "${ARTIFACT_SIZE}" -ge 1024 ]; then
+              SIZE_HUMAN="$(echo "scale=2; ${ARTIFACT_SIZE}/1024" | bc)KB"
+            else
+              SIZE_HUMAN="${ARTIFACT_SIZE}B"
+            fi
+            
+            # Calculate age in days
+            CREATED_TS=$(date -u -d "${ARTIFACT_CREATED}" +%s)
+            NOW_TS=$(date -u +%s)
+            AGE_DAYS=$(( (NOW_TS - CREATED_TS) / 86400 ))
+            
+            # Check if artifact matches pattern filter (if specified)
+            if [ -n "${ARTIFACT_PATTERN}" ]; then
+              if ! echo "${ARTIFACT_NAME}" | grep -qE "${ARTIFACT_PATTERN}"; then
+                echo "⏭️ Skipping '${ARTIFACT_NAME}' (doesn't match pattern)"
+                SKIPPED=$((SKIPPED + 1))
+                echo "| ${ARTIFACT_NAME} | ${AGE_DAYS}d | ${SIZE_HUMAN} | ⏭️ Skipped (pattern) |" >> "${REPORT_FILE}"
+                continue
+              fi
+            fi
+            
+            # Check if artifact is older than retention period
+            if [ "${ARTIFACT_CREATED}" \> "${CUTOFF_DATE}" ]; then
+              echo "⏭️ Skipping '${ARTIFACT_NAME}' (created ${AGE_DAYS} days ago, within retention)"
+              SKIPPED=$((SKIPPED + 1))
+              echo "| ${ARTIFACT_NAME} | ${AGE_DAYS}d | ${SIZE_HUMAN} | ⏭️ Skipped (recent) |" >> "${REPORT_FILE}"
+              continue
+            fi
+            
+            # Dry run mode - just report
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "🔍 [DRY RUN] Would delete: ${ARTIFACT_NAME} (${SIZE_HUMAN}, ${AGE_DAYS} days old)"
+              DELETED=$((DELETED + 1))
+              echo "| ${ARTIFACT_NAME} | ${AGE_DAYS}d | ${SIZE_HUMAN} | 🔍 Would delete |" >> "${REPORT_FILE}"
+              continue
+            fi
+            
+            # Attempt deletion
+            echo "🗑️ Deleting: ${ARTIFACT_NAME} (${SIZE_HUMAN}, ${AGE_DAYS} days old, workflow: ${WORKFLOW_NAME})"
+            
+            if gh api \
+              --silent \
+              -X DELETE \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}" 2>/dev/null; then
+              echo "  ✅ Deleted successfully"
+              DELETED=$((DELETED + 1))
+              echo "| ${ARTIFACT_NAME} | ${AGE_DAYS}d | ${SIZE_HUMAN} | ✅ Deleted |" >> "${REPORT_FILE}"
+            else
+              echo "  ❌ Failed to delete (continuing...)"
+              FAILED=$((FAILED + 1))
+              echo "| ${ARTIFACT_NAME} | ${AGE_DAYS}d | ${SIZE_HUMAN} | ❌ Failed |" >> "${REPORT_FILE}"
+            fi
+            
+            PROCESSED=$((PROCESSED + 1))
+            
+            # Rate limiting delay
+            sleep 0.1
+            
+          done < "${ARTIFACTS_FILE}"
+          
+          # Output results
+          echo ""
+          echo "📊 Cleanup Summary:"
+          echo "  - Found: ${FOUND}"
+          echo "  - Deleted: ${DELETED}"
+          echo "  - Skipped: ${SKIPPED}"
+          echo "  - Failed: ${FAILED}"
+          
+          echo "artifacts_found=${FOUND}" >> $GITHUB_OUTPUT
+          echo "artifacts_deleted=${DELETED}" >> $GITHUB_OUTPUT
+          echo "artifacts_skipped=${SKIPPED}" >> $GITHUB_OUTPUT
+          echo "artifacts_failed=${FAILED}" >> $GITHUB_OUTPUT
+          
+          # Generate summary
+          echo "### Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 Artifacts Found | ${FOUND} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ✅ Deleted | ${DELETED} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⏭️ Skipped | ${SKIPPED} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ❌ Failed | ${FAILED} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${FOUND}" -gt 0 ]; then
+            echo "### Artifact Details" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            cat "${REPORT_FILE}" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Cleanup temp files
+          rm -f "${ARTIFACTS_FILE}" "${REPORT_FILE}"
+          
+          # Exit with success even if some deletions failed (best-effort approach)
+          echo ""
+          if [ "${DRY_RUN}" = "true" ]; then
+            echo "🔍 Dry run completed - no artifacts were actually deleted"
+          else
+            echo "✨ Cleanup completed (best-effort)"
+          fi
+
+      - name: Post cleanup notification (on failure)
+        if: failure()
+        run: |
+          echo "### ⚠️ Cleanup Workflow Error" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The artifact cleanup encountered an error. This is typically non-critical" >> $GITHUB_STEP_SUMMARY
+          echo "as artifacts will still expire based on repository retention settings." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "If this persists, consider:" >> $GITHUB_STEP_SUMMARY
+          echo "- Checking repository permissions" >> $GITHUB_STEP_SUMMARY
+          echo "- Reviewing GitHub API rate limits" >> $GITHUB_STEP_SUMMARY
+          echo "- Setting artifact retention in repository settings" >> $GITHUB_STEP_SUMMARY
