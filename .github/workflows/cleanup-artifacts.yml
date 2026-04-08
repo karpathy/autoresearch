@@ -1,0 +1,52 @@
+name: Cleanup Old Artifacts
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Delete artifacts older than N days'
+        required: false
+        default: '7'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DAYS="${{ github.event.inputs.days || '7' }}"
+          echo "Cleaning up artifacts older than $DAYS days..."
+          
+          # Get all artifacts
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+            --paginate \
+            --jq ".artifacts[] | select(.expired == false) | {id: .id, name: .name, created_at: .created_at}" > artifacts.json
+          
+          # Calculate cutoff date
+          CUTOFF_DATE=$(date -u -d "$DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)
+          echo "Cutoff date: $CUTOFF_DATE"
+          
+          # Delete old artifacts (best-effort, continue on error)
+          cat artifacts.json | jq -r "select(.created_at < \"$CUTOFF_DATE\") | .id" | while read artifact_id; do
+            echo "Attempting to delete artifact ID: $artifact_id"
+            gh api \
+              --silent \
+              -X DELETE \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/actions/artifacts/$artifact_id" && \
+              echo "  ✓ Deleted artifact $artifact_id" || \
+              echo "  ✗ Failed to delete artifact $artifact_id (continuing...)"
+          done
+          
+          echo "Artifact cleanup completed (best-effort)"
