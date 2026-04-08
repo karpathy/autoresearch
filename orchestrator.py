@@ -208,7 +208,14 @@ Return search-and-replace pairs (exact text from the file) and a description."""
 
     response = call_llm(SYSTEM_PROMPT, user_msg, max_tokens=4096)
 
-    # Parse JSON from response
+    # Strip thinking tags (reasoning model outputs <think>...</think> before JSON)
+    response = re.sub(r"<think>[\s\S]*?</think>", "", response).strip()
+    # If <think> started but never closed, strip everything before the first {
+    if "<think>" in response:
+        idx = response.find("{")
+        if idx >= 0:
+            response = response[idx:]
+
     # Strip markdown fences if present
     response = re.sub(r"^```(?:json)?\n?", "", response.strip())
     response = re.sub(r"\n?```$", "", response.strip())
