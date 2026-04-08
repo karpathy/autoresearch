@@ -130,7 +130,7 @@ def best_val_bpb() -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def call_llm(system: str, user: str) -> str:
+def call_llm(system: str, user: str, max_tokens: int = 4096) -> str:
     """Call local vLLM endpoint. Uses requests (already installed)."""
     import requests
 
@@ -143,9 +143,9 @@ def call_llm(system: str, user: str) -> str:
                 {"role": "user", "content": user},
             ],
             "temperature": 0.3,
-            "max_tokens": 8192,
+            "max_tokens": max_tokens,
         },
-        timeout=120,
+        timeout=180,
     )
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
@@ -161,14 +161,32 @@ CONSTRAINTS:
 - Keep changes focused — one idea per experiment
 - Simpler is better at equal performance
 - VRAM is limited (~5-8 GB available)
+- The AUTORESEARCH_PROFILE override block near line 440 MUST be preserved
 
 RESPONSE FORMAT:
-Return ONLY a JSON object with two keys:
+Return ONLY a JSON object with these keys:
 {
   "description": "brief description of what this experiment tries",
-  "train_py": "the complete modified train.py file content"
+  "replacements": [
+    {"old": "exact lines to find in train.py", "new": "replacement lines"}
+  ]
 }
+
+Each replacement is a search-and-replace pair. Use the EXACT text from train.py
+including whitespace. Keep replacements minimal — only the lines that change.
 Do NOT include markdown code fences. Return raw JSON only."""
+
+
+def apply_replacements(train_py: str, replacements: list[dict]) -> str:
+    """Apply a list of {old, new} replacements to train.py content."""
+    result = train_py
+    for r in replacements:
+        old = r.get("old", "")
+        new = r.get("new", "")
+        if old not in result:
+            raise ValueError(f"Replacement target not found in train.py: {old[:80]!r}")
+        result = result.replace(old, new, 1)
+    return result
 
 
 def propose_experiment(train_py: str, results_history: str) -> dict:
@@ -186,9 +204,9 @@ Experiment history (TSV):
 Current best val_bpb: {best_val_bpb() or 'no results yet — this is the first run'}
 
 Propose a single focused modification to improve val_bpb.
-Return the complete modified train.py and a brief description."""
+Return search-and-replace pairs (exact text from the file) and a description."""
 
-    response = call_llm(SYSTEM_PROMPT, user_msg)
+    response = call_llm(SYSTEM_PROMPT, user_msg, max_tokens=4096)
 
     # Parse JSON from response
     # Strip markdown fences if present
@@ -284,10 +302,16 @@ def main():
 
     # Experiment loop
     experiment_num = 0
+    consecutive_failures = 0
+    MAX_CONSECUTIVE_FAILURES = 3
     while True:
         experiment_num += 1
         if args.max_experiments and experiment_num > args.max_experiments:
             print(f"\nReached max experiments ({args.max_experiments}). Stopping.", flush=True)
+            break
+
+        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            print(f"\n{MAX_CONSECUTIVE_FAILURES} consecutive LLM failures. Stopping.", flush=True)
             break
 
         current_best = best_val_bpb()
@@ -302,21 +326,31 @@ def main():
             print("  Querying LLM for proposal...", flush=True)
             proposal = propose_experiment(train_py, results_history)
             description = proposal.get("description", "unknown modification")
-            new_train_py = proposal.get("train_py", "")
+            replacements = proposal.get("replacements", [])
 
-            if not new_train_py or len(new_train_py) < 100:
-                print("  LLM returned empty/invalid train.py, skipping", flush=True)
+            if not replacements:
+                print("  LLM returned no replacements, skipping", flush=True)
                 continue
 
             print(f"  Proposal: {description}", flush=True)
+            print(f"  Replacements: {len(replacements)}", flush=True)
         except Exception as e:
             print(f"  LLM error: {e}", flush=True)
             print("  Retrying in 30s...", flush=True)
+            consecutive_failures += 1
             time.sleep(30)
             continue
 
         # Apply modification
-        write_train_py(new_train_py)
+        try:
+            new_train_py = apply_replacements(train_py, replacements)
+            write_train_py(new_train_py)
+        except ValueError as e:
+            print(f"  Replacement failed: {e}", flush=True)
+            consecutive_failures += 1
+            continue
+
+        consecutive_failures = 0  # reset on successful proposal + apply
         commit = git_commit(f"exp{experiment_num}: {description[:60]}")
 
         # Run experiment
