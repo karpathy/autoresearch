@@ -19,9 +19,15 @@ import torch.nn.functional as F
 
 from kernels import get_kernel
 cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+# FA3: Hopper-native (sm90), community fallback for Ada/Blackwell, PyTorch SDPA last resort
+_fa3_available = True
+try:
+    repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+    fa3 = get_kernel(repo).flash_attn_interface
+except Exception as _fa3_err:
+    print(f"[autoresearch] FA3 unavailable ({_fa3_err}), using PyTorch SDPA fallback")
+    _fa3_available = False
+    fa3 = None
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -90,7 +96,15 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        if _fa3_available:
+            y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        else:
+            # PyTorch SDPA fallback (no window attention — uses full causal mask)
+            q = q.transpose(1, 2)  # (B, n_head, T, head_dim)
+            k = k.transpose(1, 2)
+            v = v.transpose(1, 2)
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+            y = y.transpose(1, 2)  # (B, T, n_head, head_dim)
         y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
@@ -449,6 +463,22 @@ FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 # Model size
 DEPTH = 8               # number of transformer layers
 DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
+
+# ---------------------------------------------------------------------------
+# GPU profile overrides (set AUTORESEARCH_PROFILE=rtx5060 for 8 GB GPUs)
+# ---------------------------------------------------------------------------
+_PROFILE = os.environ.get("AUTORESEARCH_PROFILE", "").lower()
+if _PROFILE == "rtx5060":
+    DEPTH              = 4
+    ASPECT_RATIO       = 48
+    HEAD_DIM           = 64
+    WINDOW_PATTERN     = "L"
+    TOTAL_BATCH_SIZE   = 2**16
+    DEVICE_BATCH_SIZE  = 16
+    WARMUP_RATIO       = 0.05
+    print(f"[autoresearch] Applied profile: rtx5060 (8 GB VRAM)")
+elif _PROFILE and _PROFILE != "default":
+    print(f"[autoresearch] WARNING: Unknown profile '{_PROFILE}', using defaults")
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader
