@@ -17,11 +17,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+use_fa3 = False
+try:
+    from kernels import get_kernel
+    cap = torch.cuda.get_device_capability()
+    # varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
+    repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+    fa3 = get_kernel(repo).flash_attn_interface
+    use_fa3 = True
+except Exception as e:
+    print(f"Warning: Failed to load Flash Attention 3 ({e}). Falling back to PyTorch Native SDPA.")
+    fa3 = None
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -90,8 +96,18 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
-        y = y.contiguous().view(B, T, -1)
+        if use_fa3:
+            y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+            y = y.contiguous().view(B, T, -1)
+        else:
+            # PyTorch SDPA uses B, num_heads, T, head_dim
+            q_sdpa = q.transpose(1, 2)
+            k_sdpa = k.transpose(1, 2)
+            v_sdpa = v.transpose(1, 2)
+            # ignore sliding window mask for simplicity in fallback
+            y_sdpa = F.scaled_dot_product_attention(q_sdpa, k_sdpa, v_sdpa, is_causal=True)
+            y = y_sdpa.transpose(1, 2).contiguous().view(B, T, -1)
+
         y = self.c_proj(y)
         return y
 
@@ -535,6 +551,7 @@ def get_weight_decay(progress):
 # Training loop
 # ---------------------------------------------------------------------------
 
+headless = os.environ.get("AUTORESEARCH_HEADLESS", "0") == "1"
 t_start_training = time.time()
 smooth_train_loss = 0
 total_training_time = 0
@@ -587,7 +604,12 @@ while True:
     mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
     remaining = max(0, TIME_BUDGET - total_training_time)
 
-    print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
+    log_str = f"step {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s"
+    if headless:
+        if step % 50 == 0:
+            print(log_str)
+    else:
+        print(f"\r{log_str}    ", end="", flush=True)
 
     # GC management (Python's GC causes ~500ms stalls)
     if step == 0:
@@ -628,3 +650,25 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
+
+# --- Checkpointing & Inference ---
+checkpoint_path = "best_model.pt"
+print(f"Saving model weights to {checkpoint_path}...")
+torch.save(model.state_dict(), checkpoint_path)
+
+print("Starting sample generation...")
+model.eval()
+prompt_text = "Once upon a time"
+input_ids = torch.tensor([tokenizer.encode(prompt_text)], dtype=torch.long, device=device)
+with torch.no_grad(), autocast_ctx:
+    for _ in range(20):
+        logits = model(input_ids)
+        next_token_logits = logits[0, -1, :]
+        next_token = torch.argmax(next_token_logits, dim=-1).unsqueeze(0).unsqueeze(0)
+        input_ids = torch.cat([input_ids, next_token], dim=1)
+
+generated_text = tokenizer.decode(input_ids[0].tolist())
+print("Generation Result:")
+print("=" * 40)
+print(generated_text)
+print("=" * 40)
