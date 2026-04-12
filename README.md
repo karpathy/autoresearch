@@ -1,91 +1,199 @@
 # autoresearch
 
-![teaser](progress.png)
+Autonomous research framework. One target, one metric, keep or discard, repeat forever.
 
-*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
-
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069).
+Evolved from [karpathy/autoresearch](https://github.com/karpathy/autoresearch) and generalized beyond ML training.
 
 ## How it works
 
-The repo is deliberately kept small and only really has three files that matter:
+An AI agent modifies a target file, measures a metric, keeps improvements, discards regressions, and repeats autonomously. The framework provides structure for any domain: ML training, prompt engineering, performance tuning, configuration optimization, or anything with a measurable outcome.
 
-- **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
-- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+Each research workflow defines: what file(s) to edit, how to measure success, and what constraints to respect. The agent handles everything else.
 
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
+You can leave it running overnight. At 5 minutes per experiment, that's ~100 experiments while you sleep. The agent explores the design space, accumulates knowledge, and converges toward better solutions without human intervention.
 
-If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/status/2030720614752039185) looks pretty good for a lot more context.
+The core loop is simple: edit → commit → run → measure → keep or discard. The agent maintains a research log, tracks what works, and builds on successful experiments. You wake up to a log of trials and (hopefully) a better solution.
 
 ## Quick start
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+```bash
+# Create a new research workflow
+python scaffold.py my-experiment
+
+# Edit the workflow config
+# Fill in: workflows/my-experiment/workflow.yaml
+# Write your research program: workflows/my-experiment/program.md
+
+# Point your AI agent at the workflow and let it go
+```
+
+## Repo structure
+
+```
+autoresearch/
+├── agents/                   # Agent definitions (portable, tool-agnostic)
+├── skills/                   # Skill definitions (portable, tool-agnostic)
+├── workflows/
+│   ├── _template/            # Template for new workflows
+│   └── examples/
+│       └── ml-training/      # Reference implementation
+├── scaffold.py               # Create new workflows from template
+├── AGENTS.md                 # Root agent context
+└── README.md
+```
+
+## Core concepts
+
+### workflow.yaml
+
+Machine-readable manifest that defines the experiment structure:
+
+```yaml
+name: my-experiment
+target: train.py              # File(s) the agent modifies
+metric: val_loss              # What to minimize (or maximize)
+run_command: python train.py  # How to execute the experiment
+time_budget: 300              # Wall-clock seconds per run
+```
+
+Agents parse this to understand what they can change and how success is measured.
+
+### program.md
+
+Human-written research strategy. This is where you encode domain knowledge:
+
+- What approaches to try (architectural changes, hyperparameter ranges, optimization strategies)
+- What constraints to respect (no external dependencies, stay under memory budget, maintain compatibility)
+- What to log and track (metrics, intermediate outputs, failure modes)
+- How to interpret results (what "better" means, when to explore vs exploit)
+
+This file is your primary interface to the research process. You iterate on `program.md` to guide the agent toward productive experiments.
+
+### AGENTS.md
+
+Root agent context file that describes repo structure, conventions, and guidelines. Agents read this on startup to understand how to navigate the codebase.
+
+### The experiment loop
+
+1. **Edit**: Agent modifies target file(s) based on research program
+2. **Commit**: Changes are committed to git with descriptive message
+3. **Run**: Experiment executes with fixed time/resource budget
+4. **Measure**: Metric is extracted from run output
+5. **Keep or discard**: If metric improved, keep commit; otherwise, revert
+
+This loop repeats indefinitely. The agent accumulates successful changes and builds on them.
+
+### The Artisan's Triad
+
+Three fundamental modes of experimentation:
+
+| Mode | Description | Examples |
+|------|-------------|----------|
+| **Additive** | Add new things | New layers, features, logging, optimizations |
+| **Reductive** | Remove things | Delete unused code, simplify architecture, reduce params |
+| **Reformative** | Reshape existing things | Refactor structure, reorganize, change approach |
+
+The agent cycles through these modes to explore the design space comprehensively.
+
+## Creating a workflow
+
+**Step 1: Scaffold**
 
 ```bash
-
-# 1. Install uv project manager (if you don't already have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Install dependencies
-uv sync
-
-# 3. Download data and train tokenizer (one-time, ~2 min)
-uv run prepare.py
-
-# 4. Manually run a single training experiment (~5 min)
-uv run train.py
+python scaffold.py my-experiment
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
+This creates `workflows/my-experiment/` with template files.
 
-## Running the agent
+**Step 2: Configure workflow.yaml**
 
-Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
+Edit `workflows/my-experiment/workflow.yaml`:
 
+```yaml
+name: my-experiment
+target: run.py
+metric: throughput
+run_command: python run.py --benchmark
+time_budget: 60
 ```
-Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
+
+**Step 3: Write program.md**
+
+Document your research strategy in `workflows/my-experiment/program.md`:
+
+- What are you optimizing?
+- What's allowed to change?
+- What constraints must be respected?
+- What domain knowledge should guide experiments?
+
+**Step 4: Run baseline**
+
+Manually execute the baseline to verify setup:
+
+```bash
+cd workflows/my-experiment
+python run.py
 ```
 
-The `program.md` file is essentially a super lightweight "skill".
+Record the baseline metric in your notes.
 
-## Project structure
+**Step 5: Start the loop**
 
-```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
-```
+Point your AI agent at `workflows/my-experiment/program.md` and let it begin autonomous research. The agent will:
+
+- Read `workflow.yaml` to understand the experiment structure
+- Follow `program.md` to guide its research strategy
+- Execute the experiment loop autonomously
+- Log all experiments and decisions
+
+Check back periodically to review progress and refine `program.md` based on what you learn.
+
+## Example: ML training
+
+The `workflows/examples/ml-training/` directory contains the original autoresearch experiment: autonomous optimization of a small GPT model trained for 5 minutes per experiment.
+
+This workflow demonstrates:
+
+- Fixed time budget (5 minutes wall-clock)
+- Single target file (`train.py` containing model, optimizer, training loop)
+- Single metric (`val_bpb` - validation bits per byte, lower is better)
+- Comprehensive research program covering architecture, hyperparameters, and optimization
+
+The ML training example is a reference implementation showing how to structure a research workflow. It's production-tested (ran overnight, produced improvements) and serves as a template for other domains.
+
+See [workflows/examples/ml-training/](workflows/examples/ml-training/) for full details.
 
 ## Design choices
 
-- **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
-- **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+**Single target file per workflow**
 
-## Platform support
+The agent modifies one primary file (or a small set of related files). This keeps the scope manageable, diffs reviewable, and changes atomic. Multi-file workflows are possible but discouraged; better to decompose into multiple workflows.
 
-This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
+**Fixed time/resource budget**
 
-Seeing as there seems to be a lot of interest in tinkering with autoresearch on much smaller compute platforms than an H100, a few extra words. If you're going to try running autoresearch on smaller computers (Macbooks etc.), I'd recommend one of the forks below. On top of this, here are some recommendations for how to tune the defaults for much smaller models for aspiring forks:
+Experiments run with a fixed time budget (e.g., 5 minutes), regardless of what changes the agent makes. This has two key benefits:
 
-1. To get half-decent results I'd use a dataset with a lot less entropy, e.g. this [TinyStories dataset](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean). These are GPT-4 generated short stories. Because the data is a lot narrower in scope, you will see reasonable results with a lot smaller models (if you try to sample from them after training).
-2. You might experiment with decreasing `vocab_size`, e.g. from 8192 down to 4096, 2048, 1024, or even - simply byte-level tokenizer with 256 possibly bytes after utf-8 encoding.
-3. In `prepare.py`, you'll want to lower `MAX_SEQ_LEN` a lot, depending on the computer even down to 256 etc. As you lower `MAX_SEQ_LEN`, you may want to experiment with increasing `DEVICE_BATCH_SIZE` in `train.py` slightly to compensate. The number of tokens per fwd/bwd pass is the product of these two.
-4. Also in `prepare.py`, you'll want to decrease `EVAL_TOKENS` so that your validation loss is evaluated on a lot less data.
-5. In `train.py`, the primary single knob that controls model complexity is the `DEPTH` (default 8, here). A lot of variables are just functions of this, so e.g. lower it down to e.g. 4.
-6. You'll want to most likely use `WINDOW_PATTERN` of just "L", because "SSSL" uses alternating banded attention pattern that may be very inefficient for you. Try it.
-7. You'll want to lower `TOTAL_BATCH_SIZE` a lot, but keep it powers of 2, e.g. down to `2**14` (~16K) or so even, hard to tell.
+1. **Comparable experiments**: You can fairly compare architectures, batch sizes, and other changes because every experiment gets the same resources.
+2. **Optimizes for your platform**: The agent finds the best solution for your specific hardware in the given time budget.
 
-I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
+At 5 minutes per experiment, you get ~12 experiments/hour and ~100 experiments overnight.
 
-## Notable forks
+**Machine-readable manifest**
 
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
-- [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
+`workflow.yaml` is structured YAML that agents can parse, not just prose. This eliminates ambiguity: the agent knows exactly what file to edit, how to run the experiment, and what metric to optimize.
+
+**One source of truth**
+
+Each workflow is self-contained. No scattered configs, no duplicated definitions. Everything the agent needs is in the workflow directory.
+
+**Human-curated artifacts**
+
+Agents propose experiments; humans promote the best results. You review the research log, extract insights, and decide what to productionize. The framework makes agents productive, but you remain in control of what ships.
 
 ## License
 
 MIT
+
+---
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>

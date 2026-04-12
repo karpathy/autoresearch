@@ -1,0 +1,42 @@
+# ML Training Experiment — autoresearch reference implementation
+# Optimizes a small language model on RTX 4060 (8GB VRAM)
+
+name: ml-training
+description: Optimize a small GPT language model training script for lowest val_bpb on RTX 4060
+
+targets:
+  - path: train.py
+    description: Model architecture, optimizer, hyperparameters, and training loop
+
+fixed:
+  - path: prepare.py
+    description: Data loading, tokenizer, evaluation harness, and training constants (MAX_SEQ_LEN=512, TIME_BUDGET=300s)
+  - path: pyproject.toml
+    description: Project dependencies (no new packages allowed)
+
+metric:
+  name: val_bpb
+  direction: lower
+  extract: "grep '^val_bpb:' run.log | awk '{print $2}'"
+
+run:
+  command: "uv run train.py > run.log 2>&1"
+  timeout: 600
+  setup: "uv sync"
+
+outputs:
+  report: none
+  artifacts: optional
+
+stages:
+  design: false
+  experiment: true
+  synthesis: false
+
+# Hardware constraints (informational, not parsed)
+hardware:
+  gpu: RTX 4060
+  vram_gb: 8
+  peak_tflops_bf16: 121
+  arch: Ada Lovelace (SM 8.9)
+  notes: No Flash Attention 3, no torch.compile (Windows/no Triton), SDPA fallback

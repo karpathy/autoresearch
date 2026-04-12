@@ -1,22 +1,60 @@
-# Python-generated files
+# ============================================================
+# Python Standard Ignores
+# ============================================================
 __pycache__/
 *.py[oc]
+*.pyc
+.venv/
 build/
 dist/
 wheels/
-*.egg-info
+*.egg-info/
 
-# Virtual environments
-.venv
-worktrees/
-results/
-queue/
+# ============================================================
+# Research Workflow Runtime Artifacts
+# ============================================================
+# Per-run experiment outputs (not committed)
+**/results/results.tsv
+**/results/musings.md
+**/run.log
+**/outputs/
 
+# Legacy top-level artifacts (deprecated structure)
+results.tsv
+musings.md
+run.log
+
+# ============================================================
+# IDE and Editor
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ============================================================
+# Operating System
+# ============================================================
+.DS_Store
+Thumbs.db
+
+# ============================================================
+# Data and Cache
+# ============================================================
+# Local data directories (datasets should be downloaded/cached per machine)
+data/
+**/data/
+
+# ============================================================
+# Agent Session Files
+# ============================================================
 # Agent prompt files (generated per-session by launchers)
 CLAUDE.md
 
-# Experimental code/artifacts
+# ============================================================
+# Legacy Directories
+# ============================================================
+worktrees/
+queue/
 dev/
-
-# Results file
-results.tsv

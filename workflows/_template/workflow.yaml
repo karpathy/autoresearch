@@ -1,0 +1,77 @@
+# Workflow manifest for autoresearch framework
+# This template defines a research workflow for autonomous experimentation.
+# Fill in the empty strings with your specific workflow configuration.
+
+# Short identifier for this workflow (use lowercase with hyphens)
+# Examples: "ml-training", "prompt-optimization", "hyperparameter-search"
+name: ""
+
+# One-line description of the research goal
+# Examples: "Optimize model architecture for character-level language modeling"
+description: ""
+
+# What the agent can modify during experimentation
+# These files will be edited by the autonomous agent to explore the hypothesis space
+targets:
+  - path: ""                # Relative path from workflow root (e.g., "config.json", "model.py")
+    description: ""         # What this file controls (e.g., "Model hyperparameters", "Training configuration")
+
+# What the agent must NOT modify
+# These files provide the fixed experimental context
+fixed:
+  - path: ""                # Relative path from workflow root (e.g., "train.py", "dataset.txt")
+    description: ""         # What this file provides (e.g., "Training script", "Evaluation data")
+
+# The single metric that determines keep/discard decisions
+# The agent will use this to evaluate each experiment variant
+metric:
+  name: ""                  # Metric name (e.g., "val_bpb", "accuracy", "latency_ms", "f1_score")
+  direction: lower          # "lower" or "higher" — which direction indicates improvement
+  extract: ""               # Shell command to extract metric from run.log
+                            # Examples:
+                            #   - "grep '^val_bpb:' run.log | awk '{print $2}'"
+                            #   - "tail -1 run.log | jq -r '.accuracy'"
+                            #   - "python -c \"import json; print(json.load(open('run.log'))['score'])\""
+
+# How to run one experiment
+# These commands execute each experimental variant
+run:
+  command: ""               # Full command to run the experiment
+                            # Output should be written to run.log in the workflow directory
+                            # Examples:
+                            #   - "python train.py > run.log 2>&1"
+                            #   - "npm test 2>&1 | tee run.log"
+                            #   - "uv run python evaluate.py --output run.log"
+  
+  timeout: 600              # Kill after this many seconds (safety limit to prevent runaway processes)
+                            # Adjust based on expected experiment duration
+  
+  setup: ""                 # Optional: one-time setup command run before first experiment
+                            # Examples:
+                            #   - "uv sync"
+                            #   - "npm install"
+                            #   - "pip install -r requirements.txt"
+                            # Leave empty if no setup needed
+
+# What the workflow produces (all optional)
+# Controls post-experiment artifact generation and reporting
+outputs:
+  report: optional          # "required" — must generate analysis.md
+                            # "optional" — generate if synthesis stage runs
+                            # "none" — no report expected
+  
+  artifacts: optional       # "required" — must produce artifact files (models, plots, etc.)
+                            # "optional" — produce if synthesis stage runs
+                            # "none" — no artifacts expected
+
+# Which stages are active for this workflow
+# Enable/disable workflow stages based on research needs
+stages:
+  design: false             # Research design / hypothesis documentation phase
+                            # Enable if you want the agent to document the research plan first
+  
+  experiment: true          # The core autonomous loop (should always be true)
+                            # Agent iteratively modifies targets, runs experiments, keeps improvements
+  
+  synthesis: false          # Post-run analysis and artifact extraction
+                            # Enable if you want the agent to analyze results and generate reports
