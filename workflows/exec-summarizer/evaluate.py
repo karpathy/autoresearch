@@ -174,9 +174,18 @@ async def main():
     # Output results
     print("\n--- Article Results ---")
     total_score = 0.0
+    dim_totals = {"conciseness": 0, "relevance": 0, "provenance": 0, "ecq": 0}
     for score in scores:
-        avg = (score["conciseness"] + score["relevance"] + score["provenance"] + score["ecq"]) / 4.0
+        dims = [score["conciseness"], score["relevance"], score["provenance"], score["ecq"]]
+        # Harmonic mean: penalizes imbalance across dimensions
+        nonzero = [d for d in dims if d > 0]
+        if nonzero:
+            avg = len(nonzero) / sum(1.0 / d for d in nonzero)
+        else:
+            avg = 0.0
         total_score += avg
+        for k in dim_totals:
+            dim_totals[k] += score[k]
         print(
             f"{score['article_id']}: summary_score={avg:.1f} "
             f"(conciseness={score['conciseness']} "
@@ -185,7 +194,14 @@ async def main():
             f"ecq={score['ecq']})"
         )
 
-    quality_score = total_score / len(scores) if scores else 0.0
+    n = len(scores) if scores else 1
+    quality_score = total_score / n
+
+    # Per-dimension averages (for tracking regressions)
+    print("\n--- Dimension Averages ---")
+    for k in ["conciseness", "relevance", "provenance", "ecq"]:
+        print(f"avg_{k}: {dim_totals[k] / n:.2f}")
+
     print("\n---")
     print(f"quality_score: {quality_score:.2f}")
     print(f"total_articles: {len(articles)}")
