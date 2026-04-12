@@ -1,0 +1,31 @@
+name: exec-summarizer
+description: Optimize a system prompt for summarizing news articles for executive audiences
+
+targets:
+  - path: prompt.txt
+    description: System prompt for executive news summarization
+
+fixed:
+  - path: evaluate.py
+    description: Evaluation harness (Copilot SDK + GPT-5.4-mini scoring rubric)
+  - path: articles.json
+    description: Test dataset of 5 news articles
+
+metric:
+  name: quality_score
+  direction: higher
+  extract: "grep '^quality_score:' run.log | awk '{print $2}'"
+
+run:
+  command: "python evaluate.py > run.log 2>&1"
+  timeout: 300
+  setup: "uv pip install github-copilot-sdk"
+
+outputs:
+  report: optional
+  artifacts: optional
+
+stages:
+  design: false
+  experiment: true
+  synthesis: false
