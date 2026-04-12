@@ -1,0 +1,66 @@
+[
+  {
+    "id": "article-1",
+    "title": "The State of AI in the Enterprise 2026: Moving from Pilot to Scale",
+    "source": "Deloitte",
+    "url": "https://www.deloitte.com/us/en/what-we-do/capabilities/applied-artificial-intelligence/content/state-of-ai-in-the-enterprise.html",
+    "date": "2026-03-15",
+    "text": "Organizations today stand at the untapped edge of AI's potential. Deloitte's 2026 AI report reveals that worker access to AI rose by 50% in 2025, and the number of companies with 40% or more projects in production is set to double in six months. AI is delivering on efficiency and productivity, with two-thirds (66%) of organizations reporting gains. Yet just 34% are truly reimagining their businesses rather than optimizing what already exists. The AI skills gap is seen as the biggest barrier to integration, with education being the top way companies adjusted their talent strategies. On the governance front, agentic AI usage is poised to rise sharply, but only one in five companies has a mature model for governance of autonomous AI agents. More companies (42%) believe their strategy is highly prepared for AI adoption, but they feel less prepared in terms of infrastructure, data, risk, and talent."
+  },
+  {
+    "id": "article-2",
+    "title": "How Agentic AI Is Reshaping Enterprise Workflows Across Fortune 500",
+    "source": "AI2.work",
+    "url": "https://ai2.work/blog/how-agentic-ai-is-reshaping-enterprise-workflows-across-fortune-500",
+    "date": "2026-02-28",
+    "text": "More than 80% of Fortune 500 companies are now running active AI agents built using low-code and no-code tools, according to Microsoft's Cyber Pulse report. Microsoft has declared 2026 the 'Year of the AI Agent.' But only 11% of enterprises have actually moved AI agents into full production, according to data compiled from IDC, Gartner, and McKinsey. The global agentic AI market reached $10.8 billion in 2026 with a projected 43.8% CAGR through 2034. McKinsey estimates $2.3 trillion in annual economic value is unlockable by agentic AI. Companies that have successfully moved agents to production report 2.3x faster revenue growth and 34-61% improvements in cost structure. Average implementation costs sit around $890,000 per enterprise deployment, with a global AI talent shortage of approximately 340,000 specialists. Salesforce reports resolving 83% of approximately 32,000 weekly customer conversations using AI agents."
+  },
+  {
+    "id": "article-3",
+    "title": "Scaling AI Automation: Case Studies from Fortune 500 Enterprises in 2026",
+    "source": "TechDailyShot",
+    "url": "https://techdailyshot.com/blog/scaling-ai-automation-fortune-500-case-studies-2026",
+    "date": "2026-06-01",
+    "text": "Fortune 500 companies across sectors are now scaling AI-powered automation. A top-three global retailer implemented AI-driven demand forecasting and inventory replenishment across 85% of its stores, achieving a 19% reduction in stockouts and a 14% decrease in excess inventory within the first year. 'AI didn't just optimize our supply chain—it gave us the agility to respond to real-time market shifts,' said the company's Chief Supply Chain Officer. A multinational bank automated over 70% of its loan origination process using NLP and decision automation, dropping customer onboarding time from days to under 30 minutes while compliance errors fell by 40%. A pharmaceutical giant's AI-powered drug discovery platforms accelerated lead identification and trial candidate selection, reducing R&D cycle times by 23%. 'Companies that master AI automation at scale are setting the pace for their entire sectors,' said Maya Patel, Principal Analyst at TechView."
+  },
+  {
+    "id": "article-4",
+    "title": "Top 10 AI Implementation Best Practices from Fortune 500 Companies in 2026",
+    "source": "IS4.ai",
+    "url": "https://is4.ai/blog/our-blog-1/top-10-ai-implementation-best-practices-fortune-500-2026-363",
+    "date": "2026-04-10",
+    "text": "The most successful Fortune 500 AI implementations begin by identifying specific business problems with quantifiable metrics, not by selecting trendy AI technologies. Walmart exemplifies this with their inventory optimization system that predicts demand at the SKU level across thousands of stores, significantly reducing inventory costs while improving availability. 'We don't ask where can we use AI? We ask where are we losing money or missing opportunities? Then we evaluate if AI is the right solution—sometimes it's not,' said Suresh Kumar, Global CTO, Walmart. JPMorgan Chase has invested heavily in data governance, including data quality standards, lineage tracking, access controls, and bias detection. 'We spent considerable time building data governance before deploying our first production AI model. That investment paid for itself many times over by preventing downstream failures and compliance issues,' said Lori Beer, Global CIO, JPMorgan Chase. Siemens restructured their AI teams into cross-functional 'AI squads' with domain experts, data scientists, ML engineers, product managers, and ethics advisors, significantly increasing project success rates."
+  },
+  {
+    "id": "article-5",
+    "title": "Gartner Says Worldwide AI Spending Will Total $2.5 Trillion in 2026",
+    "source": "Gartner",
+    "url": "https://www.gartner.com/en/newsroom/press-releases/2026-1-15-gartner-says-worldwide-ai-spending-will-total-2-point-5-trillion-dollars-in-2026",
+    "date": "2026-01-15",
+    "text": "Gartner forecasts global AI spending will reach $2.52 trillion in 2026, representing a 44% year-over-year increase. Over half of this—approximately $1.37 trillion—will be directed to AI infrastructure, mainly data centers, servers, specialized hardware including GPUs and ASICs, and cloud services. AI software spending is projected at $452 billion, AI services at $589 billion, and AI cybersecurity at $51 billion. AI-optimized infrastructure-as-a-service (IaaS) spending will more than double to reach $37.5 billion in 2026, with over half allocated to inferencing workloads rather than training, reflecting production-scale real-world adoption. The US will represent 38% of global AI investment in 2026, with China and the EU following. Sectors leading in enterprise AI adoption include financial services, healthcare, and technology."
+  },
+  {
+    "id": "article-6",
+    "title": "How CIOs Are Shaping Enterprise Strategy and Growth",
+    "source": "McKinsey",
+    "url": "https://www.mckinsey.com/capabilities/mckinsey-technology/our-insights/mckinsey-global-tech-agenda-2026",
+    "date": "2026-02-20",
+    "text": "McKinsey's Global Tech Agenda 2026 finds that 72% of enterprises will have at least one AI workload in production by 2026, with the average enterprise running 4.2 AI models in production, up from 1.9 in 2023. At high-performing companies, CIOs report AI and IT's center of gravity has shifted from cost control to growth and revenue generation. Technology leaders are playing an increasingly large role in shaping overall business strategy, moving beyond the traditional role of infrastructure operators. The research identifies a widening gap between AI leaders and laggards: top-quartile companies deploy AI 3.4 times faster than bottom-quartile peers and capture 2.7 times greater economic value per AI initiative. The key differentiator is not the technology itself but the organizational capability to scale AI across business units while maintaining governance and risk oversight."
+  },
+  {
+    "id": "article-7",
+    "title": "AI-Optimized IaaS Spend Will More Than Double in 2026",
+    "source": "CIO Dive",
+    "url": "https://www.ciodive.com/news/ai-optimized-iaas-spend-up/802918/",
+    "date": "2026-03-05",
+    "text": "Spending on AI-optimized infrastructure-as-a-service will more than double to reach $37.5 billion in 2026, according to new market data. More than half of this spending will go toward inferencing workloads rather than training, a significant shift that reflects AI's maturation from research tool to production-grade enterprise technology. The trend signals that enterprises are moving past the experimentation phase and embedding AI directly into revenue-generating operations. Cloud providers including AWS, Microsoft Azure, and Google Cloud are racing to expand GPU capacity and offer specialized inference endpoints to meet demand. Most enterprise AI spending is gravitating toward incumbent vendors, bundled as part of broader cloud and software platforms. Procurement is becoming more structured, with CIOs negotiating to consolidate spend with strategic partners rather than managing fragmented point solutions."
+  },
+  {
+    "id": "article-8",
+    "title": "Enterprise Tech Spending to Cross $6 Trillion in 2026, Driven by AI Infrastructure",
+    "source": "Computerworld",
+    "url": "https://www.computerworld.com/article/4128002/global-it-spending-to-hit-6-15tn-in-2026-driven-by-ai-infrastructure-boom.html",
+    "date": "2026-03-12",
+    "text": "Global IT spending is projected to exceed $6 trillion in 2026, with AI infrastructure serving as the main growth driver. Data center systems are expected to see a 31.7% spending increase, driven by demand for AI-ready technologies including GPU clusters, high-bandwidth networking, and liquid cooling systems. While AI and data center spending are surging, other IT categories including communications, devices, and legacy services are seeing relatively modest increases as CIOs rebalance budgets to fund AI initiatives. The spending shift reflects a fundamental reallocation of enterprise technology budgets. Security, risk management, and cloud infrastructure remain top priorities, partly because AI is amplifying both the scale of cyber threats and the tools available to counter them. Analysts note that companies unable to keep pace with AI infrastructure investment risk falling permanently behind competitors who are building AI-native operations."
+  }
+]
