@@ -1,0 +1,112 @@
+Started autoresearch logic in D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\autoresearch_temp with tag 'final_test'
+[*] Injecting Startup Prompt...
+[*] Executing command: git branch --list autoresearch/final_test
+Fatal error in agent loop: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+Traceback (most recent call last):
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\autoresearch_agent.py", line 91, in main
+    response = chat.send_message(startup_message)
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\chats.py", line 252, in send_message
+    response = self._modules.generate_content(
+        model=self._model,
+        contents=self._curated_history + [input_content],  # type: ignore[arg-type]
+        config=config if config else self._config,
+    )
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\models.py", line 6021, in generate_content
+    response = self._generate_content(
+        model=model, contents=contents, config=parsed_config
+    )
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\models.py", line 4683, in _generate_content
+    response = self._api_client.request(
+        'post', path, request_dict, http_options
+    )
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\_api_client.py", line 1532, in request
+    response = self._request(http_request, http_options, stream=False)
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\_api_client.py", line 1327, in _request
+    return self._retry(self._request_once, http_request, stream)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\tenacity\__init__.py", line 470, in __call__
+    do = self.iter(retry_state=retry_state)
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\tenacity\__init__.py", line 371, in iter
+    result = action(retry_state)
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\tenacity\__init__.py", line 413, in exc_check
+    raise retry_exc.reraise()
+          ~~~~~~~~~~~~~~~~~^^
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\tenacity\__init__.py", line 184, in reraise
+    raise self.last_attempt.result()
+          ~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Python313\Lib\concurrent\futures\_base.py", line 449, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python313\Lib\concurrent\futures\_base.py", line 401, in __get_result
+    raise self._exception
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\tenacity\__init__.py", line 473, in __call__
+    result = fn(*args, **kwargs)
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\_api_client.py", line 1304, in _request_once
+    errors.APIError.raise_for_response(response)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\errors.py", line 155, in raise_for_response
+    cls.raise_error(response.status_code, response_json, response)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\errors.py", line 186, in raise_error
+    raise ServerError(status_code, response_json, response)
+google.genai.errors.ServerError: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+
+Traceback (most recent call last):
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\autoresearch_agent.py", line 91, in main
+    response = chat.send_message(startup_message)
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\chats.py", line 252, in send_message
+    response = self._modules.generate_content(
+        model=self._model,
+        contents=self._curated_history + [input_content],  # type: ignore[arg-type]
+        config=config if config else self._config,
+    )
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\models.py", line 6021, in generate_content
+    response = self._generate_content(
+        model=model, contents=contents, config=parsed_config
+    )
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\models.py", line 4683, in _generate_content
+    response = self._api_client.request(
+        'post', path, request_dict, http_options
+    )
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\_api_client.py", line 1532, in request
+    response = self._request(http_request, http_options, stream=False)
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\_api_client.py", line 1327, in _request
+    return self._retry(self._request_once, http_request, stream)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\tenacity\__init__.py", line 470, in __call__
+    do = self.iter(retry_state=retry_state)
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\tenacity\__init__.py", line 371, in iter
+    result = action(retry_state)
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\tenacity\__init__.py", line 413, in exc_check
+    raise retry_exc.reraise()
+          ~~~~~~~~~~~~~~~~~^^
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\tenacity\__init__.py", line 184, in reraise
+    raise self.last_attempt.result()
+          ~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Python313\Lib\concurrent\futures\_base.py", line 449, in result
+    return self.__get_result()
+           ~~~~~~~~~~~~~~~~~^^
+  File "C:\Python313\Lib\concurrent\futures\_base.py", line 401, in __get_result
+    raise self._exception
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\tenacity\__init__.py", line 473, in __call__
+    result = fn(*args, **kwargs)
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\_api_client.py", line 1304, in _request_once
+    errors.APIError.raise_for_response(response)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\errors.py", line 155, in raise_for_response
+    cls.raise_error(response.status_code, response_json, response)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\venv\Lib\site-packages\google\genai\errors.py", line 186, in raise_error
+    raise ServerError(status_code, response_json, response)
+google.genai.errors.ServerError: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\autoresearch_agent.py", line 119, in <module>
+    main()
+    ~~~~^^
+  File "D:\AnithingLLM\PROJECT LAPTOP ASSISTENT\autoresearch_agent.py", line 114, in main
+    consecutive_errors += 1
+    ^^^^^^^^^^^^^^^^^^
+UnboundLocalError: cannot access local variable 'consecutive_errors' where it is not associated with a value
