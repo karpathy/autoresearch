@@ -1,10 +1,10 @@
-# Product R&D Agent
+# theRunner - Product R&D Agent
 
-An autonomous swarm of agents (or just one very busy one) dedicated to product research, strategy, and development roadmapping.
+**theRunner** is an autonomous Product Research & Development Agent framework designed for high-reasoning models like Hermes. It transforms an AI agent into a dedicated researcher, strategist, and roadmapper for multiple product projects.
 
 ## How it works
 
-The agent operates on projects defined in the `projects/` directory. For each project, it performs market research using web scraping, synthesizes a product strategy, and develops a roadmap.
+The agent (theRunner) operates on projects defined in the `projects/` directory. It uses internet scraping to gather market intelligence and iteratively builds out product strategies and development roadmaps.
 
 ### Project Structure
 
@@ -20,8 +20,8 @@ projects/
 
 ### Core Components
 
-- **`program.md`**: The brain of the agent. Contains instructions for the autonomous R&D loop.
-- **`scrape.py`**: A utility script that allows the agent to search the web and extract content from websites.
+- **`theRunner.md`**: The core instructions and autonomous loop for the agent.
+- **`scrape.py`**: A utility script for internet search and content extraction.
 - **`pyproject.toml`**: Project dependencies.
 
 ## Quick Start
@@ -34,21 +34,21 @@ projects/
     ```
 
 2.  **Add a new project**:
-    Create a folder in `projects/` and add a `brief.md`.
+    Create a folder in `projects/` and add a `brief.md` describing your vision.
 
-3.  **Run the agent**:
-    Point your AI agent to `program.md` and let it start researching.
+3.  **Boot theRunner**:
+    Point your Hermes agent (or any LLM) to `theRunner.md` and let it start the autonomous research loop.
 
 ## Tools
 
-The agent can use `scrape.py` for internet access:
+theRunner uses `scrape.py` for internet access:
 
 ```bash
-# Search for something
-uv run python scrape.py search "competitors for carbon tracking apps"
+# Search for market data
+uv run python scrape.py search "AI tutoring market trends 2025"
 
 # Scrape a specific URL
-uv run python scrape.py get https://example.com/article
+uv run python scrape.py get https://techcrunch.com/article-about-competition
 ```
 
 ## License
