@@ -17,6 +17,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# nvcc is not executable in this sandbox; patch out the reporter that calls it
+# so it doesn't mask real inductor errors
+import torch._dynamo.debug_utils as _ddu
+_ddu._cuda_system_info_comment = lambda: ""
+import torch._dynamo.repro.after_aot as _aot
+_aot._cuda_system_info_comment = lambda: ""
+
 from kernels import get_kernel
 cap = torch.cuda.get_device_capability()
 # varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
