@@ -19,9 +19,26 @@ import torch.nn.functional as F
 
 from kernels import get_kernel
 cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+gpu_props = torch.cuda.get_device_properties(0)
+gpu_total_mem_gb = gpu_props.total_memory / (1024 ** 3)
+
+if gpu_total_mem_gb <= 8.5:
+    os.environ.setdefault("AUTORESEARCH_MAX_SEQ_LEN", "512")
+    os.environ.setdefault("AUTORESEARCH_EVAL_TOKENS", str(4 * 524288))
+
+repo = None
+fa3 = None
+if cap == (9, 0):
+    # The repository is tuned for Hopper. On other GPUs it can fail during
+    # kernel load before runtime fallback gets a chance to run.
+    repo = "varunneal/flash-attention-3"
+    try:
+        fa3 = get_kernel(repo).flash_attn_interface
+    except Exception as e:
+        print(f"Warning: failed to initialize Flash Attention kernel from {repo}: {e}")
+        print("Warning: falling back to PyTorch scaled_dot_product_attention.")
+else:
+    print(f"Warning: GPU capability {cap} is not Hopper; using PyTorch scaled_dot_product_attention.")
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
 
@@ -58,6 +75,34 @@ def apply_rotary_emb(x, cos, sin):
     return torch.cat([y1, y2], 3)
 
 
+def _make_sliding_causal_mask(seq_len, window_size, device):
+    pos = torch.arange(seq_len, device=device)
+    mask = pos[:, None] >= pos[None, :]
+    if window_size is not None and window_size > 0 and window_size < seq_len:
+        mask &= (pos[:, None] - pos[None, :]) < window_size
+    return mask.view(1, 1, seq_len, seq_len)
+
+
+def attention_forward(q, k, v, window_size):
+    if fa3 is not None:
+        try:
+            return fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        except RuntimeError as e:
+            if "no kernel image is available" not in str(e):
+                raise
+            print("Warning: Flash Attention kernel is incompatible with this GPU, falling back to PyTorch SDPA.")
+
+    q_t = q.transpose(1, 2)
+    k_t = k.transpose(1, 2)
+    v_t = v.transpose(1, 2)
+    local_window = window_size[0] if window_size is not None else -1
+    attn_mask = None
+    if local_window is not None and local_window > 0 and local_window < q.size(1):
+        attn_mask = _make_sliding_causal_mask(q.size(1), local_window, q.device)
+    y = F.scaled_dot_product_attention(q_t, k_t, v_t, attn_mask=attn_mask, is_causal=attn_mask is None)
+    return y.transpose(1, 2)
+
+
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
@@ -90,7 +135,7 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        y = attention_forward(q, k, v, window_size)
         y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
@@ -435,7 +480,7 @@ HEAD_DIM = 128          # target head dimension for attention
 WINDOW_PATTERN = "SSSL" # sliding window pattern: L=full, S=half context
 
 # Optimization
-TOTAL_BATCH_SIZE = 2**19 # ~524K tokens per optimizer step
+TOTAL_BATCH_SIZE = 2**19 if gpu_total_mem_gb > 8.5 else 2**15
 EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
@@ -447,8 +492,8 @@ WARMDOWN_RATIO = 0.5    # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
-DEPTH = 8               # number of transformer layers
-DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
+DEPTH = 8 if gpu_total_mem_gb > 8.5 else 4
+DEVICE_BATCH_SIZE = 128 if gpu_total_mem_gb > 8.5 else 8
 
 # ---------------------------------------------------------------------------
 # Setup: tokenizer, model, optimizer, dataloader

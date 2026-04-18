@@ -27,9 +27,9 @@ import torch
 # Constants (fixed, do not modify)
 # ---------------------------------------------------------------------------
 
-MAX_SEQ_LEN = 2048       # context length
+MAX_SEQ_LEN = int(os.getenv("AUTORESEARCH_MAX_SEQ_LEN", "2048"))  # context length
 TIME_BUDGET = 300        # training time budget in seconds (5 minutes)
-EVAL_TOKENS = 40 * 524288  # number of tokens for val eval
+EVAL_TOKENS = int(os.getenv("AUTORESEARCH_EVAL_TOKENS", str(40 * 524288)))  # number of tokens for val eval
 
 # ---------------------------------------------------------------------------
 # Configuration
