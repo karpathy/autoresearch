@@ -9,7 +9,8 @@
 ## [Dafouz et al., 2014] 'Surely they can't do as well'
 
 **APA7 citation:**
-> Dafouz, E., Camacho, M., & Urquia, E. (2014). 'Surely they can't do as well': a comparison of business students' academic performance in English-medium and Spanish-as-first-language-medium programmes. *Language and Education*, *28*(3), 223–236. https://doi.org/10.1080/09500782.2013.808661
+
+> Dafouz, E., Camacho, M., & Urquia, E. (2014). 'Surely they can't do as well': a comparison of business students' academic performance in English-medium and Spanish-as-first-language-medium programmes. *Language and Education*, *28*(3), 223–236. [https://doi.org/10.1080/09500782.2013.808661](https://doi.org/10.1080/09500782.2013.808661)
 
 **Local file:** not downloaded (Full text link available on WoS)
 
@@ -17,6 +18,7 @@
 This study compared the academic performance of business students enrolled in either English-medium or Spanish-medium programmes at a Spanish university. Using grade data and qualitative interviews, the authors found no statistically significant differences in overall academic performance between the two groups, despite initial scepticism from faculty and students.
 
 **Key findings / themes:**
+
 - EMI students performed comparably to L1-medium students in academic exams
 - Initial stakeholder anxiety about EMI quality was not supported by evidence
 - Discipline-specific factors (accounting/economics) may moderate EMI effects
@@ -33,7 +35,8 @@ Foundational comparative study showing no academic disadvantage in EMI; highly c
 ## [Xie & Curle, 2020] Success in EMI in China
 
 **APA7 citation:**
-> Xie, W., & Curle, S. (2020). Success in English Medium Instruction in China: significant indicators and implications. *International Journal of Bilingual Education and Bilingualism*, *25*(2), 585–597. https://doi.org/10.1080/13670050.2019.1703898
+
+> Xie, W., & Curle, S. (2020). Success in English Medium Instruction in China: significant indicators and implications. *International Journal of Bilingual Education and Bilingualism*, *25*(2), 585–597. [https://doi.org/10.1080/13670050.2019.1703898](https://doi.org/10.1080/13670050.2019.1703898)
 
 **Local file:** Free submitted article available via repository link on WoS
 
@@ -41,6 +44,7 @@ Foundational comparative study showing no academic disadvantage in EMI; highly c
 A mixed-methods study at a Chinese state university (n = 100) combining questionnaire data, exam scores, and semi-structured interviews to identify indicators of academic success in EMI. English proficiency, motivation, and engagement with the English-language environment emerged as significant predictors.
 
 **Key findings / themes:**
+
 - English proficiency is a significant positive predictor of EMI academic success
 - Motivation to use English and engagement with English-medium resources matters
 - Self-study habits and attendance are additional success factors
@@ -57,7 +61,8 @@ WoS Highly Cited Paper (118 citations); identifies actionable predictors of EMI 
 ## [Dafouz & Camacho-Miñano, 2016] EMI and accounting achievement
 
 **APA7 citation:**
-> Dafouz, E., & Camacho-Miñano, M. M. (2016). Exploring the impact of English-medium instruction on university student academic achievement: The case of accounting. *English for Specific Purposes*, *44*, 57–67. https://doi.org/10.1016/j.esp.2016.06.001
+
+> Dafouz, E., & Camacho-Miñano, M. M. (2016). Exploring the impact of English-medium instruction on university student academic achievement: The case of accounting. *English for Specific Purposes*, *44*, 57–67. [https://doi.org/10.1016/j.esp.2016.06.001](https://doi.org/10.1016/j.esp.2016.06.001)
 
 **Local file:** Free submitted article available via repository link on WoS
 
@@ -65,6 +70,7 @@ WoS Highly Cited Paper (118 citations); identifies actionable predictors of EMI 
 Investigated the impact of EMI on undergraduate accounting students' academic achievement at a Spanish university. Regression analyses on multi-year grade data found that EMI had a slight negative effect in the first year but the gap disappeared by the second year, suggesting an adaptation period.
 
 **Key findings / themes:**
+
 - EMI may create a short-term academic disadvantage (first-year effect)
 - Long-term academic performance equalises between EMI and non-EMI students
 - Prior English proficiency moderates the initial disadvantage
@@ -81,7 +87,8 @@ Shows time-dependent EMI effects; important for understanding adjustment traject
 ## [Macaro et al., 2018] Systematic review of EMI in HE
 
 **APA7 citation:**
-> Macaro, E., Curle, S., Pun, J., An, J., & Dearden, J. (2018). A systematic review of English medium instruction in higher education. *Language Teaching*, *51*(1), 36–76. https://doi.org/10.1017/s0261444817000350
+
+> Macaro, E., Curle, S., Pun, J., An, J., & Dearden, J. (2018). A systematic review of English medium instruction in higher education. *Language Teaching*, *51*(1), 36–76. [https://doi.org/10.1017/s0261444817000350](https://doi.org/10.1017/s0261444817000350)
 
 **Local file:** not downloaded
 
@@ -89,6 +96,7 @@ Shows time-dependent EMI effects; important for understanding adjustment traject
 A comprehensive systematic review of 83 peer-reviewed EMI studies in higher education across multiple contexts. The review examined student outcomes, teacher practices, and policy implications. Found wide variability in EMI effects on academic achievement and called for more rigorous research designs.
 
 **Key findings / themes:**
+
 - EMI research is highly heterogeneous in design, context, and outcome measures
 - No consistent evidence of academic disadvantage or advantage from EMI
 - Language proficiency is the most commonly studied predictor of EMI outcomes
@@ -106,7 +114,8 @@ Essential conceptual and empirical reference; establishes the field's state of k
 ## [Curle et al., 2020] Predictors of EMI academic success
 
 **APA7 citation:**
-> Curle, S., Yuksel, D., Soruç, A., & Altay, M. (2020). Predictors of English Medium Instruction academic success: English proficiency versus first language medium. *System*, *95*, 102378. https://doi.org/10.1016/j.system.2020.102378
+
+> Curle, S., Yuksel, D., Soruç, A., & Altay, M. (2020). Predictors of English Medium Instruction academic success: English proficiency versus first language medium. *System*, *95*, 102378. [https://doi.org/10.1016/j.system.2020.102378](https://doi.org/10.1016/j.system.2020.102378)
 
 **Local file:** not downloaded
 
@@ -114,6 +123,7 @@ Essential conceptual and empirical reference; establishes the field's state of k
 Examined whether English proficiency or prior first-language-medium instruction better predicts academic success in an EMI university in Turkey. Results indicated that English proficiency was a stronger predictor of academic success than first-language-medium background, though both contributed independently.
 
 **Key findings / themes:**
+
 - English proficiency is a stronger predictor of EMI academic success than L1-medium background
 - Students with higher proficiency adapt more rapidly to EMI demands
 - Prior L1-medium education negatively predicted EMI academic outcomes
@@ -130,7 +140,8 @@ Directly addresses research question; Turkish context closely relevant; Mehmet A
 ## [Soruç et al., 2021] Academic language challenges in EMI
 
 **APA7 citation:**
-> Soruç, A., Altay, M., Curle, S., & Yuksel, D. (2021). Students' academic language-related challenges in English Medium Instruction: The role of English proficiency and language gain. *System*, *103*, 102651. https://doi.org/10.1016/j.system.2021.102651
+
+> Soruç, A., Altay, M., Curle, S., & Yuksel, D. (2021). Students' academic language-related challenges in English Medium Instruction: The role of English proficiency and language gain. *System*, *103*, 102651. [https://doi.org/10.1016/j.system.2021.102651](https://doi.org/10.1016/j.system.2021.102651)
 
 **Local file:** not downloaded
 
@@ -138,6 +149,7 @@ Directly addresses research question; Turkish context closely relevant; Mehmet A
 Investigated the linguistic challenges faced by students in EMI contexts and whether English proficiency and language gain mediate these challenges. Higher-proficiency students reported fewer academic language difficulties; language gain over the academic year was associated with reduced challenge.
 
 **Key findings / themes:**
+
 - Academic language challenges are inversely related to English proficiency
 - Language gain during EMI moderates linguistic difficulty over time
 - Listening comprehension and academic writing are most challenging domains
@@ -154,7 +166,8 @@ Shows the language-achievement nexus from the challenge side; directly relevant 
 ## [Yuksel et al., 2021] Longitudinal interplay of language improvement and academic success
 
 **APA7 citation:**
-> Yuksel, D., Soruç, A., Altay, M., & Curle, S. (2021). A longitudinal study at an English medium instruction university in Turkey: the interplay between English language improvement and academic success. *Applied Linguistics Review*, *14*(3), 533–552. https://doi.org/10.1515/applirev-2020-0097
+
+> Yuksel, D., Soruç, A., Altay, M., & Curle, S. (2021). A longitudinal study at an English medium instruction university in Turkey: the interplay between English language improvement and academic success. *Applied Linguistics Review*, *14*(3), 533–552. [https://doi.org/10.1515/applirev-2020-0097](https://doi.org/10.1515/applirev-2020-0097)
 
 **Local file:** not downloaded
 
@@ -162,6 +175,7 @@ Shows the language-achievement nexus from the challenge side; directly relevant 
 A longitudinal study tracking EMI students over one academic year in Turkey, examining how English language improvement relates to academic GPA. Students who showed greater English language gains also showed higher academic success, indicating a mutually reinforcing relationship.
 
 **Key findings / themes:**
+
 - English language improvement and academic success are bidirectionally linked in EMI
 - The relationship strengthens over time (longitudinal effect)
 - Low-proficiency entrants can achieve academic success if language improves sufficiently
@@ -178,7 +192,8 @@ Key longitudinal evidence from Turkish EMI context; Mehmet Altay is co-author.
 ## [Aizawa et al., 2020] Beyond the threshold — EMI in Japan
 
 **APA7 citation:**
-> Aizawa, I., Rose, H., Thompson, G., & Curle, S. (2020). Beyond the threshold: Exploring English language proficiency, linguistic challenges, and academic language skills of Japanese students in an English medium instruction programme. *Language Teaching Research*, *27*(4), 837–861. https://doi.org/10.1177/1362168820965510
+
+> Aizawa, I., Rose, H., Thompson, G., & Curle, S. (2020). Beyond the threshold: Exploring English language proficiency, linguistic challenges, and academic language skills of Japanese students in an English medium instruction programme. *Language Teaching Research*, *27*(4), 837–861. [https://doi.org/10.1177/1362168820965510](https://doi.org/10.1177/1362168820965510)
 
 **Local file:** not downloaded
 
@@ -186,6 +201,7 @@ Key longitudinal evidence from Turkish EMI context; Mehmet Altay is co-author.
 Investigated whether a proficiency threshold exists for EMI academic success among Japanese university students, finding that students above a threshold level performed better but that academic language skills were equally important predictors alongside general proficiency.
 
 **Key findings / themes:**
+
 - A proficiency threshold exists beyond which academic performance improves substantially
 - Academic language skills (beyond general proficiency) independently predict EMI success
 - Listening and reading comprehension are bottlenecks for academic achievement in EMI
@@ -202,7 +218,8 @@ Provides cross-contextual evidence for proficiency-threshold effects; useful for
 ## [Guan et al., 2025] Self-actualization, self-efficacy, and emotions in EMI achievement
 
 **APA7 citation:**
-> Guan, Y., Du, L., Yang, C., & Hu, H.-L. (2025). Exploring the roles of self-actualization, language self-efficacy, and academic emotions in EMI students' achievement: a structural equation modeling approach. *Frontiers in Education*, *10*, 1567143. https://doi.org/10.3389/feduc.2025.1567143
+
+> Guan, Y., Du, L., Yang, C., & Hu, H.-L. (2025). Exploring the roles of self-actualization, language self-efficacy, and academic emotions in EMI students' achievement: a structural equation modeling approach. *Frontiers in Education*, *10*, 1567143. [https://doi.org/10.3389/feduc.2025.1567143](https://doi.org/10.3389/feduc.2025.1567143)
 
 **Local file:** Open access — available directly via DOI
 
@@ -210,6 +227,7 @@ Provides cross-contextual evidence for proficiency-threshold effects; useful for
 Used structural equation modelling to test how self-actualization, language self-efficacy, and academic emotions jointly predict EMI students' academic achievement. Self-actualization and positive academic emotions both positively predicted achievement; language self-efficacy mediated the relationship between self-actualization and emotions.
 
 **Key findings / themes:**
+
 - Language self-efficacy is a significant mediator between self-actualization and achievement
 - Positive academic emotions (enjoyment, pride) directly enhance EMI academic performance
 - Anxiety reduces achievement even when proficiency is controlled
@@ -226,7 +244,8 @@ Provides psychological/motivational dimension beyond language proficiency; suppo
 ## [Cinkara & Yüksel, 2025] EMI in medical and dental education in Türkiye
 
 **APA7 citation:**
-> Cinkara, E., & Yüksel, M. E. (2025). The evaluation of EMI in preparing medical and dental students for specialty exams. *Journal of Multilingual and Multicultural Development*, 1–15. https://doi.org/10.1080/01434632.2025.2532705
+
+> Cinkara, E., & Yüksel, M. E. (2025). The evaluation of EMI in preparing medical and dental students for specialty exams. *Journal of Multilingual and Multicultural Development*, 1–15. [https://doi.org/10.1080/01434632.2025.2532705](https://doi.org/10.1080/01434632.2025.2532705)
 
 **Local file:** not downloaded (Full text link on WoS)
 
@@ -234,6 +253,7 @@ Provides psychological/motivational dimension beyond language proficiency; suppo
 Evaluated the impact of English medium instruction on the academic performance of medical and dental students in Turkey using standardised specialty exam results. EMI students performed comparably to Turkish-medium peers in most specialties, with subject-specific variation.
 
 **Key findings / themes:**
+
 - EMI does not significantly disadvantage medical and dental students in specialty exams
 - Subject-specific differences exist — basic science subjects show more EMI challenge
 - Students perceive EMI as beneficial for their international career prospects
@@ -258,18 +278,50 @@ Recent Turkish EMI study (2025); discipline-specific (medical); complements exis
 **Highly relevant hits (examples from results list):**
 
 - Jin, C., & Liu, Y. — *Computer Assisted Language Learning* — “Diagnosing and promoting learners' L2 inferential reading development through hybrid computerised dynamic assessment in the Chinese EFL classroom” (full record shows publisher links; DOI verified via Crossref: `10.1080/09588221.2024.2421521`).
-
 - Jin, C., & Liu, Y. — *ELT Journal* — “Design for the future: optimizing mediations in L2 dynamic assessment” (design of mediation ladders for computerised DA; complements the CAL hybrid C-DA paper).
 
 **APA7 citations (Crossref-verified where noted):**
 
-> Jin, C., & Liu, Y. (2024). Diagnosing and promoting learners’ L2 inferential reading development through hybrid computerised dynamic assessment in the Chinese EFL classroom. *Computer Assisted Language Learning*. Advance online publication. https://doi.org/10.1080/09588221.2024.2421521
+> Jin, C., & Liu, Y. (2024). Diagnosing and promoting learners’ L2 inferential reading development through hybrid computerised dynamic assessment in the Chinese EFL classroom. *Computer Assisted Language Learning*. Advance online publication. [https://doi.org/10.1080/09588221.2024.2421521](https://doi.org/10.1080/09588221.2024.2421521)
 
-> Kuperman, V., Siegelman, N., Schroeder, S., Acartürk, C., Alexeeva, S., Amenta, S., Bertram, R., Bonandrini, R., Brysbaert, M., Chernova, D., Da Fonseca, S. M., Dirix, N., Duyck, W., Fella, A., Frost, R., Gattei, C. A., Kalaitzi, A., Lõo, K., Marelli, M., … Usal, K. A. (2023). Text reading in English as a second language: Evidence from the Multilingual Eye-Movements Corpus. *Studies in Second Language Acquisition*, *45*(1), 3–37. https://doi.org/10.1017/S0272263121000954
+> Kuperman, V., Siegelman, N., Schroeder, S., Acartürk, C., Alexeeva, S., Amenta, S., Bertram, R., Bonandrini, R., Brysbaert, M., Chernova, D., Da Fonseca, S. M., Dirix, N., Duyck, W., Fella, A., Frost, R., Gattei, C. A., Kalaitzi, A., Lõo, K., Marelli, M., … Usal, K. A. (2023). Text reading in English as a second language: Evidence from the Multilingual Eye-Movements Corpus. *Studies in Second Language Acquisition*, *45*(1), 3–37. [https://doi.org/10.1017/S0272263121000954](https://doi.org/10.1017/S0272263121000954)
 
-> Poehner, M. E., & Wang, Z. (2021). Dynamic Assessment and second language development. *Language Teaching*, *54*(4), 472–490. https://doi.org/10.1017/S0261444820000555
+> Poehner, M. E., & Wang, Z. (2021). Dynamic Assessment and second language development. *Language Teaching*, *54*(4), 472–490. [https://doi.org/10.1017/S0261444820000555](https://doi.org/10.1017/S0261444820000555)
 
 **Relevance to current study:**
 Updates classic C-DA citations with hybrid C-DA implementation evidence (Jin & Liu, 2024), large-scale L2 eye-movement heterogeneity (Kuperman et al., 2023), and a contemporary DA synthesis (Poehner & Wang, 2021).
+
+---
+
+## Cambridge FRP — dual focus: eye-tracking in testing + technology-mediated DA (2026-04-19)
+
+**Purpose:** Support the A-IDA proposal with two parallel literature strands (not requiring their intersection).
+
+### A. Eye-tracking / process evidence in language testing (WoS + Crossref)
+
+**WoS Core Collection (Topic):** `eye tracking AND language testing` — **885** documents (2026-04-19 session); first screen includes the review by **Cao & Ma** in *Colombian Applied Linguistics Journal* (“The Review on Eye-Tracking Studies in L2 Assessment”).
+
+**Anchor sources (DOI-verified):**
+
+- Cao, X., & Ma, Z. (2025). Review of eye-tracking in L2 assessment — *Colombian Applied Linguistics Journal*. https://doi.org/10.14483/22487085.22043 *(appears at top of WoS result list for this query)*
+
+- Bax, S. (2013). Cognitive processing during reading tests — *Language Testing*. https://doi.org/10.1177/0265532212473244
+- Lim, H. (2020). High-stakes L2 reading test validity — eye-tracking — *Language Testing in Asia*. https://doi.org/10.1186/s40468-020-00107-0
+- Batty, A. (2020). Visual cues in L2 listening tests — eye-tracking — *Language Testing*. https://doi.org/10.1177/0265532220951504
+- Tywoniw, R. (2023). Individual differences + gaze in L2 reading assessment — *Frontiers in Communication*. https://doi.org/10.3389/fcomm.2023.1176986
+- Godfroid, A., Winke, P., & Conklin, K. (2020). SLA eye-tracking introduction — *Second Language Research*. https://doi.org/10.1177/0267658320922578
+
+### B. Computerised / technology-mediated dynamic assessment
+
+**WoS (Topic, prior session):** `computerized dynamic assessment AND reading AND L2` — 19 documents; includes hybrid C-DA (Jin & Liu) and related CALL work.
+
+**Anchor sources:**
+
+- Poehner, M. E., Zhang, J., & Lu, X. (2015). C-DA in *Language Testing*. https://doi.org/10.1177/0265532214560390
+- Zhang, J., & Lu, X. (2019). Measuring/supporting development via C-DA — *Language and Sociocultural Theory*. https://doi.org/10.1558/lst.31710
+- Jin, C., & Liu, Y. (2024). Hybrid computerised DA for L2 inferential reading — *CALL*. https://doi.org/10.1080/09588221.2024.2421521
+- Poehner, M. E., & Wang, Z. (2021). DA synthesis — *Language Teaching*. https://doi.org/10.1017/S0261444820000555
+
+**Discovery:** Google Scholar and ResearchGate were used secondarily to confirm chapter/book entries and recent CALL articles; primary bibliographic data taken from Crossref DOIs.
 
 ---

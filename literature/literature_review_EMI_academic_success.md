@@ -80,22 +80,22 @@ What this body of research most clearly implies is a different way of thinking a
 
 ## References
 
-Aizawa, I., Rose, H., Thompson, G., & Curle, S. (2020). Beyond the threshold: Exploring English language proficiency, linguistic challenges, and academic language skills of Japanese students in an English medium instruction programme. *Language Teaching Research*, *27*(4), 837–861. https://doi.org/10.1177/1362168820965510
+Aizawa, I., Rose, H., Thompson, G., & Curle, S. (2020). Beyond the threshold: Exploring English language proficiency, linguistic challenges, and academic language skills of Japanese students in an English medium instruction programme. *Language Teaching Research*, *27*(4), 837–861. [https://doi.org/10.1177/1362168820965510](https://doi.org/10.1177/1362168820965510)
 
-Cinkara, E., & Yüksel, M. E. (2025). The evaluation of EMI in preparing medical and dental students for specialty exams. *Journal of Multilingual and Multicultural Development*, 1–15. https://doi.org/10.1080/01434632.2025.2532705
+Cinkara, E., & Yüksel, M. E. (2025). The evaluation of EMI in preparing medical and dental students for specialty exams. *Journal of Multilingual and Multicultural Development*, 1–15. [https://doi.org/10.1080/01434632.2025.2532705](https://doi.org/10.1080/01434632.2025.2532705)
 
-Curle, S., Yuksel, D., Soruç, A., & Altay, M. (2020). Predictors of English Medium Instruction academic success: English proficiency versus first language medium. *System*, *95*, 102378. https://doi.org/10.1016/j.system.2020.102378
+Curle, S., Yuksel, D., Soruç, A., & Altay, M. (2020). Predictors of English Medium Instruction academic success: English proficiency versus first language medium. *System*, *95*, 102378. [https://doi.org/10.1016/j.system.2020.102378](https://doi.org/10.1016/j.system.2020.102378)
 
-Dafouz, E., Camacho, M., & Urquia, E. (2014). 'Surely they can't do as well': a comparison of business students' academic performance in English-medium and Spanish-as-first-language-medium programmes. *Language and Education*, *28*(3), 223–236. https://doi.org/10.1080/09500782.2013.808661
+Dafouz, E., Camacho, M., & Urquia, E. (2014). 'Surely they can't do as well': a comparison of business students' academic performance in English-medium and Spanish-as-first-language-medium programmes. *Language and Education*, *28*(3), 223–236. [https://doi.org/10.1080/09500782.2013.808661](https://doi.org/10.1080/09500782.2013.808661)
 
-Dafouz, E., & Camacho-Miñano, M. M. (2016). Exploring the impact of English-medium instruction on university student academic achievement: The case of accounting. *English for Specific Purposes*, *44*, 57–67. https://doi.org/10.1016/j.esp.2016.06.001
+Dafouz, E., & Camacho-Miñano, M. M. (2016). Exploring the impact of English-medium instruction on university student academic achievement: The case of accounting. *English for Specific Purposes*, *44*, 57–67. [https://doi.org/10.1016/j.esp.2016.06.001](https://doi.org/10.1016/j.esp.2016.06.001)
 
-Guan, Y., Du, L., Yang, C., & Hu, H.-L. (2025). Exploring the roles of self-actualization, language self-efficacy, and academic emotions in EMI students' achievement: a structural equation modeling approach. *Frontiers in Education*, *10*, 1567143. https://doi.org/10.3389/feduc.2025.1567143
+Guan, Y., Du, L., Yang, C., & Hu, H.-L. (2025). Exploring the roles of self-actualization, language self-efficacy, and academic emotions in EMI students' achievement: a structural equation modeling approach. *Frontiers in Education*, *10*, 1567143. [https://doi.org/10.3389/feduc.2025.1567143](https://doi.org/10.3389/feduc.2025.1567143)
 
-Macaro, E., Curle, S., Pun, J., An, J., & Dearden, J. (2018). A systematic review of English medium instruction in higher education. *Language Teaching*, *51*(1), 36–76. https://doi.org/10.1017/s0261444817000350
+Macaro, E., Curle, S., Pun, J., An, J., & Dearden, J. (2018). A systematic review of English medium instruction in higher education. *Language Teaching*, *51*(1), 36–76. [https://doi.org/10.1017/s0261444817000350](https://doi.org/10.1017/s0261444817000350)
 
-Soruç, A., Altay, M., Curle, S., & Yuksel, D. (2021). Students' academic language-related challenges in English Medium Instruction: The role of English proficiency and language gain. *System*, *103*, 102651. https://doi.org/10.1016/j.system.2021.102651
+Soruç, A., Altay, M., Curle, S., & Yuksel, D. (2021). Students' academic language-related challenges in English Medium Instruction: The role of English proficiency and language gain. *System*, *103*, 102651. [https://doi.org/10.1016/j.system.2021.102651](https://doi.org/10.1016/j.system.2021.102651)
 
-Xie, W., & Curle, S. (2020). Success in English Medium Instruction in China: significant indicators and implications. *International Journal of Bilingual Education and Bilingualism*, *25*(2), 585–597. https://doi.org/10.1080/13670050.2019.1703898
+Xie, W., & Curle, S. (2020). Success in English Medium Instruction in China: significant indicators and implications. *International Journal of Bilingual Education and Bilingualism*, *25*(2), 585–597. [https://doi.org/10.1080/13670050.2019.1703898](https://doi.org/10.1080/13670050.2019.1703898)
 
-Yuksel, D., Soruç, A., Altay, M., & Curle, S. (2021). A longitudinal study at an English medium instruction university in Turkey: the interplay between English language improvement and academic success. *Applied Linguistics Review*, *14*(3), 533–552. https://doi.org/10.1515/applirev-2020-0097
+Yuksel, D., Soruç, A., Altay, M., & Curle, S. (2021). A longitudinal study at an English medium instruction university in Turkey: the interplay between English language improvement and academic success. *Applied Linguistics Review*, *14*(3), 533–552. [https://doi.org/10.1515/applirev-2020-0097](https://doi.org/10.1515/applirev-2020-0097)

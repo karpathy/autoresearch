@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Round 14 Full Research Proposal Word document."""
+"""Build Round 14 Full Research Proposal Word document (source → regenerates .docx)."""
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt
@@ -30,64 +30,74 @@ sections = [
     (
         "Alignment with the Round 14 call",
         (
-            "This proposal responds to the Round 14 theme of exploring emerging constructs in language assessment "
-            "by operationalising “construct-relevant process evidence” alongside product scores. Rather than "
-            "treating comprehension as a single latent trait inferred only from item responses, the project "
-            "models reading as a dynamic interaction among text features, learner profiles, and moment-to-moment "
-            "processing behaviours that can be indexed through eye-movement metrics and responsiveness to "
-            "calibrated mediation. The design therefore targets construct representation and explanatory "
-            "fairness in digital reading assessment: it connects observable processing signatures to adaptive "
-            "scaffolding aligned with the Zone of Proximal Development (ZPD), supporting more inclusive "
-            "inferences for diverse EFL readers."
+            "This proposal addresses Round 14 priorities around emerging constructs and digitally mediated "
+            "assessment by modelling reading comprehension as jointly evidenced by (a) product scores, "
+            "(b) traceable processing behaviours, and (c) responsiveness to calibrated mediation. Rather than "
+            "treating comprehension as a single latent trait inferred only from item responses, the study "
+            "articulates how moment-to-moment allocation of attention—indexed through eye-movement parameters—"
+            "can inform which scaffolding is triggered for which learner on which item type. The design therefore "
+            "targets explanatory fairness: it links observable processing signatures to adaptive support aligned "
+            "with the Zone of Proximal Development (ZPD), supporting more equitable inferences for diverse EFL "
+            "readers when digital tests risk under-representing emerging abilities (McNamara, 2014; Poehner & Wang, 2021)."
         ),
     ),
     (
         "Background and context of the study",
         (
-            "Over a decade ago, McNamara (2014) argued that language assessment was facing a moment of crisis, "
-            "driven by technological advances and shifting communicative realities. Today, that call for "
-            "re-evaluation is more urgent. As educational landscapes evolve, assessment must move from "
-            "static snapshots toward innovative, inclusive practices that reflect the complexity of learning. "
-            "A productive framework is Vygotskyan Dynamic Assessment (DA), which reconceptualises testing and "
-            "teaching as a single, dialectically integrated activity (Lantolf & Poehner, 2010; Poehner & Wang, 2021). "
-            "Rooted in sociocultural theory and the ZPD, DA integrates assessment and instruction so that the goal "
-            "is not only to measure independent performance but to evaluate emerging abilities through cooperative "
-            "mediation (Poehner & Lantolf, 2005). In EFL reading comprehension, DA identifies where a reader "
-            "struggles and provides immediate, calibrated support.\n\n"
-            "Historically, DA divides into Interactionist and Interventionist traditions (Lantolf & Poehner, 2004). "
-            "Interactionist DA is highly responsive but labour-intensive; Interventionist DA scales through "
-            "standardised prompts. Computerised formats (C-DA) extend Interventionist models to larger cohorts "
-            "(Poehner et al., 2015). Recent work on hybrid computerised DA further shows how principled mediation "
-            "design can combine interactionist insights with scalable delivery in L2 reading contexts (Jin & Liu, 2024). "
-            "However, conventional C-DA still largely delivers fixed mediation sequences and therefore under-uses "
-            "information about how individual learners process text in real time.\n\n"
-            "Eye-tracking provides millisecond-level evidence of allocation of attention during reading and has "
-            "become a mainstream complement to outcome measures in second language research (Godfroid, Winke, & Conklin, 2020). "
-            "Large-scale corpora such as MECO L2 also demonstrate substantial heterogeneity in the determinants of L2 "
-            "reading fluency versus comprehension accuracy across diverse L1 backgrounds, underscoring the need for "
-            "assessment models that recognise multiple reader profiles rather than a single developmental pathway "
-            "(Kuperman et al., 2023). Integrating eye-movement features with reader profiles therefore offers a "
-            "credible route toward adaptive mediation without requiring continuous human–learner dialogues.\n\n"
-            "From a validity standpoint, the proposal treats process data as auxiliary evidence that constrains "
-            "interpretation of mediated performance: gaze indices are not proposed as standalone proficiency scores, "
-            "but as evidence that helps explain why particular mediations are warranted for particular learners on "
-            "particular items. This distinction matters for programme priorities around fairness and transparency in "
-            "digital assessment, where claims about “emerging abilities” should be traceable to observable behaviours "
-            "and principled mediation rules (Poehner & Wang, 2021)."
+            "McNamara (2014) argued that language assessment must confront technological change and shifting "
+            "communicative realities; digital delivery now makes process capture feasible at scale, reopening "
+            "questions about what should count as evidence in reading assessment. Two research programmes are "
+            "especially relevant.\n\n"
+            "Eye-tracking and process-oriented validity in language testing. Eye-movement recording has become a "
+            "standard complement to outcome scores when researchers ask whether tests elicit the cognitive processes "
+            "their constructs imply (Bax, 2013). In high-stakes reading assessment, process evidence can support "
+            "validity arguments by describing how candidates allocate attention across text and items (Lim, 2020). "
+            "Related work shows how individual differences interact with gaze during L2 reading-for-testing tasks "
+            "(Tywoniw, 2023). Eye-tracking has also been applied beyond reading-for-comprehension screens—for "
+            "example to analyse attention to visual cues in L2 listening tests (Batty, 2020)—illustrating how "
+            "process data can be embedded in computer-delivered tasks more broadly. Syntheses and introductions in "
+            "second language research position eye-tracking as a method that increasingly pairs with other evidence "
+            "sources and with interdisciplinary tooling (Godfroid, Winke, & Conklin, 2020). A recent review maps the "
+            "growth of eye-tracking research in L2 assessment and foregrounds cognitive validity and processing "
+            "patterns among recurring themes (Cao & Ma, 2025). Across these lines of "
+            "work, gaze indices are typically treated as auxiliary evidence that constrains interpretation of "
+            "performance rather than as standalone proficiency scores.\n\n"
+            "Dynamic assessment and technology-mediated mediation. Sociocultural Dynamic Assessment (DA) integrates "
+            "assessment and instruction so that the aim includes estimating emerging abilities through cooperative "
+            "mediation (Lantolf & Poehner, 2010; Poehner & Lantolf, 2005). Computerised Dynamic Assessment (C-DA) "
+            "scales interventionist mediation through graduated prompts and yields multi-index profiles of "
+            "responsiveness (Poehner, Zhang, & Lu, 2015; Zhang & Lu, 2019). Contemporary accounts emphasise DA’s "
+            "relevance to digital ecologies and to diagnosing development during mediation (Poehner & Wang, 2021). "
+            "Recent classroom-oriented implementations further demonstrate how hybrid computerised DA can combine "
+            "interactionist insights with scalable delivery in L2 reading contexts (Jin & Liu, 2024). However, many "
+            "C-DA systems still deliver largely fixed mediation ladders and therefore under-use continuous evidence "
+            "about how a learner is processing the text at hand.\n\n"
+            "Heterogeneity in L2 reading. Large-scale eye-movement corpora underscore that predictors of fluency "
+            "and comprehension need not align uniformly across multilingual readers (Kuperman et al., 2023), "
+            "motivating profile-sensitive assessment designs. Reader profiles tied to competence and motivational–"
+            "cognitive resources provide stable priors for interpreting gaze (Alexander, 2005; Dinsmore et al., 2018).\n\n"
+            "Synthesis. The project integrates process-oriented validity logic from eye-tracking research in "
+            "language testing with technology-mediated DA: real-time indices of processing difficulty become "
+            "inputs to mediation selection, while outcome and mediation traces remain primary evidentiary objects.\n\n"
+            "Literature sources informing this synthesis were identified through Web of Science Core Collection "
+            "searches (e.g., topic queries pairing computerised dynamic assessment with reading/L2; eye tracking with "
+            "language testing) and supplemented with publisher metadata (Crossref) for DOI-verified citations. "
+            "Complementary discovery in Google Scholar and ResearchGate was used to confirm bibliographic details for "
+            "handbooks and recent CALL articles where needed."
         ),
     ),
     (
         "Research gap",
         (
-            "A critical gap separates the scalability of Interventionist C-DA from the responsiveness of "
-            "Interactionist DA. Current platforms rarely use continuous process evidence to adapt mediation; cues "
-            "typically follow predetermined ladders. Parallel gaps exist between product-only scoring and "
-            "construct-relevant process data that can explain why a response is (in)correct for a given learner.\n\n"
-            "This project proposes Adaptive Interventionist Dynamic Assessment (A-IDA): a synthesis in which "
-            "eye-tracking metrics and reader-profile classifications jointly trigger individualised scaffolding "
-            "during computerised reading tests. The objective is to approximate the diagnostic richness of "
-            "interactionist mediation within a scalable workflow suitable for empirical comparison against "
-            "traditional C-DA and non-mediated control conditions."
+            "Three gaps motivate Adaptive Interventionist Dynamic Assessment (A-IDA). First, scalable Interventionist "
+            "C-DA trades away moment-to-moment responsiveness: mediation is typically pre-sequenced rather than "
+            "conditional on ongoing comprehension signals. Second, although eye-tracking has been used to evaluate "
+            "tests and tasks, fewer implementations close the loop by using gaze features to adapt scaffolding inside "
+            "the assessment session itself. Third, product-only scoring leaves explanatory gaps when learners with "
+            "different profiles produce similar scores or when scores understate emerging ability.\n\n"
+            "A-IDA targets a synthesis: eye-tracking metrics and reader-profile classifications jointly trigger "
+            "individualised scaffolding during computerised reading, enabling empirical comparison against traditional "
+            "C-DA and a non-mediated control."
         ),
     ),
     (
@@ -98,24 +108,23 @@ sections = [
             "non-mediated control condition?\n\n"
             "2. How do comprehension outcomes and response times vary across reader profiles (e.g., highly competent, "
             "effortful, challenged) under A-IDA compared with traditional C-DA?\n\n"
-            "3. What relationships obtain between eye-movement parameters (e.g., fixation measures, regressive "
-            "saccades) and the type and frequency of scaffolding cues triggered during testing?"
+            "3. What relationships obtain between eye-movement parameters (e.g., fixation-based difficulty proxies, "
+            "regressive saccades) and the type and frequency of scaffolding cues triggered during testing?"
         ),
     ),
     (
         "Research design",
         (
             "The study follows design-based research (DBR) using the ADDIE cycle (Analysis, Design, Development, "
-            "Implementation, Evaluation) to build, pilot, and refine A-IDA across iterative micro-cycles. DBR is "
-            "appropriate because the artefact (an adaptive testing interface) and its instrumentation are co-developed "
-            "with evidence from authentic learner use (McNamara, 2014; Poehner & Wang, 2021).\n\n"
+            "Implementation, Evaluation) to build, pilot, and refine A-IDA across iterative micro-cycles. DBR fits "
+            "because the artefact (an adaptive testing interface) and its instrumentation co-evolve with evidence "
+            "from learner use (McNamara, 2014; Poehner & Wang, 2021).\n\n"
             "Figure 1 summarises the processing architecture. In live operation, gaze streams are segmented into "
-            "fixations and saccades; features feed a profile-aware decision layer that selects mediation from a "
-            "validated bank mapped to item-level skills (e.g., inferencing, cohesion). This figure should appear "
-            "as a simple flowchart in the final Word file (Insert → SmartArt → Process, or an exported diagram from "
-            "your design tool).\n\n"
+            "fixations and saccades; derived features feed a profile-aware decision layer that selects mediation "
+            "from a validated bank mapped to item-level skills (e.g., inferencing, cohesion). Insert Figure 1 in Word "
+            "as a flowchart (Insert → SmartArt → Process, or an exported diagram).\n\n"
             "Table 1 outlines a 12-month timeline aligned to the programme window (December 2026–December 2027). "
-            "Months are indicative; exact dates will be anchored to institutional calendars and ethics approval."
+            "Exact months will be adjusted for ethics approval and term dates."
         ),
     ),
 ]
@@ -134,11 +143,11 @@ hdr[2].text = "Primary outputs"
 hdr[3].text = "Evaluation focus"
 
 rows = [
-    ("Analysis", "Dec 2026 – Jan 2027", "Needs analysis; risk register; mediation taxonomy draft", "Construct map ↔ Cambridge item types"),
-    ("Design", "Feb – Mar 2027", "Wireframes; cue database v1; pilot items; preregistration plan", "Expert panel review (n = 5)"),
-    ("Development", "Apr – Jul 2027", "EyeLink–PsychoPy/PyQt integration; real-time feature pipeline; classifier v1", "Latency benchmarks; debugging logs"),
-    ("Implementation", "Aug – Sep 2027", "Pilot (n ≈ 20–30); refine mediation rules", "Usability; mediation validity checks"),
-    ("Evaluation", "Oct – Dec 2027", "Main study; analysis; report; dissemination package", "Effect sizes; process–outcome models"),
+    ("Analysis", "Dec 2026 – Jan 2027", "Needs analysis; risk register; mediation taxonomy v0", "Construct map ↔ Cambridge item types"),
+    ("Design", "Feb – Mar 2027", "Wireframes; cue database v1; pilot battery; analysis preregistration", "Expert review (n = 5)"),
+    ("Development", "Apr – Jul 2027", "EyeLink–PsychoPy/PyQt integration; online feature pipeline; rules v1", "Latency; reliability of gaze features"),
+    ("Implementation", "Aug – Sep 2027", "Pilot (n ≈ 20–30); tune thresholds", "Usability; cue–item alignment"),
+    ("Evaluation", "Oct – Dec 2027", "Main study; analysis; reporting; handover pack", "Effects; process–outcome models"),
 ]
 for phase, period, outputs, ev in rows:
     r = t.add_row().cells
@@ -148,8 +157,10 @@ for phase, period, outputs, ev in rows:
     r[3].text = ev
 
 doc.add_paragraph()
-doc.add_paragraph("Figure 1. A-IDA live cycle: gaze acquisition → event detection (fixations, regressions) → "
-                  "profile-aware mediation selection → delivery via the testing UI → logged outcomes for analysis.")
+doc.add_paragraph(
+    "Figure 1. A-IDA cycle: gaze acquisition → event detection (fixations, regressions) → "
+    "profile-aware mediation selection → delivery via the testing UI → logged outcomes for analysis."
+)
 
 doc.add_heading("Methodology", level=1)
 
@@ -157,64 +168,57 @@ method_parts = [
     (
         "Rationale for proposed methods",
         (
-            "Eye-tracking is included because it captures how comprehension unfolds, not only whether an item is "
-            "answered correctly (Godfroid, Winke, & Conklin, 2020). Fixation- and regression-based features provide "
-            "proxies for difficulty and strategic reanalysis that can be computed within trial windows compatible "
-            "with mediated items. Profile classification (Alexander, 2005; Dinsmore et al., 2018) supplies stable "
-            "priors that prevent overfitting idiosyncratic noise in gaze data. The learning potential score (LPS) "
-            "framework remains appropriate because it quantifies responsiveness to mediation relative to "
-            "unassisted performance (Poehner et al., 2015). Finally, scikit-learn decision rules offer an "
-            "interpretable first-generation mapping from features to mediation levels—transparent to auditors and "
-            "teachers—while remaining fast enough for classroom/lab deployment; more complex models can be explored "
-            "in later iterations once trace data are logged."
+            "Eye-tracking is included because it captures how comprehension unfolds during test completion, aligning "
+            "with process-oriented validity arguments in language testing research (Bax, 2013; Godfroid, Winke, & "
+            "Conklin, 2020; Lim, 2020). Fixation- and regression-based features provide proxies for difficulty and "
+            "strategic reanalysis within trial windows compatible with mediated items. Profile classification "
+            "(Alexander, 2005; Dinsmore et al., 2018) supplies priors that reduce overfitting idiosyncratic gaze noise. "
+            "The learning potential score (LPS) family remains appropriate because it indexes responsiveness to "
+            "mediation relative to unassisted performance (Poehner et al., 2015; Zhang & Lu, 2019). Scikit-learn "
+            "decision rules offer an interpretable first-generation mapping from features to mediation levels—"
+            "auditable for stakeholders—before more complex models are considered once trace datasets exist."
         ),
     ),
     (
         "Participants and research team",
         (
-            "Participants will be EFL undergraduates enrolled in English-medium coursework at a public university "
-            "in Türkiye. A vocabulary-size screening will target intermediate–upper intermediate readers "
-            "(approximately 5,000–6,000 word families) to align texts with Cambridge-level tasks. Reader profiles "
-            "will be operationalised using the Alexander (2005) competence framework as informed by interest/prior "
-            "knowledge indicators (Dinsmore et al., 2018). Target recruitment for the main phase is approximately "
-            "60–90 participants (20–30 per arm), with a preceding pilot to stabilise mediation thresholds. The team "
-            "includes applied linguists/assessment researchers and a software engineer responsible for the adaptive "
-            "interface, aligning with Jin and Liu’s (2024) emphasis on principled mediation design in computerised DA."
+            "Participants will be EFL undergraduates in English-medium programmes at a public university in Türkiye. "
+            "Vocabulary screening will target intermediate–upper intermediate readers (approximately 5,000–6,000 word "
+            "families) to align with Cambridge-level tasks. Reader profiles will follow Alexander (2005) as informed "
+            "by interest and prior knowledge (Dinsmore et al., 2018). Target recruitment is approximately 60–90 "
+            "participants (20–30 per arm), preceded by a pilot to stabilise mediation thresholds. The team combines "
+            "applied linguists/assessment researchers with a software engineer for the adaptive interface—consistent "
+            "with principled mediation design in computerised DA (Jin & Liu, 2024)."
         ),
     ),
     (
         "Instruments and data collection",
         (
             "Reading materials and items will be drawn from validated Cambridge English examinations (e.g., B2 First, "
-            "C1 Advanced, or IELTS Academic reading), ensuring construct alignment with Cambridge constructs and score "
-            "interpretations. An expert panel (five applied linguists) will review text–mediation coupling before pilots.\n\n"
-            "Eye-tracking will use the SR Research EyeLink Portable Duo already available in the lab. The software stack "
-            "(pylink, PsychoPy, PyQt5; NumPy/Pandas for online feature extraction) prioritises timing fidelity and "
-            "reproducibility. Mediation banks will follow graduated prompting consistent with Interventionist DA while "
-            "allowing profile-conditioned branches—an implementation parallel to hybrid C-DA rationales (Jin & Liu, 2024)."
+            "C1 Advanced, or IELTS Academic reading), supporting alignment with Cambridge constructs. An expert panel "
+            "(five applied linguists) will review text–mediation mapping before pilots.\n\n"
+            "Eye-tracking will use the SR Research EyeLink Portable Duo available in the lab. The stack (pylink, "
+            "PsychoPy, PyQt5; NumPy/Pandas for online features) prioritises timing fidelity. Mediation banks follow "
+            "graduated prompting while allowing profile-conditioned branches (Jin & Liu, 2024; Poehner et al., 2015)."
         ),
     ),
     (
         "Procedure and analysis",
         (
             "Participants will be randomly assigned to A-IDA, standard C-DA, or control. Dependent variables include "
-            "accuracy, response time, mediation level required, and LPS contrasts. Omnibus tests (e.g., one-way ANOVA "
-            "or robust alternatives if assumptions fail) will compare arms; exploratory moderation by reader profile "
-            "will use factorial or regression models; relationships between gaze features and mediation will be "
-            "examined via correlational and regression frameworks, with multiple-comparison control as appropriate.\n\n"
-            "Ethics: institutional ethics approval, informed consent, right to withdraw, secure storage of gaze and "
-            "behavioural logs, and clear protocols for incidental findings. Data management will follow least-privilege "
-            "access and pseudonymised identifiers.\n\n"
-            "Limitations and delimitations: eye-tracking requires laboratory-quality calibration; findings will "
-            "generalise first to similar proficiency bands and task types rather than all Cambridge products. "
-            "Mediation rules will be versioned (A-IDA v1) to support replication. Finally, while the decision layer "
-            "begins with interpretable rules, future work may explore richer sequence models under strict governance "
-            "for high-stakes use.\n\n"
-            "Transparency outputs: alongside peer-targeted dissemination, the team will prepare a mediation codebook "
-            "(cue functions, triggering thresholds, and profile logic), anonymised analysis scripts, and a summary of "
-            "alignment between gaze features and item-level skills. Where copyright permits, de-identified process "
-            "aggregates may be shared to support secondary analysis; otherwise, synthetic illustrations will document "
-            "the approach for Cambridge stakeholders."
+            "accuracy, response time, mediation level, and LPS contrasts. Omnibus comparisons (e.g., one-way ANOVA or "
+            "robust alternatives) will contrast arms; moderation by reader profile will use factorial or regression "
+            "models; gaze–mediation relations will use correlational/regression frameworks with multiple-comparison "
+            "control as appropriate. Effect sizes and confidence intervals will be reported alongside p-values.\n\n"
+            "Ethics: institutional approval, informed consent, withdrawal rights, secure storage of logs, protocols "
+            "for incidental findings. Data access will follow least privilege and pseudonymised identifiers.\n\n"
+            "Open-science practices: the team will preregister the main confirmatory analysis plan (e.g., OSF) before "
+            "the main data collection window, specifying primary contrasts, planned contrasts or simple effects for "
+            "profiles, and rules for handling outliers and missing gaze segments. Materials that can be shared "
+            "without violating Cambridge item copyright will be documented in a replication packet.\n\n"
+            "Limitations: laboratory calibration requirements; generalisation initially to similar proficiency bands "
+            "and task types; mediation rules versioned as A-IDA v1 for replication. Transparency: mediation codebook, "
+            "analysis scripts, and (where copyright permits) aggregated process summaries for Cambridge stakeholders."
         ),
     ),
 ]
@@ -226,19 +230,13 @@ for sub, body in method_parts:
 doc.add_heading("Potential implications for Cambridge University Press & Assessment and the wider field", level=1)
 doc.add_paragraph(
     "For Cambridge English, the project offers a research pathway toward digital assessments and learning products "
-    "that combine high-quality items with transparent, profile-sensitive feedback—supporting fairness arguments where "
-    "learners differ in processing signatures yet demonstrate similar emerging abilities when appropriately mediated. "
-    "Because materials come from Cambridge examinations, results can speak directly to how diverse profiles engage "
-    "with existing tasks, informing future item development and automated tutoring overlays. If process-sensitive "
-    "mediation improves score meaning without inflating construct-irrelevant variance, the model also aligns with "
-    "programme interests in assessment for learning and responsible innovation in computer-delivered testing.\n\n"
-    "For the wider field, the work contributes an empirically grounded synthesis of DA, eye-tracking process data, "
-    "and adaptive testing. It demonstrates how “emerging construct” claims can be evidenced through linked process–"
-    "product modelling rather than outcome-only inference (cf. Kuperman et al., 2023; Poehner & Wang, 2021). "
-    "Finally, documenting mediation rules and gaze-derived features advances open, auditable pathways for inclusive "
-    "assessment design beyond one-size-fits-all adaptive algorithms, including potential transfer of cueing logic to "
-    "settings where specialised hardware is unavailable (e.g., using simplified behavioural proxies in standard "
-    "computer-based tests)."
+    "that pair high-quality items with interpretable, profile-sensitive feedback. Because stimuli come from Cambridge "
+    "examinations, results can inform how diverse profiles engage with existing tasks—supporting item development, "
+    "automated tutoring overlays, and transparency in score meaning when mediation is present.\n\n"
+    "For the wider field, the work demonstrates how emerging-construct claims can be supported by linked process–"
+    "product evidence (cf. Bax, 2013; Kuperman et al., 2023; Poehner & Wang, 2021). Documenting mediation rules and "
+    "gaze-derived features advances auditable inclusive design beyond fixed adaptive algorithms; later work can "
+    "explore proxies where eye-tracking hardware is unavailable."
 )
 
 doc.add_heading("References", level=1)
@@ -246,6 +244,12 @@ doc.add_heading("References", level=1)
 refs = [
     "Alexander, P. A. (2005). The path to competence: A lifespan developmental perspective on reading. "
     "Journal of Literacy Research, 37(4), 413–436.",
+    "Bax, S. (2013). The cognitive processing of candidates during reading tests: Evidence from eye-tracking. "
+    "Language Testing, 30(4), 441–465. https://doi.org/10.1177/0265532212473244",
+    "Batty, A. (2020). An eye-tracking study of attention to visual cues in L2 listening tests. "
+    "Language Testing, 38(4), 511–535. https://doi.org/10.1177/0265532220951504",
+    "Cao, X., & Ma, Z. (2025). The review on eye-tracking studies in L2 assessment. "
+    "Colombian Applied Linguistics Journal, 27(2), 51–63. https://doi.org/10.14483/22487085.22043",
     "Dinsmore, D. L., Fox, E., Parkinson, M. M., & Bilgili, F. (2018). The interplay of prior knowledge, interest, "
     "and reading comprehension. Learning and Individual Differences, 65, 477–490.",
     "Godfroid, A., Winke, P., & Conklin, K. (2020). Exploring the depths of second language processing with eye "
@@ -253,8 +257,6 @@ refs = [
     "Jin, C., & Liu, Y. (2024). Diagnosing and promoting learners’ L2 inferential reading development through hybrid "
     "computerised dynamic assessment in the Chinese EFL classroom. Computer Assisted Language Learning. "
     "Advance online publication. https://doi.org/10.1080/09588221.2024.2421521",
-    "Kozulin, A., & Garb, E. (2002). Dynamic assessment of EFL text comprehension. School Psychology International, "
-    "23(1), 112–127.",
     "Kuperman, V., Siegelman, N., Schroeder, S., Acartürk, C., Alexeeva, S., Amenta, S., Bertram, R., Bonandrini, R., "
     "Brysbaert, M., Chernova, D., Da Fonseca, S. M., Dirix, N., Duyck, W., Fella, A., Frost, R., Gattei, C. A., "
     "Kalaitzi, A., Lõo, K., Marelli, M., … Usal, K. A. (2023). Text reading in English as a second language: "
@@ -264,16 +266,22 @@ refs = [
     "Journal of Applied Linguistics, 1(1), 49–72.",
     "Lantolf, J. P., & Poehner, M. E. (2010). Dynamic assessment in the classroom: Vygotskian praxis for second language "
     "development. Language Teaching Research, 15(1), 11–33.",
+    "Lim, H. (2020). Exploring the validity evidence of a high-stake, second language reading test: An eye-tracking study. "
+    "Language Testing in Asia, 10, Article 14. https://doi.org/10.1186/s40468-020-00107-0",
     "McNamara, T. (2014). 30 years on—Evolution or revolution? Language Assessment Quarterly, 11(2), 226–232.",
     "Poehner, M. E., & Lantolf, J. P. (2005). Dynamic assessment in the language classroom. Language Teaching Research, "
     "9(3), 233–265.",
-    "Poehner, M. E., & Lantolf, J. P. (2013). Bringing the ZPD into the equation: Capturing L2 development during "
-    "Computerized Dynamic Assessment (C-DA). Language Teaching Research, 17(3), 323–342.",
     "Poehner, M. E., & Wang, Z. (2021). Dynamic Assessment and second language development. Language Teaching, 54(4), "
     "472–490. https://doi.org/10.1017/S0261444820000555",
     "Poehner, M. E., Zhang, J., & Lu, X. (2015). Computerized dynamic assessment (C-DA): Diagnosing L2 development "
-    "according to learner responsiveness to mediation. Language Testing, 32(3), 337–357.",
+    "according to learner responsiveness to mediation. Language Testing, 32(3), 337–357. "
+    "https://doi.org/10.1177/0265532214560390",
+    "Tywoniw, R. (2023). Compensatory effects of individual differences, language proficiency, and reading behavior: "
+    "An eye-tracking study of second language reading assessment. Frontiers in Communication, 8, Article 1176986. "
+    "https://doi.org/10.3389/fcomm.2023.1176986",
     "Vygotsky, L. S. (1978). Mind in society: The development of higher psychological processes. Harvard University Press.",
+    "Zhang, J., & Lu, X. (2019). Measuring and supporting second language development using computerized dynamic "
+    "assessment. Language and Sociocultural Theory, 6(1), 92–115. https://doi.org/10.1558/lst.31710",
 ]
 
 for r in refs:
