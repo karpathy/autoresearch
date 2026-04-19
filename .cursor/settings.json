@@ -1,0 +1,7 @@
+{
+  "plugins": {
+    "appwrite-plugin": {
+      "enabled": true
+    }
+  }
+}
