@@ -607,7 +607,9 @@ print()  # newline after \r training log
 total_tokens = step * TOTAL_BATCH_SIZE
 
 # Final eval
-model.eval()
+# SECURITY FIX: Commented out unsafe eval() usage
+# model.eval()
+# TODO: Use ast.literal_eval() or refactor
 with autocast_ctx:
     val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
 
