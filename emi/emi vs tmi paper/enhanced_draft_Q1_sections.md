@@ -1,5 +1,7 @@
 # EMI, TMI, and EDI in Turkish Higher Education — Master draft (merge into journal submission)
 
+**Full merged paper (recommended):** `emi/emi vs tmi paper/full_manuscript.md` — single file with enhanced Methodology & Results, literature, discussion, conclusion, tables, and references.
+
 *Target: ≤ ~8,000 words including abstract, tables, and references. If the draft runs long, shorten the literature subsections on multilingual responses and move the tier appendix to supplementary material.*
 
 ---
