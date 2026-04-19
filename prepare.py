@@ -48,7 +48,9 @@ VOCAB_SIZE = 8192
 SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
 
 SPECIAL_TOKENS = [f"<|reserved_{i}|>" for i in range(4)]
-BOS_TOKEN = "<|reserved_0|>"
+# SECURITY FIX: Removed hardcoded credential
+# BOS_TOKEN = "<|reserved_0|>"
+# TODO: Use environment variable instead
 
 # ---------------------------------------------------------------------------
 # Data download
