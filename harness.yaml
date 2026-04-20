@@ -1,0 +1,314 @@
+# ============================================================
+# Harness Configuration -- Reference Implementation
+# ============================================================
+# Machine-readable declaration of a workspace's agent environment.
+# This file describes what agents need to know to work effectively
+# in this workspace: instructions, skills, hooks, guardrails,
+# quality gates, and structural conventions.
+#
+# This is the CANONICAL reference harness -- the autoresearch repo
+# serving as its own optimized agent environment. Other repos can
+# copy and adapt this file as a starting point.
+#
+# Schema version: 3.0
+# Last updated: 2026-03-08
+# ============================================================
+
+
+# ------------------------------------------------------------
+# Identity
+# ------------------------------------------------------------
+# Basic metadata identifying this harness and its purpose.
+
+name: "autoresearch"                  # Short identifier for this workspace
+description: >-                       # Human-readable purpose statement
+  Canonical reference harness for agent-assisted development.
+  Contains optimized agent instructions, skills, hooks, and
+  conventions that maximize agent effectiveness. This repo
+  is both the framework and the reference implementation.
+version: "3.0"                        # Harness schema version
+
+
+# ------------------------------------------------------------
+# Agent Behavior
+# ------------------------------------------------------------
+# Defines the agent's role, root instructions, hard constraints,
+# and style conventions. Constraints are non-negotiable rules.
+# Conventions are preferred patterns that guide style and structure.
+
+agent:
+  # One-line statement of what the agent is here to do.
+  purpose: "Research and optimize harness configurations that maximize agent effectiveness"
+
+  # Path to the root instructions file. AGENTS.md is the manifest
+  # and router -- it points agents to sub-directory AGENTS.md files
+  # for deeper context. Relative to repo root.
+  instructions: "AGENTS.md"
+
+  # Hard boundaries the agent must never cross. These are
+  # enforced by hooks and guardrails, but stating them here
+  # gives the agent explicit awareness.
+  constraints:
+    - "Do not modify files listed as fixed in workflow.yaml"
+    - "Do not install new dependencies during experiments"
+    - "Do not commit results.tsv or musings.md"
+    - "Do not expose secrets in code, commits, or logs"
+    - "Do not use git push --force or destructive git commands"
+
+  # Style and pattern preferences. Not hard rules, but strong
+  # defaults the agent should follow unless overridden.
+  conventions:
+    - "Conventional commits with Co-authored-by trailer"
+    - "TSV for structured logs (not CSV)"
+    - "AGENTS.md files form a tree -- root is manifest/router"
+    - "Each sub-directory with agent-relevant context has its own AGENTS.md"
+    - "Runtime artifacts (logs, results, outputs) are gitignored"
+    - "Workflow data stays in its workflow directory, not repo root"
+    - "No emoji in content output"
+    - "No em dashes -- use double-dash instead"
+
+
+# ------------------------------------------------------------
+# Platform Integration
+# ------------------------------------------------------------
+# Maps agent platforms to their instruction entry points.
+# Each platform may have its own format for instructions.
+# The generic fallback works for any platform that reads markdown.
+
+platforms:
+  copilot:
+    # Copilot reads this file automatically from .github/
+    instructions: ".github/copilot-instructions.md"
+
+  claude:
+    # CLAUDE.md is generated on-demand per session and gitignored.
+    # It aggregates AGENTS.md content into Claude's expected format.
+    instructions: "CLAUDE.md"
+
+  generic:
+    # Platform-agnostic fallback. Any agent that reads markdown
+    # can start here. AGENTS.md is always the canonical source.
+    instructions: "AGENTS.md"
+
+
+# ------------------------------------------------------------
+# Skills
+# ------------------------------------------------------------
+# Skills are reusable capability definitions that agents can
+# invoke. Each skill has a markdown file describing its protocol,
+# inputs, outputs, and acceptance criteria.
+#
+# Triggers are keywords or phrases that suggest this skill
+# should be activated. Agents match user intent to triggers.
+
+skills:
+  - name: "autonomous-iteration"
+    path: "skills/autonomous-iteration.md"
+    description: "Edit-commit-run-measure-decide loop for autonomous experimentation"
+    triggers:
+      - "iterate"
+      - "experiment"
+      - "optimize"
+      - "autoresearch"
+      - "autonomous loop"
+      - "keep/discard"
+
+
+# ------------------------------------------------------------
+# Agents
+# ------------------------------------------------------------
+# Agent definitions describe specialized personas with specific
+# roles, tools, and behavioral constraints. Each agent has a
+# markdown file with its full specification.
+
+agents:
+  - name: "research-runner"
+    path: "agents/research-runner.md"
+    description: "Executes autonomous research workflows against workflow.yaml manifests"
+    role: "Runs the edit-measure-decide loop within a declared workflow"
+
+
+# ------------------------------------------------------------
+# Hooks
+# ------------------------------------------------------------
+# Lifecycle event handlers that run deterministic scripts at
+# specific points in the agent session. Hooks are the "hard floor"
+# that agent instructions cannot override.
+#
+# Each hook specifies:
+#   - path: Script to execute (relative to repo root)
+#   - description: What it does and why
+#
+# Hook directories exist as placeholders; scripts will be
+# created in a subsequent step.
+
+hooks:
+  session_start:
+    # Runs when an agent session begins in this workspace.
+    - path: "hooks/session-start/check-agents-freshness.sh"
+      description: "Verify AGENTS.md files are current (not stale >90 days)"
+
+  pre_tool_use:
+    # Runs before the agent executes a tool (shell command, file edit, etc.).
+    - path: "hooks/pre-tool-use/block-dangerous-commands.sh"
+      description: "Block destructive git commands and secret exposure"
+
+  post_tool_use:
+    # Runs after the agent executes a tool. Used for validation.
+    - path: "hooks/post-tool-use/lint-after-edit.sh"
+      description: "Run linter after file edits to catch regressions early"
+
+  session_end:
+    # Runs when the agent session ends.
+    - path: "hooks/session-end/git-status-summary.sh"
+      description: "Show uncommitted changes summary before session closes"
+
+
+# ------------------------------------------------------------
+# Guardrails
+# ------------------------------------------------------------
+# Safety boundaries enforced by hooks and agent instructions.
+# These are declarative -- the hooks implement the enforcement.
+
+guardrails:
+  # Commands that hooks will block if an agent attempts them.
+  blocked_commands:
+    - "git push --force"
+    - "git push -f"
+    - "git reset --hard"
+    - "git clean -f"
+    - "git clean -fd"
+    - "rm -rf /"
+    - "rm -rf /*"
+
+  # Paths the agent must treat as read-only. Changes to these
+  # paths should be rejected by pre_tool_use hooks.
+  read_only_paths:
+    - "tests/tasks/"                  # Benchmark tasks are fixed inputs
+    - "tests/evaluator.py"           # Evaluator logic is fixed
+
+  # Checks that must pass before any commit is created.
+  # Enforced by pre-commit hooks or agent self-checks.
+  required_checks:
+    - "No secrets in staged diff"
+    - "No .env files committed"
+    - "No results.tsv or musings.md committed"
+
+  # File patterns that must never be committed to the repo.
+  # Aligned with .gitignore but stated explicitly for agents.
+  never_commit:
+    - "*.key"
+    - "*.pem"
+    - ".env"
+    - "local.settings.json"
+    - "results.tsv"
+    - "musings.md"
+    - "run.log"
+    - "CLAUDE.md"
+
+
+# ------------------------------------------------------------
+# Quality Gates
+# ------------------------------------------------------------
+# Commands that validate workspace health. Empty string means
+# the gate is not yet configured. Agents should run configured
+# gates after making changes and before committing.
+
+gates:
+  # Linter command. Empty until a linter is configured.
+  linter: ""
+
+  # Type checker command. Empty until type checking is configured.
+  typecheck: ""
+
+  # Test command. Runs the benchmark suite in quick mode.
+  # benchmark.py will be created in a subsequent step.
+  test: "python tests/benchmark.py --quick"
+
+
+# ------------------------------------------------------------
+# Scaffold Patterns
+# ------------------------------------------------------------
+# Directory conventions for this workspace and for workspaces
+# generated from it. Agents use this to know where to put things.
+
+scaffold:
+  # Canonical directory names and their purposes.
+  structure:
+    agents: "agents/"                 # Agent behavior definitions
+    skills: "skills/"                 # Reusable skill definitions
+    hooks: "hooks/"                   # Lifecycle hook scripts
+    tests: "tests/"                   # Quality benchmarks
+    workflows: "workflows/"          # Research/task workflows
+
+  # Structural rules that agents should follow when creating
+  # or modifying the workspace layout.
+  patterns:
+    - "Each sub-directory with agent context has its own AGENTS.md"
+    - "Workflow data stays in its workflow directory, not repo root"
+    - "Runtime artifacts (logs, results, outputs) are gitignored"
+    - "Hook scripts are organized by lifecycle event in hooks/<event>/"
+    - "New workflows are scaffolded with: python scaffold.py <name>"
+
+
+# ------------------------------------------------------------
+# Model Preferences
+# ------------------------------------------------------------
+# Recommended models for different task complexities. Agents
+# should select the appropriate model tier based on task demands.
+
+models:
+  # Routine work: code edits, simple queries, standard tasks.
+  default: "claude-sonnet-4-5"
+
+  # Complex reasoning: architecture decisions, multi-step planning,
+  # cross-cutting analysis, novel problem solving.
+  complex: "claude-opus-4-6"
+
+  # Quick checks: validation, linting, simple lookups, formatting.
+  fast: "claude-haiku-4-5"
+
+
+# ------------------------------------------------------------
+# Metrics
+# ------------------------------------------------------------
+# Harness optimization metrics using a Pareto ratchet strategy.
+# Metrics are organized into tiers:
+#
+#   Tier 1 (Gate):        Must not regress. These are hard floors.
+#   Tier 2 (Constraint):  Optimized subject to Tier 1 floors.
+#   Tier 3 (Optimization): Optimized subject to Tier 1 + Tier 2 floors.
+#
+# The ratchet ensures that optimizing lower-tier metrics never
+# comes at the cost of higher-tier ones.
+
+metrics:
+  task_success_rate:
+    description: "Fraction of tasks completed correctly"
+    formula: "completed_tasks / total_tasks"
+    direction: higher                 # Higher values are better
+    tier: 1                           # Gate -- must not regress
+
+  quality_gate_pass_rate:
+    description: "Fraction of runs passing linter/tests on first try"
+    formula: "first_pass_successes / total_runs"
+    direction: higher                 # Higher values are better
+    tier: 1                           # Gate -- must not regress
+
+  rework_rate:
+    description: "Fraction of completed tasks requiring human corrections"
+    formula: "correction_requests / completed_tasks"
+    direction: lower                  # Lower values are better
+    tier: 2                           # Constraint -- subject to T1 floors
+
+  avg_token_consumption:
+    description: "Average tokens used per task"
+    formula: "total_tokens / num_tasks"
+    direction: lower                  # Lower values are better
+    tier: 3                           # Optimization -- subject to T1+T2 floors
+
+  time_per_turn:
+    description: "Average wall-clock time to first agent response"
+    formula: "avg(time_to_first_response)"
+    direction: lower                  # Lower values are better
+    tier: 3                           # Optimization -- subject to T1+T2 floors

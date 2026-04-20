@@ -1,114 +1,34 @@
 # autoresearch
 
-## Overview
+Canonical reference harness for agent-assisted development. This repo contains the optimized set of agent instructions, skills, hooks, guardrails, tests, and conventions that make AI agents maximally effective in any workspace.
 
-General-purpose autonomous research framework. An AI agent modifies code or configuration, measures a metric, keeps improvements, discards regressions, and repeats. Forked from [karpathy/autoresearch](https://github.com/karpathy/autoresearch) and generalized beyond ML training.
+**Core Invariant**: A harness declares agent instructions, hooks, skills, guardrails, quality gates, and conventions that maximize agent effectiveness. Everything else is optional.
 
-**Core Invariant**: A workflow declares editable targets, an evaluator, a score direction, and a keep/discard policy. Everything else is optional.
+## Discovery Index
 
-## Repo Structure
+Navigate to the sub-tree that matches your task.
 
-```
-autoresearch/
-├── .github/                  # Copilot integration pointers
-│   └── copilot-instructions.md
-├── agents/                   # Portable agent definitions
-│   └── research-runner.md
-├── skills/                   # Portable skill definitions
-│   └── autonomous-iteration.md
-├── workflows/
-│   ├── _template/            # Template for new research workflows
-│   │   ├── AGENTS.md
-│   │   ├── program.md
-│   │   ├── workflow.yaml     # Machine-readable workflow manifest
-│   │   ├── results/
-│   │   └── outputs/
-│   └── examples/
-│       └── ml-training/      # Reference implementation (original autoresearch)
-├── scaffold.py               # CLI to create new workflows
-├── AGENTS.md                 # This file
-└── README.md
-```
+| Directory | Purpose | Navigate when... |
+|-----------|---------|------------------|
+| [agents/](agents/AGENTS.md) | Agent behavioral contracts | Defining or modifying how an autonomous agent behaves |
+| [skills/](skills/AGENTS.md) | Reusable agent capabilities | Adding or invoking a portable skill |
+| [hooks/](hooks/AGENTS.md) | Deterministic lifecycle scripts | Enforcing guardrails that AI instructions alone cannot guarantee |
+| [tests/](tests/AGENTS.md) | Benchmark suite for harness quality | Measuring whether a change improved or regressed agent effectiveness |
+| [workflows/](workflows/) | Concrete experiment configurations | Running an autonomous iteration loop against a specific target |
 
-## How to Create a Workflow
+Platform-specific integration (GitHub Copilot) lives in `.github/copilot-instructions.md` -- pointers only, never duplicated definitions.
 
-```bash
-python scaffold.py <workflow-name>
-```
+## Cross-Cutting Conventions
 
-This creates a new directory under `workflows/<workflow-name>/` from the template. Then:
-
-1. Edit `workflow.yaml` to declare:
-   - Editable targets (files the agent can modify)
-   - Evaluator command (how to measure success)
-   - Score direction (higher_is_better or lower_is_better)
-   - Keep/discard policy (threshold, improvement ratio, etc.)
-
-2. Edit `program.md` with domain-specific instructions for the agent.
-
-3. Point an AI agent at `workflows/<workflow-name>/program.md` and let it iterate.
-
-## How to Run
-
-Point an AI agent (GitHub Copilot, Claude, etc.) at the workflow's `program.md` file. The agent will:
-
-1. Read the workflow manifest
-2. Propose changes to editable targets
-3. Run the evaluator
-4. Keep improvements or discard regressions
-5. Log results and repeat
-
-## Conventions
-
-| Convention | Rationale |
-|------------|-----------|
-| Agent/skill definitions live in top-level `agents/` and `skills/` | Single source of truth |
-| `.github/` contains pointers only | Copilot integration without duplication |
-| `workflow.yaml` is the machine-readable contract | Parseable by both agents and tooling |
-| `results.tsv` and `musings.md` are gitignored | Experiment logs are local artifacts |
-| Artifact extraction is human-curated | Agent proposes candidates in `outputs/`, human reviews |
-
-## Workflow Manifest Schema
-
-A minimal `workflow.yaml`:
-
-```yaml
-name: "example-workflow"
-description: "Optimize script.py for best accuracy"
-
-targets:
-  - path: "script.py"
-    description: "The file being optimized"
-
-fixed:
-  - path: "evaluate.py"
-    description: "Evaluation harness (read-only)"
-
-metric:
-  name: "accuracy"
-  direction: higher
-  extract: "grep '^accuracy:' run.log | awk '{print $2}'"
-
-run:
-  command: "python script.py > run.log 2>&1"
-  timeout: 600
-```
-
-## Skills
-
-This framework uses the `autonomous-iteration` skill. See `skills/autonomous-iteration.md` for details.
-
-Agents consume this skill via:
-- Direct reference: `skills/autonomous-iteration.md`
-- Copilot pointer: `.github/copilot-instructions.md`
-
-## Reference Implementations
-
-| Workflow | Domain | Description |
-|----------|--------|-------------|
-| `workflows/examples/ml-training/` | ML research | Original karpathy/autoresearch (PyTorch training loop optimization) |
+| Convention | Detail |
+|------------|--------|
+| Commit style | Conventional commits (`feat:`, `fix:`, `docs:`, etc.) with `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>` trailer |
+| Logging | TSV format for all structured logs (`results.tsv`). Untracked by git. |
+| Gitignore | `results.tsv`, `musings.md`, `run.log`, `__pycache__/`, `.venv/` are local artifacts |
+| Definitions | Agent/skill definitions live in top-level `agents/` and `skills/` -- single source of truth |
+| Scaffolding | `python scaffold.py <name>` creates a new workflow from `workflows/_template/` |
 
 ## Version
 
-- Last updated: 2026-04-12
-- Framework version: 2.0 (generalized from ML-specific 1.0)
+- Last updated: 2026-04-19
+- Harness version: 3.0
