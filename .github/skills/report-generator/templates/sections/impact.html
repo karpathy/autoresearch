@@ -6,7 +6,7 @@
         <div class="impact-hero">
             <div class="improvement-display">
                 {% if report.improvement_pct %}
-                <span class="improvement-value">{{ "%.1f"|format(report.improvement_pct|abs) }}%</span>
+                <span class="improvement-value" data-target="{{ "%.1f"|format(report.improvement_pct|abs) }}">0%</span>
                 <span class="improvement-label">
                     {% if report.improvement_pct > 0 %}Improvement{% else %}Change{% endif %}
                 </span>
@@ -16,6 +16,28 @@
                 {% endif %}
             </div>
         </div>
+        <script>
+        (function() {
+            const el = document.querySelector('.improvement-value[data-target]');
+            if (!el) return;
+            const target = parseFloat(el.dataset.target);
+            const duration = 1200;
+            const start = performance.now();
+            function tick(now) {
+                const progress = Math.min((now - start) / duration, 1);
+                const eased = 1 - Math.pow(1 - progress, 3);
+                el.textContent = (target * eased).toFixed(1) + '%';
+                if (progress < 1) requestAnimationFrame(tick);
+            }
+            const observer = new IntersectionObserver(function(entries) {
+                if (entries[0].isIntersecting) {
+                    requestAnimationFrame(tick);
+                    observer.disconnect();
+                }
+            }, { threshold: 0.5 });
+            observer.observe(el);
+        })();
+        </script>
 
         <!-- Before/After Comparison -->
         {% if report.baseline and report.best %}
