@@ -1278,6 +1278,21 @@ strong {
     }
 }
 
+/* High Contrast Mode */
+@media (forced-colors: active) {
+    .nav-dot {
+        border: 2px solid ButtonText;
+    }
+    
+    .nav-dot.active {
+        background: Highlight;
+    }
+    
+    .status-badge {
+        border: 1px solid ButtonText;
+    }
+}
+
 /* Print Styles */
 @media print {
     body {
