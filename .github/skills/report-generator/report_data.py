@@ -156,7 +156,7 @@ def load_results_tsv(workflow_dir: Path) -> list[ExperimentEntry]:
                 delta: float | None = None
                 delta_pct: float | None = None
 
-                if last_kept_value is not None and status == "keep":
+                if last_kept_value is not None and status != "crash":
                     delta = metric_value - last_kept_value
                     if last_kept_value != 0:
                         delta_pct = (delta / abs(last_kept_value)) * 100.0
@@ -263,12 +263,14 @@ def load_git_log(workflow_dir: Path) -> list[dict[str, str]]:
         )
         branch_name = branch_result.stdout.strip()
 
-        # Get git log with custom format: hash|subject|author|date
+        # Get git log with NUL-delimited format for safe parsing
         log_result = subprocess.run(
-            ["git", "log", "--format=%H|%s|%an|%aI", "--", "."],
+            ["git", "log", "--format=%H%x00%s%x00%an%x00%aI", "--", "."],
             cwd=workflow_dir,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         )
 
@@ -278,7 +280,7 @@ def load_git_log(workflow_dir: Path) -> list[dict[str, str]]:
             if not line:
                 continue
 
-            parts = line.split("|", maxsplit=3)
+            parts = line.split("\0", maxsplit=3)
             if len(parts) != 4:
                 continue
 
@@ -328,15 +330,16 @@ def collect(workflow_dir: Path) -> ReportData:
     # Load experiments
     experiments = load_results_tsv(workflow_dir)
 
-    # Find baseline (first entry) and best (highest/lowest based on direction)
+    # Find baseline (first entry) and best (best kept result)
     baseline = experiments[0] if experiments else None
     best: ExperimentEntry | None = None
 
-    if experiments:
+    kept_experiments = [e for e in experiments if e.status == "keep"]
+    if kept_experiments:
         if metric_direction == "higher":
-            best = max(experiments, key=lambda e: e.metric_value)
+            best = max(kept_experiments, key=lambda e: e.metric_value)
         else:
-            best = min(experiments, key=lambda e: e.metric_value)
+            best = min(kept_experiments, key=lambda e: e.metric_value)
 
     # Compute aggregate stats
     total_experiments = len(experiments)

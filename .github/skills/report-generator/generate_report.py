@@ -91,8 +91,7 @@ def main(workflow_dir: Path | str | None = None, open_browser: bool = False) -> 
     
     # Convert dataclass to dict for tojson filter compatibility
     # Templates access fields as report.field_name (works with both dicts and objects)
-    from dataclasses import asdict
-    report_dict = asdict(report_obj)
+    report_dict = report_data.report_data_to_dict(report_obj)
     
     # Load and render template
     print("Rendering report template...")
@@ -127,7 +126,7 @@ def main(workflow_dir: Path | str | None = None, open_browser: bool = False) -> 
     # Open in browser if requested
     if open_browser:
         print("Opening report in browser...")
-        webbrowser.open(output_file.as_uri())
+        webbrowser.open(output_file.resolve().as_uri())
 
 
 if __name__ == "__main__":

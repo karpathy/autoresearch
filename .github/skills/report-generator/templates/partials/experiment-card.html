@@ -23,7 +23,9 @@
                 {% set is_improvement = (report.metric_direction == "higher" and experiment.delta > 0) or (report.metric_direction == "lower" and experiment.delta < 0) %}
                 <span class="delta-badge {% if is_improvement %}delta-positive{% else %}delta-negative{% endif %}">
                     {% if experiment.delta > 0 %}+{% endif %}{{ "%.4f"|format(experiment.delta) }}
+                    {% if experiment.delta_pct is not none %}
                     <span class="delta-percent">({{ "%+.2f"|format(experiment.delta_pct) }}%)</span>
+                    {% endif %}
                 </span>
             </div>
             {% endif %}
