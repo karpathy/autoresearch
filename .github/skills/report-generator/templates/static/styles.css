@@ -153,6 +153,7 @@ strong {
     color: var(--color-text-primary);
     margin-bottom: 3rem;
     text-align: center;
+    padding-top: 2vh;
 }
 
 /* Section-specific backgrounds */
@@ -196,7 +197,7 @@ strong {
     font-size: var(--font-size-h4);
     color: var(--color-text-secondary);
     font-weight: var(--font-weight-regular);
-    max-width: 800px;
+    max-width: 80vw;
     margin: 0 auto;
 }
 
@@ -497,6 +498,7 @@ strong {
 .chart-wrapper {
     position: relative;
     height: 300px;
+    min-height: 30vh;
 }
 
 /* Experiment Timeline */
@@ -896,6 +898,8 @@ strong {
     font-family: var(--font-mono);
     color: var(--color-brand-primary);
     line-height: 1;
+    margin-top: 2vh;
+    margin-bottom: 2vh;
 }
 
 .improvement-label {
@@ -1134,6 +1138,8 @@ strong {
     background: var(--color-bg-dark);
     color: var(--color-text-inverse);
     text-align: center;
+    min-height: 10vh;
+    padding-top: 4vh;
 }
 
 .footer-content {
