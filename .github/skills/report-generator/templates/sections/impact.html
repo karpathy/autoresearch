@@ -66,6 +66,40 @@
             </div>
         </div>
 
+        <!-- Success Rate Chart -->
+        <div class="chart-container" style="margin-bottom: 3rem;">
+            <h4 class="chart-title">Success Rate Overview</h4>
+            <div class="chart-wrapper" style="height: 180px;">
+                <canvas id="successRateChart" alt="Success rate chart" aria-label="Success rate chart showing kept vs discarded experiments"></canvas>
+            </div>
+            <script>
+            (function() {
+                const ctx = document.getElementById('successRateChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: ['Kept', 'Discarded', 'Crashed'],
+                        datasets: [{
+                            data: [{{ report.kept_count }}, {{ report.discarded_count }}, {{ report.crash_count }}],
+                            backgroundColor: ['#059669', '#dc2626', '#d97706'],
+                            borderRadius: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        indexAxis: 'y',
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            x: { beginAtZero: true, grid: { color: '#e2e8f0' } },
+                            y: { grid: { display: false } }
+                        }
+                    }
+                });
+            })();
+            </script>
+        </div>
+
         <!-- Next Steps -->
         <div class="next-steps-section">
             <h3 class="next-steps-title">Next Steps</h3>
@@ -84,6 +118,7 @@
         <!-- Provenance -->
         <div class="provenance-section">
             <h3 class="provenance-title">Provenance</h3>
+            <h5 class="provenance-subtitle">Commit History</h5>
             <div class="commit-list">
                 {% for commit in report.git_log %}
                 <div class="commit-item">

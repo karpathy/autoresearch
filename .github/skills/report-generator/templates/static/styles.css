@@ -501,6 +501,10 @@ strong {
     min-height: 30vh;
 }
 
+.chart-container-timeline {
+    margin-bottom: 3rem;
+}
+
 /* Experiment Timeline */
 .experiment-timeline {
     margin-top: 3rem;
