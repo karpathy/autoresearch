@@ -64,6 +64,13 @@ CLAUDE.md
 .harness-bg-state.json
 
 # ============================================================
+# Node.js / Copilot CLI Crash Dumps
+# ============================================================
+# Node writes these when --report-on-fatalerror fires (e.g., OOM).
+# They are diagnostics, not experiment output. Do not commit.
+report.*.json
+
+# ============================================================
 # Legacy Directories
 # ============================================================
 worktrees/
