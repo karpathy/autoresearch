@@ -97,6 +97,8 @@ body {
     background-color: var(--color-bg-primary);
     scroll-snap-type: y mandatory;
     overflow-y: scroll;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
 }
 
 /* Typography */
