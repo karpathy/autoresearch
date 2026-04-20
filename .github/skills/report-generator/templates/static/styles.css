@@ -1109,6 +1109,24 @@ strong {
     padding: 0;
 }
 
+/* Skip Link */
+.skip-link {
+    position: absolute;
+    top: -40px;
+    left: 0;
+    background: var(--color-brand-primary);
+    color: var(--color-text-inverse);
+    padding: 0.5rem 1rem;
+    z-index: 200;
+    transition: top 0.2s ease;
+    text-decoration: none;
+    font-size: var(--font-size-small);
+}
+
+.skip-link:focus {
+    top: 0;
+}
+
 /* Navigation Dots */
 .nav-dots {
     position: fixed;
