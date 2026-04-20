@@ -69,9 +69,9 @@
             {% if report.baseline and report.best %}
             {% include 'partials/metric-delta.html' %}
             {% endif %}
-            <div class="chart-container" style="margin-top: 2rem;">
+            <div class="chart-container chart-container-cumulative">
                 <h4 class="chart-title">Cumulative Progress</h4>
-                <div class="chart-wrapper" style="height: 200px;">
+                <div class="chart-wrapper chart-wrapper-compact">
                     <canvas id="cumulativeProgressChart"></canvas>
                 </div>
                 <script>

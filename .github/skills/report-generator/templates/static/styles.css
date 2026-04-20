@@ -505,6 +505,14 @@ strong {
     margin-bottom: 3rem;
 }
 
+.chart-container-cumulative {
+    margin-top: 2rem;
+}
+
+.chart-wrapper-compact {
+    height: 200px;
+}
+
 /* Experiment Timeline */
 .experiment-timeline {
     margin-top: 3rem;
