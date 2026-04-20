@@ -18,6 +18,7 @@ wheels/
 **/results/musings.md
 **/results/ratchet_state.json
 **/results/telemetry.jsonl
+**/results/audit/*.md
 **/run.log
 **/outputs/
 workflows/exec-summarizer/threads/*/jobs/
@@ -59,6 +60,8 @@ data/
 # ============================================================
 # Agent prompt files (generated per-session by launchers)
 CLAUDE.md
+.harness-bg-prompt.md
+.harness-bg-state.json
 
 # ============================================================
 # Legacy Directories

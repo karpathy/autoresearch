@@ -8,7 +8,9 @@ Reference harness for agent-assisted development. See [AGENTS.md](../AGENTS.md) 
 - `python scaffold.py generate harness.yaml` | generate workspace
 - `python scaffold.py workflow <name>` | create workflow
 - `python scaffold.py report <workflow> [--open]` | generate HTML research report
-- `uv run python .github/tests/benchmark.py --all` | run benchmarks
+- `python scaffold.py harness-bg [--resume|--refresh]` | background harness optimizer
+- `uv run python .github/tests/benchmark.py --all` | run benchmarks (agent mode)
+- `uv run python .github/tests/benchmark.py --all --dry-run` | validate task structure only
 
 ## Design intelligence (ui-ux-pro-max)
 - `python .github/prompts/ui-ux-pro-max/scripts/search.py "<query>" --design-system` | full design system

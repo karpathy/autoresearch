@@ -1,12 +1,18 @@
 """Synthetic benchmark suite for harness quality measurement.
 
+Runs tasks against a real LLM agent (Copilot SDK) and evaluates responses
+against expected outcomes. Falls back to dry-run (structural validation)
+when --dry-run is passed or the Copilot SDK is unavailable.
+
 Usage:
-    python tests/benchmark.py --all          # Run all tasks
-    python tests/benchmark.py --quick        # Run subset
-    python tests/benchmark.py --all --json   # JSON output
+    python benchmark.py --all              # Run all tasks with agent
+    python benchmark.py --quick            # Run subset with agent
+    python benchmark.py --all --dry-run    # Validate structure only
+    python benchmark.py --all --json       # JSON output
 """
 
 import argparse
+import asyncio
 import json
 import sys
 import time
@@ -14,9 +20,12 @@ from pathlib import Path
 
 import yaml
 
+from agent_runner import AgentRunner, load_context_files
+from checker import CheckResult, check_response, format_audit_entry
 from observe import TelemetryCollector
 
 TASKS_DIR = Path(__file__).parent / "tasks"
+AUDIT_DIR = Path(__file__).parent / "results" / "audit"
 
 REQUIRED_FIELDS = {"name", "description", "category", "input", "expected_outcome", "metric_annotations"}
 REQUIRED_INPUT_FIELDS = {"prompt"}
@@ -76,7 +85,7 @@ def validate_task(task_path: Path) -> tuple[dict | None, list[str]]:
 
 
 def placeholder_metrics() -> dict:
-    """Return placeholder metric values (skeleton -- real evaluation comes later)."""
+    """Return placeholder metric values for dry-run mode."""
     return {
         "task_success_rate": 1.0,
         "quality_gate_pass_rate": 1.0,
@@ -86,8 +95,135 @@ def placeholder_metrics() -> dict:
     }
 
 
+async def run_task_with_agent(
+    runner: AgentRunner,
+    task_data: dict,
+    task_path: Path,
+    collector: TelemetryCollector | None = None,
+) -> dict:
+    """Run a single task against the agent and evaluate the response."""
+    rel = task_path.relative_to(TASKS_DIR)
+    name = task_data.get("name", str(rel))
+    prompt = task_data["input"]["prompt"]
+    context_file_paths = task_data["input"].get("context_files", [])
+    expected = task_data.get("expected_outcome", {})
+
+    # Load context files
+    context_texts = load_context_files(context_file_paths)
+
+    # Run agent
+    start = time.time()
+    task_result = await runner.run_task(prompt, context_texts, timeout=120)
+    end = time.time()
+
+    # Evaluate response
+    if task_result.error:
+        check_result = CheckResult(mode="error")
+        check_result.add_check("agent_execution", False, task_result.error)
+        check_result.compute_score()
+    else:
+        check_result = check_response(task_result.response, expected)
+
+    # Record telemetry
+    if collector:
+        with collector.task(str(rel)) as t:
+            t.record_timing(start, end)
+            t.record_tokens(input=task_result.input_tokens, output=task_result.output_tokens)
+            t.status = "pass" if check_result.passed else "fail"
+            if not check_result.passed:
+                t.error_category = "quality_gate_fail"
+            t.record_evaluation(
+                response=task_result.response,
+                expected=expected,
+                checks=check_result.checks,
+                mode=check_result.mode,
+                score=check_result.score,
+                prompt_hash=task_result.prompt_hash,
+                harness_version=task_result.harness_version,
+                model=task_result.model,
+            )
+
+    # Write audit file
+    AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+    audit_path = AUDIT_DIR / f"{name}.md"
+    audit_path.write_text(
+        format_audit_entry(
+            task_name=name,
+            prompt=prompt,
+            context_files=context_file_paths,
+            response=task_result.response,
+            check_result=check_result,
+            harness_version=task_result.harness_version,
+        ),
+        encoding="utf-8",
+    )
+
+    return {
+        "task": str(rel),
+        "name": name,
+        "status": "PASS" if check_result.passed else "FAIL",
+        "score": check_result.score,
+        "mode": check_result.mode,
+        "checks": check_result.checks,
+        "tokens": task_result.input_tokens + task_result.output_tokens,
+        "duration_s": round(end - start, 3),
+        "error": task_result.error,
+    }
+
+
+async def run_benchmark_with_agent(
+    tasks: list[Path],
+    model: str = "claude-sonnet-4-6",
+    collector: TelemetryCollector | None = None,
+) -> dict:
+    """Run all tasks against a real agent and collect results."""
+    results: list[dict] = []
+    passed = 0
+    failed = 0
+    total_tokens = 0
+    total_duration = 0.0
+
+    async with AgentRunner(backend="copilot", model=model) as runner:
+        for task_path in tasks:
+            data, errors = validate_task(task_path)
+            if errors:
+                failed += 1
+                results.append({"task": str(task_path.relative_to(TASKS_DIR)),
+                                "status": "FAIL", "errors": errors, "score": 0.0})
+                continue
+
+            result = await run_task_with_agent(runner, data, task_path, collector)
+            results.append(result)
+            if result["status"] == "PASS":
+                passed += 1
+            else:
+                failed += 1
+            total_tokens += result.get("tokens", 0)
+            total_duration += result.get("duration_s", 0.0)
+
+    total = len(tasks)
+    metrics = {
+        "task_success_rate": passed / total if total else 0.0,
+        "quality_gate_pass_rate": passed / total if total else 0.0,
+        "rework_rate": failed / total if total else 0.0,
+        "avg_token_consumption": total_tokens / total if total else 0.0,
+        "time_per_turn": total_duration / total if total else 0.0,
+    }
+    composite = composite_score_local(metrics)
+
+    return {
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "results": results,
+        "metrics": metrics,
+        "harness_score": round(composite, 3),
+        "mode": "agent",
+    }
+
+
 def run_benchmark(tasks: list[Path], collector: TelemetryCollector | None = None) -> dict:
-    """Run all tasks and collect results."""
+    """Run all tasks in dry-run mode (structural validation only)."""
     results: list[dict] = []
     passed = 0
     failed = 0
@@ -155,7 +291,8 @@ def composite_score_local(metrics: dict) -> float:
 
 def print_human(summary: dict) -> None:
     """Print human-readable results."""
-    print(f"Benchmark: {summary['passed']}/{summary['total']} tasks passed\n")
+    mode = summary.get("mode", "dry-run")
+    print(f"Benchmark ({mode}): {summary['passed']}/{summary['total']} tasks passed\n")
     for r in summary["results"]:
         status = r["status"]
         task = r["task"]
@@ -163,8 +300,14 @@ def print_human(summary: dict) -> None:
             print(f"  FAIL  {task}")
             for err in r.get("errors", []):
                 print(f"        {err}")
+            # Show check details in agent mode
+            for check in r.get("checks", []):
+                if not check.get("passed"):
+                    print(f"        [{check['name']}] {check.get('detail', '')}")
         else:
-            print(f"  PASS  {task}")
+            score = r.get("score", "")
+            score_str = f" (score: {score:.2f})" if isinstance(score, float) else ""
+            print(f"  PASS  {task}{score_str}")
 
     print(f"\nMetrics:")
     for k, v in summary["metrics"].items():
@@ -178,21 +321,41 @@ def main() -> None:
     group.add_argument("--all", action="store_true", help="Run all tasks")
     group.add_argument("--quick", action="store_true", help="Run a subset of tasks")
     parser.add_argument("--json", action="store_true", help="Output JSON")
-    parser.add_argument("--telemetry", action="store_true", help="Collect telemetry to results/telemetry.jsonl")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Validate task structure only (no agent invocation)")
+    parser.add_argument("--model", default="claude-sonnet-4-6",
+                        help="Model for agent tasks (default: claude-sonnet-4-6)")
+    parser.add_argument("--telemetry", action="store_true",
+                        help="Collect telemetry to results/telemetry.jsonl")
     args = parser.parse_args()
 
     tasks = discover_tasks(TASKS_DIR)
     if args.quick:
-        tasks = tasks[:2]
+        tasks = tasks[:3]
 
     results_dir = Path(__file__).parent / "results"
     collector = TelemetryCollector(results_dir) if args.telemetry else None
 
-    summary = run_benchmark(tasks, collector=collector)
+    if args.dry_run:
+        summary = run_benchmark(tasks, collector=collector)
+        summary["mode"] = "dry-run"
+    else:
+        try:
+            summary = asyncio.run(
+                run_benchmark_with_agent(tasks, model=args.model, collector=collector)
+            )
+        except RuntimeError as e:
+            if "Copilot SDK" in str(e):
+                print(f"Warning: {e}", file=sys.stderr)
+                print("Falling back to dry-run mode.\n", file=sys.stderr)
+                summary = run_benchmark(tasks, collector=collector)
+                summary["mode"] = "dry-run (fallback)"
+            else:
+                raise
 
     if collector:
         out = collector.flush()
-        print(f"Telemetry written to {out}")
+        print(f"Telemetry written to {out}", file=sys.stderr)
 
     if args.json:
         print(json.dumps(summary, indent=2))

@@ -114,3 +114,17 @@ Maintain a `results/musings.md` file (untracked) with pre/post reflections:
 **Per-metric**: task_success=X, gate_pass=X, rework=X, tokens=X, time=X
 **Learning**: What did this teach you about instruction design?
 ```
+
+## Background Mode
+
+When launched via `python scaffold.py harness-bg`, this workflow runs in a worktree-isolated Copilot CLI session without user interaction.
+
+**Setup overrides for background mode:**
+- Self-assign a run tag based on the date (do not ask the user)
+- Skip all confirmation steps
+- If `results/results.tsv` exists, read it and resume from the last experiment
+- If no baseline exists, establish one immediately
+
+**Bounded batches:** Each background session runs on a frozen snapshot of main. When the session ends (context window full, rate limits, or manual stop), re-launch with `scaffold.py harness-bg --resume` to continue, or `--refresh` to start from the latest main while preserving experiment state.
+
+**Do NOT rebase or merge during an active session** -- this breaks commit provenance in results.tsv.

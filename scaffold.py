@@ -212,6 +212,198 @@ def generate_report_cmd(workflow_name: str, open_browser: bool = False, design_s
     mod.main(workflow_dir, open_browser=open_browser, design_system=design_system)
 
 
+BOOTSTRAP_PROMPT = """\
+# Background Harness Optimizer -- Bootstrap Prompt
+
+You are the harness background optimizer. Begin immediately -- no user interaction needed.
+
+## Session Configuration
+- Run tag: {tag}
+- Branch: autoiterate/harness-bg-{tag}
+- Worktree: {worktree_path}
+- Mode: Background (autonomous, no confirmations)
+
+## Immediate Actions
+1. Read `workflows/harness-optimize/workflow.yaml` for targets, metric, and run command
+2. Read `workflows/harness-optimize/program.md` for experimentation strategy
+3. Read all target files listed in workflow.yaml:
+   - AGENTS.md
+   - .github/copilot-instructions.md
+   - .github/agents/research-runner.agent.md
+   - .github/skills/autonomous-iteration/SKILL.md
+   - harness.yaml
+4. If `workflows/harness-optimize/results/results.tsv` exists, read it for prior experiment history
+5. If `workflows/harness-optimize/results/musings.md` exists, review it for accumulated learnings
+6. If no baseline exists in results.tsv, establish one now by running the benchmark
+7. Begin the autonomous-iteration loop as defined in the skill protocol
+
+## Background Mode Overrides
+- Self-assign run tags (do not ask the user)
+- Skip all confirmation and setup steps
+- Run indefinitely until the session ends or the context window fills
+- Follow the "Between-Session Reflection" protocol if prior results exist
+- Log every experiment to results.tsv and musings.md
+- Use the Artisan's Triad (Additive/Reductive/Reformative) and don't repeat the same type 5+ times in a row
+
+## Anti-Overfitting Guardrail
+Changes must improve general agent effectiveness, not game specific benchmark tasks.
+If a change cannot be justified on general-effectiveness grounds, discard it.
+"""
+
+
+def harness_bg_cmd(tag: str | None = None, resume: bool = False, refresh: bool = False) -> None:
+    """Set up and print launch instructions for the background harness optimizer.
+
+    Args:
+        tag: Run tag (default: today's date as YYYYMMDD)
+        resume: Reuse existing worktree if present
+        refresh: Create fresh worktree from main, copy state from old worktree
+    """
+    import subprocess
+    from datetime import datetime
+
+    if tag is None:
+        tag = datetime.now().strftime("%Y%m%d")
+
+    repo_name = REPO_ROOT.name
+    branch_name = f"autoiterate/harness-bg-{tag}"
+    worktree_path = REPO_ROOT.parent / f"{repo_name}-harness-bg"
+    state_dir = Path("workflows/harness-optimize/results")
+
+    # Check for existing worktree
+    if worktree_path.exists():
+        if resume:
+            print(f"Resuming existing worktree at {worktree_path}")
+            _write_bootstrap(worktree_path, tag)
+            _print_launch_instructions(worktree_path)
+            return
+        elif refresh:
+            # Save state from old worktree
+            old_state = {}
+            for artifact in ["results.tsv", "musings.md", "ratchet_state.json"]:
+                src = worktree_path / state_dir / artifact
+                if src.exists():
+                    old_state[artifact] = src.read_text(encoding="utf-8")
+                    print(f"  Saved: {artifact}")
+
+            # Remove old worktree
+            subprocess.run(["git", "worktree", "remove", str(worktree_path), "--force"],
+                           cwd=REPO_ROOT, capture_output=True)
+            print(f"Removed old worktree")
+
+            # Create fresh worktree from main
+            _create_worktree(worktree_path, branch_name)
+
+            # Restore state
+            results_dir = worktree_path / state_dir
+            results_dir.mkdir(parents=True, exist_ok=True)
+            for artifact, content in old_state.items():
+                (results_dir / artifact).write_text(content, encoding="utf-8")
+                print(f"  Restored: {artifact}")
+
+            _write_bootstrap(worktree_path, tag)
+            _print_launch_instructions(worktree_path)
+            return
+        else:
+            print(f"Error: Worktree already exists at {worktree_path}", file=sys.stderr)
+            print("  Use --resume to reuse it, or --refresh to recreate from main", file=sys.stderr)
+            sys.exit(1)
+
+    _create_worktree(worktree_path, branch_name)
+    _write_bootstrap(worktree_path, tag)
+    _print_launch_instructions(worktree_path)
+
+
+def _create_worktree(worktree_path: Path, branch_name: str) -> None:
+    """Create a git worktree with a new branch from the default branch."""
+    import subprocess
+
+    # Detect default branch (master or main)
+    result = subprocess.run(
+        ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        default_branch = result.stdout.strip().split("/")[-1]
+    else:
+        # Fallback: check if main or master exists
+        for candidate in ["main", "master"]:
+            check = subprocess.run(
+                ["git", "rev-parse", "--verify", candidate],
+                cwd=REPO_ROOT, capture_output=True,
+            )
+            if check.returncode == 0:
+                default_branch = candidate
+                break
+        else:
+            default_branch = "HEAD"
+
+    # Create the branch
+    subprocess.run(
+        ["git", "branch", branch_name, default_branch],
+        cwd=REPO_ROOT, capture_output=True,
+    )
+
+    # Create the worktree
+    result = subprocess.run(
+        ["git", "worktree", "add", str(worktree_path), branch_name],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"Error creating worktree: {result.stderr}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Created worktree at {worktree_path}")
+    print(f"  Branch: {branch_name}")
+
+    # Sync dependencies
+    sync = subprocess.run(
+        ["uv", "sync"],
+        cwd=worktree_path, capture_output=True, text=True,
+    )
+    if sync.returncode == 0:
+        print("  Dependencies synced")
+    else:
+        print(f"  Warning: uv sync failed: {sync.stderr[:200]}", file=sys.stderr)
+
+    # Create results directory
+    results_dir = worktree_path / "workflows" / "harness-optimize" / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _write_bootstrap(worktree_path: Path, tag: str) -> None:
+    """Write the bootstrap prompt file into the worktree."""
+    prompt = BOOTSTRAP_PROMPT.format(tag=tag, worktree_path=worktree_path)
+    prompt_path = worktree_path / ".harness-bg-prompt.md"
+    prompt_path.write_text(prompt, encoding="utf-8")
+    print(f"  Bootstrap prompt: {prompt_path}")
+
+
+def _print_launch_instructions(worktree_path: Path) -> None:
+    """Print instructions for starting the Copilot CLI session."""
+    prompt_path = worktree_path / ".harness-bg-prompt.md"
+    print()
+    print("=" * 60)
+    print("  BACKGROUND HARNESS OPTIMIZER READY")
+    print("=" * 60)
+    print()
+    print("To start the optimizer:")
+    print()
+    print("  Option A (VS Code Copilot CLI):")
+    print("  1. Open VS Code")
+    print("  2. Start a new Copilot CLI session (Worktree isolation)")
+    print(f"  3. Paste the prompt from: {prompt_path}")
+    print()
+    print("  Option B (Terminal):")
+    print(f"  1. cd {worktree_path}")
+    print("  2. copilot")
+    print(f"  3. Paste the prompt from: {prompt_path}")
+    print()
+    print("The optimizer will run autonomously until the session ends.")
+    print("Results will be logged to workflows/harness-optimize/results/")
+    print()
+
+
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -234,6 +426,11 @@ def main() -> None:
     rpt.add_argument("--open", action="store_true", help="Open report in browser after generation")
     rpt.add_argument("--design-system", type=Path, help="Path to MASTER.md or directory containing it (overrides design tokens)")
 
+    bg = sub.add_parser("harness-bg", help="Set up background harness optimizer worktree")
+    bg.add_argument("--tag", help="Run tag (default: today's date as YYYYMMDD)")
+    bg.add_argument("--resume", action="store_true", help="Reuse existing worktree")
+    bg.add_argument("--refresh", action="store_true", help="Fresh worktree from main, copy state")
+
     args = parser.parse_args()
     if args.command == "workflow":
         scaffold_workflow(args.name)
@@ -243,6 +440,8 @@ def main() -> None:
         generate_workspace(args.harness_yaml, args.output_dir)
     elif args.command == "report":
         generate_report_cmd(args.workflow_name, args.open, getattr(args, 'design_system', None))
+    elif args.command == "harness-bg":
+        harness_bg_cmd(tag=args.tag, resume=args.resume, refresh=args.refresh)
 
 
 if __name__ == "__main__":

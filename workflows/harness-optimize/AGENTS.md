@@ -1,17 +1,21 @@
 # harness-optimize
-Meta-optimization: the harness iterates on itself to maximize benchmark scores.
+Meta-optimize: the harness iterates on itself to maximize benchmark scores.
 
-## Targets (agent edits)
-- `../../AGENTS.md` | root manifest
-- `../../.github/agents/research-runner.agent.md` | agent definition
-- `../../.github/skills/autonomous-iteration/SKILL.md` | core skill
-- `../../.github/copilot-instructions.md` | Copilot instructions
+## Targets
+- `../../AGENTS.md` | `../../harness.yaml` | `../../.github/copilot-instructions.md`
+- `../../.github/agents/research-runner.agent.md` | `../../.github/skills/autonomous-iteration/SKILL.md`
 
-## Fixed (read-only)
-- `workflow.yaml`, `program.md` | manifest and strategy
-- `../../.github/tests/` | benchmark suite
+## Fixed
+- `workflow.yaml`, `program.md` | `../../.github/tests/`
+
+## Background mode
+- `python scaffold.py harness-bg` | `--resume` | `--refresh`
+
+## State (gitignored)
+- `results/results.tsv` | `results/musings.md` | `results/ratchet_state.json` | `results/audit/`
 
 ## Constraints
-- No modifying tests or evaluator -- evaluation integrity
-- Platform-agnostic changes only -- no vendor lock-in
-- No gaming specific test cases -- generalize, not overfit
+- No modifying tests/evaluator -- evaluation integrity
+- Platform-agnostic only -- no vendor lock-in
+- No gaming specific tasks -- generalize, not overfit
+- No rebase during session -- breaks commit provenance

@@ -17,7 +17,7 @@ ERROR_CATEGORIES = frozenset(
 
 @dataclass
 class TaskTelemetry:
-    """Per-task metrics container."""
+    """Per-task metrics container with provenance tracking."""
 
     task_name: str
     input_tokens: int = 0
@@ -27,6 +27,17 @@ class TaskTelemetry:
     end_time: float = 0.0
     status: str = "pass"
     error_category: str | None = None
+
+    # Provenance fields for audit trail
+    agent_response: str = ""
+    expected_outcome: dict = field(default_factory=dict)
+    outcome_match: dict = field(default_factory=dict)
+    session_id: str | None = None
+    prompt_hash: str = ""
+    harness_version: str = ""
+    evaluation_mode: str = ""
+    model: str = ""
+    check_score: float = 0.0
 
     def record_tokens(self, input: int = 0, output: int = 0) -> None:
         self.input_tokens += input
@@ -38,15 +49,50 @@ class TaskTelemetry:
     def record_timing(self, start: float, end: float) -> None:
         self.start_time, self.end_time = start, end
 
+    def record_evaluation(
+        self,
+        response: str,
+        expected: dict,
+        checks: list[dict],
+        mode: str = "",
+        score: float = 0.0,
+        prompt_hash: str = "",
+        harness_version: str = "",
+        model: str = "",
+    ) -> None:
+        """Record evaluation provenance for audit trail."""
+        self.agent_response = response[:5000]  # cap stored response size
+        self.expected_outcome = expected
+        self.outcome_match = {"checks": checks, "score": score}
+        self.evaluation_mode = mode
+        self.check_score = score
+        self.prompt_hash = prompt_hash
+        self.harness_version = harness_version
+        self.model = model
+
     def to_dict(self) -> dict:
         dur = round(self.end_time - self.start_time, 3) if self.end_time else 0.0
-        return {
+        d = {
             "task_name": self.task_name, "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens, "total_tokens": self.input_tokens + self.output_tokens,
             "tool_calls": self.tool_calls, "tool_call_count": len(self.tool_calls),
             "start_time": self.start_time, "end_time": self.end_time, "duration_s": dur,
             "status": self.status, "error_category": self.error_category,
         }
+        # Include provenance fields when populated
+        if self.prompt_hash:
+            d["prompt_hash"] = self.prompt_hash
+        if self.harness_version:
+            d["harness_version"] = self.harness_version
+        if self.model:
+            d["model"] = self.model
+        if self.evaluation_mode:
+            d["evaluation_mode"] = self.evaluation_mode
+        if self.outcome_match:
+            d["outcome_match"] = self.outcome_match
+        if self.check_score > 0:
+            d["check_score"] = self.check_score
+        return d
 
     def __enter__(self):
         self.start_time = time.time()
