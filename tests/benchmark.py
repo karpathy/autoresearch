@@ -9,9 +9,12 @@ Usage:
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 import yaml
+
+from observe import TelemetryCollector
 
 TASKS_DIR = Path(__file__).parent / "tasks"
 
@@ -83,7 +86,7 @@ def placeholder_metrics() -> dict:
     }
 
 
-def run_benchmark(tasks: list[Path]) -> dict:
+def run_benchmark(tasks: list[Path], collector: TelemetryCollector | None = None) -> dict:
     """Run all tasks and collect results."""
     results: list[dict] = []
     passed = 0
@@ -91,7 +94,18 @@ def run_benchmark(tasks: list[Path]) -> dict:
 
     for task_path in tasks:
         rel = task_path.relative_to(TASKS_DIR)
+        start = time.time()
         data, errors = validate_task(task_path)
+        end = time.time()
+
+        if collector:
+            with collector.task(str(rel)) as t:
+                t.record_timing(start, end)
+                t.record_tokens(input=0, output=0)
+                if errors:
+                    t.status = "fail"
+                    t.error_category = "constraint_violation"
+
         if errors:
             failed += 1
             results.append({"task": str(rel), "status": "FAIL", "errors": errors})
@@ -164,13 +178,21 @@ def main() -> None:
     group.add_argument("--all", action="store_true", help="Run all tasks")
     group.add_argument("--quick", action="store_true", help="Run a subset of tasks")
     parser.add_argument("--json", action="store_true", help="Output JSON")
+    parser.add_argument("--telemetry", action="store_true", help="Collect telemetry to results/telemetry.jsonl")
     args = parser.parse_args()
 
     tasks = discover_tasks(TASKS_DIR)
     if args.quick:
         tasks = tasks[:2]
 
-    summary = run_benchmark(tasks)
+    results_dir = Path(__file__).parent / "results"
+    collector = TelemetryCollector(results_dir) if args.telemetry else None
+
+    summary = run_benchmark(tasks, collector=collector)
+
+    if collector:
+        out = collector.flush()
+        print(f"Telemetry written to {out}")
 
     if args.json:
         print(json.dumps(summary, indent=2))

@@ -17,6 +17,7 @@ wheels/
 **/results/results.tsv
 **/results/musings.md
 **/results/ratchet_state.json
+**/results/telemetry.jsonl
 **/run.log
 **/outputs/
 workflows/exec-summarizer/threads/*/jobs/

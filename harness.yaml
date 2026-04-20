@@ -103,15 +103,21 @@ platforms:
 
 skills:
   - name: "autonomous-iteration"
-    path: "skills/autonomous-iteration.md"
+    path: ".github/skills/autonomous-iteration/SKILL.md"
     description: "Edit-commit-run-measure-decide loop for autonomous experimentation"
     triggers:
       - "iterate"
       - "experiment"
       - "optimize"
       - "autoresearch"
-      - "autonomous loop"
-      - "keep/discard"
+  - name: "map-harness"
+    path: ".github/skills/map-harness/SKILL.md"
+    description: "Verify and maintain structure indexes in AGENTS.md files"
+    triggers:
+      - "map"
+      - "index"
+      - "hygiene"
+      - "structure check"
 
 
 # ------------------------------------------------------------
@@ -152,6 +158,15 @@ hooks:
     # Runs before the agent executes a tool (shell command, file edit, etc.).
     - path: "hooks/pre-tool-use/block-dangerous-commands.sh"
       description: "Block destructive git commands and secret exposure"
+    - path: "hooks/pre-tool-use/enforce-read-only.sh"
+      description: "Block writes to read-only paths declared in guardrails"
+
+  pre_commit:
+    # Runs before a commit is created.
+    - path: "hooks/pre-commit/check-file-sizes.sh"
+      description: "Reject AGENTS.md or SKILL.md files over 1000 characters"
+    - path: "hooks/pre-commit/no-secrets.sh"
+      description: "Scan staged diff for potential secrets"
 
   post_tool_use:
     # Runs after the agent executes a tool. Used for validation.
@@ -171,6 +186,20 @@ hooks:
 # These are declarative -- the hooks implement the enforcement.
 
 guardrails:
+  # Prohibition + reason pairs. Each rule is enforced by hooks;
+  # stating them here gives agents explicit awareness.
+  constraints:
+    - rule: "No secrets in code or commits"
+      reason: "credential leaks are irrecoverable"
+    - rule: "No git push --force"
+      reason: "history rewrites break collaboration"
+    - rule: "No modifying tests/tasks/ or tests/evaluator.py"
+      reason: "evaluation integrity requires fixed benchmarks"
+    - rule: "No AGENTS.md or SKILL.md over 1000 characters"
+      reason: "context window budget -- bloat degrades agent performance"
+    - rule: "No results.tsv or musings.md in commits"
+      reason: "experiment logs are local artifacts"
+
   # Commands that hooks will block if an agent attempts them.
   blocked_commands:
     - "git push --force"
@@ -236,7 +265,7 @@ scaffold:
   # Canonical directory names and their purposes.
   structure:
     agents: "agents/"                 # Agent behavior definitions
-    skills: "skills/"                 # Reusable skill definitions
+    skills: ".github/skills/"          # Changed from skills/
     hooks: "hooks/"                   # Lifecycle hook scripts
     tests: "tests/"                   # Quality benchmarks
     workflows: "workflows/"          # Research/task workflows
@@ -267,6 +296,14 @@ models:
 
   # Quick checks: validation, linting, simple lookups, formatting.
   fast: "claude-haiku-4-5"
+
+
+# Benchmark configuration
+benchmark:
+  model: "claude-sonnet-4-6"           # Fixed baseline model for experiments
+  reasoning_effort: "highest"           # Maximum reasoning for benchmark tasks
+  telemetry: true                       # Collect telemetry during benchmark runs
+  telemetry_output: "tests/results/telemetry.jsonl"
 
 
 # ------------------------------------------------------------
@@ -312,3 +349,15 @@ metrics:
     formula: "avg(time_to_first_response)"
     direction: lower                  # Lower values are better
     tier: 3                           # Optimization -- subject to T1+T2 floors
+
+
+# Observability
+observability:
+  telemetry_file: "tests/results/telemetry.jsonl"
+  error_taxonomy:
+    - "constraint_violation"       # Agent violated a guardrail
+    - "tool_failure"              # Tool call failed
+    - "timeout"                   # Task exceeded time budget
+    - "quality_gate_fail"         # Output failed lint/test
+    - "unknown"                   # Uncategorized error
+  metrics_export: "tests/results/"  # Directory for metric exports
