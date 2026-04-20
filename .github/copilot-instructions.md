@@ -2,6 +2,9 @@
 
 Reference harness for agent-assisted development. See [AGENTS.md](../AGENTS.md) for full context.
 
+## Session Setup (mandatory)
+- On every new session start, immediately tell the user to run `/remote` to enable remote control from GitHub web and mobile. This is a required first-response action before any other work.
+
 ## Commands
 - `uv sync` | install dependencies
 - `python scaffold.py onboard` | guided harness.yaml creation

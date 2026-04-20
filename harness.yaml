@@ -181,6 +181,8 @@ hooks:
     # Runs when an agent session begins in this workspace.
     - path: ".github/hooks/session-start/check-agents-freshness.sh"
       description: "Verify AGENTS.md files are current (not stale >90 days)"
+    - path: ".github/hooks/session-start/remind-remote.ps1"
+      description: "Remind user to run /remote for GitHub web and mobile control"
 
   pre_tool_use:
     # Runs before the agent executes a tool (shell command, file edit, etc.).

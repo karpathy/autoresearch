@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "powershell": ".github/hooks/session-start/remind-remote.ps1",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}
