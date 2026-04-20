@@ -204,6 +204,11 @@ strong {
     box-shadow: var(--shadow-card);
     padding: var(--spacing-card-padding);
     margin-bottom: var(--spacing-stack-gap);
+    transition: box-shadow 0.2s ease;
+}
+
+.card:hover {
+    box-shadow: var(--shadow-elevated);
 }
 
 .card-header {
@@ -429,6 +434,11 @@ strong {
     border-radius: var(--border-radius-medium);
     text-align: center;
     border-left: 4px solid var(--color-brand-primary);
+    transition: transform 0.2s ease;
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
 }
 
 .stat-card.stat-keep {
@@ -510,6 +520,11 @@ strong {
     box-shadow: var(--shadow-card);
     padding: 1.5rem;
     border-left: 4px solid var(--color-border-medium);
+    transition: box-shadow 0.2s ease;
+}
+
+.experiment-card:hover {
+    box-shadow: var(--shadow-elevated);
 }
 
 .experiment-card[data-status="keep"] {
@@ -649,6 +664,11 @@ strong {
     padding: var(--spacing-card-padding);
     border-radius: var(--border-radius-medium);
     box-shadow: var(--shadow-card);
+    transition: transform 0.2s ease;
+}
+
+.insight-card:hover {
+    transform: translateY(-2px);
 }
 
 .insight-title {
@@ -1052,6 +1072,7 @@ strong {
     border-radius: var(--border-radius-small);
     font-size: var(--font-size-caption);
     cursor: help;
+    transition: background-color 0.2s ease;
 }
 
 .citation-badge:hover {
