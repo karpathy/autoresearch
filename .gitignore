@@ -18,11 +18,14 @@ wheels/
 **/results/musings.md
 **/run.log
 **/outputs/
+workflows/exec-summarizer/threads/*/jobs/
 
-# Legacy top-level artifacts (deprecated structure)
+# Root-level runtime artifacts
 results.tsv
 musings.md
 run.log
+progress.db
+*.png
 
 # ============================================================
 # IDE and Editor
