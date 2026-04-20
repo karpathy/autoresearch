@@ -187,12 +187,13 @@ def generate_workspace(harness_path: Path, output_dir: Path) -> None:
         print(f"  {item}")
 
 
-def generate_report_cmd(workflow_name: str, open_browser: bool = False) -> None:
+def generate_report_cmd(workflow_name: str, open_browser: bool = False, design_system: Path | None = None) -> None:
     """Generate an HTML report from workflow results.
     
     Args:
         workflow_name: Name of the workflow (e.g., 'exec-summarizer')
         open_browser: Whether to open the report in browser after generation
+        design_system: Optional path to MASTER.md or directory containing it
     """
     workflow_dir = REPO_ROOT / "workflows" / workflow_name
     if not workflow_dir.exists():
@@ -208,7 +209,7 @@ def generate_report_cmd(workflow_name: str, open_browser: bool = False) -> None:
     spec = importlib.util.spec_from_file_location("generate_report", gen_script)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    mod.main(workflow_dir, open_browser=open_browser)
+    mod.main(workflow_dir, open_browser=open_browser, design_system=design_system)
 
 
 def main() -> None:
@@ -231,6 +232,7 @@ def main() -> None:
     rpt = sub.add_parser("report", help="Generate an HTML report from workflow results")
     rpt.add_argument("workflow_name", help="Workflow name (e.g., exec-summarizer)")
     rpt.add_argument("--open", action="store_true", help="Open report in browser after generation")
+    rpt.add_argument("--design-system", type=Path, help="Path to MASTER.md or directory containing it (overrides design tokens)")
 
     args = parser.parse_args()
     if args.command == "workflow":
@@ -240,7 +242,7 @@ def main() -> None:
     elif args.command == "generate":
         generate_workspace(args.harness_yaml, args.output_dir)
     elif args.command == "report":
-        generate_report_cmd(args.workflow_name, args.open)
+        generate_report_cmd(args.workflow_name, args.open, getattr(args, 'design_system', None))
 
 
 if __name__ == "__main__":

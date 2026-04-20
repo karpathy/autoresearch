@@ -1,0 +1,37 @@
+name: design-optimize
+description: "Use ui-ux-pro-max design intelligence to iteratively optimize report template visual quality"
+
+targets:
+  - path: "../../.github/skills/report-generator/templates/static/styles.css"
+    description: "Report visual design, typography, layout, colors"
+  - path: "../../.github/skills/report-generator/design-tokens.json"
+    description: "Design system tokens (colors, typography, spacing, chart config)"
+  - path: "../../.github/skills/report-generator/templates/base.html"
+    description: "Report page shell, navigation, structure"
+
+fixed:
+  - path: "../../.github/skills/report-generator/report_data.py"
+    description: "Data collector module (read-only)"
+  - path: "../../.github/skills/report-generator/generate_report.py"
+    description: "Report generator CLI (read-only)"
+  - path: "evaluate.py"
+    description: "Report quality evaluator (read-only)"
+
+metric:
+  name: quality_score
+  direction: higher
+  extract: "grep '^quality_score:' run.log | awk '{print $2}'"
+
+run:
+  command: "python evaluate.py > run.log 2>&1"
+  timeout: 120
+  setup: ""
+
+outputs:
+  report: required
+  artifacts: optional
+
+stages:
+  design: true
+  experiment: true
+  synthesis: true

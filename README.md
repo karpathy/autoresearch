@@ -91,6 +91,7 @@ Benchmark runs emit telemetry to `tests/results/telemetry.jsonl` (token counts, 
 | `exec-summarizer/` | Prompt engineering | `prompt.txt` | `quality_score` (higher) |
 | `harness-optimize/` | Meta-optimization | Harness config files | `harness_score` (higher) |
 | `report-design/` | Report UX | HTML templates + CSS | `quality_score` (higher) |
+| `design-optimize/` | Visual design | CSS + design tokens | `quality_score` (higher) |
 
 ## Report generation
 

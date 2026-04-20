@@ -20,6 +20,23 @@
     
     <!-- Styles -->
     <link rel="stylesheet" href="static/styles.css">
+    
+    {% if design_overrides %}
+    <!-- Design System Overrides from MASTER.md -->
+    <style>
+        :root {
+            {% if design_overrides.primary %}--color-brand-primary: {{ design_overrides.primary }};{% endif %}
+            {% if design_overrides.primary %}--color-brand-primary-light: {{ design_overrides.primary }};{% endif %}
+            {% if design_overrides.primary %}--color-border-focus: {{ design_overrides.primary }};{% endif %}
+            {% if design_overrides.secondary %}--color-brand-secondary: {{ design_overrides.secondary }};{% endif %}
+            {% if design_overrides.cta %}--color-brand-accent: {{ design_overrides.cta }};{% endif %}
+            {% if design_overrides.background %}--color-bg-primary: {{ design_overrides.background }};{% endif %}
+            {% if design_overrides.text %}--color-text-primary: {{ design_overrides.text }};{% endif %}
+            {% if design_overrides.heading_font %}--font-heading: '{{ design_overrides.heading_font }}', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;{% endif %}
+            {% if design_overrides.body_font %}--font-body: '{{ design_overrides.body_font }}', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;{% endif %}
+        }
+    </style>
+    {% endif %}
 </head>
 <body>
     <!-- Skip Navigation -->
