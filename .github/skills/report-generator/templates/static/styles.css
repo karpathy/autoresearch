@@ -1138,7 +1138,6 @@ strong {
     background: var(--color-bg-dark);
     color: var(--color-text-inverse);
     text-align: center;
-    min-height: 10vh;
     padding-top: 4vh;
 }
 
