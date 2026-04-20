@@ -1,0 +1,51 @@
+name: harness-optimize
+description: "Optimize the reference harness for maximum agent effectiveness using Pareto ratchet"
+
+targets:
+  - path: "../../AGENTS.md"
+    description: "Root manifest/router -- agent navigation and cross-cutting conventions"
+  - path: "../../.github/copilot-instructions.md"
+    description: "Copilot platform integration instructions"
+  - path: "../../agents/research-runner.md"
+    description: "Autonomous research agent behavioral contract"
+  - path: "../../skills/autonomous-iteration.md"
+    description: "Core iteration skill definition"
+  - path: "../../harness.yaml"
+    description: "Reference harness configuration"
+
+fixed:
+  - path: "../../tests/benchmark.py"
+    description: "Benchmark runner -- evaluation harness (read-only)"
+  - path: "../../tests/evaluator.py"
+    description: "Pareto ratchet evaluator (read-only)"
+  - path: "../../tests/tasks/"
+    description: "Synthetic task definitions (read-only)"
+
+metric:
+  name: "harness_score"
+  direction: higher
+  extract: "uv run python ../../tests/evaluator.py --extract-composite"
+
+run:
+  command: "uv run python ../../tests/benchmark.py --all > run.log 2>&1"
+  timeout: 1800
+  setup: "uv sync"
+
+outputs:
+  report: optional
+  artifacts: optional
+
+gates:
+  self_eval:
+    enabled: true
+    composite_min: 0.6
+    dimension_mins:
+      task_success_rate: 0.7
+      quality_gate_pass_rate: 0.7
+    on_fail: retry
+    max_retries: 1
+
+stages:
+  design: false
+  experiment: true
+  synthesis: false

@@ -1,197 +1,198 @@
-"""Pareto ratchet evaluator for harness metrics.
+"""Pareto ratchet evaluator -- tiered keep/discard logic with ratcheting floors.
 
-Implements tiered keep/discard logic:
-  Tier 1 (gates):      task_success_rate, quality_gate_pass_rate
-  Tier 2 (constraint): rework_rate
-  Tier 3 (optimize):   avg_token_consumption, time_per_turn
-
-Improvements to lower-tier metrics are accepted only if higher-tier
-floors are maintained. Floors ratchet upward on improvement.
-
-Usage:
-    python tests/evaluator.py --extract-composite    # Print composite score
-    python tests/evaluator.py --check-ratchet        # Check against ratcheted floors
-    python tests/evaluator.py --update-floors        # Update floors after a keep
+T1 (gate): task_success_rate, quality_gate_pass_rate
+T2 (constraint): rework_rate | T3 (optimize): avg_token_consumption, time_per_turn
 """
 
 import argparse
 import json
 import re
 import sys
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 RATCHET_PATH = Path(__file__).parent / "results" / "ratchet_state.json"
-
-METRIC_TIERS: dict[int, list[str]] = {
+TIERS: dict[int, list[str]] = {
     1: ["task_success_rate", "quality_gate_pass_rate"],
     2: ["rework_rate"],
     3: ["avg_token_consumption", "time_per_turn"],
 }
-
-METRIC_DIRECTION: dict[str, str] = {
-    "task_success_rate": "higher",
-    "quality_gate_pass_rate": "higher",
-    "rework_rate": "lower",
-    "avg_token_consumption": "lower",
-    "time_per_turn": "lower",
+DIR: dict[str, str] = {
+    "task_success_rate": "higher", "quality_gate_pass_rate": "higher",
+    "rework_rate": "lower", "avg_token_consumption": "lower", "time_per_turn": "lower",
 }
+TIER_W = {1: 0.5, 2: 0.3, 3: 0.2}
 
-TIER_WEIGHTS = {1: 0.5, 2: 0.3, 3: 0.2}
+
+def _better(val: float, ref: float, d: str) -> bool:
+    return (d == "higher" and val > ref) or (d == "lower" and val < ref)
 
 
 class RatchetState:
-    """Loads and saves ratcheted metric floors."""
-
+    """Loads and saves ratcheted metric floors with evaluation history."""
     def __init__(self, path: Path = RATCHET_PATH) -> None:
-        self.path = path
-        self.floors: dict[str, float] = {}
+        self.path, self.floors, self.history = path, {}, []
+        self.load()
+
+    def load(self) -> None:
         if self.path.exists():
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            self.floors = data.get("floors", {})
+            self.floors, self.history = data.get("floors", {}), data.get("history", [])
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"floors": self.floors}
-        self.path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        self.path.write_text(
+            json.dumps({"floors": self.floors, "history": self.history}, indent=2) + "\n",
+            encoding="utf-8")
+
+    def record(self, metrics: dict[str, float], decision: str) -> None:
+        self.history.append({"timestamp": datetime.now(timezone.utc).isoformat(),
+                             "metrics": metrics, "decision": decision})
 
     def update_floors(self, metrics: dict[str, float]) -> None:
-        """Ratchet floors upward (or downward for lower-is-better metrics)."""
         for name, value in metrics.items():
-            direction = METRIC_DIRECTION.get(name)
-            if direction is None:
-                continue
-            current = self.floors.get(name)
-            if current is None:
-                self.floors[name] = value
-            elif direction == "higher" and value > current:
-                self.floors[name] = value
-            elif direction == "lower" and value < current:
+            d = DIR.get(name)
+            if d and (name not in self.floors or _better(value, self.floors[name], d)):
                 self.floors[name] = value
 
 
 def composite_score(metrics: dict[str, float]) -> float:
     """Weighted harmonic mean across tiers. T1=0.5, T2=0.3, T3=0.2."""
-    weighted_sum = 0.0
-    weight_total = 0.0
-
-    for tier, names in METRIC_TIERS.items():
-        values = []
-        for name in names:
-            raw = metrics.get(name, 0.0)
-            direction = METRIC_DIRECTION[name]
-            if direction == "higher":
-                values.append(raw)
-            else:
-                values.append(1.0 / (1.0 + raw))
-
-        avg = sum(values) / len(values) if values else 0.0
+    w_sum, w_total = 0.0, 0.0
+    for tier, names in TIERS.items():
+        vals = [m if DIR[n] == "higher" else 1.0 / (1.0 + m)
+                for n in names if (m := metrics.get(n, 0.0)) is not None]
+        avg = sum(vals) / len(vals) if vals else 0.0
         if avg <= 0:
             return 0.0
-        w = TIER_WEIGHTS[tier]
-        weighted_sum += w / avg
-        weight_total += w
-
-    if weighted_sum <= 0:
-        return 0.0
-    return weight_total / weighted_sum
+        w = TIER_W[tier]
+        w_sum += w / avg
+        w_total += w
+    return w_total / w_sum if w_sum > 0 else 0.0
 
 
-def check_floors(metrics: dict[str, float], state: RatchetState) -> list[str]:
-    """Check metrics against ratcheted floors. Returns list of violations."""
-    violations: list[str] = []
-    for tier in sorted(METRIC_TIERS.keys()):
-        for name in METRIC_TIERS[tier]:
+def _check_tier(metrics: dict[str, float], state: RatchetState, tier: int) -> list[str]:
+    return [f"{n}: {metrics.get(n, 0.0):.3f} vs floor {f:.3f}"
+            for n in TIERS.get(tier, [])
+            if (f := state.floors.get(n)) is not None
+            and _better(f, metrics.get(n, 0.0), DIR[n])]
+
+def _find_improvements(metrics: dict[str, float], state: RatchetState) -> list[str]:
+    out: list[str] = []
+    for tier in sorted(TIERS):
+        for name in TIERS[tier]:
+            val = metrics.get(name)
+            if val is None:
+                continue
             floor = state.floors.get(name)
             if floor is None:
-                continue
-            value = metrics.get(name, 0.0)
-            direction = METRIC_DIRECTION[name]
-            if direction == "higher" and value < floor:
-                violations.append(
-                    f"T{tier} {name}: {value:.3f} < floor {floor:.3f}"
-                )
-            elif direction == "lower" and value > floor:
-                violations.append(
-                    f"T{tier} {name}: {value:.3f} > floor {floor:.3f}"
-                )
-    return violations
-
+                out.append(f"T{tier} {name}: {val:.3f} (new)")
+            elif _better(val, floor, DIR[name]):
+                out.append(f"T{tier} {name}: {val:.3f} (was {floor:.3f})")
+    return out
 
 def evaluate(metrics: dict[str, float]) -> dict:
-    """Evaluate metrics against ratchet. Returns decision and reasoning."""
+    """Core decision function with tiered regression checks."""
     state = RatchetState()
-    violations = check_floors(metrics, state)
     score = composite_score(metrics)
+    result: dict = {"harness_score": round(score, 3)}
+    for tier in (1, 2):
+        viol = _check_tier(metrics, state, tier)
+        if viol:
+            result.update(decision="discard",
+                          reason=f"T{tier} regression: {'; '.join(viol)}")
+            state.record(metrics, "discard"); state.save()
+            return result
+    improvements = _find_improvements(metrics, state)
+    if improvements:
+        result.update(decision="keep", reason="; ".join(improvements))
+    else:
+        result.update(decision="discard", reason="No improvement in any metric")
+    state.record(metrics, result["decision"]); state.save()
+    return result
 
-    if violations:
-        return {
-            "decision": "discard",
-            "harness_score": round(score, 3),
-            "violations": violations,
-            "reasoning": "Higher-tier floor(s) regressed",
-        }
-    return {
-        "decision": "keep",
-        "harness_score": round(score, 3),
-        "violations": [],
-        "reasoning": "All floors maintained",
+def _parse_metrics(text: str) -> dict[str, float]:
+    return {n: float(m.group(1)) for n in DIR
+            if (m := re.search(rf"^{re.escape(n)}:\s*([\d.]+)", text, re.MULTILINE))}
+
+def _read_metrics() -> dict[str, float]:
+    log = Path.cwd() / "run.log"
+    if log.exists():
+        return _parse_metrics(log.read_text(encoding="utf-8"))
+    return _parse_metrics(sys.stdin.read()) if not sys.stdin.isatty() else {}
+
+def reflect() -> None:
+    """Analyze results.tsv discard patterns and output markdown summary."""
+    path = Path.cwd() / "results" / "results.tsv"
+    if not path.exists():
+        print("No results/results.tsv found."); return
+    lines = path.read_text(encoding="utf-8").strip().splitlines()
+    if len(lines) < 2:
+        print("results.tsv has no data rows."); return
+    header = lines[0].split("\t")
+    rows = [line.split("\t") for line in lines[1:]]
+    dec_i = next((i for i, h in enumerate(header) if h.lower() == "decision"), None)
+    reason_i = next((i for i, h in enumerate(header) if h.lower() == "reason"), None)
+    if dec_i is None:
+        print("No 'decision' column in results.tsv."); return
+    total = len(rows)
+    discards = [r for r in rows if len(r) > dec_i and r[dec_i] == "discard"]
+    keeps = total - len(discards)
+    reasons: Counter[str] = Counter()
+    if reason_i is not None:
+        for r in discards:
+            if len(r) > reason_i:
+                tag = re.match(r"(T\d [^\s:]+)", r[reason_i])
+                reasons[tag.group(1) if tag else r[reason_i][:60]] += 1
+    print("## Reflection: Discard Pattern Analysis\n")
+    print(f"- Total evaluations: {total}")
+    print(f"- Kept: {keeps}, Discarded: {len(discards)}")
+    if total:
+        print(f"- Keep rate: {keeps / total:.1%}\n")
+    if not reasons:
+        return
+    print("### Top discard reasons\n")
+    print("| Reason | Count | Share |\n|--------|-------|-------|")
+    for reason, cnt in reasons.most_common(10):
+        print(f"| {reason} | {cnt} | {cnt / len(discards):.0%} |")
+    top = reasons.most_common(1)[0][0]
+    hyp = {
+        "T1": f"Primary blocker is T1 gate regression ({top})."
+              " Stabilize core success metrics before optimizing T2/T3.",
+        "T2": f"Primary blocker is T2 constraint ({top})."
+              " Rework rate is the bottleneck -- focus on first-pass quality.",
     }
-
-
-def extract_metrics_from_log(log_path: Path) -> dict[str, float]:
-    """Extract metric values from a run.log file (line format: 'key: value')."""
-    metrics: dict[str, float] = {}
-    if not log_path.exists():
-        return metrics
-    text = log_path.read_text(encoding="utf-8")
-    for name in METRIC_DIRECTION:
-        pattern = rf"^{re.escape(name)}:\s*([\d.]+)"
-        match = re.search(pattern, text, re.MULTILINE)
-        if match:
-            metrics[name] = float(match.group(1))
-    return metrics
-
+    msg = hyp.get(top[:2], f"Most frequent discard: {top}."
+                            " Review recent change patterns for root cause.")
+    print(f"\n### Hypotheses\n\n- {msg}")
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Pareto ratchet evaluator")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument(
-        "--extract-composite", action="store_true",
-        help="Read run.log, extract metrics, print composite score",
-    )
-    group.add_argument(
-        "--check-ratchet", action="store_true",
-        help="Check current metrics against saved floors",
-    )
-    group.add_argument(
-        "--update-floors", action="store_true",
-        help="Save current metrics as new floors (after a keep)",
-    )
-    args = parser.parse_args()
-
-    log_path = Path.cwd() / "run.log"
-    metrics = extract_metrics_from_log(log_path)
-
+    ap = argparse.ArgumentParser(description="Pareto ratchet evaluator")
+    g = ap.add_mutually_exclusive_group(required=True)
+    for flag, hlp in [("--extract-composite", "Print composite score from run.log or stdin"),
+                      ("--check-ratchet", "Check metrics against saved floors"),
+                      ("--update-floors", "Save current metrics as new floors"),
+                      ("--reflect", "Analyze discard patterns from results.tsv")]:
+        g.add_argument(flag, action="store_true", help=hlp)
+    args = ap.parse_args()
+    if args.reflect:
+        reflect(); return
+    metrics = _read_metrics()
     if args.extract_composite:
-        score = composite_score(metrics)
-        print(f"harness_score: {score:.3f}")
-
+        print(f"harness_score: {composite_score(metrics):.3f}")
     elif args.check_ratchet:
         state = RatchetState()
-        violations = check_floors(metrics, state)
-        if violations:
-            for v in violations:
+        viols = [v for t in sorted(TIERS) for v in _check_tier(metrics, state, t)]
+        if viols:
+            for v in viols:
                 print(f"VIOLATION: {v}")
             sys.exit(1)
-        else:
-            print("All floors maintained")
-
+        print("All floors maintained")
     elif args.update_floors:
         state = RatchetState()
-        state.update_floors(metrics)
-        state.save()
+        state.update_floors(metrics); state.save()
         print(f"Floors updated: {state.floors}")
 
-
-if __name__ == "__main__":
+if __name__== "__main__":
     main()
