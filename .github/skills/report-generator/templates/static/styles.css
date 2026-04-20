@@ -1281,6 +1281,7 @@ strong {
 @media print {
     body {
         scroll-snap-type: none;
+        font-size: 12pt;
     }
     
     .section {
@@ -1289,7 +1290,8 @@ strong {
         page-break-inside: avoid;
     }
     
-    .nav-dots {
+    .nav-dots,
+    .skip-link {
         display: none;
     }
     
