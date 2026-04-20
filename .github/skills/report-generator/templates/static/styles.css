@@ -1266,6 +1266,17 @@ strong {
     outline-offset: 2px;
 }
 
+/* Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        transition-duration: 0.01ms !important;
+    }
+    
+    html {
+        scroll-behavior: auto;
+    }
+}
+
 /* Print Styles */
 @media print {
     body {
