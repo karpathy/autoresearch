@@ -10,10 +10,17 @@ Reference harness for agent-assisted development. See [AGENTS.md](../AGENTS.md) 
 - `python scaffold.py report <workflow> [--open]` | generate HTML research report
 - `uv run python .github/tests/benchmark.py --all` | run benchmarks
 
+## Design intelligence (ui-ux-pro-max)
+- `python .github/prompts/ui-ux-pro-max/scripts/search.py "<query>" --design-system` | full design system
+- `python .github/prompts/ui-ux-pro-max/scripts/search.py "<query>" --domain <d>` | domain search
+- Domains: style, color, typography, chart, ux, landing, product, prompt
+- `--design-system --persist -p "Name"` | saves MASTER.md for session reuse
+
 ## Key files
 - `AGENTS.md` | root manifest/router | start here
 - `harness.yaml` | machine-readable harness config
 - `.github/skills/` | skill definitions (SKILL.md per skill)
+- `.github/prompts/` | Copilot prompts (ui-ux-pro-max design intelligence)
 - `.github/skills/report-generator/` | Jinja2+Chart.js report templates
 - `.github/hooks/` | lifecycle enforcement scripts
 - `.github/tests/` | benchmark suite with Pareto ratchet

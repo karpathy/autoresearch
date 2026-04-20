@@ -50,6 +50,9 @@ Thumbs.db
 # Local data directories (datasets should be downloaded/cached per machine)
 data/
 **/data/
+# Exception: ui-ux-pro-max design intelligence CSVs are committed
+!.github/prompts/ui-ux-pro-max/data/
+!.github/prompts/ui-ux-pro-max/data/**
 
 # ============================================================
 # Agent Session Files

@@ -128,6 +128,27 @@ skills:
 
 
 # ------------------------------------------------------------
+# Prompts (Copilot reusable prompts)
+# ------------------------------------------------------------
+# Copilot prompts live in .github/prompts/ and provide domain
+# intelligence that agents can query via CLI search tools.
+
+prompts:
+  - name: "ui-ux-pro-max"
+    path: ".github/prompts/ui-ux-pro-max/PROMPT.md"
+    description: "Design intelligence with 67 styles, 96 palettes, 57 font pairings, 99 UX guidelines, 25 chart types"
+    search_command: "python .github/prompts/ui-ux-pro-max/scripts/search.py"
+    triggers:
+      - "design"
+      - "UI"
+      - "UX"
+      - "style"
+      - "color palette"
+      - "typography"
+      - "chart type"
+
+
+# ------------------------------------------------------------
 # Agents
 # ------------------------------------------------------------
 # Agent definitions describe specialized personas with specific
@@ -273,6 +294,7 @@ scaffold:
   structure:
     agents: ".github/agents/"            # Agent definitions (Copilot-native)
     skills: ".github/skills/"          # Skill definitions
+    prompts: ".github/prompts/"        # Copilot reusable prompts
     hooks: ".github/hooks/"            # Lifecycle hook scripts
     tests: ".github/tests/"            # Quality benchmarks
     workflows: "workflows/"          # Research/task workflows
