@@ -2,103 +2,73 @@
     <div class="section-content">
         <h2 class="section-heading">Experiments</h2>
 
-        <!-- Summary Stats -->
-        <div class="experiment-stats">
-            <div class="stat-card">
-                <span class="stat-value">{{ report.total_experiments }}</span>
-                <span class="stat-label">Total</span>
-            </div>
-            <div class="stat-card stat-keep">
-                <span class="stat-value">{{ report.kept_count }}</span>
-                <span class="stat-label">Kept</span>
-            </div>
-            <div class="stat-card stat-discard">
-                <span class="stat-value">{{ report.discarded_count }}</span>
-                <span class="stat-label">Discarded</span>
-            </div>
-            <div class="stat-card stat-crash">
-                <span class="stat-value">{{ report.crash_count }}</span>
-                <span class="stat-label">Crashed</span>
-            </div>
+        <!-- Compact Summary Bar -->
+        <div class="summary-bar">
+            <span class="summary-segment summary-total">
+                <strong>{{ report.total_experiments }}</strong> experiments
+            </span>
+            <span class="summary-divider"></span>
+            <span class="summary-segment summary-keep">
+                <strong>{{ report.kept_count }}</strong> kept
+                {% if report.total_experiments > 0 %}
+                <span class="summary-pct">({{ "%.0f"|format((report.kept_count / report.total_experiments) * 100) }}%)</span>
+                {% endif %}
+            </span>
+            <span class="summary-divider"></span>
+            <span class="summary-segment summary-discard">
+                <strong>{{ report.discarded_count }}</strong> discarded
+            </span>
+            {% if report.crash_count > 0 %}
+            <span class="summary-divider"></span>
+            <span class="summary-segment summary-crash">
+                <strong>{{ report.crash_count }}</strong> crashed
+            </span>
+            {% endif %}
         </div>
 
-        <!-- Charts -->
+        <!-- Charts (primary data display) -->
         <div class="charts-grid">
-            <div class="chart-container">
+            <div class="chart-container chart-container-main">
                 <h3 class="chart-title">Metric Progression</h3>
                 {% include 'partials/chart-metric-progression.html' %}
             </div>
-            <div class="chart-container">
-                <h3 class="chart-title">Outcome Distribution</h3>
+            <div class="chart-container chart-container-side">
+                <h3 class="chart-title">Outcomes</h3>
                 {% include 'partials/chart-keepdiscard.html' %}
             </div>
         </div>
 
-        <!-- Experiment Timeline Chart -->
-        <div class="chart-container chart-container-timeline">
-            <h3 class="chart-title">Experiment Timeline</h3>
-            <div class="chart-wrapper">
-                <canvas id="experimentTimelineChart" aria-label="Bar chart showing experiment metric values over time"></canvas>
-            </div>
-            <script>
-            (function() {
-                const ctx = document.getElementById('experimentTimelineChart').getContext('2d');
-                const experiments = {{ report.experiments | tojson }};
-                const labels = experiments.map(e => `#${e.index}`);
-                const values = experiments.map(e => e.metric_value);
-                const colors = experiments.map(e => {
-                    if (e.status === 'keep') return '#059669';
-                    if (e.status === 'discard') return '#dc2626';
-                    if (e.status === 'crash') return '#d97706';
-                    return '#718096';
-                });
-                new Chart(ctx, {
-                    type: 'bar',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: '{{ report.metric_name }}',
-                            data: values,
-                            backgroundColor: colors,
-                            borderRadius: 4,
-                            barThickness: 24
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: { display: false },
-                            tooltip: {
-                                backgroundColor: 'rgba(26, 26, 46, 0.95)',
-                                padding: 12,
-                                cornerRadius: 6,
-                                callbacks: {
-                                    title: function(context) {
-                                        const idx = context[0].dataIndex;
-                                        return `Experiment ${experiments[idx].index}: ${experiments[idx].status}`;
-                                    }
-                                }
-                            }
-                        },
-                        scales: {
-                            y: { beginAtZero: false, grid: { color: '#e2e8f0' }, ticks: { font: { family: "'Inter', sans-serif", size: 11 }, color: '#64748b' } },
-                            x: { grid: { display: false }, ticks: { font: { family: "'Inter', sans-serif", size: 11 }, color: '#64748b' } }
-                        }
-                    }
-                });
-            })();
-            </script>
-        </div>
-
-        <!-- Experiment Timeline -->
-        <div class="experiment-timeline">
-            <h3 class="timeline-heading">Timeline</h3>
-            <div class="experiment-list">
-                {% for experiment in report.experiments %}
-                {% include 'partials/experiment-card.html' %}
-                {% endfor %}
-            </div>
-        </div>
+        <!-- Compact experiment table (collapsible) -->
+        <details class="experiment-details">
+            <summary class="experiment-details-summary">View all {{ report.total_experiments }} experiments</summary>
+            <table class="experiment-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Description</th>
+                        <th>{{ report.metric_name }}</th>
+                        <th>Delta</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for experiment in report.experiments %}
+                    <tr class="experiment-row experiment-row-{{ experiment.status }}">
+                        <td class="exp-index">#{{ experiment.index }}</td>
+                        <td class="exp-desc" title="{{ experiment.commit[:7] }}">{{ experiment.description }}</td>
+                        <td class="exp-metric">{{ "%.4f"|format(experiment.metric_value) }}</td>
+                        <td class="exp-delta">
+                            {% if experiment.delta is not none and experiment.delta != 0 %}
+                            <span class="{% if experiment.delta > 0 %}delta-positive{% else %}delta-negative{% endif %}">
+                                {% if experiment.delta > 0 %}+{% endif %}{{ "%.4f"|format(experiment.delta) }}
+                            </span>
+                            {% else %}--{% endif %}
+                        </td>
+                        <td class="exp-status"><span class="status-dot status-dot-{{ experiment.status }}"></span>{{ experiment.status }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </details>
     </div>
 </section>

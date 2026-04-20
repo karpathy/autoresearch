@@ -3,56 +3,29 @@
         <h2 class="section-heading">The Challenge</h2>
         
         <!-- Optimization Goal -->
-        <div class="challenge-grid">
-            <div class="card challenge-card">
-                <div class="card-body">
-                    <h3 class="challenge-label">Optimize</h3>
-                    <p class="challenge-metric">{{ report.metric_name }}</p>
-                    <div class="challenge-direction">
-                        {% if report.metric_direction == "higher" %}
-                        <svg class="direction-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M12 19V5M5 12l7-7 7 7"/>
-                        </svg>
-                        <span>Higher is better</span>
-                        {% else %}
-                        <svg class="direction-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M12 5v14M5 12l7 7 7-7"/>
-                        </svg>
-                        <span>Lower is better</span>
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
+        <div class="challenge-goal">
+            <span class="challenge-direction-icon">
+                {% if report.metric_direction == "higher" %}
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                {% else %}
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+                {% endif %}
+            </span>
+            <span class="challenge-goal-text">
+                Maximize <strong>{{ report.metric_name }}</strong>
+            </span>
         </div>
 
-        <!-- Job to be Done -->
-        <div class="narrative-block">
-            <h3 class="narrative-title">The Job to be Done</h3>
-            <div class="narrative-content">
-                <p>
-                    This workflow iteratively optimizes <strong>{{ report.metric_name }}</strong> 
-                    by testing variants of the target files. Each experiment proposes a change, 
-                    measures the impact, and keeps the improvement or discards the attempt.
-                </p>
-                <p>
-                    The system is constrained by the workflow configuration: certain files and 
-                    patterns are fixed, while others are open for experimentation. The goal is 
-                    to find the {{ report.metric_direction }} value through systematic exploration.
-                </p>
-            </div>
-        </div>
-
-        <!-- Target Context -->
-        <div class="constraint-box">
-            <h4 class="constraint-title">Experiment Scope</h4>
-            <ul class="constraint-list">
+        <!-- Experiment Scope (compact target list) -->
+        <div class="scope-block">
+            <h4 class="scope-title">Experiment scope</h4>
+            <div class="scope-targets">
                 {% for target in report.targets %}
-                <li>
-                    <code>{{ target.path }}</code>
-                    <span class="constraint-note">{{ target.description }}</span>
-                </li>
+                <span class="scope-target" title="{{ target.path }} -- {{ target.description }}">
+                    <code>{{ target.path.split('/')[-1] }}</code>
+                </span>
                 {% endfor %}
-            </ul>
+            </div>
         </div>
     </div>
 </section>

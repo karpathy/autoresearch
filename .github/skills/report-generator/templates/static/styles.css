@@ -1294,6 +1294,391 @@ strong {
     }
 }
 
+/* ============================================================
+   Redesign: Summary Bar, Compact Table, Collapsible Details
+   ============================================================ */
+
+/* Baseline Hero (situation section) */
+.baseline-hero {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin-top: 2rem;
+}
+
+.baseline-label {
+    font-size: var(--font-size-small);
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.baseline-metric-value {
+    font-size: var(--font-size-hero);
+    font-weight: var(--font-weight-bold);
+    color: var(--color-status-baseline);
+    font-family: var(--font-mono);
+}
+
+.baseline-metric-name {
+    font-size: var(--font-size-small);
+    color: var(--color-text-muted);
+}
+
+/* Challenge Goal (compact) */
+.challenge-goal {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    padding: 1.5rem;
+    background: var(--color-bg-accent);
+    border-radius: var(--border-radius-medium);
+}
+
+.challenge-direction-icon {
+    color: var(--color-brand-primary);
+}
+
+.challenge-goal-text {
+    font-size: var(--font-size-h3);
+    color: var(--color-text-primary);
+}
+
+/* Scope Block (compact inline targets) */
+.scope-block {
+    margin-top: 1.5rem;
+}
+
+.scope-title {
+    font-size: var(--font-size-small);
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.75rem;
+}
+
+.scope-targets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.scope-target {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--border-radius-small);
+    font-size: var(--font-size-small);
+    cursor: help;
+    transition: all 0.15s ease-out;
+}
+
+.scope-target:hover {
+    background: var(--color-bg-accent);
+    border-color: var(--color-brand-primary);
+    transform: translateY(-1px);
+}
+
+/* Summary Bar (replaces stat cards) */
+.summary-bar {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: 0.75rem 1.5rem;
+    background: var(--color-bg-secondary);
+    border-radius: var(--border-radius-medium);
+    border: 1px solid var(--color-border-light);
+    margin-bottom: 2rem;
+    font-size: var(--font-size-body);
+}
+
+.summary-segment {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--color-text-secondary);
+}
+
+.summary-segment strong {
+    font-family: var(--font-mono);
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text-primary);
+}
+
+.summary-pct {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-small);
+}
+
+.summary-divider {
+    width: 1px;
+    height: 1.25rem;
+    background: var(--color-border-medium);
+    margin: 0 1rem;
+}
+
+.summary-keep strong { color: var(--color-status-keep); }
+.summary-discard strong { color: var(--color-status-discard); }
+.summary-crash strong { color: var(--color-status-crash); }
+
+.impact-summary {
+    justify-content: center;
+    margin-top: 2rem;
+}
+
+/* Charts grid override */
+.chart-container-main {
+    flex: 2;
+}
+
+.chart-container-side {
+    flex: 1;
+}
+
+/* Experiment Table (compact, collapsible) */
+.experiment-details {
+    margin-top: 2rem;
+}
+
+.experiment-details-summary {
+    cursor: pointer;
+    padding: 0.75rem 1rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--border-radius-medium);
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+    font-weight: var(--font-weight-medium);
+    transition: all 0.15s ease-out;
+}
+
+.experiment-details-summary:hover {
+    background: var(--color-bg-accent);
+    color: var(--color-text-primary);
+}
+
+.experiment-details[open] .experiment-details-summary {
+    border-radius: var(--border-radius-medium) var(--border-radius-medium) 0 0;
+    border-bottom: none;
+}
+
+.experiment-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-small);
+    border: 1px solid var(--color-border-light);
+    border-top: none;
+    border-radius: 0 0 var(--border-radius-medium) var(--border-radius-medium);
+    overflow: hidden;
+}
+
+.experiment-table thead {
+    background: var(--color-bg-secondary);
+}
+
+.experiment-table th {
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    font-size: var(--font-size-caption);
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--color-border-light);
+}
+
+.experiment-table td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--color-border-light);
+}
+
+.experiment-row:hover {
+    background: var(--color-bg-accent);
+}
+
+.exp-index {
+    font-family: var(--font-mono);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+
+.exp-desc {
+    max-width: 400px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.exp-metric {
+    font-family: var(--font-mono);
+    font-weight: var(--font-weight-semibold);
+    white-space: nowrap;
+}
+
+.exp-delta {
+    font-family: var(--font-mono);
+    white-space: nowrap;
+}
+
+.exp-status {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    white-space: nowrap;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-dot-keep { background: var(--color-status-keep); }
+.status-dot-discard { background: var(--color-status-discard); }
+.status-dot-crash { background: var(--color-status-crash); }
+.status-dot-baseline { background: var(--color-status-baseline); }
+
+.experiment-row-keep .exp-metric { color: var(--color-status-keep); }
+.experiment-row-discard .exp-metric { color: var(--color-status-discard); }
+.experiment-row-crash .exp-metric { color: var(--color-status-crash); }
+
+/* Compact comparison rows */
+.comparison-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--color-border-light);
+}
+
+.comparison-row:last-child {
+    border-bottom: none;
+}
+
+.comparison-description {
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+    flex: 1;
+}
+
+.comparison-metric {
+    font-family: var(--font-mono);
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-small);
+    color: var(--color-status-keep);
+    white-space: nowrap;
+    margin-left: 1rem;
+}
+
+.comparison-metric.regress {
+    color: var(--color-status-discard);
+}
+
+/* Collapsible details (learnings, provenance) */
+.learnings-details,
+.provenance-details {
+    margin-top: 2rem;
+}
+
+.learnings-summary,
+.provenance-summary {
+    cursor: pointer;
+    padding: 0.75rem 1rem;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--border-radius-medium);
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+    font-weight: var(--font-weight-medium);
+    transition: all 0.15s ease-out;
+}
+
+.learnings-summary:hover,
+.provenance-summary:hover {
+    background: var(--color-bg-accent);
+    color: var(--color-text-primary);
+}
+
+.learnings-list {
+    padding: 1rem;
+    border: 1px solid var(--color-border-light);
+    border-top: none;
+    border-radius: 0 0 var(--border-radius-medium) var(--border-radius-medium);
+}
+
+.learning-row {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--color-border-light);
+}
+
+.learning-row:last-child {
+    border-bottom: none;
+}
+
+.learning-title {
+    font-size: var(--font-size-small);
+    color: var(--color-text-primary);
+}
+
+.learning-text {
+    font-size: var(--font-size-small);
+    color: var(--color-text-muted);
+    margin-top: 0.25rem;
+}
+
+/* Commit list (compact rows) */
+.commit-list {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--color-border-light);
+    border-top: none;
+    border-radius: 0 0 var(--border-radius-medium) var(--border-radius-medium);
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.commit-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--color-border-light);
+    font-size: var(--font-size-small);
+}
+
+.commit-row:last-child {
+    border-bottom: none;
+}
+
+.commit-hash {
+    font-size: var(--font-size-caption);
+    color: var(--color-brand-primary);
+    flex-shrink: 0;
+}
+
+.commit-message {
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Hover interactivity (Bento Grid pattern) */
+.card,
+.before-after-card,
+.scope-target {
+    transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+}
+
+.card:hover,
+.before-after-card:hover {
+    transform: scale(1.02);
+    box-shadow: var(--shadow-elevated);
+}
+
 /* Print Styles */
 @media print {
     body {

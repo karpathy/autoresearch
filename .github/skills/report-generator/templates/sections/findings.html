@@ -2,42 +2,17 @@
     <div class="section-content">
         <h2 class="section-heading">Findings</h2>
 
-        <!-- Key Insights -->
-        <div class="insights-grid">
-            {% for musing in report.musings[:5] %}
-            <div class="insight-card">
-                <h4 class="insight-title">{{ musing.experiment_title }}</h4>
-                <div class="insight-content">
-                    <div class="insight-block">
-                        <span class="insight-label">Rationale</span>
-                        <p>{{ musing.rationale }}</p>
-                    </div>
-                    <div class="insight-block">
-                        <span class="insight-label">Result</span>
-                        <p>{{ musing.result }}</p>
-                    </div>
-                    <div class="insight-block">
-                        <span class="insight-label">Learning</span>
-                        <p class="insight-learning">{{ musing.learning }}</p>
-                    </div>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-
-        <!-- What Worked vs What Didn't -->
+        <!-- What Worked vs What Didn't (compact) -->
         <div class="comparison-grid">
             <div class="comparison-column">
                 <h3 class="comparison-title comparison-positive">What Worked</h3>
                 <div class="comparison-content">
                     {% for experiment in report.experiments %}
                     {% if experiment.status == "keep" and experiment.delta is not none and experiment.delta != 0 %}
-                    <div class="comparison-item">
-                        <p class="comparison-description">{{ experiment.description }}</p>
+                    <div class="comparison-row">
+                        <span class="comparison-description">{{ experiment.description }}</span>
                         {% if experiment.delta_pct is not none %}
-                        <span class="comparison-metric">
-                            {% if experiment.delta > 0 %}+{% endif %}{{ "%.2f"|format(experiment.delta_pct) }}%
-                        </span>
+                        <span class="comparison-metric">{% if experiment.delta > 0 %}+{% endif %}{{ "%.2f"|format(experiment.delta_pct) }}%</span>
                         {% endif %}
                     </div>
                     {% endif %}
@@ -49,12 +24,10 @@
                 <div class="comparison-content">
                     {% for experiment in report.experiments %}
                     {% if experiment.status == "discard" %}
-                    <div class="comparison-item">
-                        <p class="comparison-description">{{ experiment.description }}</p>
+                    <div class="comparison-row">
+                        <span class="comparison-description">{{ experiment.description }}</span>
                         {% if experiment.delta_pct is not none %}
-                        <span class="comparison-metric regress">
-                            {{ "%.2f"|format(experiment.delta_pct) }}%
-                        </span>
+                        <span class="comparison-metric regress">{{ "%.2f"|format(experiment.delta_pct) }}%</span>
                         {% endif %}
                     </div>
                     {% endif %}
@@ -69,46 +42,21 @@
             {% if report.baseline and report.best %}
             {% include 'partials/metric-delta.html' %}
             {% endif %}
-            <div class="chart-container chart-container-cumulative">
-                <h4 class="chart-title">Cumulative Progress</h4>
-                <div class="chart-wrapper chart-wrapper-compact">
-                    <canvas id="cumulativeProgressChart" aria-label="Line chart showing cumulative progress of kept experiments"></canvas>
-                </div>
-                <script>
-                (function() {
-                    const ctx = document.getElementById('cumulativeProgressChart').getContext('2d');
-                    const experiments = {{ report.experiments | tojson }};
-                    const kept = experiments.filter(e => e.status === 'keep');
-                    const labels = kept.map(e => `#${e.index}`);
-                    const values = kept.map(e => e.metric_value);
-                    new Chart(ctx, {
-                        type: 'line',
-                        data: {
-                            labels: labels,
-                            datasets: [{
-                                label: 'Kept Experiments',
-                                data: values,
-                                borderColor: '#059669',
-                                backgroundColor: 'rgba(5, 150, 105, 0.1)',
-                                fill: true,
-                                tension: 0.3,
-                                pointRadius: 5,
-                                pointBackgroundColor: '#059669'
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            plugins: { legend: { display: false } },
-                            scales: {
-                                y: { beginAtZero: false, grid: { color: '#e2e8f0' } },
-                                x: { grid: { display: false } }
-                            }
-                        }
-                    });
-                })();
-                </script>
-            </div>
         </div>
+
+        <!-- Learnings (collapsible) -->
+        {% if report.musings %}
+        <details class="learnings-details">
+            <summary class="learnings-summary">{{ report.musings|length }} experiment reflections</summary>
+            <div class="learnings-list">
+                {% for musing in report.musings %}
+                <div class="learning-row">
+                    <strong class="learning-title">{{ musing.experiment_title }}</strong>
+                    <p class="learning-text">{{ musing.learning }}</p>
+                </div>
+                {% endfor %}
+            </div>
+        </details>
+        {% endif %}
     </div>
 </section>

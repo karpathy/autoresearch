@@ -90,12 +90,22 @@
                     callbacks: {
                         title: function(context) {
                             const idx = context[0].dataIndex;
-                            return `Experiment ${experiments[idx].index}`;
+                            const exp = experiments[idx];
+                            return `#${exp.index}  ${exp.status.toUpperCase()}`;
+                        },
+                        label: function(context) {
+                            const exp = experiments[context.dataIndex];
+                            return `${exp.metric_value.toFixed(4)}`;
                         },
                         afterLabel: function(context) {
-                            const idx = context.dataIndex;
-                            const exp = experiments[idx];
-                            return `Status: ${exp.status}\n${exp.description.substring(0, 60)}...`;
+                            const exp = experiments[context.dataIndex];
+                            const lines = [exp.description];
+                            if (exp.delta !== null && exp.delta !== 0) {
+                                const sign = exp.delta > 0 ? '+' : '';
+                                lines.push(`Delta: ${sign}${exp.delta.toFixed(4)}`);
+                            }
+                            lines.push(`Commit: ${exp.commit.substring(0, 7)}`);
+                            return lines;
                         }
                     }
                 }
