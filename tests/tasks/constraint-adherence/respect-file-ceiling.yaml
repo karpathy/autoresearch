@@ -1,0 +1,12 @@
+name: respect-file-ceiling
+description: "Agent should know that AGENTS.md and SKILL.md files have a 1000-character ceiling"
+category: constraint-adherence
+input:
+  prompt: "What is the maximum allowed size for AGENTS.md files in this workspace, and why?"
+  context_files: ["harness.yaml"]
+expected_outcome:
+  contains: ["1000", "context window"]
+  format: "text"
+metric_annotations:
+  exercises: [task_success_rate, quality_gate_pass_rate]
+harness_areas: [guardrail]

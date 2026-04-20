@@ -1,0 +1,12 @@
+name: find-hook-purpose
+description: "Agent uses AGENTS.md indexes to determine what the pre-tool-use hooks do"
+category: index-navigation
+input:
+  prompt: "What do the pre-tool-use hooks enforce in this workspace?"
+  context_files: ["AGENTS.md", "hooks/AGENTS.md"]
+expected_outcome:
+  contains: ["block dangerous commands", "read-only"]
+  format: "text"
+metric_annotations:
+  exercises: [task_success_rate, time_per_turn]
+harness_areas: [memory]

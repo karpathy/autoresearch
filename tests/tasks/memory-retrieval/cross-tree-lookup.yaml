@@ -1,0 +1,12 @@
+name: cross-tree-lookup
+description: "Agent navigates AGENTS.md tree to find which skill handles autonomous experimentation"
+category: memory-retrieval
+input:
+  prompt: "Using the AGENTS.md index, find which skill handles the edit-commit-run-measure loop and where its detailed protocol lives"
+  context_files: ["AGENTS.md"]
+expected_outcome:
+  contains: ["autonomous-iteration", "protocol.md"]
+  format: "text"
+metric_annotations:
+  exercises: [task_success_rate, time_per_turn]
+harness_areas: [memory, orchestration]

@@ -29,9 +29,9 @@ autoresearch/
 ├── AGENTS.md                 # Root manifest/router (start here)
 ├── harness.yaml              # Machine-readable harness config
 ├── agents/                   # Agent behavioral contracts
-├── skills/                   # Reusable agent capabilities
+├── .github/skills/           # Skill definitions (SKILL.md per skill)
 ├── hooks/                    # Deterministic lifecycle scripts
-├── tests/                    # Benchmark suite for harness quality
+├── tests/                    # Benchmark suite (8 synthetic tasks)
 ├── workflows/                # Concrete experiment configurations
 │   ├── _template/
 │   ├── examples/ml-training/
@@ -39,22 +39,13 @@ autoresearch/
 └── scaffold.py               # CLI for onboarding and scaffolding
 ```
 
-Each sub-directory has its own `AGENTS.md` with local context. The root `AGENTS.md` is the discovery index.
+Each sub-directory has its own `AGENTS.md` with local context. The root `AGENTS.md` is the discovery index. Skills live in `.github/skills/` (one `SKILL.md` per skill), including `autonomous-iteration` for the experiment loop and `map-harness` for structure hygiene.
 
 ## The autoresearch loop
 
-An AI agent modifies a target, measures a metric, keeps improvements, discards regressions, and repeats. The protocol:
+An AI agent modifies a target, measures a metric, keeps improvements, discards regressions, and repeats: edit, commit, run, extract metric, check gates, keep or discard, log to `results.tsv`, repeat. See `.github/skills/autonomous-iteration/SKILL.md` for the full protocol.
 
-1. Edit target file(s)
-2. Commit with descriptive message
-3. Run experiment, capture output
-4. Extract metric
-5. Check quality gates (if configured)
-6. Keep (improved + gates passed) or discard (revert)
-7. Log to `results.tsv` and `musings.md`
-8. Repeat
-
-The agent cycles through three modes -- the Artisan's Triad -- to explore the design space without getting stuck:
+The agent cycles through three modes -- the Artisan's Triad -- to avoid local optima:
 
 | Mode | Action | Example |
 |------|--------|---------|
@@ -73,6 +64,24 @@ Harness quality is measured across five metrics organized into tiers. Optimizing
 | Rework rate | Lower | T2 | Constraint -- subject to T1 floors |
 | Token consumption | Lower | T3 | Optimization -- subject to T1+T2 |
 | Time per turn | Lower | T3 | Optimization -- subject to T1+T2 |
+
+## Benchmarks
+
+The benchmark suite (`tests/benchmark.py`) runs 8 synthetic tasks against a fixed model baseline (Sonnet 4.6, highest reasoning effort). Tasks cover constraint adherence, context retrieval, data flow, index navigation, instruction following, memory retrieval, quality gates, and tool orchestration. Results are evaluated with a Pareto ratchet -- optimizing lower-tier metrics never regresses higher-tier ones.
+
+Run benchmarks: `uv run python tests/benchmark.py --all`
+
+## Observability
+
+Benchmark runs emit telemetry to `tests/results/telemetry.jsonl` (token counts, latencies, error taxonomy). Errors are classified as: constraint violation, tool failure, timeout, quality gate fail, or unknown.
+
+## Conventions
+
+- AGENTS.md and SKILL.md files stay under 1000 characters -- context window budget
+- Pipe-compressed index format for instruction files
+- Constraints include rationale: `No X -- reason`
+- TSV for structured logs, gitignored
+- No emoji, no em dashes (use `--`)
 
 ## Reference workflows
 

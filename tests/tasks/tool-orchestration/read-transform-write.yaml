@@ -1,0 +1,12 @@
+name: read-transform-write
+description: "Agent reads workflow.yaml, extracts metric name and direction, writes a summary"
+category: tool-orchestration
+input:
+  prompt: "Read workflows/harness-optimize/workflow.yaml, extract the metric name and direction, then write a one-line summary to stdout"
+  context_files: ["workflows/harness-optimize/workflow.yaml"]
+expected_outcome:
+  contains: ["harness_score", "higher"]
+  format: "text"
+metric_annotations:
+  exercises: [task_success_rate, avg_token_consumption, time_per_turn]
+harness_areas: [tool, orchestration]

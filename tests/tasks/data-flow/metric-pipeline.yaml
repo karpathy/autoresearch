@@ -1,0 +1,12 @@
+name: metric-pipeline
+description: "Agent runs benchmark, extracts composite score via evaluator, and reports the result"
+category: data-flow
+input:
+  prompt: "Run the benchmark suite in quick mode and extract the composite harness score using the evaluator"
+  context_files: ["tests/AGENTS.md"]
+expected_outcome:
+  contains: ["harness_score"]
+  format: "text"
+metric_annotations:
+  exercises: [task_success_rate, avg_token_consumption, time_per_turn]
+harness_areas: [tool, orchestration]
