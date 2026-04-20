@@ -3,7 +3,7 @@ name = "autoresearch"
 version = "0.1.0"
 description = "Autonomous pretraining research swarm"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "jinja2>=3.1.0",
     "kernels>=0.11.7",
@@ -17,6 +17,9 @@ dependencies = [
     "torch==2.9.1",
     "pyyaml>=6.0",
 ]
+
+[project.optional-dependencies]
+benchmark = ["github-copilot-sdk>=0.2.0"]
 
 [tool.uv.sources]
 torch = [
