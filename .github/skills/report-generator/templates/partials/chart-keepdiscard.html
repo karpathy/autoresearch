@@ -1,0 +1,105 @@
+<div class="chart-wrapper">
+    <canvas id="keepDiscardChart"></canvas>
+</div>
+
+<script>
+(function() {
+    const ctx = document.getElementById('keepDiscardChart').getContext('2d');
+    
+    const keptCount = {{ report.kept_count }};
+    const discardedCount = {{ report.discarded_count }};
+    const crashCount = {{ report.crash_count }};
+    const totalExperiments = {{ report.total_experiments }};
+    
+    const chartData = {
+        labels: ['Kept', 'Discarded', 'Crashed'],
+        datasets: [{
+            data: [keptCount, discardedCount, crashCount],
+            backgroundColor: [
+                '#059669',
+                '#dc2626',
+                '#d97706'
+            ],
+            borderWidth: 0,
+            hoverOffset: 8
+        }]
+    };
+    
+    const config = {
+        type: 'doughnut',
+        data: chartData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '60%',
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'bottom',
+                    labels: {
+                        font: {
+                            family: "'Inter', sans-serif",
+                            size: 12
+                        },
+                        color: '#4a5568',
+                        padding: 15,
+                        usePointStyle: true
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(26, 26, 46, 0.95)',
+                    titleFont: {
+                        family: "'Inter', sans-serif",
+                        size: 13,
+                        weight: 600
+                    },
+                    bodyFont: {
+                        family: "'Inter', sans-serif",
+                        size: 12
+                    },
+                    padding: 12,
+                    cornerRadius: 6,
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.label || '';
+                            const value = context.parsed || 0;
+                            const percentage = totalExperiments > 0 
+                                ? ((value / totalExperiments) * 100).toFixed(1)
+                                : 0;
+                            return `${label}: ${value} (${percentage}%)`;
+                        }
+                    }
+                }
+            }
+        },
+        plugins: [{
+            id: 'centerText',
+            afterDraw: function(chart) {
+                const ctx = chart.ctx;
+                const width = chart.width;
+                const height = chart.height;
+                
+                ctx.restore();
+                ctx.font = "600 28px 'Inter'";
+                ctx.fillStyle = '#1a1a2e';
+                ctx.textBaseline = 'middle';
+                ctx.textAlign = 'center';
+                
+                const text = totalExperiments.toString();
+                const textX = width / 2;
+                const textY = height / 2 - 10;
+                
+                ctx.fillText(text, textX, textY);
+                
+                ctx.font = "400 12px 'Inter'";
+                ctx.fillStyle = '#718096';
+                ctx.fillText('Total', textX, textY + 25);
+                
+                ctx.save();
+            }
+        }]
+    };
+    
+    new Chart(ctx, config);
+})();
+</script>

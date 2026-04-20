@@ -1,0 +1,101 @@
+<section id="impact" class="section section-impact">
+    <div class="section-content">
+        <h2 class="section-heading">Impact</h2>
+
+        <!-- Hero Metric -->
+        <div class="impact-hero">
+            <div class="improvement-display">
+                {% if report.improvement_pct %}
+                <span class="improvement-value">{{ "%.1f"|format(report.improvement_pct|abs) }}%</span>
+                <span class="improvement-label">
+                    {% if report.improvement_pct > 0 %}Improvement{% else %}Change{% endif %}
+                </span>
+                {% else %}
+                <span class="improvement-value">--</span>
+                <span class="improvement-label">No change measured</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Before/After Comparison -->
+        {% if report.baseline and report.best %}
+        <div class="before-after-grid">
+            <div class="before-after-card">
+                <span class="before-after-label">Baseline</span>
+                <span class="before-after-value">{{ "%.4f"|format(report.baseline.metric_value) }}</span>
+                <p class="before-after-description">{{ report.baseline.description }}</p>
+            </div>
+            <div class="before-after-arrow">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+            </div>
+            <div class="before-after-card">
+                <span class="before-after-label">Best Result</span>
+                <span class="before-after-value best">{{ "%.4f"|format(report.best.metric_value) }}</span>
+                <p class="before-after-description">{{ report.best.description }}</p>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Summary Stats -->
+        <div class="impact-stats">
+            <div class="impact-stat-card">
+                <span class="impact-stat-label">Experiments Run</span>
+                <span class="impact-stat-value">{{ report.total_experiments }}</span>
+            </div>
+            <div class="impact-stat-card">
+                <span class="impact-stat-label">Keep Rate</span>
+                <span class="impact-stat-value">
+                    {% if report.total_experiments > 0 %}
+                    {{ "%.0f"|format((report.kept_count / report.total_experiments) * 100) }}%
+                    {% else %}
+                    --
+                    {% endif %}
+                </span>
+            </div>
+            <div class="impact-stat-card">
+                <span class="impact-stat-label">Final Metric</span>
+                <span class="impact-stat-value">
+                    {% if report.best %}
+                    {{ "%.4f"|format(report.best.metric_value) }}
+                    {% else %}
+                    --
+                    {% endif %}
+                </span>
+            </div>
+        </div>
+
+        <!-- Next Steps -->
+        <div class="next-steps-section">
+            <h3 class="next-steps-title">Next Steps</h3>
+            <div class="next-steps-content">
+                <p>
+                    Review the experiment timeline and learnings to understand what worked. 
+                    The best-performing variant has been identified and can be adopted as the new baseline.
+                </p>
+                <p>
+                    Consider running additional experiments to explore adjacent variations or 
+                    apply the successful patterns to other target files.
+                </p>
+            </div>
+        </div>
+
+        <!-- Provenance -->
+        <div class="provenance-section">
+            <h3 class="provenance-title">Provenance</h3>
+            <div class="commit-list">
+                {% for commit in report.git_log %}
+                <div class="commit-item">
+                    <code class="commit-hash">{{ commit.hash[:7] }}</code>
+                    <span class="commit-message">{{ commit.message }}</span>
+                    <span class="commit-meta">
+                        <span class="commit-author">{{ commit.author }}</span>
+                        <span class="commit-date">{{ commit.date }}</span>
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</section>

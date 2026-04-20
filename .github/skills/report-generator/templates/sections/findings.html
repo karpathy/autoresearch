@@ -1,0 +1,74 @@
+<section id="findings" class="section section-findings">
+    <div class="section-content">
+        <h2 class="section-heading">Findings</h2>
+
+        <!-- Key Insights -->
+        <div class="insights-grid">
+            {% for musing in report.musings[:5] %}
+            <div class="insight-card">
+                <h4 class="insight-title">{{ musing.experiment_title }}</h4>
+                <div class="insight-content">
+                    <div class="insight-block">
+                        <span class="insight-label">Rationale</span>
+                        <p>{{ musing.rationale }}</p>
+                    </div>
+                    <div class="insight-block">
+                        <span class="insight-label">Result</span>
+                        <p>{{ musing.result }}</p>
+                    </div>
+                    <div class="insight-block">
+                        <span class="insight-label">Learning</span>
+                        <p class="insight-learning">{{ musing.learning }}</p>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- What Worked vs What Didn't -->
+        <div class="comparison-grid">
+            <div class="comparison-column">
+                <h3 class="comparison-title comparison-positive">What Worked</h3>
+                <div class="comparison-content">
+                    {% for experiment in report.experiments %}
+                    {% if experiment.status == "keep" and experiment.delta is not none and experiment.delta != 0 %}
+                    <div class="comparison-item">
+                        <p class="comparison-description">{{ experiment.description }}</p>
+                        {% if experiment.delta_pct is not none %}
+                        <span class="comparison-metric">
+                            {% if experiment.delta > 0 %}+{% endif %}{{ "%.2f"|format(experiment.delta_pct) }}%
+                        </span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="comparison-column">
+                <h3 class="comparison-title comparison-negative">What Didn't</h3>
+                <div class="comparison-content">
+                    {% for experiment in report.experiments %}
+                    {% if experiment.status == "discard" %}
+                    <div class="comparison-item">
+                        <p class="comparison-description">{{ experiment.description }}</p>
+                        {% if experiment.delta_pct is not none %}
+                        <span class="comparison-metric regress">
+                            {{ "%.2f"|format(experiment.delta_pct) }}%
+                        </span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Metric Journey -->
+        <div class="journey-section">
+            <h3 class="journey-title">Metric Journey</h3>
+            {% if report.baseline and report.best %}
+            {% include 'partials/metric-delta.html' %}
+            {% endif %}
+        </div>
+    </div>
+</section>

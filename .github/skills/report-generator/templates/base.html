@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ report.workflow_name }} - AutoResearch Report</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="static/styles.css">
+</head>
+<body>
+    <!-- Navigation Dots -->
+    <nav class="nav-dots" aria-label="Section navigation">
+        <a href="#situation" class="nav-dot active" aria-label="Situation" data-section="situation"></a>
+        <a href="#challenge" class="nav-dot" aria-label="Challenge" data-section="challenge"></a>
+        <a href="#experiments" class="nav-dot" aria-label="Experiments" data-section="experiments"></a>
+        <a href="#findings" class="nav-dot" aria-label="Findings" data-section="findings"></a>
+        <a href="#impact" class="nav-dot" aria-label="Impact" data-section="impact"></a>
+    </nav>
+
+    <!-- Main Content -->
+    <main>
+        {% include 'sections/situation.html' %}
+        {% include 'sections/challenge.html' %}
+        {% include 'sections/experiments.html' %}
+        {% include 'sections/findings.html' %}
+        {% include 'sections/impact.html' %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="report-footer">
+        <div class="footer-content">
+            <p class="footer-meta">
+                Generated {{ report.generated_at }} on branch <code>{{ report.branch_name }}</code>
+            </p>
+            <p class="footer-attribution">
+                AutoResearch Report Generator
+            </p>
+        </div>
+    </footer>
+
+    <!-- Navigation Script -->
+    <script>
+        // Update active navigation dot on scroll
+        const sections = document.querySelectorAll('section[id]');
+        const navDots = document.querySelectorAll('.nav-dot');
+        
+        const observerOptions = {
+            root: null,
+            rootMargin: '-50% 0px -50% 0px',
+            threshold: 0
+        };
+        
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const sectionId = entry.target.getAttribute('id');
+                    navDots.forEach(dot => {
+                        dot.classList.remove('active');
+                        if (dot.getAttribute('data-section') === sectionId) {
+                            dot.classList.add('active');
+                        }
+                    });
+                }
+            });
+        }, observerOptions);
+        
+        sections.forEach(section => observer.observe(section));
+    </script>
+</body>
+</html>

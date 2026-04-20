@@ -2,6 +2,7 @@
 """Scaffold workflows, print onboarding prompts, and generate workspaces."""
 
 import argparse
+import importlib.util
 import shutil
 import sys
 from pathlib import Path
@@ -186,6 +187,30 @@ def generate_workspace(harness_path: Path, output_dir: Path) -> None:
         print(f"  {item}")
 
 
+def generate_report_cmd(workflow_name: str, open_browser: bool = False) -> None:
+    """Generate an HTML report from workflow results.
+    
+    Args:
+        workflow_name: Name of the workflow (e.g., 'exec-summarizer')
+        open_browser: Whether to open the report in browser after generation
+    """
+    workflow_dir = REPO_ROOT / "workflows" / workflow_name
+    if not workflow_dir.exists():
+        print(f"Error: Workflow not found: {workflow_dir}", file=sys.stderr)
+        sys.exit(1)
+    
+    # Import and execute the generate_report module
+    gen_script = REPO_ROOT / ".github" / "skills" / "report-generator" / "generate_report.py"
+    if not gen_script.exists():
+        print(f"Error: Report generator not found: {gen_script}", file=sys.stderr)
+        sys.exit(1)
+    
+    spec = importlib.util.spec_from_file_location("generate_report", gen_script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.main(workflow_dir, open_browser=open_browser)
+
+
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -203,6 +228,10 @@ def main() -> None:
     gen.add_argument("--output-dir", type=Path, default=Path("."),
                      help="Output directory (default: current directory)")
 
+    rpt = sub.add_parser("report", help="Generate an HTML report from workflow results")
+    rpt.add_argument("workflow_name", help="Workflow name (e.g., exec-summarizer)")
+    rpt.add_argument("--open", action="store_true", help="Open report in browser after generation")
+
     args = parser.parse_args()
     if args.command == "workflow":
         scaffold_workflow(args.name)
@@ -210,6 +239,8 @@ def main() -> None:
         print(ONBOARDING_PROMPT)
     elif args.command == "generate":
         generate_workspace(args.harness_yaml, args.output_dir)
+    elif args.command == "report":
+        generate_report_cmd(args.workflow_name, args.open)
 
 
 if __name__ == "__main__":

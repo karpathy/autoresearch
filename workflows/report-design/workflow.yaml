@@ -1,0 +1,51 @@
+name: report-design
+description: "Optimize the HTML research report template for visual quality, narrative coherence, and data presentation"
+
+targets:
+  - path: "../../.github/skills/report-generator/templates/base.html"
+    description: "Report page shell, navigation, structure"
+  - path: "../../.github/skills/report-generator/templates/static/styles.css"
+    description: "Visual design, typography, layout, scroll behavior"
+  - path: "../../.github/skills/report-generator/templates/sections/situation.html"
+    description: "Starting context section template"
+  - path: "../../.github/skills/report-generator/templates/sections/challenge.html"
+    description: "Challenge/problem framing section template"
+  - path: "../../.github/skills/report-generator/templates/sections/experiments.html"
+    description: "Experiment timeline and charts section template"
+  - path: "../../.github/skills/report-generator/templates/sections/findings.html"
+    description: "Key insights and learnings section template"
+  - path: "../../.github/skills/report-generator/templates/sections/impact.html"
+    description: "Results and impact section template"
+  - path: "../../.github/skills/report-generator/templates/partials/chart-metric-progression.html"
+    description: "Chart.js metric progression line chart"
+  - path: "../../.github/skills/report-generator/templates/partials/chart-keepdiscard.html"
+    description: "Chart.js keep/discard doughnut chart"
+  - path: "../../.github/skills/report-generator/design-tokens.json"
+    description: "Design system tokens (colors, typography, spacing)"
+
+fixed:
+  - path: "../../.github/skills/report-generator/report_data.py"
+    description: "Data collector module (read-only)"
+  - path: "../../.github/skills/report-generator/generate_report.py"
+    description: "Report generator CLI (read-only)"
+  - path: "evaluate.py"
+    description: "Report quality evaluator (read-only)"
+
+metric:
+  name: quality_score
+  direction: higher
+  extract: "grep '^quality_score:' run.log | awk '{print $2}'"
+
+run:
+  command: "python evaluate.py > run.log 2>&1"
+  timeout: 120
+  setup: ""
+
+outputs:
+  report: required
+  artifacts: optional
+
+stages:
+  design: true
+  experiment: true
+  synthesis: true

@@ -1,0 +1,32 @@
+<div class="experiment-card" data-status="{{ experiment.status }}">
+    <div class="experiment-header">
+        <div class="experiment-number">
+            <span class="experiment-index">#{{ experiment.index }}</span>
+            <code class="experiment-commit">{{ experiment.commit[:7] }}</code>
+        </div>
+        <span class="status-badge status-{{ experiment.status }}">
+            {{ experiment.status }}
+        </span>
+    </div>
+    
+    <div class="experiment-body">
+        <p class="experiment-description">{{ experiment.description }}</p>
+        
+        <div class="experiment-metrics">
+            <div class="experiment-metric-primary">
+                <span class="experiment-metric-label">{{ report.metric_name }}</span>
+                <span class="experiment-metric-value">{{ "%.4f"|format(experiment.metric_value) }}</span>
+            </div>
+            
+            {% if experiment.delta is not none and experiment.delta != 0 %}
+            <div class="experiment-metric-delta">
+                {% set is_improvement = (report.metric_direction == "higher" and experiment.delta > 0) or (report.metric_direction == "lower" and experiment.delta < 0) %}
+                <span class="delta-badge {% if is_improvement %}delta-positive{% else %}delta-negative{% endif %}">
+                    {% if experiment.delta > 0 %}+{% endif %}{{ "%.4f"|format(experiment.delta) }}
+                    <span class="delta-percent">({{ "%+.2f"|format(experiment.delta_pct) }}%)</span>
+                </span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>

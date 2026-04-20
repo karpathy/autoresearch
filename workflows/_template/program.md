@@ -67,6 +67,22 @@ Cycle through three types. Don't do 5+ of the same type in a row.
 **Reductive (Sculptor)**: {domain-specific reductive experiments}
 **Reformative (Potter)**: {domain-specific reformative experiments}
 
+## Synthesis
+
+When the experiment loop ends (manual interruption or budget exhausted), generate a research report:
+
+```bash
+python scaffold.py report {workflow_name}
+```
+
+This produces an HTML report at `outputs/report/index.html` with:
+- Narrative arc: Situation > Challenge > Experiments > Findings > Impact
+- Interactive charts showing metric progression and keep/discard ratios
+- Key learnings extracted from musings.md
+- Full provenance with commit hashes and git history
+
+The report is gitignored (outputs/ is excluded) but can be shared by copying the `outputs/report/` folder.
+
 ## Musings (Reflection Log)
 
 Maintain a `results/musings.md` file (untracked) with pre/post reflections:

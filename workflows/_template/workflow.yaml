@@ -73,5 +73,7 @@ stages:
   experiment: true          # The core autonomous loop (should always be true)
                             # Agent iteratively modifies targets, runs experiments, keeps improvements
   
-  synthesis: false          # Post-run analysis and artifact extraction
+  synthesis: true          # Post-run analysis and report generation
+                            # Generates an HTML research report from experiment data
+                            # Run: python scaffold.py report {workflow_name}
                             # Enable if you want the agent to analyze results and generate reports

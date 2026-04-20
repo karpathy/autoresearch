@@ -89,6 +89,19 @@ Benchmark runs emit telemetry to `tests/results/telemetry.jsonl` (token counts, 
 |----------|--------|--------|--------|
 | `examples/ml-training/` | ML training | `train.py` | `val_bpb` (lower) |
 | `exec-summarizer/` | Prompt engineering | `prompt.txt` | `quality_score` (higher) |
+| `harness-optimize/` | Meta-optimization | Harness config files | `harness_score` (higher) |
+| `report-design/` | Report UX | HTML templates + CSS | `quality_score` (higher) |
+
+## Report generation
+
+After completing an autoresearch run, generate a shareable HTML report:
+
+```bash
+python scaffold.py report exec-summarizer        # generate report
+python scaffold.py report exec-summarizer --open  # generate and open in browser
+```
+
+Reports follow a narrative arc -- Situation > Challenge > Experiments > Findings > Impact -- with interactive Chart.js charts, experiment timelines, and full provenance. Output goes to `<workflow>/outputs/report/index.html`.
 
 ## License
 

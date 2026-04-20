@@ -1,0 +1,52 @@
+<section id="situation" class="section section-situation">
+    <div class="section-content">
+        <!-- Hero -->
+        <div class="hero">
+            <h1 class="hero-title">{{ report.workflow_name }}</h1>
+            <p class="hero-subtitle">{{ report.workflow_description }}</p>
+        </div>
+
+        <!-- Starting Point -->
+        <div class="card baseline-card">
+            <div class="card-header">
+                <h3 class="card-title">Starting Point</h3>
+            </div>
+            <div class="card-body">
+                {% if report.baseline %}
+                <div class="metric-display">
+                    <span class="metric-label">{{ report.metric_name }}</span>
+                    <span class="metric-value baseline-value">{{ "%.4f"|format(report.baseline.metric_value) }}</span>
+                </div>
+                <p class="baseline-description">{{ report.baseline.description }}</p>
+                {% else %}
+                <p class="text-muted">No baseline experiment recorded</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Target Files -->
+        <div class="targets-section">
+            <h3 class="section-subtitle">Target Files</h3>
+            <div class="targets-grid">
+                {% for target in report.targets %}
+                <div class="target-item">
+                    <code class="target-path">{{ target.path }}</code>
+                    <p class="target-description">{{ target.description }}</p>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Context -->
+        <div class="context-footer">
+            <span class="context-item">
+                <span class="context-label">Branch:</span>
+                <code>{{ report.branch_name }}</code>
+            </span>
+            <span class="context-item">
+                <span class="context-label">Total Experiments:</span>
+                <strong>{{ report.total_experiments }}</strong>
+            </span>
+        </div>
+    </div>
+</section>

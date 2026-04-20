@@ -1,0 +1,31 @@
+<div class="metric-delta-display">
+    <div class="metric-delta-container">
+        <div class="metric-delta-item metric-before">
+            <span class="metric-delta-label">Baseline</span>
+            <span class="metric-delta-value">{{ "%.4f"|format(report.baseline.metric_value) }}</span>
+        </div>
+        
+        <div class="metric-delta-arrow">
+            {% set is_improvement = (report.metric_direction == "higher" and report.best.metric_value > report.baseline.metric_value) or (report.metric_direction == "lower" and report.best.metric_value < report.baseline.metric_value) %}
+            <svg width="64" height="32" viewBox="0 0 64 32" fill="none" class="arrow-svg {% if is_improvement %}arrow-improvement{% else %}arrow-regression{% endif %}">
+                <path d="M4 16h52m0 0l-8-8m8 8l-8 8" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="metric-delta-change {% if is_improvement %}change-positive{% else %}change-negative{% endif %}">
+                {% if report.improvement_pct %}
+                {{ "%+.2f"|format(report.improvement_pct) }}%
+                {% else %}
+                No change
+                {% endif %}
+            </span>
+        </div>
+        
+        <div class="metric-delta-item metric-after">
+            <span class="metric-delta-label">Best Result</span>
+            <span class="metric-delta-value {% if is_improvement %}value-improved{% endif %}">{{ "%.4f"|format(report.best.metric_value) }}</span>
+        </div>
+    </div>
+    
+    <div class="metric-delta-description">
+        <p>{{ report.best.description }}</p>
+    </div>
+</div>

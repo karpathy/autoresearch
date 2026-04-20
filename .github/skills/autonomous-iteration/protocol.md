@@ -76,6 +76,17 @@ NEVER STOP. Once the loop begins, do NOT pause to ask the human if you should co
 - Try more radical changes
 - The loop runs until manually interrupted.
 
+## Synthesis (Post-Loop)
+
+When the loop ends (manual interrupt or budget exhaustion), generate a research report:
+
+1. Run `python scaffold.py report <workflow-name>` from the repo root
+2. The report is written to `<workflow>/outputs/report/index.html`
+3. Share the `outputs/report/` folder -- it is self-contained (HTML + CSS + Chart.js via CDN)
+
+The report synthesizes results.tsv, musings.md, and git history into a narrative arc:
+Situation > Challenge > Experiments > Findings > Impact
+
 ## Logging
 
 Results go to `results.tsv` (tab-separated, NOT comma-separated, untracked by git):
@@ -107,6 +118,7 @@ Before completing any session, verify:
 - [ ] Every experiment logged with commit hash, metric, status, and description
 - [ ] Discarded experiments properly git-reset (branch only contains kept changes)
 - [ ] Musings.md has pre/post reflection for every experiment
+- [ ] Research report generated via `python scaffold.py report <workflow>` (if synthesis stage enabled)
 
 ## Self-Evaluation Gate
 

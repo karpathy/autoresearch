@@ -1,0 +1,138 @@
+<div class="chart-wrapper">
+    <canvas id="metricProgressionChart"></canvas>
+</div>
+
+<script>
+(function() {
+    const ctx = document.getElementById('metricProgressionChart').getContext('2d');
+    
+    const experiments = {{ report.experiments | tojson }};
+    const metricDirection = "{{ report.metric_direction }}";
+    const baselineValue = {{ report.baseline.metric_value if report.baseline else 'null' }};
+    
+    // Prepare data
+    const labels = experiments.map(e => `#${e.index}`);
+    const values = experiments.map(e => e.metric_value);
+    
+    // Color-code points by status
+    const pointColors = experiments.map(e => {
+        if (e.status === 'keep') return '#059669';
+        if (e.status === 'discard') return '#dc2626';
+        if (e.status === 'crash') return '#d97706';
+        return '#718096';
+    });
+    
+    const chartData = {
+        labels: labels,
+        datasets: [{
+            label: '{{ report.metric_name }}',
+            data: values,
+            borderColor: '#2563eb',
+            backgroundColor: 'rgba(37, 99, 235, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.3,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            pointBackgroundColor: pointColors,
+            pointBorderColor: pointColors,
+            pointBorderWidth: 2
+        }]
+    };
+    
+    // Add baseline line if available
+    if (baselineValue !== null) {
+        chartData.datasets.push({
+            label: 'Baseline',
+            data: Array(experiments.length).fill(baselineValue),
+            borderColor: '#6366f1',
+            borderWidth: 2,
+            borderDash: [5, 5],
+            fill: false,
+            pointRadius: 0,
+            pointHoverRadius: 0
+        });
+    }
+    
+    const config = {
+        type: 'line',
+        data: chartData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        font: {
+                            family: "'Inter', sans-serif",
+                            size: 12
+                        },
+                        color: '#4a5568',
+                        usePointStyle: true,
+                        padding: 15
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(26, 26, 46, 0.95)',
+                    titleFont: {
+                        family: "'Inter', sans-serif",
+                        size: 13,
+                        weight: 600
+                    },
+                    bodyFont: {
+                        family: "'Inter', sans-serif",
+                        size: 12
+                    },
+                    padding: 12,
+                    cornerRadius: 6,
+                    callbacks: {
+                        title: function(context) {
+                            const idx = context[0].dataIndex;
+                            return `Experiment ${experiments[idx].index}`;
+                        },
+                        afterLabel: function(context) {
+                            const idx = context.dataIndex;
+                            const exp = experiments[idx];
+                            return `Status: ${exp.status}\n${exp.description.substring(0, 60)}...`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    grid: {
+                        color: '#e2e8f0',
+                        drawBorder: false
+                    },
+                    ticks: {
+                        font: {
+                            family: "'Inter', sans-serif",
+                            size: 11
+                        },
+                        color: '#64748b'
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false,
+                        drawBorder: false
+                    },
+                    ticks: {
+                        font: {
+                            family: "'Inter', sans-serif",
+                            size: 11
+                        },
+                        color: '#64748b',
+                        maxRotation: 0
+                    }
+                }
+            }
+        }
+    };
+    
+    new Chart(ctx, config);
+})();
+</script>

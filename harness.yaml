@@ -118,6 +118,13 @@ skills:
       - "index"
       - "hygiene"
       - "structure check"
+  - name: "report-generator"
+    path: ".github/skills/report-generator/SKILL.md"
+    description: "Generate professional HTML research reports from experiment data"
+    triggers:
+      - "report"
+      - "synthesize"
+      - "summarize results"
 
 
 # ------------------------------------------------------------
