@@ -188,8 +188,6 @@ strong {
     font-weight: var(--font-weight-bold);
     color: var(--color-text-primary);
     margin-bottom: 1rem;
-    letter-spacing: -0.02em;
-    line-height: 1.1;
     padding-top: 2vh;
 }
 
