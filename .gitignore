@@ -16,6 +16,7 @@ wheels/
 # Per-run experiment outputs (not committed)
 **/results/results.tsv
 **/results/musings.md
+**/results/ratchet_state.json
 **/run.log
 **/outputs/
 workflows/exec-summarizer/threads/*/jobs/

@@ -1,0 +1,10 @@
+name: lint-on-first-try
+description: "Generated code should pass linting without corrections"
+category: quality-gates
+input:
+  prompt: "Write a Python function that reverses a string"
+  constraints: ["Must pass ruff check"]
+expected_outcome:
+  passes_lint: true
+metric_annotations:
+  exercises: [quality_gate_pass_rate, rework_rate]

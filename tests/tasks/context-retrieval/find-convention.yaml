@@ -1,0 +1,11 @@
+name: find-convention
+description: "Agent should find the commit style convention from AGENTS.md"
+category: context-retrieval
+input:
+  prompt: "What commit message format does this project use?"
+  context_files: ["AGENTS.md"]
+expected_outcome:
+  contains: ["conventional commits", "Co-authored-by"]
+  format: "text"
+metric_annotations:
+  exercises: [task_success_rate, time_per_turn]
