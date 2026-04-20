@@ -119,6 +119,11 @@
     "experimentTimeline": {
       "type": "bar",
       "barThickness": 24
+    },
+    "cumulativeProgress": {
+      "type": "line",
+      "fill": true,
+      "fillOpacity": 0.1
     }
   },
 
