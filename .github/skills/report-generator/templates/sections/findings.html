@@ -69,6 +69,46 @@
             {% if report.baseline and report.best %}
             {% include 'partials/metric-delta.html' %}
             {% endif %}
+            <div class="chart-container" style="margin-top: 2rem;">
+                <h4 class="chart-title">Cumulative Progress</h4>
+                <div class="chart-wrapper" style="height: 200px;">
+                    <canvas id="cumulativeProgressChart"></canvas>
+                </div>
+                <script>
+                (function() {
+                    const ctx = document.getElementById('cumulativeProgressChart').getContext('2d');
+                    const experiments = {{ report.experiments | tojson }};
+                    const kept = experiments.filter(e => e.status === 'keep');
+                    const labels = kept.map(e => `#${e.index}`);
+                    const values = kept.map(e => e.metric_value);
+                    new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Kept Experiments',
+                                data: values,
+                                borderColor: '#059669',
+                                backgroundColor: 'rgba(5, 150, 105, 0.1)',
+                                fill: true,
+                                tension: 0.3,
+                                pointRadius: 5,
+                                pointBackgroundColor: '#059669'
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: { legend: { display: false } },
+                            scales: {
+                                y: { beginAtZero: false, grid: { color: '#e2e8f0' } },
+                                x: { grid: { display: false } }
+                            }
+                        }
+                    });
+                })();
+                </script>
+            </div>
         </div>
     </div>
 </section>
