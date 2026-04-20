@@ -34,6 +34,63 @@
             </div>
         </div>
 
+        <!-- Experiment Timeline Chart -->
+        <div class="chart-container" style="margin-bottom: 3rem;">
+            <h3 class="chart-title">Experiment Timeline</h3>
+            <div class="chart-wrapper">
+                <canvas id="experimentTimelineChart"></canvas>
+            </div>
+            <script>
+            (function() {
+                const ctx = document.getElementById('experimentTimelineChart').getContext('2d');
+                const experiments = {{ report.experiments | tojson }};
+                const labels = experiments.map(e => `#${e.index}`);
+                const values = experiments.map(e => e.metric_value);
+                const colors = experiments.map(e => {
+                    if (e.status === 'keep') return '#059669';
+                    if (e.status === 'discard') return '#dc2626';
+                    if (e.status === 'crash') return '#d97706';
+                    return '#718096';
+                });
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: '{{ report.metric_name }}',
+                            data: values,
+                            backgroundColor: colors,
+                            borderRadius: 4,
+                            barThickness: 24
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                backgroundColor: 'rgba(26, 26, 46, 0.95)',
+                                padding: 12,
+                                cornerRadius: 6,
+                                callbacks: {
+                                    title: function(context) {
+                                        const idx = context[0].dataIndex;
+                                        return `Experiment ${experiments[idx].index}: ${experiments[idx].status}`;
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            y: { beginAtZero: false, grid: { color: '#e2e8f0' }, ticks: { font: { family: "'Inter', sans-serif", size: 11 }, color: '#64748b' } },
+                            x: { grid: { display: false }, ticks: { font: { family: "'Inter', sans-serif", size: 11 }, color: '#64748b' } }
+                        }
+                    }
+                });
+            })();
+            </script>
+        </div>
+
         <!-- Experiment Timeline -->
         <div class="experiment-timeline">
             <h3 class="timeline-heading">Timeline</h3>
