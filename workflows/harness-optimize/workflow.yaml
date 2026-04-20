@@ -6,28 +6,28 @@ targets:
     description: "Root manifest/router -- agent navigation and cross-cutting conventions"
   - path: "../../.github/copilot-instructions.md"
     description: "Copilot platform integration instructions"
-  - path: "../../agents/research-runner.md"
-    description: "Autonomous research agent behavioral contract"
-  - path: "../../skills/autonomous-iteration.md"
+  - path: "../../.github/agents/research-runner.agent.md"
+    description: "Autonomous research agent definition"
+  - path: "../../.github/skills/autonomous-iteration/SKILL.md"
     description: "Core iteration skill definition"
   - path: "../../harness.yaml"
     description: "Reference harness configuration"
 
 fixed:
-  - path: "../../tests/benchmark.py"
+  - path: "../../.github/tests/benchmark.py"
     description: "Benchmark runner -- evaluation harness (read-only)"
-  - path: "../../tests/evaluator.py"
+  - path: "../../.github/tests/evaluator.py"
     description: "Pareto ratchet evaluator (read-only)"
-  - path: "../../tests/tasks/"
+  - path: "../../.github/tests/tasks/"
     description: "Synthetic task definitions (read-only)"
 
 metric:
   name: "harness_score"
   direction: higher
-  extract: "uv run python ../../tests/evaluator.py --extract-composite"
+  extract: "uv run python ../../.github/tests/evaluator.py --extract-composite"
 
 run:
-  command: "uv run python ../../tests/benchmark.py --all > run.log 2>&1"
+  command: "uv run python ../../.github/tests/benchmark.py --all > run.log 2>&1"
   timeout: 1800
   setup: "uv sync"
 

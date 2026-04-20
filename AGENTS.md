@@ -2,12 +2,11 @@
 Reference harness for agent-assisted development.
 
 ## Structure
-- `agents/` | agent definitions | `agents/AGENTS.md`
-- `skills/` | reusable capabilities | `skills/AGENTS.md`
-- `hooks/` | lifecycle enforcement | `hooks/AGENTS.md`
-- `tests/` | benchmark suite | `tests/AGENTS.md`
+- `.github/agents/` | agent definitions | `research-runner.agent.md`
+- `.github/skills/` | reusable capabilities | per-skill SKILL.md
+- `.github/hooks/` | lifecycle enforcement | `.github/hooks/AGENTS.md`
+- `.github/tests/` | benchmark suite | `.github/tests/AGENTS.md`
 - `workflows/` | experiment configs | per-workflow AGENTS.md
-- `.github/` | Copilot integration | pointers only, never duplicated definitions
 
 ## Constraints
 - No secrets in code or commits -- credential leaks are irrecoverable

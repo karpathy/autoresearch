@@ -129,7 +129,7 @@ skills:
 
 agents:
   - name: "research-runner"
-    path: "agents/research-runner.md"
+    path: ".github/agents/research-runner.agent.md"
     description: "Executes autonomous research workflows against workflow.yaml manifests"
     role: "Runs the edit-measure-decide loop within a declared workflow"
 
@@ -151,31 +151,31 @@ agents:
 hooks:
   session_start:
     # Runs when an agent session begins in this workspace.
-    - path: "hooks/session-start/check-agents-freshness.sh"
+    - path: ".github/hooks/session-start/check-agents-freshness.sh"
       description: "Verify AGENTS.md files are current (not stale >90 days)"
 
   pre_tool_use:
     # Runs before the agent executes a tool (shell command, file edit, etc.).
-    - path: "hooks/pre-tool-use/block-dangerous-commands.sh"
+    - path: ".github/hooks/pre-tool-use/block-dangerous-commands.sh"
       description: "Block destructive git commands and secret exposure"
-    - path: "hooks/pre-tool-use/enforce-read-only.sh"
+    - path: ".github/hooks/pre-tool-use/enforce-read-only.sh"
       description: "Block writes to read-only paths declared in guardrails"
 
   pre_commit:
     # Runs before a commit is created.
-    - path: "hooks/pre-commit/check-file-sizes.sh"
+    - path: ".github/hooks/pre-commit/check-file-sizes.sh"
       description: "Reject AGENTS.md or SKILL.md files over 1000 characters"
-    - path: "hooks/pre-commit/no-secrets.sh"
+    - path: ".github/hooks/pre-commit/no-secrets.sh"
       description: "Scan staged diff for potential secrets"
 
   post_tool_use:
     # Runs after the agent executes a tool. Used for validation.
-    - path: "hooks/post-tool-use/lint-after-edit.sh"
+    - path: ".github/hooks/post-tool-use/lint-after-edit.sh"
       description: "Run linter after file edits to catch regressions early"
 
   session_end:
     # Runs when the agent session ends.
-    - path: "hooks/session-end/git-status-summary.sh"
+    - path: ".github/hooks/session-end/git-status-summary.sh"
       description: "Show uncommitted changes summary before session closes"
 
 
@@ -213,8 +213,8 @@ guardrails:
   # Paths the agent must treat as read-only. Changes to these
   # paths should be rejected by pre_tool_use hooks.
   read_only_paths:
-    - "tests/tasks/"                  # Benchmark tasks are fixed inputs
-    - "tests/evaluator.py"           # Evaluator logic is fixed
+    - ".github/tests/tasks/"                  # Benchmark tasks are fixed inputs
+    - ".github/tests/evaluator.py"           # Evaluator logic is fixed
 
   # Checks that must pass before any commit is created.
   # Enforced by pre-commit hooks or agent self-checks.
@@ -252,7 +252,7 @@ gates:
 
   # Test command. Runs the benchmark suite in quick mode.
   # benchmark.py will be created in a subsequent step.
-  test: "python tests/benchmark.py --quick"
+  test: "python .github/tests/benchmark.py --quick"
 
 
 # ------------------------------------------------------------
@@ -264,10 +264,10 @@ gates:
 scaffold:
   # Canonical directory names and their purposes.
   structure:
-    agents: "agents/"                 # Agent behavior definitions
-    skills: ".github/skills/"          # Changed from skills/
-    hooks: "hooks/"                   # Lifecycle hook scripts
-    tests: "tests/"                   # Quality benchmarks
+    agents: ".github/agents/"            # Agent definitions (Copilot-native)
+    skills: ".github/skills/"          # Skill definitions
+    hooks: ".github/hooks/"            # Lifecycle hook scripts
+    tests: ".github/tests/"            # Quality benchmarks
     workflows: "workflows/"          # Research/task workflows
 
   # Structural rules that agents should follow when creating

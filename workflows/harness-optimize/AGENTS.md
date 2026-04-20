@@ -3,13 +3,13 @@ Meta-optimization: the harness iterates on itself to maximize benchmark scores.
 
 ## Targets (agent edits)
 - `../../AGENTS.md` | root manifest
-- `../../agents/research-runner.md` | agent contract
-- `../../skills/autonomous-iteration.md` | core skill
-- `../../.github/copilot-instructions.md` | Copilot pointers
+- `../../.github/agents/research-runner.agent.md` | agent definition
+- `../../.github/skills/autonomous-iteration/SKILL.md` | core skill
+- `../../.github/copilot-instructions.md` | Copilot instructions
 
 ## Fixed (read-only)
 - `workflow.yaml`, `program.md` | manifest and strategy
-- `../../tests/` | benchmark suite
+- `../../.github/tests/` | benchmark suite
 
 ## Constraints
 - No modifying tests or evaluator -- evaluation integrity

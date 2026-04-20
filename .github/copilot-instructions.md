@@ -7,14 +7,14 @@ Reference harness for agent-assisted development. See [AGENTS.md](../AGENTS.md) 
 - `python scaffold.py onboard` | guided harness.yaml creation
 - `python scaffold.py generate harness.yaml` | generate workspace
 - `python scaffold.py workflow <name>` | create workflow
-- `uv run python tests/benchmark.py --all` | run benchmarks
+- `uv run python .github/tests/benchmark.py --all` | run benchmarks
 
 ## Key files
 - `AGENTS.md` | root manifest/router | start here
 - `harness.yaml` | machine-readable harness config
 - `.github/skills/` | skill definitions (SKILL.md per skill)
-- `hooks/` | lifecycle enforcement scripts
-- `tests/` | benchmark suite with Pareto ratchet
+- `.github/hooks/` | lifecycle enforcement scripts
+- `.github/tests/` | benchmark suite with Pareto ratchet
 
 ## Conventions
 - Conventional commits with Co-authored-by trailer
