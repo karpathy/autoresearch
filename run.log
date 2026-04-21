@@ -1,0 +1,60 @@
+Installed 2 packages in 43ms
+ERROR:root:code for hash blake2b was not found.
+Traceback (most recent call last):
+  File "/Users/amader/.pyenv/versions/3.11.12/lib/python3.11/hashlib.py", line 307, in <module>
+    globals()[__func_name] = __get_hash(__func_name)
+                             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amader/.pyenv/versions/3.11.12/lib/python3.11/hashlib.py", line 129, in __get_openssl_constructor
+    return __get_builtin_constructor(name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amader/.pyenv/versions/3.11.12/lib/python3.11/hashlib.py", line 123, in __get_builtin_constructor
+    raise ValueError('unsupported hash type ' + name)
+ValueError: unsupported hash type blake2b
+ERROR:root:code for hash blake2s was not found.
+Traceback (most recent call last):
+  File "/Users/amader/.pyenv/versions/3.11.12/lib/python3.11/hashlib.py", line 307, in <module>
+    globals()[__func_name] = __get_hash(__func_name)
+                             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amader/.pyenv/versions/3.11.12/lib/python3.11/hashlib.py", line 129, in __get_openssl_constructor
+    return __get_builtin_constructor(name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amader/.pyenv/versions/3.11.12/lib/python3.11/hashlib.py", line 123, in __get_builtin_constructor
+    raise ValueError('unsupported hash type ' + name)
+ValueError: unsupported hash type blake2s
+loading train split...
+running algo.strategy(data)...
+  strategy returned in 0.1s
+  inferred timeframe: day
+fetching prices for 2 symbols...
+simulating...
+
+============================================================
+======================= TEST RESULTS =======================
+============================================================
+Split        : train  (2017-01-01 .. 2022-12-31)
+Timeframe    : day
+Periods      : 1,509  (2017-01-04 05:00:00+00:00  -->  2022-12-30 05:00:00+00:00)
+Symbols      : 2
+Cost model   : 1.5 bps one-way per unit |dW|
+
+RETURNS
+  Sharpe              : -0.3616    <-- PRIMARY METRIC
+  Total return        : -5.11%
+  Ann. return         : -0.87%
+  Ann. volatility     : 2.35%
+  t-stat of mean      : -0.88
+  Hit rate            : 27.70%
+
+RISK
+  Max drawdown        : -6.06%
+  Avg gross exposure  : 0.55x
+  Max gross exposure  : 1.00x
+  Avg net exposure    : 0.00x
+
+ACTIVITY
+  Ann. turnover (1w)  : 3.34x
+  Cost drag           : 0.050% / yr
+
+Wall time    : 0.1s
+============================================================
+Appended row to results.tsv

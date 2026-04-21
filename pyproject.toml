@@ -11,7 +11,8 @@ dependencies = [
     "requests>=2.32.0",
     "wrds>=0.1.0",
     "alpaca-py",
-    "dotenv"
+    "dotenv",
+    "statsmodels"
 ]
 
 

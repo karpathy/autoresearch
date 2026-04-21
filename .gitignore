@@ -21,3 +21,8 @@ dev/
 
 # Results file
 results.tsv
+experiment_log.md
+run.log
+
+# Cached market data (regenerate with `uv run load.py --prepopulate`)
+data/cache/

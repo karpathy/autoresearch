@@ -1,69 +1,56 @@
 """
-Cointegration pair trade: TLT vs EDV.
+Strategy file. This is the ONLY file the research agent edits.
 
-Both are long-duration Treasury ETFs (TLT ~17yr, EDV ~25yr strips).
-The spread is structurally mean-reverting but wider than pure trackers.
-OLS hedge ratio computed on a rolling window. Trade z-score of spread.
+The contract is the `strategy(data)` function below: `test.py` will import
+it, hand it a `load.Data` scoped to the active split, and score the
+returned weights. Everything else in this file can be reshaped as needed.
+
+The current implementation is a placeholder: 100% long SPY, rebalanced
+every daily bar. Its Sharpe is whatever SPY's Sharpe happens to be on the
+evaluated window (minus a one-time entry cost). Delete or replace it
+with your own ideas.
 """
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from load import Data
 
-LOOKBACK  = 120     # rolling window for hedge ratio + z-score
-ENTRY_Z   = 1.5    # wider threshold → lower turnover, survives costs
-EXIT_Z    = 0.25   # exit early enough to not over-trade
-HALF_LEG  = 0.5    # each leg 50% NAV, market-neutral
-
-
-def _ols_hedge(y: np.ndarray, x: np.ndarray) -> float:
-    """OLS slope: y = a + h*x."""
-    X = np.column_stack([np.ones(len(x)), x])
-    return float(np.linalg.lstsq(X, y, rcond=None)[0][1])
-
 
 def strategy(data: Data) -> pd.DataFrame:
-    bars = data.bars(["TLT", "EDV"], timeframe="day")
-    close = bars["close"].unstack("symbol").ffill().dropna()
+    """Return target portfolio weights.
 
-    log_tlt = np.log(close["TLT"])
-    log_edv = np.log(close["EDV"])
+    Parameters
+    ----------
+    data : load.Data
+        Pre-scoped to the split the harness is evaluating on. Use
+        ``data.universe(...)`` and ``data.bars(...)`` to pull whatever you
+        need; both are automatically bounded to the active window.
 
-    # Rolling OLS hedge ratio + z-score of residual spread
-    spread = pd.Series(np.nan, index=close.index)
-    for i in range(LOOKBACK, len(close)):
-        win_y = log_tlt.iloc[i - LOOKBACK: i].values
-        win_x = log_edv.iloc[i - LOOKBACK: i].values
-        h = _ols_hedge(win_y, win_x)
-        spread.iloc[i] = log_tlt.iloc[i] - h * log_edv.iloc[i]
+    Returns
+    -------
+    pandas.DataFrame
+        - Index   : tz-aware UTC ``DatetimeIndex``, strictly increasing, no
+                    duplicates. Every timestamp MUST be a real bar timestamp
+                    from ``data.bars(..., timeframe=...)`` at either ``"day"``
+                    or ``"30min"`` resolution (mix of the two in one frame
+                    is not supported).
+        - Columns : symbols, all drawn from ``data.universe()``.
+        - Values  : target weight of the symbol in portfolio NAV at that
+                    row's timestamp. +0.5 = 50% long, -0.25 = 25% short,
+                    0 or NaN = flat. No cap on gross exposure -- leverage
+                    is on you.
 
-    roll_mean = spread.rolling(LOOKBACK).mean()
-    roll_std  = spread.rolling(LOOKBACK).std()
-    z = (spread - roll_mean) / roll_std
-
-    tlt_w = pd.Series(0.0, index=close.index)
-    edv_w = pd.Series(0.0, index=close.index)
-
-    position = 0
-    for t in range(len(z)):
-        zt = z.iloc[t]
-        if np.isnan(zt):
-            pass
-        elif position == 0:
-            if zt > ENTRY_Z:
-                position = -1   # TLT expensive vs EDV: short TLT, long EDV
-            elif zt < -ENTRY_Z:
-                position = 1    # TLT cheap: long TLT, short EDV
-        elif position == 1 and zt >= EXIT_Z:
-            position = 0
-        elif position == -1 and zt <= -EXIT_Z:
-            position = 0
-
-        tlt_w.iloc[t] =  HALF_LEG * position
-        edv_w.iloc[t] = -HALF_LEG * position
-
-    weights = pd.DataFrame({"TLT": tlt_w, "EDV": edv_w}, index=close.index)
-    return weights
+    Semantics
+    ---------
+    The row at time ``t`` is executed at that bar's close and held until
+    the row at ``t+1``. Returns earned from ``t`` to ``t+1`` are
+    ``W[t] . (P[t+1] / P[t] - 1)``. Transaction cost is charged at every
+    rebalance (including the initial entry from zero).
+    """
+    # Placeholder: buy SPY on day 1, hold to the end. Zero turnover after
+    # the initial entry.
+    bars = data.bars("SPY", timeframe="day")
+    timestamps = bars.index.get_level_values("timestamp")
+    return pd.DataFrame({"SPY": 1.0}, index=timestamps)
