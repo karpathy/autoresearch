@@ -14,7 +14,7 @@ import sys
 import time
 import math
 import argparse
-import pickle
+import json
 from multiprocessing import Pool
 
 import requests
@@ -139,11 +139,11 @@ def text_iterator(max_chars=1_000_000_000, doc_cap=10_000):
 
 
 def train_tokenizer():
-    """Train BPE tokenizer using rustbpe, save as tiktoken pickle."""
-    tokenizer_pkl = os.path.join(TOKENIZER_DIR, "tokenizer.pkl")
+    """Train BPE tokenizer using rustbpe, save as tiktoken JSON."""
+    tokenizer_json = os.path.join(TOKENIZER_DIR, "tokenizer.json")
     token_bytes_path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
 
-    if os.path.exists(tokenizer_pkl) and os.path.exists(token_bytes_path):
+    if os.path.exists(tokenizer_json) and os.path.exists(token_bytes_path):
         print(f"Tokenizer: already trained at {TOKENIZER_DIR}")
         return
 
@@ -174,12 +174,21 @@ def train_tokenizer():
         special_tokens=special_tokens,
     )
 
-    # Save tokenizer
-    with open(tokenizer_pkl, "wb") as f:
-        pickle.dump(enc, f)
+    # Save tokenizer as JSON (pickle is insecure)
+    # tiktoken.Encoding itself isn't easily JSON serializable,
+    # so we save the parameters needed to reconstruct it.
+    serializable_ranks = {k.hex(): v for k, v in mergeable_ranks.items()}
+    tokenizer_data = {
+        "name": "rustbpe",
+        "pat_str": pattern,
+        "mergeable_ranks": serializable_ranks,
+        "special_tokens": special_tokens
+    }
+    with open(tokenizer_json, "w", encoding="utf-8") as f:
+        json.dump(tokenizer_data, f, indent=2)
 
     t1 = time.time()
-    print(f"Tokenizer: trained in {t1 - t0:.1f}s, saved to {tokenizer_pkl}")
+    print(f"Tokenizer: trained in {t1 - t0:.1f}s, saved to {tokenizer_json}")
 
     # --- Build token_bytes lookup for BPB evaluation ---
     print("Tokenizer: building token_bytes lookup...")
@@ -215,8 +224,19 @@ class Tokenizer:
 
     @classmethod
     def from_directory(cls, tokenizer_dir=TOKENIZER_DIR):
-        with open(os.path.join(tokenizer_dir, "tokenizer.pkl"), "rb") as f:
-            enc = pickle.load(f)
+        tokenizer_json = os.path.join(tokenizer_dir, "tokenizer.json")
+        with open(tokenizer_json, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        # Reconstruct mergeable_ranks from hex-encoded keys
+        mergeable_ranks = {bytes.fromhex(k): v for k, v in data["mergeable_ranks"].items()}
+
+        enc = tiktoken.Encoding(
+            name=data["name"],
+            pat_str=data["pat_str"],
+            mergeable_ranks=mergeable_ranks,
+            special_tokens=data["special_tokens"],
+        )
         return cls(enc)
 
     def get_vocab_size(self):
@@ -248,7 +268,7 @@ class Tokenizer:
 def get_token_bytes(device="cpu"):
     path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
     with open(path, "rb") as f:
-        return torch.load(f, map_location=device)
+        return torch.load(f, map_location=device, weights_only=True)
 
 
 def _document_batches(split, tokenizer_batch_size=128):
