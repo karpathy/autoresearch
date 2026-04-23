@@ -165,6 +165,7 @@ class GPT(nn.Module):
             str(i): nn.Embedding(config.vocab_size, kv_dim)
             for i in range(config.n_layer) if has_ve(i, config.n_layer)
         })
+        self._ve_list = [self.value_embeds.get(str(i)) for i in range(config.n_layer)]
         # Rotary embeddings
         self.rotary_seq_len = config.sequence_len * 10
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
@@ -300,7 +301,8 @@ class GPT(nn.Module):
         x0 = x
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
+            ve_module = self._ve_list[i]
+            ve = ve_module(idx) if ve_module is not None else None
             x = block(x, ve, cos_sin, self.window_sizes[i])
         x = norm(x)
 
