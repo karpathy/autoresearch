@@ -10,6 +10,7 @@ os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
 import time
+import itertools
 import contextlib
 from dataclasses import dataclass, asdict
 
@@ -536,12 +537,7 @@ model = torch.compile(model, dynamic=False)
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
 
 def ddp_dataloader_wrapper(loader, rank, world_size):
-    for _ in range(rank):
-        next(loader)
-    while True:
-        yield next(loader)
-        for _ in range(world_size - 1):
-            next(loader)
+    return itertools.islice(loader, rank, None, world_size)
 
 train_loader = ddp_dataloader_wrapper(train_loader, ddp_rank, ddp_world_size)
 
