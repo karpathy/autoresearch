@@ -118,7 +118,7 @@ def download_data(num_shards, download_workers=8):
 
 def list_parquet_files():
     """Return sorted list of parquet file paths in the data directory."""
-    files = sorted(f for f in os.listdir(DATA_DIR) if f.endswith(".parquet") and not f.endswith(".tmp"))
+    files = sorted(f for f in os.listdir(DATA_DIR) if f.endswith(".parquet"))
     return [os.path.join(DATA_DIR, f) for f in files]
 
 
