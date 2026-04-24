@@ -1,27 +1,59 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "autoresearch"
-version = "0.1.0"
-description = "Autonomous pretraining research swarm"
+name = "autoresearch-nano"
+version = "1.0.0"
+description = "nanoGPT-based autonomous ML research loop (research prototype)."
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Francisco Angulo de Lafuente", email = "agnuxo1@gmail.com" },
+]
+keywords = ["nanogpt", "llm", "research", "training", "autonomous", "p2pclaw"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
-    "kernels>=0.11.7",
-    "matplotlib>=3.10.8",
-    "numpy>=2.2.6",
-    "pandas>=2.3.3",
-    "pyarrow>=21.0.0",
-    "requests>=2.32.0",
-    "rustbpe>=0.1.0",
-    "tiktoken>=0.11.0",
-    "torch==2.9.1",
+    "torch>=2.0",
+    "numpy>=1.23",
+    "requests>=2.28",
 ]
 
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cu128" },
+[project.optional-dependencies]
+full = [
+    "transformers>=4.30",
+    "datasets>=2.14",
+    "wandb>=0.15",
+]
+dev = [
+    "pytest>=7.0",
+    "build>=1.0",
+    "twine>=4.0",
 ]
 
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
+[project.urls]
+Homepage = "https://github.com/Agnuxo1/autoresearch"
+Repository = "https://github.com/Agnuxo1/autoresearch"
+Issues = "https://github.com/Agnuxo1/autoresearch/issues"
+
+[project.scripts]
+autoresearch = "autoresearch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["autoresearch*"]
+exclude = ["tests*", "silicon*", "__pycache__*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

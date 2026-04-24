@@ -21,3 +21,9 @@ dev/
 
 # Results file
 results.tsv
+
+# v1.0.0 packaging additions
+.pytest_cache/
+run_metrics.json
+run_metrics.json.tmp
+
