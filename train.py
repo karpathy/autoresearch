@@ -460,7 +460,22 @@ torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 device = torch.device("cuda")
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-H100_BF16_PEAK_FLOPS = 989.5e12
+
+# Theoretical bf16 peak FLOPS keyed by CUDA compute capability. Hardcoding the
+# H100 number made the reported MFU 3-6x too high on every other GPU and
+# meaningless across community runs. See issues #5 and #29 (Blackwell support).
+_BF16_PEAK_FLOPS_BY_CAPABILITY = {
+    (7, 0): 125e12,    # V100 (fp16 tensor; bf16 unsupported, used as proxy)
+    (7, 5): 65e12,     # T4 / RTX 20xx
+    (8, 0): 312e12,    # A100
+    (8, 6): 165e12,    # RTX 30xx / A40 / A10
+    (8, 9): 165e12,    # RTX 40xx / L4 / L40
+    (9, 0): 989.5e12,  # H100 / H200
+    (10, 0): 2250e12,  # B100 / B200 (datacenter Blackwell, dense bf16)
+    (12, 0): 209e12,   # RTX 50xx (consumer Blackwell, dense bf16)
+}
+GPU_BF16_PEAK_FLOPS = _BF16_PEAK_FLOPS_BY_CAPABILITY.get(cap, 989.5e12)
+print(f"GPU: sm_{cap[0]}{cap[1]} -> bf16 peak {GPU_BF16_PEAK_FLOPS:.2e} FLOPS")
 
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
@@ -584,7 +599,7 @@ while True:
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
     pct_done = 100 * progress
     tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
-    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
+    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / GPU_BF16_PEAK_FLOPS
     remaining = max(0, TIME_BUDGET - total_training_time)
 
     print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
@@ -615,7 +630,7 @@ with autocast_ctx:
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
+steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / GPU_BF16_PEAK_FLOPS if total_training_time > 0 else 0
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
 print("---")
