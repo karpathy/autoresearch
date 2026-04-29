@@ -65,13 +65,16 @@ def download_single_shard(index):
     max_attempts = 5
     for attempt in range(1, max_attempts + 1):
         try:
-            response = requests.get(url, stream=True, timeout=30)
-            response.raise_for_status()
-            temp_path = filepath + ".tmp"
-            with open(temp_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
+            # Scope the response to a with-block so the underlying socket is
+            # released promptly on success or partial-stream failure, instead
+            # of waiting for GC to trigger urllib3 cleanup.
+            with requests.get(url, stream=True, timeout=30) as response:
+                response.raise_for_status()
+                temp_path = filepath + ".tmp"
+                with open(temp_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
             os.rename(temp_path, filepath)
             print(f"  Downloaded {filename}")
             return True
