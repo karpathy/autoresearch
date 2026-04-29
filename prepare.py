@@ -67,11 +67,21 @@ def download_single_shard(index):
         try:
             response = requests.get(url, stream=True, timeout=30)
             response.raise_for_status()
+            # Capture expected size BEFORE streaming so we can detect truncation
+            # caused by mid-stream socket drops, partial gateway responses, etc.
+            expected_size = int(response.headers.get("Content-Length", "0"))
             temp_path = filepath + ".tmp"
             with open(temp_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=1024 * 1024):
                     if chunk:
                         f.write(chunk)
+            if expected_size > 0:
+                actual_size = os.path.getsize(temp_path)
+                if actual_size != expected_size:
+                    raise IOError(
+                        f"truncated download for {filename}: "
+                        f"got {actual_size} bytes, expected {expected_size}"
+                    )
             os.rename(temp_path, filepath)
             print(f"  Downloaded {filename}")
             return True
