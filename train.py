@@ -5,7 +5,10 @@ Usage: uv run train.py
 """
 
 import os
-os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+# PyTorch reads PYTORCH_CUDA_ALLOC_CONF for the CUDA caching allocator. The
+# previous name (PYTORCH_ALLOC_CONF) is silently ignored, leaving expandable
+# segments off and producing more allocator fragmentation than necessary.
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
