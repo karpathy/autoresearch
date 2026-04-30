@@ -182,15 +182,17 @@ def train_tokenizer():
     print(f"Tokenizer: trained in {t1 - t0:.1f}s, saved to {tokenizer_pkl}")
 
     # --- Build token_bytes lookup for BPB evaluation ---
+    # Use raw token bytes from mergeable_ranks. Decoding each token to a
+    # Python str then re-encoding to UTF-8 silently replaces any non-UTF-8
+    # byte sequences (e.g. a single continuation byte 0x80) with U+FFFD
+    # (3 bytes), inflating the BPB byte denominator and making scores look
+    # artificially better. See issue #384.
     print("Tokenizer: building token_bytes lookup...")
-    special_set = set(SPECIAL_TOKENS)
+    rank_to_bytes = {rank: raw for raw, rank in mergeable_ranks.items()}
     token_bytes_list = []
     for token_id in range(enc.n_vocab):
-        token_str = enc.decode([token_id])
-        if token_str in special_set:
-            token_bytes_list.append(0)
-        else:
-            token_bytes_list.append(len(token_str.encode("utf-8")))
+        raw = rank_to_bytes.get(token_id)
+        token_bytes_list.append(len(raw) if raw is not None else 0)
     token_bytes_tensor = torch.tensor(token_bytes_list, dtype=torch.int32)
     torch.save(token_bytes_tensor, token_bytes_path)
     print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
