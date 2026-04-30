@@ -1,0 +1,105 @@
+=== Autoresearch Nightly Run ===
+Date:       2026-04-18T21:03:06Z
+Tag:        apr
+Batch size: 12
+Profile:    rtx5060
+GPU:        1
+GCRM lease: none (shell-script fallback)
+
+[rag-gpu-reservation] Switching crsai-mcp-rag to CPU mode
+ Container crsai-mcp-rag Recreate 
+ Container crsai-mcp-rag Recreated 
+ Container crsai-mcp-rag Starting 
+ Container crsai-mcp-rag Started 
+GPU reservation applied for AutoResearch (shell-script mode)
+vLLM healthy at http://crsai-vllm:8000/v1
+[21:03:09] === Autoresearch Orchestrator (batch) ===
+[21:03:09] Branch: autoresearch/apr
+[21:03:09] LLM: http://crsai-vllm:8000/v1 / nemotron-cascade-2-nvfp4
+[21:03:09] Profile: rtx5060
+[21:03:09] Batch size: 12
+[21:03:09] Cumulative experiments so far: 33
+[21:03:09] Consecutive failures carried over: 0
+GCRM modules not importable — falling back to shell script
+[21:03:11] GCRM fallback: shell-script reservation was used
+[21:03:11] vLLM health check passed (attempt 1)
+[21:03:11] Checked out existing branch: autoresearch/apr
+[21:03:11] --- Experiment 34 [1/12] (best: 1.172754) ---
+[21:03:11] Querying LLM for proposal...
+[21:03:14] Proposal: Add a linear warmup for the Muon optimizer's momentum to align with the 5% learning rate warmup, improving training stability and convergence for better validation bits per byte.
+[21:03:14] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 0s
+[21:03:14] CRASHED — reverting
+[21:03:14] --- Experiment 35 [2/12] (best: 1.172754) ---
+[21:03:14] Querying LLM for proposal...
+[21:03:15] Proposal: Add a linear warmup for the Muon optimizer's momentum to align with the 5% learning rate warmup, improving training stability and convergence for better validation bits per byte.
+[21:03:15] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 0s
+[21:03:15] CRASHED — reverting
+[21:03:15] --- Experiment 36 [3/12] (best: 1.172754) ---
+[21:03:15] Querying LLM for proposal...
+[21:03:17] Proposal: Add a linear warmup for the Muon optimizer's momentum to align with the 5% learning rate warmup, improving training stability and convergence for better validation bits per byte.
+[21:03:17] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 0s
+[21:03:17] CRASHED — reverting
+[21:03:17] --- Experiment 37 [4/12] (best: 1.172754) ---
+[21:03:17] Querying LLM for proposal...
+[21:03:18] Proposal: Add a linear warmup for Muon optimizer momentum to align with the 5% learning rate warmup, improving training stability and convergence for better validation bits per byte.
+[21:03:18] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 0s
+[21:03:18] CRASHED — reverting
+[21:03:18] --- Experiment 38 [5/12] (best: 1.172754) ---
+[21:03:18] Querying LLM for proposal...
+[21:03:21] Proposal: Add a linear warmup for the Muon optimizer's momentum to align with the 5% learning rate warmup, improving training stability and convergence for better validation bits per byte.
+[21:03:21] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 0s
+[21:03:21] CRASHED — reverting
+[21:03:21] --- Experiment 39 [6/12] (best: 1.172754) ---
+[21:03:21] Querying LLM for proposal...
+[21:03:27] Proposal: Add a linear warmup for Muon optimizer momentum to align with the 5% learning rate warmup, improving training stability and convergence for better validation bits per byte.
+[21:03:27] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 0s
+[21:03:27] CRASHED — reverting
+[21:03:27] --- Experiment 40 [7/12] (best: 1.172754) ---
+[21:03:27] Querying LLM for proposal...
+[21:03:31] Proposal: Add a linear warmup for the Muon optimizer's momentum to align with the 5% learning rate warmup, improving training stability and convergence for better validation bits per byte.
+[21:03:31] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 0s
+[21:03:31] CRASHED — reverting
+[21:03:31] --- Experiment 41 [8/12] (best: 1.172754) ---
+[21:03:31] Querying LLM for proposal...
+[21:03:36] Proposal: Add a linear warmup for Muon optimizer momentum to align with the 5% learning rate warmup, improving training stability and convergence for better validation bits per byte.
+[21:03:36] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 0s
+[21:03:36] CRASHED — reverting
+[21:03:36] --- Experiment 42 [9/12] (best: 1.172754) ---
+[21:03:36] Querying LLM for proposal...
+[21:03:41] Proposal: Add a linear warmup for Muon optimizer momentum to align with the 5% learning rate warmup, improving training stability and convergence for better validation bits per byte.
+[21:03:41] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 0s
+[21:03:41] CRASHED — reverting
+[21:03:41] --- Experiment 43 [10/12] (best: 1.172754) ---
+[21:03:41] Querying LLM for proposal...
+[21:03:46] Proposal: Add a linear warmup for Muon optimizer momentum to align with the 5% learning rate warmup, improving training stability and convergence for better validation bits per byte.
+[21:03:46] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 0s
+[21:03:46] CRASHED — reverting
+[21:03:46] --- Experiment 44 [11/12] (best: 1.172754) ---
+[21:03:46] Querying LLM for proposal...
+[21:03:51] Proposal: Add a linear warmup for Muon optimizer momentum to align with the 5% learning rate warmup, improving training stability and convergence for better validation bits per byte.
+[21:03:51] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 0s
+[21:03:51] CRASHED — reverting
+[21:03:51] --- Experiment 45 [12/12] (best: 1.172754) ---
+[21:03:51] Querying LLM for proposal...

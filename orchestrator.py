@@ -20,7 +20,6 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -39,11 +38,17 @@ RUN_LOG = "run.log"
 # ---------------------------------------------------------------------------
 
 
-def run(cmd: str, timeout: int | None = None, cwd: str | None = None) -> subprocess.CompletedProcess:
+def run(
+    cmd: str, timeout: int | None = None, cwd: str | None = None
+) -> subprocess.CompletedProcess:
     """Run a shell command, return CompletedProcess."""
     return subprocess.run(
-        cmd, shell=True, capture_output=True, text=True,
-        timeout=timeout, cwd=cwd,
+        cmd,
+        shell=True,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=cwd,
     )
 
 
@@ -75,7 +80,9 @@ def init_results_tsv() -> None:
         Path(RESULTS_FILE).write_text("commit\tval_bpb\tmemory_gb\tstatus\tdescription\n")
 
 
-def append_result(commit: str, val_bpb: float, memory_gb: float, status: str, description: str) -> None:
+def append_result(
+    commit: str, val_bpb: float, memory_gb: float, status: str, description: str
+) -> None:
     line = f"{commit}\t{val_bpb:.6f}\t{memory_gb:.1f}\t{status}\t{description}\n"
     with open(RESULTS_FILE, "a") as f:
         f.write(line)
@@ -201,7 +208,7 @@ Experiment history (TSV):
 {results_history}
 ```
 
-Current best val_bpb: {best_val_bpb() or 'no results yet — this is the first run'}
+Current best val_bpb: {best_val_bpb() or "no results yet — this is the first run"}
 
 Propose a single focused modification to improve val_bpb.
 Return search-and-replace pairs (exact text from the file) and a description."""
@@ -224,7 +231,7 @@ Return search-and-replace pairs (exact text from the file) and a description."""
         return json.loads(response)
     except json.JSONDecodeError:
         # Try to extract JSON from response
-        match = re.search(r'\{[\s\S]*\}', response)
+        match = re.search(r"\{[\s\S]*\}", response)
         if match:
             return json.loads(match.group())
         raise ValueError(f"Could not parse LLM response as JSON:\n{response[:500]}")
@@ -242,12 +249,15 @@ def run_experiment() -> dict:
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    # Pin to GPU0 (RTX 5090) unless caller explicitly overrides.
+    env.setdefault("CUDA_VISIBLE_DEVICES", "0")
 
     try:
         with open(RUN_LOG, "w") as log_file:
-            proc = subprocess.run(
+            subprocess.run(
                 TRAIN_CMD.split(),
-                stdout=log_file, stderr=subprocess.STDOUT,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
                 timeout=MAX_EXPERIMENT_SECONDS,
                 env=env,
             )
@@ -264,14 +274,16 @@ def run_experiment() -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Autoresearch orchestrator")
     parser.add_argument("--tag", required=True, help="Experiment run tag (e.g. apr8)")
-    parser.add_argument("--max-experiments", type=int, default=0,
-                        help="Max experiments to run (0 = infinite)")
-    parser.add_argument("--baseline-only", action="store_true",
-                        help="Run only the baseline, then exit")
+    parser.add_argument(
+        "--max-experiments", type=int, default=0, help="Max experiments to run (0 = infinite)"
+    )
+    parser.add_argument(
+        "--baseline-only", action="store_true", help="Run only the baseline, then exit"
+    )
     args = parser.parse_args()
 
     branch = f"autoresearch/{args.tag}"
-    print(f"=== Autoresearch Orchestrator ===", flush=True)
+    print("=== Autoresearch Orchestrator ===", flush=True)
     print(f"Branch: {branch}", flush=True)
     print(f"LLM: {LLM_URL} / {LLM_MODEL}", flush=True)
     print(f"Profile: {os.getenv('AUTORESEARCH_PROFILE', 'default')}", flush=True)
@@ -322,7 +334,9 @@ def main():
             break
 
         current_best = best_val_bpb()
-        print(f"\n--- Experiment {experiment_num} (best so far: {current_best:.6f}) ---", flush=True)
+        print(
+            f"\n--- Experiment {experiment_num} (best so far: {current_best:.6f}) ---", flush=True
+        )
 
         # Get current state
         train_py = read_train_py()
@@ -366,7 +380,7 @@ def main():
         if result["crashed"]:
             mem = 0.0
             append_result(commit, 0.0, mem, "crash", description)
-            print(f"  CRASHED — reverting", flush=True)
+            print("  CRASHED — reverting", flush=True)
             git_reset_hard()
             continue
 
@@ -384,7 +398,7 @@ def main():
             git_reset_hard()
 
     # Summary
-    print(f"\n=== Summary ===", flush=True)
+    print("\n=== Summary ===", flush=True)
     print(f"Total experiments: {experiment_num}", flush=True)
     print(f"Best val_bpb: {best_val_bpb():.6f}", flush=True)
     print(f"Results: {RESULTS_FILE}", flush=True)
