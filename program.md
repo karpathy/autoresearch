@@ -36,6 +36,15 @@ Each experiment runs on a single GPU. The training script runs for a **fixed tim
 
 **Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome — that's a simplification win. When evaluating whether to keep a change, weigh the complexity cost against the improvement magnitude. A 0.001 val_bpb improvement that adds 20 lines of hacky code? Probably not worth it. A 0.001 val_bpb improvement from deleting code? Definitely keep. An improvement of ~0 but much simpler code? Keep.
 
+To make this less subjective, use a free-energy comparison rather than a pure energy comparison. Compute `diff_bytes = git diff --shortstat HEAD^ HEAD` (added + removed bytes; `wc -c` on the diff hunk is fine). Then:
+
+```
+F  =  val_bpb  +  λ · diff_bytes
+λ  ≈  5e-6 BPB/byte         (so a 100-byte change "costs" ~0.0005 BPB)
+```
+
+Accept iff `F_new < F_old`. A pure deletion has negative `diff_bytes` and is rewarded automatically. A 100-byte addition that improves BPB by 0.0001 (less than its complexity cost) is rejected, even though greedy energy comparison would accept it. Two agents arguing about "is this complexity worth it" can now compare numbers instead of vibes; calibrate λ if it's miscalibrated for your taste, but keep the form. (This is the [Hinton & Zemel autoencoder MDL framing](https://proceedings.neurips.cc/paper/1993/hash/9e3cfc48eccf81a0d57663e129aef3cb-Abstract.html) applied to architecture search: minimize description length of the change, not just the test loss.)
+
 **The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
 
 ## Output format
