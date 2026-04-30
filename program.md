@@ -38,6 +38,25 @@ Each experiment runs on a single GPU. The training script runs for a **fixed tim
 
 **The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
 
+**Sweeping a continuous knob (golden-angle sampling)**: When you decide to scan a continuous hyperparameter (LR, weight decay, embedding scale, gate temperature, dropout, …), don't sample uniformly or grid-style — sample from a low-discrepancy golden-ratio sequence on log-space. Plants distribute leaves at the [golden angle 137.5°](https://nph.onlinelibrary.wiley.com/doi/10.1111/nph.16040) because the irrationality of φ is what guarantees no two leaves overlap; the same fact makes the [generalized golden ratio one of the lowest-discrepancy quasi-random sequences](https://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/) we know. At the small budgets autoresearch operates on (5–30 candidates per session), it covers the space ~10–30% more efficiently than uniform random and avoids grid search's clustering at endpoints.
+
+```python
+# Drop into a one-shot Python invocation between experiments.
+GOLDEN = 0.61803398875
+def golden_iter(n, lo, hi, seed=0.5):
+    x = seed
+    out = []
+    for _ in range(n):
+        x = (x + GOLDEN) % 1.0
+        out.append(lo * (hi / lo) ** x)        # log-space interpolation
+    return out
+
+# Example: 8 LR candidates between 1e-4 and 1e-1
+# golden_iter(8, 1e-4, 1e-1)
+```
+
+Use this any time the next experiment is "let me sweep X across a range". For discrete knobs (depth, n_head, attention pattern), just enumerate.
+
 ## Output format
 
 Once the script finishes it prints a summary like this:
