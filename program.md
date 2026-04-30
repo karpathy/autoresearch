@@ -65,26 +65,28 @@ grep "^val_bpb:" run.log
 
 When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated — commas break in descriptions).
 
-The TSV has a header row and 5 columns:
+The TSV has a header row and 6 columns:
 
 ```
-commit	val_bpb	memory_gb	status	description
+commit	val_bpb	memory_gb	status	axis	description
 ```
 
 1. git commit hash (short, 7 chars)
 2. val_bpb achieved (e.g. 1.234567) — use 0.000000 for crashes
 3. peak memory in GB, round to .1f (e.g. 12.3 — divide peak_vram_mb by 1024) — use 0.0 for crashes
 4. status: `keep`, `discard`, or `crash`
-5. short text description of what this experiment tried
+5. **axis**: a short tag for the primary search axis touched by this experiment (e.g. `lr`, `depth`, `head_dim`, `optimizer`, `activation`, `attn_window`, `weight_decay`, `init`, `architecture`). Use `baseline` for the first run and `multi` if the change touched 2+ axes. This makes the inhibition-of-return rule, the pheromone trail, and the fluctuation-dissipation curvature estimate auditable post-hoc — without it, all three rely on the agent's working memory and can't be reconstructed across sessions.
+6. short text description of what this experiment tried (free-form)
 
 Example:
 
 ```
-commit	val_bpb	memory_gb	status	description
-a1b2c3d	0.997900	44.0	keep	baseline
-b2c3d4e	0.993200	44.2	keep	increase LR to 0.04
-c3d4e5f	1.005000	44.0	discard	switch to GeLU activation
-d4e5f6g	0.000000	0.0	crash	double model width (OOM)
+commit	val_bpb	memory_gb	status	axis	description
+a1b2c3d	0.997900	44.0	keep	baseline	first baseline run
+b2c3d4e	0.997931	44.0	keep	baseline	second baseline (sigma_noise = 3.1e-5)
+c3d4e5f	0.993200	44.2	keep	lr	increase MATRIX_LR 0.04 -> 0.06
+d4e5f6g	1.005000	44.0	discard	activation	switch to GeLU
+e5f6g7h	0.000000	0.0	crash	architecture	double model width (OOM)
 ```
 
 ## The experiment loop
