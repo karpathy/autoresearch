@@ -95,6 +95,7 @@ LOOP FOREVER:
 
 1. Look at the git state: the current branch/commit we're on
 2. Tune `train.py` with an experimental idea by directly hacking the code.
+   Before committing, write down (in the commit message body) the **reverse move** — the smallest change that would undo this one. If the reverse isn't easily expressible ("change LR back to 0.04", "remove this block", "swap activation back to ReLU²"), the search is operating with an asymmetric pawl: you can move forward but not backward. Asymmetric reject rules let noise ratchet the search in one direction even when the underlying landscape is flat. (See [Feynman's analysis of the Brownian ratchet](https://en.wikipedia.org/wiki/Brownian_ratchet): a one-way pawl plus thermal noise looks like net work, but at uniform temperature it isn't. Same trap, same fix — make the move set symmetric.) If you can't write the reverse, either pick a different change or explicitly add the reverse to your move set so the loop has both directions available.
 3. git commit
 4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
 5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
