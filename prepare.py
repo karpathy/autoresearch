@@ -226,17 +226,35 @@ class Tokenizer:
         return self.bos_token_id
 
     def encode(self, text, prepend=None, num_threads=8):
+        # Resolve `prepend` to a list of token ids once, up front. The previous
+        # implementation defined `prepend_id` only inside `if prepend is not None`
+        # and referenced it from nested branches, and called encode_single_token
+        # on string prepends — which raises ValueError for any prepend that maps
+        # to multiple tokens (e.g. a multi-token BOS marker). See issue #348.
+        prepend_ids: list[int] = []
         if prepend is not None:
-            prepend_id = prepend if isinstance(prepend, int) else self.enc.encode_single_token(prepend)
+            if isinstance(prepend, int):
+                prepend_ids = [prepend]
+            elif isinstance(prepend, (list, tuple)):
+                prepend_ids = [int(t) for t in prepend]
+            elif isinstance(prepend, str):
+                try:
+                    prepend_ids = [self.enc.encode_single_token(prepend)]
+                except (KeyError, ValueError):
+                    # Fall back to ordinary encoding so multi-token strings work.
+                    prepend_ids = self.enc.encode_ordinary(prepend)
+            else:
+                raise TypeError(f"Invalid prepend type: {type(prepend)}")
+
         if isinstance(text, str):
             ids = self.enc.encode_ordinary(text)
-            if prepend is not None:
-                ids.insert(0, prepend_id)
+            if prepend_ids:
+                ids = prepend_ids + ids
         elif isinstance(text, list):
             ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
-            if prepend is not None:
+            if prepend_ids:
                 for row in ids:
-                    row.insert(0, prepend_id)
+                    row[0:0] = prepend_ids
         else:
             raise ValueError(f"Invalid input type: {type(text)}")
         return ids
