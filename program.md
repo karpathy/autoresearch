@@ -38,6 +38,14 @@ Each experiment runs on a single GPU. The training script runs for a **fixed tim
 
 **The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
 
+**Measure the noise floor (second run)**: After the first baseline run, do a *second* baseline run on the unchanged code. The two `val_bpb` values will differ because of CUDA kernel non-determinism, GC scheduling, and floating-point reduction order. The absolute difference between them is your **noise floor σ_noise** — back-of-envelope, ~3e-4 BPB on the 21M-token val shard, but measure it, don't assume it. Record both as `keep` (the second is the new baseline). All future experiments are interpreted against this floor:
+
+- |Δval_bpb| < 2 × σ_noise → **discard**, no matter the sign. The change is indistinguishable from noise; keeping it anchors 12+ downstream experiments on what is essentially a coin flip.
+- |Δval_bpb| ≥ 2 × σ_noise *and* improving → **keep** (subject to the simplicity criterion).
+- Anything else → **discard**.
+
+This is the single highest-leverage protocol change in the loop: most "0.0003 BPB improvements" celebrated in greedy hill-climbs are noise. One free run at the start saves dozens of experiments wasted building on a phantom win.
+
 ## Output format
 
 Once the script finishes it prints a summary like this:
