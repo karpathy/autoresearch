@@ -140,8 +140,12 @@ class GPT(nn.Module):
             str(i): nn.Embedding(config.vocab_size, kv_dim)
             for i in range(config.n_layer) if has_ve(i, config.n_layer)
         })
-        # Rotary embeddings
-        self.rotary_seq_len = config.sequence_len * 10
+        # Rotary embeddings. Sized to the configured sequence length — forward
+        # asserts T <= cos.size(1), so any T <= config.sequence_len fits. The
+        # previous `* 10` overshoot allocated 10x more cos/sin entries than
+        # could ever be indexed (forward never sees T > config.sequence_len),
+        # wasting ~90% of the buffer.
+        self.rotary_seq_len = config.sequence_len
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
