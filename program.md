@@ -87,6 +87,16 @@ c3d4e5f	1.005000	44.0	discard	switch to GeLU activation
 d4e5f6g	0.000000	0.0	crash	double model width (OOM)
 ```
 
+**Read the curvature out of your discards (free)**: Every K=10 experiments, look back at the last 10 *signed* deltas (`val_bpb_new − val_bpb_old`, including discards). Compute their stdev — call it `σ_local`. This is a free local-curvature estimate from data you already have, by the [fluctuation-dissipation theorem](https://en.wikipedia.org/wiki/Fluctuation-dissipation_theorem): in equilibrium, the variance of fluctuations is proportional to the susceptibility, so the spread of nearby attempts tells you the local stiffness without any extra runs.
+
+| `σ_local` regime         | What it means                              | What to do next                                |
+| ------------------------ | ------------------------------------------ | ---------------------------------------------- |
+| `σ_local ≲ 2 × σ_noise`  | locally flat; small steps are wasted       | jump (Lévy *long*, or change axis)             |
+| `σ_local ≈ 5 × σ_noise`  | normal slope                               | continue with default mutation size            |
+| `σ_local ≳ 20 × σ_noise` | cliff; one-line tweaks could break things  | shrink mutation size, only short hops          |
+
+Same intuition as classical [trust-region](https://en.wikipedia.org/wiki/Trust_region) optimizers, derived in two lines from the discard log instead of estimating a Hessian. Costs nothing — the data is already on disk in `results.tsv`.
+
 ## The experiment loop
 
 The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
