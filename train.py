@@ -10,7 +10,9 @@ os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
 import math
+import statistics
 import time
+from collections import deque
 from dataclasses import dataclass, asdict
 
 import torch
@@ -539,6 +541,11 @@ t_start_training = time.time()
 smooth_train_loss = 0
 total_training_time = 0
 step = 0
+# Honest-loss signal: ring buffer of recent train_loss values; reported in the
+# final summary as `loss_std_last_100`. Two runs at the same val_bpb but very
+# different loss-volatility are not equivalent — high volatility usually
+# means the win is fragile and won't transfer (cf. physics_inspired.md §7).
+recent_losses = deque(maxlen=100)
 
 while True:
     torch.cuda.synchronize()
@@ -565,6 +572,7 @@ while True:
     model.zero_grad(set_to_none=True)
 
     train_loss_f = train_loss.item()
+    recent_losses.append(train_loss_f)
 
     # Fast fail: abort if loss is exploding or NaN
     if math.isnan(train_loss_f) or train_loss_f > 100:
@@ -628,3 +636,5 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
+loss_std_last_100 = statistics.pstdev(recent_losses) if len(recent_losses) >= 2 else 0.0
+print(f"loss_std_last_100:{loss_std_last_100:.4f}")
