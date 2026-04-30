@@ -628,3 +628,13 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
+# Final values of the per-layer scalar mixing coefficients. Two ways to read
+# them: (a) if x0_lambdas converge to ~0 across all layers, the input-skip
+# mechanism is dead weight and the model collapses to a vanilla pre-norm
+# transformer at convergence; (b) if resid_lambdas stay ~1 across all layers,
+# those scalars are also dead weight. Non-trivial values (especially per-layer
+# variation) mean the rescaling is load-bearing and worth keeping. After
+# torch.compile, the parameters live on the wrapped _orig_mod.
+_m = getattr(model, "_orig_mod", model)
+print("resid_lambdas:    [" + ", ".join(f"{v:.3f}" for v in _m.resid_lambdas.detach().float().cpu().tolist()) + "]")
+print("x0_lambdas:       [" + ", ".join(f"{v:.3f}" for v in _m.x0_lambdas.detach().float().cpu().tolist()) + "]")
