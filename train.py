@@ -575,7 +575,13 @@ while True:
     t1 = time.time()
     dt = t1 - t0
 
-    if step > 10:
+    # Skip exactly 10 warmup steps (compilation, kernel autotune, etc.) before
+    # accumulating training time. `step` is the index BEFORE the increment at
+    # the bottom of the loop, so step >= 10 means we've completed 10 warmup
+    # iterations and this is the 11th (the first measured) iteration. The old
+    # `step > 10` check skipped 11 iterations instead of 10, which left
+    # `(step - 10)` overcounting measured iterations by one in the final MFU.
+    if step >= 10:
         total_training_time += dt
 
     # Logging
