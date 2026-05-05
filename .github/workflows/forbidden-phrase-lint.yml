@@ -1,0 +1,48 @@
+name: forbidden-phrase-lint
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'README.md'
+      - 'SECURITY.md'
+      - 'CHANGELOG.md'
+      - '.github/workflows/forbidden-phrase-lint.yml'
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Fetch lint + dictionary from opencastor-ops
+        env:
+          AUTH_TOKEN: ${{ secrets.OPENCASTOR_OPS_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          API="https://api.github.com/repos/craigm26/opencastor-ops/contents"
+          REF="master"
+          mkdir -p .forbidden-phrase-lint
+          curl -fsSL \
+            -H "Authorization: Bearer ${AUTH_TOKEN}" \
+            -H "Accept: application/vnd.github.raw" \
+            "${API}/tools/lint_forbidden_phrases.py?ref=${REF}" \
+            -o .forbidden-phrase-lint/lint.py
+          curl -fsSL \
+            -H "Authorization: Bearer ${AUTH_TOKEN}" \
+            -H "Accept: application/vnd.github.raw" \
+            "${API}/docs/standards/forbidden-phrases.json?ref=${REF}" \
+            -o .forbidden-phrase-lint/dict.json
+      - name: Run lint
+        run: |
+          set -euo pipefail
+          python .forbidden-phrase-lint/lint.py \
+            --dict .forbidden-phrase-lint/dict.json \
+            --root .
