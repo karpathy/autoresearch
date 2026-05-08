@@ -1,0 +1,624 @@
+# autoresearch — full documentation bundle
+
+This file is the single-file documentation bundle for `autoresearch`. It is a stable, readable concatenation of the canonical docs intended for LLM ingestion. Sources are listed below; the ordering is fixed.
+
+Sources, in order:
+
+1. `README.md` — top-level overview.
+2. `program.md` — the agent skill file.
+3. `docs/README.md` — documentation index.
+4. `docs/architecture.md` — system architecture.
+5. `docs/getting-started.md` — setup and first run.
+6. `docs/agent-workflow.md` — experiment loop semantics.
+7. `docs/reference/prepare.md` — `prepare.py` API reference.
+8. `docs/reference/train.md` — `train.py` API reference.
+9. `docs/reference/results-tsv.md` — `results.tsv` schema.
+10. `docs/internals/model.md` — GPT model internals.
+11. `docs/internals/optimizer.md` — `MuonAdamW` internals.
+12. `docs/operations/forking.md` — forking guidance.
+13. `docs/operations/analysis.md` — analysis workflow.
+14. `docs/agent-skills.md` — skill index.
+
+Every section is delimited by `========== <path> ==========` markers so a downstream tool can split this back into files if needed.
+
+========== README.md ==========
+
+# autoresearch
+
+![teaser](progress.png)
+
+*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies.*
+
+The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org.
+
+## How it works
+
+The repo is deliberately kept small and only really has three files that matter:
+
+- **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
+- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc.
+- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go.
+
+By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
+
+## Quick start
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # install uv
+uv sync                                            # install deps
+uv run prepare.py                                  # download data + train tokenizer (~2 min)
+uv run train.py                                    # one manual experiment (~5 min)
+```
+
+If those work, point your agent at the repo (with permissions disabled) and prompt: *"Hi have a look at program.md and let's kick off a new experiment! let's do the setup first."*
+
+## Documentation
+
+Full documentation is in [`docs/`](docs/README.md). Quick links:
+
+- [Architecture](docs/architecture.md), [Getting started](docs/getting-started.md), [Agent workflow](docs/agent-workflow.md)
+- Reference: [`prepare.py`](docs/reference/prepare.md), [`train.py`](docs/reference/train.md), [`results.tsv`](docs/reference/results-tsv.md)
+- Internals: [GPT model](docs/internals/model.md), [`MuonAdamW`](docs/internals/optimizer.md)
+- Operations: [Forking](docs/operations/forking.md), [Analysis](docs/operations/analysis.md)
+- Agent skills: [skill index](docs/agent-skills.md)
+
+LLM-friendly artifacts: [`llms.txt`](llms.txt), [`llms-full.txt`](llms-full.txt) (this file).
+
+## Notable forks
+
+- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
+- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS / MLX)
+- [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
+- [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
+
+## License
+
+MIT
+
+========== program.md ==========
+
+# autoresearch
+
+This is an experiment to have the LLM do its own research.
+
+## Setup
+
+To set up a new experiment, work with the user to:
+
+1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar5`). The branch `autoresearch/<tag>` must not already exist — this is a fresh run.
+2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
+3. **Read the in-scope files**: The repo is small. Read these files for full context: `README.md`, `prepare.py`, `train.py`.
+4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
+5. **Initialize results.tsv**: Create `results.tsv` with just the header row.
+6. **Confirm and go**: Confirm setup looks good, then start the loop.
+
+## Experimentation
+
+Each experiment runs for a **fixed 5-minute time budget** on a single GPU. Launch with `uv run train.py`.
+
+**You CAN**: modify `train.py` — architecture, optimizer, hyperparameters, training loop, batch size, model size, anything.
+
+**You CANNOT**: modify `prepare.py`, install new packages, or modify the eval harness (`evaluate_bpb`).
+
+**Goal**: lowest `val_bpb`. VRAM is a soft constraint. Simpler is better — a small win that adds ugly complexity is not worth it; deleting code while matching the metric is a clear keep.
+
+**First run**: always the unmodified baseline.
+
+## Output format
+
+```
+---
+val_bpb:          0.997900
+training_seconds: 300.1
+total_seconds:    325.9
+peak_vram_mb:     45060.2
+mfu_percent:      39.80
+total_tokens_M:   499.6
+num_steps:        953
+num_params_M:     50.3
+depth:            8
+```
+
+Extract the metric: `grep "^val_bpb:" run.log`.
+
+## Logging results
+
+Log to `results.tsv` (tab-separated, NOT comma — commas break in descriptions):
+
+```
+commit	val_bpb	memory_gb	status	description
+a1b2c3d	0.997900	44.0	keep	baseline
+b2c3d4e	0.993200	44.2	keep	increase LR to 0.04
+c3d4e5f	1.005000	44.0	discard	switch to GeLU
+d4e5f6g	0.000000	0.0	crash	double model width (OOM)
+```
+
+Status: `keep`, `discard`, or `crash`. `results.tsv` is gitignored — do not commit it.
+
+## The experiment loop
+
+LOOP FOREVER:
+
+1. Look at git state.
+2. Tune `train.py` with one experimental idea.
+3. `git commit`.
+4. `uv run train.py > run.log 2>&1` (redirect — do NOT use tee).
+5. `grep "^val_bpb:\|^peak_vram_mb:" run.log`.
+6. Empty grep ⇒ run crashed: `tail -n 50 run.log`, decide fix vs skip.
+7. Append a row to `results.tsv`.
+8. If `val_bpb` improved, advance the branch. Otherwise `git reset --hard HEAD~1`.
+
+**Timeout**: kill any run that exceeds 10 minutes; treat as crash.
+
+**NEVER STOP**: the user may be asleep. Do not pause to ask "should I keep going?". Run until manually interrupted.
+
+========== docs/README.md ==========
+
+(See `docs/README.md` in the repo. The browsable index points to every section listed below.)
+
+========== docs/architecture.md ==========
+
+# Architecture
+
+Autoresearch turns a small, self-contained LLM training setup into an autonomous research target. A coding agent edits a single file, runs a fixed-budget training script, reads a single metric, and either keeps the change or reverts.
+
+## High-level system
+
+Three roles, three contracts:
+
+- **Human** writes `program.md` and chooses the agent. Never edits `train.py` once a run starts.
+- **Agent** mutates `train.py`, commits, runs `uv run train.py`, decides keep/discard.
+- **Harness** (`prepare.py`) provides constants, dataloader, and the canonical `evaluate_bpb` metric. Read-only by contract.
+
+Mermaid (system overview):
+
+```mermaid
+graph TD
+    Human["Human"] --> Program["program.md"]
+    Human --> Agent["Coding agent"]
+    Agent --> Program
+    Agent --> Train["train.py"]
+    Train --> Prepare["prepare.py"]
+    Prepare --> Cache[("~/.cache/autoresearch")]
+    Train --> Agent
+    Agent --> Results["results.tsv"]
+    Human --> Notebook["analysis.ipynb"]
+    Notebook --> Results
+```
+
+## Experiment loop
+
+```
+LOOP FOREVER:
+  edit train.py → git commit → uv run train.py > run.log → grep val_bpb
+  if improved: keep, advance branch
+  if equal/worse: discard, git reset --hard HEAD~1
+  if empty (crash): log crash, git reset
+```
+
+State lives in git. Every experiment is a commit. `results.tsv` is gitignored so it survives resets.
+
+## Training pipeline (one experiment run)
+
+Parquet shards → `_document_batches` → `Tokenizer.encode` → `make_dataloader` (BOS-aligned best-fit packing, pinned CPU → CUDA) → `GPT.forward` (bf16 autocast) → cross-entropy → backward → `MuonAdamW.step` → repeat until `TIME_BUDGET` → `evaluate_bpb` → print `val_bpb`.
+
+## Fixed vs. mutable
+
+| Layer | Fixed | Mutable |
+|---|---|---|
+| Data | shard list, val shard, `MAX_SEQ_LEN`, `EVAL_TOKENS` | none |
+| Tokenizer | `VOCAB_SIZE`, BPE merges | none |
+| Dataloader | packing logic | `DEVICE_BATCH_SIZE` |
+| Model | none — `GPT` is in `train.py` | every detail |
+| Optimizer | none — `MuonAdamW` is in `train.py` | every hyperparameter |
+| Eval | `evaluate_bpb`, val shard | none |
+| Time | `TIME_BUDGET = 300s` | none |
+
+## File layout
+
+```
+prepare.py     — read-only harness
+train.py       — the only file the agent edits
+program.md     — the agent skill
+analysis.ipynb — review notebook
+docs/          — this documentation set
+llms.txt       — concise LLM index
+llms-full.txt  — bundled docs
+CHANGELOG.md   — append-only history
+~/.cache/autoresearch/  — data shards + tokenizer (untracked)
+results.tsv             — experiment log (untracked)
+run.log                 — last run's stdout+stderr (untracked)
+```
+
+========== docs/getting-started.md ==========
+
+# Getting Started
+
+Linux + single NVIDIA GPU is the supported path. Other platforms: see forking notes.
+
+## Requirements
+
+- Single NVIDIA GPU (defaults tuned for H100 80 GB BF16).
+- Python ≥ 3.10.
+- `uv`: `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+- ~20 GB free disk for the default 10 training shards + 1 val shard.
+
+## Install
+
+```bash
+git clone https://github.com/karpathy/autoresearch
+cd autoresearch
+uv sync
+```
+
+`uv sync` resolves against the cu128 PyTorch index. `kernels` fetches Flash Attention 3 wheels at first use.
+
+## Prepare data
+
+```bash
+uv run prepare.py                  # default: 10 shards + val shard, train BPE
+uv run prepare.py --num-shards 4   # smaller download
+uv run prepare.py --num-shards -1  # all 6,542 shards
+```
+
+Outputs: `~/.cache/autoresearch/data/shard_*.parquet`, `~/.cache/autoresearch/tokenizer/{tokenizer.pkl,token_bytes.pt}`.
+
+Re-running is safe (skips existing shards and existing tokenizer).
+
+## Verify
+
+```bash
+uv run train.py
+```
+
+Expect a final summary block ending with `val_bpb: …`. On H100 the baseline is ~0.99.
+
+Common issues: Flash Attention 3 wheel mismatch, OOM (drop `DEVICE_BATCH_SIZE`), no parquet files (re-run prepare).
+
+## Start the agent
+
+Open the agent in this directory with permissions disabled. Prompt:
+
+> Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
+
+The agent reads `program.md`, creates `autoresearch/<tag>`, runs the baseline, and loops. ~12 experiments/hour, ~100 over an 8-hour sleep. Wakes-up review: `cat results.tsv`, `git log --oneline autoresearch/<tag>`, run `analysis.ipynb`.
+
+========== docs/agent-workflow.md ==========
+
+# Agent Workflow
+
+Roles:
+
+- **Human**: writes `program.md`, decides start/stop, reviews. Doesn't edit `train.py` while running.
+- **Agent**: reads `program.md` + `README.md`, mutates `train.py`, commits, runs, decides keep/discard. Runs autonomously until interrupted.
+- **Repo**: enforces — `prepare.py` is read-only, `evaluate_bpb` is the metric, 5-minute budget is hard-coded.
+
+Setup phase:
+
+1. Propose tag (e.g., `mar5`); branch `autoresearch/<tag>` must not exist.
+2. `git checkout -b autoresearch/<tag>` off `master`.
+3. Read `README.md`, `prepare.py`, `train.py`.
+4. Verify cache (`~/.cache/autoresearch/data/`, `tokenizer.pkl`, `token_bytes.pt`).
+5. Init `results.tsv` with header.
+6. Confirm with human; first run is the unmodified baseline.
+
+Loop:
+
+```
+LOOP FOREVER:
+  inspect git state
+  modify train.py with one idea
+  git commit
+  uv run train.py > run.log 2>&1
+  grep '^val_bpb:|^peak_vram_mb:' run.log
+  if empty → tail run.log; fix or skip
+  append row to results.tsv (keep | discard | crash)
+  improved → advance branch; else → git reset --hard HEAD~1
+```
+
+Rules: redirect (no tee), one experiment per commit, never pause to ask "should I continue?", never add deps without human approval.
+
+Keep/discard:
+- **Crash** (exception, OOM, NaN-fast-fail, >10 min) → `crash`, `val_bpb=0.000000`, reset.
+- **Improved** → `keep`, advance branch. But discard if the win is tiny and the code is ugly.
+- **Equal/worse** → `discard`, reset. *Removing* code while matching the metric is a clear keep.
+
+`results.tsv` is gitignored. Multi-agent setups need separate worktrees + tags + GPUs.
+
+Failure modes the harness already catches: NaN/`loss > 100` → `print("FAIL"); exit(1)`; missing shards → assert in `make_dataloader`; over-time → loop break.
+
+To change agent behavior, edit `program.md`. The Python files are not the lever.
+
+========== docs/reference/prepare.md ==========
+
+# Reference: prepare.py
+
+Two jobs: one-time setup CLI, plus runtime utilities imported by `train.py`. Read-only contract.
+
+## Constants
+
+| Name | Value | Meaning |
+|---|---|---|
+| `MAX_SEQ_LEN` | 2048 | context length |
+| `TIME_BUDGET` | 300 | training seconds (excludes warmup) |
+| `EVAL_TOKENS` | 40 × 524288 | tokens evaluated by `evaluate_bpb` |
+| `CACHE_DIR` | `~/.cache/autoresearch` | cache root |
+| `DATA_DIR` | `<cache>/data` | parquet shards |
+| `TOKENIZER_DIR` | `<cache>/tokenizer` | tokenizer.pkl + token_bytes.pt |
+| `BASE_URL` | climbmix-400b-shuffle on HF | dataset source |
+| `MAX_SHARD` | 6542 | last shard index |
+| `VAL_SHARD` | `MAX_SHARD` | pinned val shard |
+| `VOCAB_SIZE` | 8192 | including 4 reserved special tokens |
+| `BOS_TOKEN` | `<\|reserved_0\|>` | start of every packed row |
+
+## CLI
+
+`uv run prepare.py [--num-shards N] [--download-workers M]`. Default `N=10`, `M=8`. Idempotent.
+
+## Functions
+
+- `download_single_shard(idx)`: 5-attempt retry with backoff.
+- `download_data(num_shards, download_workers=8)`: parallel pool.
+- `list_parquet_files()`: sorted absolute paths.
+- `text_iterator(max_chars, doc_cap)`: training-split-only doc generator.
+- `train_tokenizer()`: rustbpe + tiktoken, saves `tokenizer.pkl` and `token_bytes.pt`.
+- `_document_batches(split, batch_size=128)`: infinite `(docs, epoch)` generator.
+- `make_dataloader(tokenizer, B, T, split, buffer_size=1000)`: yields `(inputs, targets, epoch)` on CUDA. BOS-aligned best-fit packing, 100% utilization. Pinned CPU buffer + CUDA buffer reused.
+- `get_token_bytes(device)`: load `token_bytes.pt`.
+- `evaluate_bpb(model, tokenizer, batch_size)`: nats/byte → bits/byte. Excludes special tokens. Always uses `MAX_SEQ_LEN`. **Do not modify.**
+
+## Tokenizer class
+
+`Tokenizer.from_directory()`, `.get_vocab_size()`, `.get_bos_token_id()`, `.encode(text, prepend=None)`, `.decode(ids)`. Wraps a pickled `tiktoken.Encoding`.
+
+Violating the contract (editing `evaluate_bpb`, `MAX_SEQ_LEN`, `EVAL_TOKENS`, `VOCAB_SIZE`, `VAL_SHARD`) breaks cross-experiment comparability. Fix: `rm -rf ~/.cache/autoresearch && uv run prepare.py`.
+
+========== docs/reference/train.md ==========
+
+# Reference: train.py
+
+The only file the agent edits. CLI: `uv run train.py` (no flags).
+
+## Hyperparameter block (mutable)
+
+```
+ASPECT_RATIO = 64        # n_embd = depth * 64, rounded up to multiple of HEAD_DIM
+HEAD_DIM = 128
+WINDOW_PATTERN = "SSSL"  # S=half context, L=full; last layer always full
+TOTAL_BATCH_SIZE = 2**19 # 524288 tokens/step
+EMBEDDING_LR = 0.6
+UNEMBEDDING_LR = 0.004
+MATRIX_LR = 0.04
+SCALAR_LR = 0.5          # x0_lambdas uses this; resid_lambdas uses *0.01
+WEIGHT_DECAY = 0.2       # cautious WD for Muon, decays to 0
+ADAM_BETAS = (0.8, 0.95) # x0_lambdas overrides to (0.96, 0.95)
+WARMUP_RATIO = 0.0
+WARMDOWN_RATIO = 0.5
+FINAL_LR_FRAC = 0.0
+DEPTH = 8
+DEVICE_BATCH_SIZE = 128
+```
+
+`TOTAL_BATCH_SIZE % (DEVICE_BATCH_SIZE * MAX_SEQ_LEN) == 0` is asserted.
+
+## GPTConfig
+
+Fields: `sequence_len`, `vocab_size`, `n_layer`, `n_head`, `n_kv_head`, `n_embd`, `window_pattern`. Built at runtime by `build_model_config(DEPTH)`. `n_kv_head == n_head` by default (no GQA).
+
+## GPT methods
+
+- `init_weights()`: explicit init scheme, casts `wte` and value embeddings to bf16.
+- `_precompute_rotary_embeddings(seq_len, head_dim)`: `(cos, sin)` shape `(1, seq_len, 1, head_dim/2)`, bf16. Buffers sized at `sequence_len * 10`.
+- `_compute_window_sizes(config)`: `(window, lookback)` per layer, last forced to full.
+- `estimate_flops()`: FLOPs/token (fwd+bwd).
+- `num_scaling_params()`: per-group counts.
+- `setup_optimizer(...)`: builds `MuonAdamW` with `dmodel_lr_scale = (model_dim/768)^-0.5` applied to AdamW groups.
+- `forward(idx, targets, reduction)`: returns logits or cross-entropy. Logits softcapped at 15, lifted to fp32 before cross-entropy.
+
+## MuonAdamW
+
+Param-group dispatch on `kind == 'adamw' | 'muon'`. AdamW groups: lm_head, wte, value_embeds, resid_lambdas (lr × 0.01), x0_lambdas. Muon groups: bucketed by parameter shape across `transformer.h`. Both inner steps are `@torch.compile(dynamic=False, fullgraph=True)`. Hyperparameters arrive as 0-D CPU tensors so the compiled graph doesn't recompile when LRs change between steps.
+
+## Schedules (time-based, `progress = total_training_time / TIME_BUDGET`)
+
+```
+get_lr_multiplier(progress) — piecewise linear: warmup → 1 → cooldown to FINAL_LR_FRAC
+get_muon_momentum(step)    — 0.85 → 0.95 over first 300 steps
+get_weight_decay(progress) — WEIGHT_DECAY * (1 - progress)
+```
+
+## Training loop
+
+`for grad_accum_steps: forward → backward (next batch prefetched) → optimizer.step → zero_grad`. NaN / loss > 100 → `print("FAIL"); exit(1)`. `step > 10` is when `total_training_time` starts accumulating (skip compilation). `gc.disable()` after step 0; safety `gc.collect()` every 5000 steps. Loop breaks when `total_training_time >= TIME_BUDGET`.
+
+## Output keys
+
+`val_bpb` (the metric), `training_seconds`, `total_seconds`, `peak_vram_mb`, `mfu_percent` (always vs H100 BF16 peak), `total_tokens_M`, `num_steps`, `num_params_M`, `depth`. Agent reads only `val_bpb` and `peak_vram_mb`.
+
+========== docs/reference/results-tsv.md ==========
+
+# Reference: results.tsv
+
+Tab-separated, untracked, append-only during a run.
+
+Schema:
+
+| col | type | meaning |
+|---|---|---|
+| `commit` | 7-char SHA | the experiment's commit (preserved even after a discard reset) |
+| `val_bpb` | float | `evaluate_bpb` output, `0.000000` for crashes |
+| `memory_gb` | float | `peak_vram_mb / 1024`, `0.0` for crashes |
+| `status` | enum | `keep` / `discard` / `crash` |
+| `description` | free text | one line, no tabs, no newlines |
+
+Header line first:
+```
+commit\tval_bpb\tmemory_gb\tstatus\tdescription
+```
+
+Tabs not commas — descriptions contain commas. Untracked so `git reset` doesn't lose history. For multi-agent setups give each agent its own worktree.
+
+Pandas read: `pd.read_csv("results.tsv", sep="\t")`.
+
+Pitfalls: spaces instead of tabs, newlines in descriptions, recording the post-reset SHA on a discard, forgetting to log crashes.
+
+========== docs/internals/model.md ==========
+
+# Internals: GPT model
+
+Decoder-only transformer with: `x0_lambdas` (per-layer mixin of the input embedding), `resid_lambdas` (per-layer residual scale), value embeddings (ResFormer-style, alternating layers + last), alternating sliding-window attention, softcapped logits.
+
+## Block
+
+`x = norm(x); attn(x, ve, cos_sin, window) → +residual; x = norm(x); mlp(x) → +residual`. `c_proj` weights zero-initialized → block starts as identity.
+
+## Attention
+
+```
+q,k,v = c_q(x), c_k(x), c_v(x) reshaped to (B, T, n_head_or_kv, head_dim)
+if value_embeds present:
+    gate = 2 * sigmoid(ve_gate(x[..., :32]))   # per-head gate from first 32 channels
+    v = v + gate.unsqueeze(-1) * ve
+q, k = apply_rotary_emb(q, cos, sin); q, k = norm(q), norm(k)   # RoPE + QK-norm
+y = fa3.flash_attn_func(q, k, v, causal=True, window_size=(window, 0))
+y = c_proj(y.contiguous().view(B, T, -1))
+```
+
+`window_size` per layer from `_compute_window_sizes`. Default `WINDOW_PATTERN="SSSL"` with `n_layer=8` ⇒ `[S,S,S,L,S,S,S,L]`. `S = MAX_SEQ_LEN/2 = 1024`, `L = MAX_SEQ_LEN = 2048`.
+
+`has_ve(layer_idx, n_layer) = (layer_idx % 2) == ((n_layer - 1) % 2)`. With `n_layer=8`: VE on layers `[1, 3, 5, 7]`. Last layer always has VE. `ve_gate.weight` zero-init ⇒ initial gate = 1.0 (neutral).
+
+## MLP
+
+`c_fc(x).square_relu() → c_proj`. Squared ReLU. 4× expand. `c_proj` zero-init.
+
+## Norm
+
+`norm(x) = F.rms_norm(x, (x.size(-1),))` — no learnable scale/bias.
+
+## Init
+
+- `wte` ~ N(0, 1); `lm_head` ~ N(0, 0.001).
+- All `c_q`, `c_k`, `c_v`, `c_fc` uniform on `[-s, s]` with `s = sqrt(3) * n_embd^-0.5`.
+- All `c_proj` and `ve_gate.weight` zero.
+- `resid_lambdas` ← 1.0; `x0_lambdas` ← 0.1.
+- `wte` and value embeddings cast to bf16.
+
+## Forward
+
+```
+x = wte(idx); x = norm(x); x0 = x
+for i in layers:
+    x = resid_lambdas[i] * x + x0_lambdas[i] * x0
+    ve = value_embeds[str(i)](idx) if i has VE else None
+    x = block(x, ve, cos_sin, window_sizes[i])
+x = norm(x)
+logits = lm_head(x).float()
+logits = 15 * tanh(logits / 15)
+return F.cross_entropy(logits, targets, reduction=reduction)  # or logits if no targets
+```
+
+## FLOP/param accounting
+
+`estimate_flops` excludes `wte`, `value_embeds`, `resid_lambdas`, `x0_lambdas` from the `6 * params` term and adds `12 * h * q * effective_seq` per layer (with `effective_seq = min(window, T)`). `num_scaling_params` returns `wte`, `value_embeds`, `lm_head`, `transformer_matrices`, `scalars`, `total`.
+
+========== docs/internals/optimizer.md ==========
+
+# Internals: MuonAdamW
+
+`MuonAdamW` dispatches param groups by `kind` field. AdamW for embeddings/lm_head/scalars. Muon for transformer matrices, bucketed by shape across blocks (vectorized batched update).
+
+## Group split (from `setup_optimizer`)
+
+- AdamW: `lm_head`, `wte`, `value_embeds`, `resid_lambdas` (lr × 0.01), `x0_lambdas` (betas `(0.96, 0.95)`).
+- Muon: one group per unique shape in `transformer.h`. `lr` further scaled by `max(1, h/w)^0.5` per shape.
+- AdamW LRs scaled by `(model_dim/768)^-0.5`.
+
+## AdamW step
+
+Decoupled WD (`p *= 1 - lr*wd`), then EMAs `m, v`, then `p -= (lr / (1 - β1^step)) * m / (sqrt(v / (1 - β2^step)) + eps)`.
+
+## Muon step
+
+1. Nesterov: `m = β m + (1-β) g; g = (1-β) g + β m`.
+2. Normalize: `X = g / (||g||_F * 1.02 + 1e-6)`.
+3. Polar Express orthogonalization (5 hard-coded coefficient triples; `ns_steps=5` uses all). Tall vs wide branch: tall ⇒ `A = X.mT @ X; X = aX + X @ (bA + cA²)`. Wide ⇒ `A = X @ X.mT; X = aX + (bA + cA²) @ X`.
+4. NorMuon variance reduction: `v_mean` over `red_dim`, EMA → `step_size = rsqrt`, rescale to preserve Frobenius norm.
+5. Cautious WD: `mask = (g * p) >= 0; p -= lr * (g + wd * p * mask)`.
+
+State per Muon shape-group: stacked `momentum_buffer (num_params, *shape)` and `second_momentum_buffer (num_params, h, 1)` or `(num_params, 1, w)` depending on aspect.
+
+## Schedules
+
+```
+lrm = warmup(progress) | 1.0 | cooldown(progress, FINAL_LR_FRAC)
+muon_momentum(step) = 0.85 + (0.95 - 0.85) * min(step/300, 1)
+muon_weight_decay(progress) = WEIGHT_DECAY * (1 - progress)
+```
+
+Each step: `group["lr"] = group["initial_lr"] * lrm`; Muon groups also receive new `momentum` and `weight_decay`. 0-D CPU tensor inputs to compiled inner steps prevent `torch.compile` recompilation when those values change.
+
+## Surface for experiments
+
+Coefficients in `polar_express_coeffs`, `ns_steps`, the cautious mask form, the `max(1, h/w)^0.5` LR scaling, AdamW betas, embedding/unembedding LR ratios, and the three schedule functions.
+
+========== docs/operations/forking.md ==========
+
+# Forking for smaller hardware
+
+Defaults are H100 (80 GB BF16) + Flash Attention 3. For other platforms either use a maintained fork or adapt yourself.
+
+What stays: contract from `prepare.py` (`MAX_SEQ_LEN`, `EVAL_TOKENS`, `TIME_BUDGET`, `evaluate_bpb`, val shard) and from `program.md`.
+
+Smaller CUDA (3090/4090): drop `DEPTH` (e.g., 6), halve `DEVICE_BATCH_SIZE`, halve `TOTAL_BATCH_SIZE`, set `WINDOW_PATTERN="L"`.
+
+MacOS / Apple Silicon: prefer existing forks. Otherwise: replace `kernels.get_kernel`/`fa3.flash_attn_func` with `F.scaled_dot_product_attention`, swap `cuda` device + pinned-memory in `make_dataloader`, drop `H100_BF16_PEAK_FLOPS` (cosmetic).
+
+AMD ROCm: install ROCm PyTorch wheels, confirm Flash Attention 3 availability via `kernels-community/flash-attn3`.
+
+CPU / tiny: edit `prepare.py` (`MAX_SEQ_LEN=256`, `EVAL_TOKENS=4*524288`, `VOCAB_SIZE=1024`), re-run prepare, set `DEPTH=4`, `ASPECT_RATIO=32`, `DEVICE_BATCH_SIZE=8`, `TOTAL_BATCH_SIZE=2**14`, `WINDOW_PATTERN="L"`, swap to SDPA. Use TinyStories (`karpathy/tinystories-gpt4-clean`) for visible coherence.
+
+Sanity: `uv run train.py` should print a real `val_bpb`, peak VRAM should match the card, MFU is informational only.
+
+========== docs/operations/analysis.md ==========
+
+# Analyzing results
+
+`results.tsv` + `git log autoresearch/<tag>` are the artifacts. `analysis.ipynb` plots `progress.png`.
+
+Notebook flow:
+
+1. Load with `pd.read_csv("results.tsv", sep="\t")`, normalize statuses to upper-case.
+2. Counts per status; keep rate.
+3. List of every kept experiment with `val_bpb` and description.
+4. Running-best plot: faint grey dots = discards near baseline, green dots = keeps with annotated descriptions, green step line = running min. Y-axis zoomed to `[best - margin, baseline + margin]`. Saves `progress.png`.
+5. Summary stats (baseline, best, total improvement).
+6. Top hits by per-step delta improvement.
+
+Reading the run: productivity (running-best slope), exploration vs exploitation (kept descriptions), crash rate (>10% suggests over-reach).
+
+Comparing across machines: `val_bpb` is comparable only with the same `MAX_SEQ_LEN`, `EVAL_TOKENS`, `VOCAB_SIZE`, val shard. `mfu_percent` is always vs H100 peak.
+
+Archiving: `cp results.tsv results-mar5.tsv`, commit on a separate branch, or stash externally.
+
+========== docs/agent-skills.md ==========
+
+# Agent skills
+
+One canonical skill: `program.md`. Triggers on a human prompt like *"look at program.md and kick off a new experiment"*.
+
+Use this skill when: the user wants an autonomous loop, hardware is verified, single GPU.
+
+Don't use this skill when: one-off experiment, hardware unverified, or the user is editing the harness/docs themselves.
+
+Authoring `program.md`:
+
+- Concise (loaded into every agent context).
+- Procedural (numbered steps for setup, numbered steps for the loop).
+- Constraints up front (CAN/CANNOT lists).
+- "NEVER STOP" rule preserved — most-violated rule otherwise.
+- No CLI invention; everything is `uv run train.py > run.log 2>&1` + grep.
+
+Multi-agent: separate worktrees + tags + GPUs. The skill itself is single-threaded.
+
+========== END ==========

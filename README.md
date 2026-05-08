@@ -56,7 +56,23 @@ prepare.py      — constants, data prep + runtime utilities (do not modify)
 train.py        — model, optimizer, training loop (agent modifies this)
 program.md      — agent instructions
 pyproject.toml  — dependencies
+docs/           — full documentation set (architecture, reference, internals, ops)
+llms.txt        — concise LLM index
+llms-full.txt   — single-file documentation bundle for ingestion
+CHANGELOG.md    — append-only history
 ```
+
+## Documentation
+
+Full docs are in [`docs/`](docs/README.md). Quick links:
+
+- [Architecture](docs/architecture.md) — system overview with mermaid diagrams.
+- [Getting started](docs/getting-started.md) — install, prepare, run, launch the agent.
+- [Agent workflow](docs/agent-workflow.md) — experiment loop, keep/discard rules.
+- Reference: [`prepare.py`](docs/reference/prepare.md), [`train.py`](docs/reference/train.md), [`results.tsv`](docs/reference/results-tsv.md).
+- Internals: [GPT model](docs/internals/model.md), [`MuonAdamW`](docs/internals/optimizer.md).
+- Operations: [forking for smaller hardware](docs/operations/forking.md), [analyzing results](docs/operations/analysis.md).
+- LLM artifacts: [`llms.txt`](llms.txt), [`llms-full.txt`](llms-full.txt).
 
 ## Design choices
 

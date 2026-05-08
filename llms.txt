@@ -1,0 +1,47 @@
+# autoresearch
+
+> Single-GPU, single-file harness for autonomous LLM pretraining research. A coding agent edits `train.py`, runs a fixed 5-minute training budget, reads `val_bpb`, and keeps or reverts. The repo defines the contract: `prepare.py` is read-only, `evaluate_bpb` is the metric, `program.md` is the agent skill.
+
+The repo is intentionally tiny: three substantive files (`prepare.py`, `train.py`, `program.md`) and a docs set. Anything not in `train.py` is harness — agents must not edit it. The agent loop is documented in `program.md` and expanded in `docs/agent-workflow.md`.
+
+## Start here
+
+- [README](README.md): top-level project story, install, quickstart, notable forks.
+- [docs index](docs/README.md): map of all documentation.
+- [Architecture](docs/architecture.md): system overview with mermaid diagrams.
+- [Getting started](docs/getting-started.md): install, data prep, baseline, launch agent.
+- [Agent workflow](docs/agent-workflow.md): the experiment loop, keep/discard rules, what's mutable.
+
+## Reference
+
+- [prepare.py reference](docs/reference/prepare.md): constants (`MAX_SEQ_LEN`, `TIME_BUDGET`, `EVAL_TOKENS`, `VOCAB_SIZE`), `Tokenizer`, `make_dataloader`, `evaluate_bpb`. **Read-only contract.**
+- [train.py reference](docs/reference/train.md): hyperparameter block, `GPTConfig`, `GPT` model, `MuonAdamW`, schedules, output summary keys.
+- [results.tsv reference](docs/reference/results-tsv.md): schema (`commit`, `val_bpb`, `memory_gb`, `status`, `description`), semantics, why TSV and untracked.
+
+## Internals
+
+- [GPT model](docs/internals/model.md): block layout, attention (RoPE, FA3, value residual, sliding windows), MLP, init, forward.
+- [MuonAdamW](docs/internals/optimizer.md): AdamW step, Muon (polar-express orthogonalization, NorMuon, cautious weight decay), schedules.
+
+## Operations
+
+- [Forking for smaller hardware](docs/operations/forking.md): tuning knobs for non-H100, pointers to maintained forks.
+- [Analyzing results](docs/operations/analysis.md): `analysis.ipynb` walkthrough, reading `progress.png`.
+
+## Agent skills
+
+- [Skill index](docs/agent-skills.md): the canonical skill is `program.md`. Use it when launching an autonomous run.
+- [program.md](program.md): the actual skill file the agent reads.
+
+## Bundled
+
+- [llms-full.txt](llms-full.txt): full documentation set in a single file for ingestion.
+- [CHANGELOG.md](CHANGELOG.md): append-only history.
+
+## Hard constraints (don't violate)
+
+- **Do not edit `prepare.py`.** Changing `MAX_SEQ_LEN`, `EVAL_TOKENS`, `VOCAB_SIZE`, or `evaluate_bpb` invalidates cross-experiment comparisons.
+- **Do not stop the loop on your own.** `program.md` says "NEVER STOP". The user may be asleep.
+- **Tab-separated, not comma.** `results.tsv` uses tabs because descriptions contain commas.
+- **Redirect, do not tee.** `uv run train.py > run.log 2>&1` keeps the agent's context clean.
+- **One experiment per commit.** Keep advances the branch; discard does `git reset --hard HEAD~1`.
