@@ -11,7 +11,14 @@ All notable changes are listed here in reverse chronological order. The repo's e
 - Added this `CHANGELOG.md`.
 - README updated to link the new docs set, `llms.txt`, and `llms-full.txt`.
 
-No code or contract changes — `prepare.py`, `train.py`, and `program.md` are unchanged.
+### Agent
+
+- `program.md`: added `llms.txt` to the in-scope files the agent reads during setup, so the docs tree is reachable from inside the loop.
+- `program.md`: added an **Exploration discipline** rule next to the simplicity criterion — after two consecutive experiments on the same axis, switch surfaces. Counters re-litigation of the same hyperparameter band.
+- `program.md`: the "out of ideas" line in **NEVER STOP** now points specifically at `docs/internals/model.md` and `docs/internals/optimizer.md` for surfaces to rotate through (init, polar-express coefficients, cautious-WD mask, value-embedding selection, window pattern, schedule shapes).
+- `docs/agent-workflow.md` and `llms-full.txt` synced to mirror the new program.md guidance.
+
+No harness changes — `prepare.py` and `train.py` are unchanged.
 
 ## Earlier history
 

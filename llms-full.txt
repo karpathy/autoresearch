@@ -87,7 +87,7 @@ To set up a new experiment, work with the user to:
 
 1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar5`). The branch `autoresearch/<tag>` must not already exist — this is a fresh run.
 2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
-3. **Read the in-scope files**: The repo is small. Read these files for full context: `README.md`, `prepare.py`, `train.py`.
+3. **Read the in-scope files**: The repo is small. Read these files for full context: `README.md`, `prepare.py`, `train.py`, plus `llms.txt` as a map into `docs/` if you need deeper detail.
 4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
 5. **Initialize results.tsv**: Create `results.tsv` with just the header row.
 6. **Confirm and go**: Confirm setup looks good, then start the loop.
@@ -101,6 +101,8 @@ Each experiment runs for a **fixed 5-minute time budget** on a single GPU. Launc
 **You CANNOT**: modify `prepare.py`, install new packages, or modify the eval harness (`evaluate_bpb`).
 
 **Goal**: lowest `val_bpb`. VRAM is a soft constraint. Simpler is better — a small win that adds ugly complexity is not worth it; deleting code while matching the metric is a clear keep.
+
+**Exploration discipline**: prefer ideas you have not tried recently. After two consecutive experiments on the same axis, switch surfaces (architecture, optimizer internals, schedules, init, window pattern, value-embedding selection). `docs/internals/model.md` and `docs/internals/optimizer.md` enumerate surfaces.
 
 **First run**: always the unmodified baseline.
 
@@ -150,7 +152,7 @@ LOOP FOREVER:
 
 **Timeout**: kill any run that exceeds 10 minutes; treat as crash.
 
-**NEVER STOP**: the user may be asleep. Do not pause to ask "should I keep going?". Run until manually interrupted.
+**NEVER STOP**: the user may be asleep. Do not pause to ask "should I keep going?". Run until manually interrupted. If out of ideas, re-read `docs/internals/model.md` and `docs/internals/optimizer.md` for surfaces you haven't tried, combine previous near-misses, or try more radical architectural changes.
 
 ========== docs/README.md ==========
 

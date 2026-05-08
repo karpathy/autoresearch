@@ -65,6 +65,8 @@ The metric is `val_bpb` (validation bits-per-byte from `evaluate_bpb`). Lower is
 
 The simplicity criterion modifies #2: if the improvement is tiny (≪0.005 bpb) and adds substantial code complexity, the agent should *discard* it anyway. If a change *removes* code while matching or improving the metric, that is a clear keep.
 
+**Exploration discipline.** After two experiments on the same axis (e.g., learning-rate nudges), the agent should switch surfaces rather than continue stacking marginal wins on the same knob. The metric is noisy at small deltas, so repeated nudges in one direction are usually re-litigation. The internals docs ([model](internals/model.md), [optimizer](internals/optimizer.md)) enumerate surfaces worth rotating through: init scheme, polar-express coefficients, cautious-WD mask form, value-embedding selection, window pattern, schedule shapes. `program.md` codifies this as a soft rule.
+
 ## results.tsv schema
 
 Tab-separated, five columns. Tabs are required because descriptions often contain commas. The format is documented in detail in [reference/results-tsv.md](reference/results-tsv.md).
