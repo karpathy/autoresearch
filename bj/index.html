@@ -1,0 +1,1897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<title>BJ Companion</title>
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: #131a2c;
+    --panel2: #1b2440;
+    --line: #2a3556;
+    --text: #e6ecff;
+    --muted: #8b96b8;
+    --accent: #4fd1c5;
+    --warn: #f6ad55;
+    --good: #68d391;
+    --bad: #fc8181;
+    --hot: #f56565;
+    --cool: #63b3ed;
+    --tap: 56px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; padding:0; background:var(--bg); color:var(--text); font:500 16px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; }
+  body { padding-bottom: env(safe-area-inset-bottom); -webkit-text-size-adjust:100%; }
+  .app { max-width: 480px; margin: 0 auto; padding: 12px; }
+  h1, h2, h3 { margin: 0 0 8px; font-weight:700; }
+  h1 { font-size: 20px; }
+  h2 { font-size: 16px; color:var(--muted); }
+  small { color: var(--muted); }
+  button {
+    appearance: none; border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+    border-radius: 12px; padding: 12px 14px; font: inherit; font-weight: 600;
+    min-height: var(--tap); touch-action: manipulation; cursor: pointer;
+  }
+  button:active { transform: scale(0.97); }
+  button.primary { background: var(--accent); color: #06212d; border-color: transparent; }
+  button.warn { background: var(--warn); color: #2a1a05; border-color: transparent; }
+  button.bad  { background: var(--bad);  color: #2a0707; border-color: transparent; }
+  button.good { background: var(--good); color: #0a2916; border-color: transparent; }
+  button.ghost { background: transparent; }
+  button:disabled { opacity: 0.4; pointer-events: none; }
+  input, select { font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); width: 100%; }
+  label { display:block; margin: 10px 0 4px; color: var(--muted); font-size: 13px; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 12px; margin-bottom: 12px; }
+  .row { display:flex; gap: 8px; align-items:center; flex-wrap: wrap; }
+  .row.tight { gap: 4px; }
+  .grow { flex: 1; }
+  .right { margin-left: auto; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+  .grid-5 { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; }
+
+  .count-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; text-align:center; }
+  .stat { background: var(--panel2); padding: 10px 8px; border-radius: 12px; }
+  .stat .v { font-size: 22px; font-weight: 800; line-height: 1; }
+  .stat .l { font-size: 11px; color: var(--muted); margin-top: 4px; letter-spacing: .04em; text-transform: uppercase; }
+  .stat.hot .v { color: var(--hot); }
+  .stat.cool .v { color: var(--cool); }
+
+  .pen { height: 8px; background: var(--panel2); border-radius: 8px; overflow:hidden; margin-top: 10px; position: relative;}
+  .pen-fill { height: 100%; background: linear-gradient(90deg, var(--good), var(--warn) 60%, var(--bad)); }
+  .pen-cut { position: absolute; top:-3px; bottom:-3px; width: 2px; background: var(--text); opacity: .6; }
+  .pen-label { font-size: 11px; color: var(--muted); margin-top:4px; }
+
+  .hand-row { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .hand-box { background: var(--panel2); border-radius: 12px; padding: 10px; min-height: 80px; }
+  .hand-box.active { outline: 2px solid var(--accent); }
+  .hand-box .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .hand-cards { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; min-height: 40px; }
+  .ccard { background: #fff; color:#111; font-weight: 800; padding: 6px 10px; border-radius: 8px; font-size: 18px; min-width: 30px; text-align:center; box-shadow: 0 1px 0 rgba(0,0,0,.4); }
+  .ccard.red { color: #c53030; }
+  .hand-meta { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+  .advice { padding: 14px; border-radius: 14px; text-align: center; }
+  .advice .a { font-size: 28px; font-weight: 900; letter-spacing: .04em; }
+  .advice .why { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .advice.HIT  { background: linear-gradient(135deg, #2c5282, #1a365d); }
+  .advice.STAND{ background: linear-gradient(135deg, #276749, #22543d); }
+  .advice.DOUBLE { background: linear-gradient(135deg, #c05621, #7b341e); }
+  .advice.SPLIT { background: linear-gradient(135deg, #6b46c1, #44337a); }
+  .advice.SURR { background: linear-gradient(135deg, #c53030, #742a2a); }
+  .advice.WAIT { background: var(--panel2); color: var(--muted); }
+
+  .bet { background: var(--panel2); border-radius: 12px; padding: 10px 12px; margin-top: 8px; display:flex; align-items:center; gap: 8px; }
+  .bet .units { font-size: 22px; font-weight: 800; }
+  .bet .dollars { color: var(--muted); font-size: 14px; }
+  .bet.warn { background: linear-gradient(135deg, #7b341e, #44280f); }
+  .bet.max  { background: linear-gradient(135deg, #c05621, #7b341e); }
+
+  /* Hero bet status: dominant visual cue */
+  .bet-hero {
+    border-radius: 16px; padding: 18px 16px; margin-bottom: 12px;
+    display: grid; grid-template-columns: 1fr auto; gap: 8px 16px;
+    align-items: center; transition: background 0.4s ease;
+    color: #fff; box-shadow: 0 4px 18px rgba(0,0,0,0.35);
+  }
+  .bet-hero .status { font-size: 30px; font-weight: 900; letter-spacing: 0.04em; line-height: 1; }
+  .bet-hero .substatus { font-size: 13px; opacity: 0.85; margin-top: 4px; }
+  .bet-hero .units { font-size: 30px; font-weight: 900; line-height: 1; text-align: right; }
+  .bet-hero .dollars { font-size: 14px; opacity: 0.85; margin-top: 4px; text-align: right; }
+  .bet-hero.t-cold { background: linear-gradient(135deg, #2d3748, #1a202c); color: #cbd5e0; }
+  .bet-hero.t-flat { background: linear-gradient(135deg, #2c5282, #1a365d); }
+  .bet-hero.t-warm { background: linear-gradient(135deg, #b7791f, #744210); }
+  .bet-hero.t-hot  { background: linear-gradient(135deg, #c05621, #7b341e); animation: pulse 1.5s ease-in-out infinite; }
+  .bet-hero.t-max  { background: linear-gradient(135deg, #2f855a, #22543d); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 4px 18px rgba(0,0,0,0.35); }
+    50%      { box-shadow: 0 6px 28px rgba(245, 101, 101, 0.55); }
+  }
+  .bet-hero.t-max @keyframes pulse {
+    0%, 100% { box-shadow: 0 4px 18px rgba(0,0,0,0.35); }
+    50%      { box-shadow: 0 6px 32px rgba(72, 187, 120, 0.65); }
+  }
+
+  /* Active deviations cheat sheet */
+  .devs-card { padding: 12px; }
+  .devs-title { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  .devs-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .dev-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; font-size: 13px; font-weight: 700; line-height: 1.1; }
+  .dev-chip .arr { opacity: 0.7; font-weight: 500; }
+  .dev-chip.dev-STAND  { background: #276749; color: #c6f6d5; }
+  .dev-chip.dev-HIT    { background: #2c5282; color: #bee3f8; }
+  .dev-chip.dev-DOUBLE { background: #c05621; color: #fbd38d; }
+  .dev-chip.dev-SPLIT  { background: #6b46c1; color: #e9d8fd; }
+  .dev-chip.dev-SURR   { background: #c53030; color: #fed7d7; }
+  .devs-empty { font-size: 13px; color: var(--muted); }
+
+  /* Settings cog row */
+  .actions-row { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 6px; }
+
+  /* Mic status indicator */
+  .mic-card { text-align: center; }
+  .mic-status { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 14px; }
+  .mic-dot {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--bad); flex-shrink: 0;
+  }
+  .mic-dot.on { background: var(--good); animation: mic-pulse 1.5s ease-in-out infinite; }
+  .mic-dot.connecting { background: var(--warn); animation: mic-pulse 0.8s ease-in-out infinite; }
+  @keyframes mic-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.5; transform: scale(1.3); }
+  }
+  .mic-label { font-size: 14px; font-weight: 600; }
+  .mic-partial { font-size: 13px; color: var(--muted); font-style: italic; min-height: 1.4em; padding: 0 12px; }
+  .mic-log { font-size: 12px; color: var(--muted); min-height: 1.2em; padding: 4px 12px 8px; }
+
+  .bank-bar { display:flex; flex-wrap:wrap; gap: 8px 16px; align-items:baseline; }
+  .bank-bar .v { font-size: 18px; font-weight: 800; }
+  .bank-bar .delta.pos { color: var(--good); }
+  .bank-bar .delta.neg { color: var(--bad); }
+
+  .insurance-pill {
+    display:inline-flex; align-items:center; gap:8px; padding: 8px 12px; border-radius: 999px;
+    background: linear-gradient(135deg, #c05621, #7b341e); color:#fff; font-weight: 700; font-size: 13px;
+  }
+  .insurance-pill.take { background: linear-gradient(135deg, #276749, #22543d); }
+  .insurance-pill.skip { background: var(--panel2); color: var(--muted); }
+
+  .banner { padding: 10px 12px; border-radius: 10px; background: linear-gradient(135deg, #7b341e, #44280f); color: #fff; font-weight:600; font-size: 13px; }
+  .banner.warn { background: linear-gradient(135deg, #b7791f, #744210); }
+
+  details { background: var(--panel2); border-radius: 10px; padding: 8px 10px; }
+  details > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+
+  .hide { display: none !important; }
+  pre.test-out { white-space: pre-wrap; font: 13px/1.4 ui-monospace,Menlo,monospace; background: var(--panel); padding: 12px; border-radius: 10px; max-height: 80vh; overflow:auto; }
+  .pass { color: var(--good); }
+  .fail { color: var(--bad); }
+
+  /* Keyboard hint pills on buttons */
+  .kbd {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 5px;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.18);
+    font: 600 11px ui-monospace,Menlo,monospace;
+    color: rgba(255,255,255,0.85);
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Setup screen -->
+  <div id="setup-screen" class="hide">
+    <h1>BJ Companion — Setup</h1>
+    <small id="setup-tagline">Configure your game. You can change rules later (gear icon).</small>
+
+    <div class="card">
+      <h2>Table rules</h2>
+      <label>Decks <input type="number" id="cfg-decks" min="1" max="8" value="8"></label>
+      <label>Penetration (%) <input type="number" id="cfg-pen" min="10" max="95" value="50"></label>
+      <label>Dealer hits soft 17 (H17)
+        <select id="cfg-h17"><option value="true" selected>Yes (H17)</option><option value="false">No (S17)</option></select>
+      </label>
+      <label>Double after split (DAS) — affects splitting indices
+        <select id="cfg-das"><option value="true" selected>Yes</option><option value="false">No</option></select>
+      </label>
+      <label>Late surrender — unlocks Fab 4 in deviation panel
+        <select id="cfg-ls"><option value="false">No</option><option value="true">Yes</option></select>
+      </label>
+    </div>
+
+    <div class="card">
+      <h2>Betting</h2>
+      <label>Table min / unit size ($) <input type="number" id="cfg-unit" min="1" step="1" value="25"></label>
+      <label>Wong ramp (units by TC tier — TC≤+1, +2, +3, +4, +5+)
+        <input type="text" id="cfg-ramp" value="1,2,4,8,12">
+      </label>
+      <small style="color:var(--muted)">e.g. <code>1,2,4,8,12</code> means 1u at TC≤+1, 2u at +2, 4u at +3, 8u at +4, 12u at +5 and above.</small>
+    </div>
+
+    <div class="card">
+      <h2>Voice</h2>
+      <label>ElevenLabs API Key
+        <input type="password" id="cfg-apikey" placeholder="xi-...">
+      </label>
+      <small style="color:var(--muted)">Required for voice input. Stored locally, never sent to any server except ElevenLabs.</small>
+    </div>
+
+    <div class="row">
+      <button class="primary grow" id="setup-save">Start session</button>
+      <button class="ghost" id="setup-defaults">Reset defaults</button>
+    </div>
+  </div>
+
+  <!-- Game screen (counter-only) -->
+  <div id="game-screen" class="hide">
+
+    <!-- Hero bet status (dominant visual cue) -->
+    <div class="bet-hero t-cold" id="bet-hero">
+      <div>
+        <div class="status" id="bet-status">MIN BET</div>
+        <div class="substatus" id="bet-substatus">Table min · TC 0</div>
+      </div>
+      <div>
+        <div class="units" id="bet-hero-units">1u</div>
+        <div class="dollars" id="bet-hero-dollars">$25</div>
+      </div>
+    </div>
+
+
+    <!-- Count + penetration -->
+    <div class="card">
+      <div class="count-strip">
+        <div class="stat" id="stat-rc"><div class="v">+0</div><div class="l">RC</div></div>
+        <div class="stat" id="stat-tc"><div class="v">0</div><div class="l">TC</div></div>
+        <div class="stat" id="stat-dr"><div class="v">8.0</div><div class="l">Decks left</div></div>
+      </div>
+      <div class="pen"><div class="pen-fill" id="pen-fill" style="width:0%"></div><div class="pen-cut" id="pen-cut" style="left:50%"></div></div>
+      <div class="pen-label" id="pen-label">0 / 416 cards dealt</div>
+    </div>
+
+    <!-- Active deviations cheat sheet -->
+    <div class="card devs-card">
+      <div class="devs-title">Active deviations · TC <span id="devs-tc">+0</span></div>
+      <div class="devs-grid" id="devs-grid"></div>
+      <div class="devs-empty" id="devs-empty">Basic strategy applies. (Watch the bet panel for ramp signals.)</div>
+    </div>
+
+    <!-- Mic status + transcript -->
+    <div class="card mic-card">
+      <div class="mic-status">
+        <div class="mic-dot" id="mic-dot"></div>
+        <span class="mic-label" id="mic-label">Mic off</span>
+      </div>
+      <div class="mic-partial" id="mic-partial"></div>
+      <div class="mic-log" id="mic-log">Tap mic or press M to start listening.</div>
+    </div>
+
+    <div class="card" style="background:transparent;border:none;padding:0">
+      <div class="actions-row">
+        <button id="btn-undo" class="ghost">&#x21B6; Undo <span class="kbd">U</span></button>
+        <button id="btn-shuffle" class="warn">Shuffle <span class="kbd">X</span></button>
+        <button id="btn-mic" class="primary">&#x1F3A4; Mic <span class="kbd">M</span></button>
+        <button id="btn-settings" class="ghost">&#x2699;</button>
+      </div>
+    </div>
+
+    <div class="card" style="background:transparent;border:none;padding:0;color:var(--muted);font-size:12px;text-align:center">
+      Hi-Lo · I18 + Fab 4 (deviation panel) · Wong ramp (bet panel)
+    </div>
+  </div>
+
+  <!-- Test screen -->
+  <div id="test-screen" class="hide">
+    <h1>Inline tests</h1>
+    <pre id="test-out" class="test-out"></pre>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// ============================================================================
+// LIB — pure functions (testable, no DOM)
+// ============================================================================
+const Lib = (() => {
+
+  // ---------- Hi-Lo count ----------
+  const RANKS = ['2','3','4','5','6','7','8','9','T','A'];
+  const HILO = { '2':1,'3':1,'4':1,'5':1,'6':1,'7':0,'8':0,'9':0,'T':-1,'A':-1 };
+  // Card numeric value for hand totals (T = 10, A = 1 or 11)
+  const VAL = { '2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'T':10,'A':11 };
+
+  const cardCount = r => HILO[r];
+
+  function decksRemaining(cardsDealt, totalDecks) {
+    const left = totalDecks * 52 - cardsDealt;
+    return Math.max(0, left / 52);
+  }
+  function trueCount(rc, decksRem) {
+    if (decksRem <= 0.25) decksRem = 0.25; // never divide by ~0
+    return Math.round(rc / decksRem * 4) / 4;
+  }
+
+  // ---------- Hand classification ----------
+  // hand = ['T','6'] etc. Returns { kind: 'pair'|'soft'|'hard', total, isPair, pairRank, isBJ }
+  function classify(hand) {
+    if (!hand || hand.length === 0) return null;
+    const cards = hand.slice();
+    let aces = 0, sum = 0;
+    for (const c of cards) { if (c === 'A') aces++; else sum += VAL[c]; }
+    // Best total: count one A as 11 if it doesn't bust.
+    let total = sum + aces;             // all aces as 1
+    let soft = false;
+    if (aces > 0 && sum + 11 + (aces - 1) <= 21) { total = sum + 11 + (aces - 1); soft = true; }
+    const isPair = cards.length === 2 && (
+      cards[0] === cards[1] ||
+      (VAL[cards[0]] === 10 && VAL[cards[1]] === 10) // T,J,Q,K all "T" in our model; we still allow T+T pairs
+    );
+    const pairRank = isPair ? cards[0] : null;
+    const isBJ = cards.length === 2 && total === 21 && (cards.includes('A'));
+    return { kind: isPair ? 'pair' : (soft ? 'soft' : 'hard'), total, soft, isPair, pairRank, isBJ, n: cards.length };
+  }
+
+  // ---------- Strategy: basic + I18 + Fab 4 ----------
+  // Actions: 'H' hit, 'S' stand, 'D' double (else hit), 'Ds' double (else stand),
+  //          'P' split, 'PH' split if DAS else hit, 'SU' surrender (else hit), 'SUs' surrender (else stand)
+  // Dealer up rank index: '2'..'9','T','A'
+  const DUP = ['2','3','4','5','6','7','8','9','T','A'];
+  function dupIdx(d) { return DUP.indexOf(d); }
+
+  // Returns base action code; resolveAction() resolves to final HIT/STAND/DOUBLE/SPLIT/SURR
+  function basic(handCls, dealerUp, rules) {
+    const d = dupIdx(dealerUp); if (d < 0) return null;
+    const t = handCls.total;
+    const H17 = !!rules.h17;
+    const DAS = !!rules.das;
+
+    if (handCls.kind === 'pair') {
+      const pr = handCls.pairRank;
+      // Pairs of 10 are handled as hard 20 in basic (never split)
+      if (pr === 'A') return 'P';
+      if (pr === 'T') return 'S';
+      if (pr === '9') return (d <= 4 || d === 6 || d === 7) ? 'P' : 'S'; // split vs 2-6,8,9; stand vs 7,T,A
+      if (pr === '8') return d === 9 ? (rules.ls ? 'SU' : 'P') : 'P';   // surrender 8,8 vs A in some H17 strats; we keep split for simplicity
+      if (pr === '7') return d <= 5 ? 'P' : 'H';
+      if (pr === '6') return DAS ? (d <= 4 ? 'P' : 'H') : (d >= 1 && d <= 4 ? 'P' : 'H');
+      if (pr === '5') {
+        // play as hard 10
+        if (d <= 7) return 'D'; return 'H';
+      }
+      if (pr === '4') return DAS && (d === 3 || d === 4) ? 'P' : 'H';
+      if (pr === '3') return DAS ? (d <= 5 ? 'P' : 'H') : (d >= 2 && d <= 5 ? 'P' : 'H');
+      if (pr === '2') return DAS ? (d <= 5 ? 'P' : 'H') : (d >= 2 && d <= 5 ? 'P' : 'H');
+    }
+
+    if (handCls.kind === 'soft') {
+      // Soft totals (with A counted as 11)
+      if (t >= 20) return 'S';                                  // A,9 (A,A handled as pair)
+      if (t === 19) return (H17 && d === 4) ? 'Ds' : 'S';       // soft 19 dbl vs 6 in H17 only
+      if (t === 18) {
+        if (d <= 4) return 'Ds';                                // dbl vs 2-6 (else stand)
+        if (d <= 6) return 'S';                                 // stand vs 7,8
+        return 'H';                                             // hit vs 9, T, A
+      }
+      if (t === 17) return d >= 1 && d <= 4 ? 'D' : 'H';        // dbl vs 3-6
+      if (t === 16 || t === 15) return d >= 2 && d <= 4 ? 'D' : 'H'; // dbl vs 4-6
+      if (t === 14 || t === 13) return d >= 3 && d <= 4 ? 'D' : 'H'; // dbl vs 5-6
+      return 'H';
+    }
+
+    // Hard
+    if (t >= 17) {
+      // 17 vs A surrender in H17 (Fab-ish); without LS, stand
+      if (t === 17 && d === 9 && H17 && rules.ls) return 'SUs';
+      return 'S';
+    }
+    if (t === 16) {
+      if (d <= 4) return 'S';                                   // stand vs 2-6
+      if (rules.ls && (d === 7 || d === 8 || d === 9)) return 'SU'; // surr vs 9,T,A
+      return 'H';
+    }
+    if (t === 15) {
+      if (d <= 4) return 'S';                                   // stand vs 2-6
+      if (rules.ls && d === 8) return 'SU';                     // surr vs T
+      return 'H';
+    }
+    if (t === 14) {
+      if (d <= 4) return 'S';                                   // stand vs 2-6
+      return 'H';
+    }
+    if (t === 13) {
+      if (d <= 4) return 'S';                                   // stand vs 2-6
+      return 'H';
+    }
+    if (t === 12) {
+      if (d >= 2 && d <= 4) return 'S';                          // stand vs 4-6
+      return 'H';
+    }
+    if (t === 11) return H17 ? 'D' : (d <= 8 ? 'D' : 'H');      // dbl all in H17, else not vs A
+    if (t === 10) return d <= 7 ? 'D' : 'H';
+    if (t === 9)  return d >= 1 && d <= 4 ? 'D' : 'H';
+    return 'H'; // 5-8
+  }
+
+  // I18 deviations. Each entry pins BOTH actions: at-or-above threshold AND below threshold.
+  // This is the canonical I18 form — at very low TC, hands like 12v5 flip from basic STAND to HIT.
+  // [name, hand-matcher, dealer-idx, threshold-TC, action-if->=, action-if-<]
+  const I18 = [
+    ['16 vs T',  c => c.kind==='hard' && c.total===16, 8,  0, 'S', 'H'],
+    ['15 vs T',  c => c.kind==='hard' && c.total===15, 8,  4, 'S', 'H'],
+    ['T,T vs 5', c => c.isPair && c.pairRank==='T',    3,  5, 'P', 'S'],
+    ['T,T vs 6', c => c.isPair && c.pairRank==='T',    4,  4, 'P', 'S'],
+    ['10 vs T',  c => c.kind==='hard' && c.total===10, 8,  4, 'D', 'H'],
+    ['12 vs 3',  c => c.kind==='hard' && c.total===12, 1,  2, 'S', 'H'],
+    ['12 vs 2',  c => c.kind==='hard' && c.total===12, 0,  3, 'S', 'H'],
+    // 11 vs A: in H17 basic is already D and the deviation index sits at very negative TC,
+    //          so we leave it to basic. (The S17 +1 deviation isn't relevant: this app targets H17.)
+    ['9 vs 2',   c => c.kind==='hard' && c.total===9,  0,  1, 'D', 'H'],
+    ['10 vs A',  (c,r) => r.h17 && c.kind==='hard' && c.total===10, 9, 4, 'D', 'H'],
+    ['9 vs 7',   c => c.kind==='hard' && c.total===9,  5,  3, 'D', 'H'],
+    ['16 vs 9',  c => c.kind==='hard' && c.total===16, 7,  5, 'S', 'H'],
+    ['13 vs 2',  c => c.kind==='hard' && c.total===13, 0, -1, 'S', 'H'],
+    ['12 vs 4',  c => c.kind==='hard' && c.total===12, 2,  0, 'S', 'H'],
+    ['12 vs 5',  c => c.kind==='hard' && c.total===12, 3, -2, 'S', 'H'],
+    ['12 vs 6',  c => c.kind==='hard' && c.total===12, 4, -1, 'S', 'H'],
+    ['13 vs 3',  c => c.kind==='hard' && c.total===13, 1, -2, 'S', 'H'],
+  ];
+
+  // Fab 4 — surrender deviations (all need late surrender enabled)
+  const FAB4 = [
+    ['14 vs T',  c => c.kind==='hard' && c.total===14, 8,  3, 'SU'],
+    ['15 vs 9',  c => c.kind==='hard' && c.total===15, 7,  2, 'SU'],
+    ['15 vs A',  (c,r) => r.h17 && c.kind==='hard' && c.total===15, 9, 1, 'SU'],
+    // 15 vs T surrender at TC>=0 is in basic (LS) for H17 already; included for completeness:
+    ['15 vs T',  (c,r) => r.h17 && c.kind==='hard' && c.total===15, 8, 0, 'SU'],
+  ];
+
+  // Decide final action: returns code (HIT/STAND/DOUBLE/SPLIT/SURR) plus reason
+  function decide(handCls, dealerUp, rules, tc) {
+    if (!handCls || !dealerUp) return { code: 'WAIT', reason: 'Enter your hand and dealer up' };
+    if (handCls.isBJ) return { code: 'STAND', reason: 'Blackjack', isBJ: true };
+    if (handCls.total >= 21) return { code: 'STAND', reason: handCls.total === 21 ? '21' : 'Bust' };
+
+    const d = dupIdx(dealerUp);
+    let baseAct = basic(handCls, dealerUp, rules);
+    let why = 'Basic strategy';
+
+    // Apply I18 deviations (replace basic for matching hands; both branches explicit).
+    let devApplied = null;
+    for (const [name, match, dIdx, thresh, hiAct, loAct] of I18) {
+      if (dIdx === d && match(handCls, rules)) {
+        if (tc >= thresh) { baseAct = hiAct; devApplied = `${name}: TC≥${thresh} → ${hiAct}`; }
+        else              { baseAct = loAct; devApplied = `${name}: TC<${thresh} → ${loAct}`; }
+      }
+    }
+
+    // Apply Fab 4 if surrender allowed and applicable
+    if (rules.ls) {
+      for (const [name, match, dIdx, thresh, act] of FAB4) {
+        if (dIdx === d && match(handCls, rules)) {
+          if (tc >= thresh) { baseAct = act; devApplied = `${name} (Fab4): TC≥${thresh} → SURR`; }
+        }
+      }
+    }
+
+    // Resolve special action codes given hand state
+    return resolve(baseAct, handCls, rules, devApplied || why);
+  }
+
+  function resolve(act, handCls, rules, why) {
+    const canDouble = handCls.n === 2 && !handCls.fromSplit;       // basic: only on first two cards
+    const canDoubleAfterSplit = canDouble || (handCls.fromSplit && rules.das);
+    const canSplit = handCls.isPair && handCls.n === 2;
+    const map = (a) => {
+      if (a === 'D')  return canDoubleAfterSplit ? 'DOUBLE' : 'HIT';
+      if (a === 'Ds') return canDoubleAfterSplit ? 'DOUBLE' : 'STAND';
+      if (a === 'P')  return canSplit ? 'SPLIT' : 'HIT';
+      if (a === 'PH') return (canSplit && rules.das) ? 'SPLIT' : 'HIT';
+      if (a === 'SU') return rules.ls && handCls.n === 2 ? 'SURR' : 'HIT';
+      if (a === 'SUs')return rules.ls && handCls.n === 2 ? 'SURR' : 'STAND';
+      if (a === 'H')  return 'HIT';
+      if (a === 'S')  return 'STAND';
+      return 'HIT';
+    };
+    const code = map(act);
+    return { code, reason: why };
+  }
+
+  // ---------- Wong bet ramp + Kelly cap ----------
+  function wongUnits(tc, ramp) {
+    const idx = Math.max(0, Math.min(ramp.length - 1, Math.floor(tc) - 1));
+    return ramp[idx];
+  }
+  // Player advantage at TC for 8-deck H17 DAS roughly: -0.5% at TC 0, +0.5% per TC unit gain.
+  // Refined: edge ≈ (tc - 1) * 0.5% (so TC=+1 ≈ -0.05% to break-even, +3 ≈ +1%).
+  function approxEdge(tc, rules) {
+    const baseHouse = rules.h17 ? 0.0050 : 0.0035; // approx for 8-deck DAS
+    // ~0.5% per TC unit for Hi-Lo (Schlesinger ballpark)
+    return -baseHouse + tc * 0.005;
+  }
+  function kellyCap(bankroll, edge, fraction) {
+    if (fraction <= 0) return Infinity;
+    if (edge <= 0)     return 0;
+    return bankroll * edge * fraction;
+  }
+  // returns { units, dollars, capped, note }
+  function recommendBet(tc, setup) {
+    const units = wongUnits(tc, setup.ramp);
+    const ramp$ = units * setup.unit;
+    const edge = approxEdge(tc, setup);
+    const cap$ = kellyCap(setup.bankroll, edge, setup.kelly);
+    let dollars = ramp$;
+    let note = '';
+    if (setup.kelly > 0 && tc >= 1 && cap$ > 0 && cap$ < ramp$) {
+      dollars = Math.max(setup.unit, Math.round(cap$ / setup.unit) * setup.unit); // round to unit
+      note = `Kelly cap: $${dollars} (edge ≈ ${(edge*100).toFixed(2)}%)`;
+    }
+    if (tc < 1 && cap$ <= 0) {
+      // negative edge: bet table min only
+      dollars = setup.unit;
+      note = 'Negative edge — table min';
+    }
+    const finalUnits = Math.max(1, Math.round(dollars / setup.unit));
+    return { units: finalUnits, dollars, ramp$, capped: dollars !== ramp$, note, edge };
+  }
+
+  // ---------- Bankroll math ----------
+  // Returns delta (positive means win)
+  function handDelta(bet, result, bjPayout) {
+    if (result === 'W')   return  bet;
+    if (result === 'L')   return -bet;
+    if (result === 'P')   return  0;
+    if (result === 'SURR')return -bet * 0.5;
+    if (result === 'BJ')  return  bet * (bjPayout === '6:5' ? 1.2 : 1.5);
+    return 0;
+  }
+
+  // ---------- Insurance ----------
+  function insuranceCall(tc, threshold) {
+    return tc >= threshold ? 'TAKE' : 'SKIP';
+  }
+
+  // ---------- Voice / dictation parser (counter-only) ----------
+  // Card-counting reader. Aggressively tolerant: drop everything that isn't a
+  // card or command. Run-on digit strings are greedy-split with "10" priority,
+  // so "1064498" → 10, 6, 4, 4, 9, 8.
+  // Action shapes:
+  //   { type:'card',   rank }      no mode tracking — every card just feeds RC
+  //   { type:'shuffle' } | { type:'undo' }
+  //   { type:'adjust', rc, cards }
+  function parseDictation(text) {
+    const out = { actions: [], parsed: [], unrecognized: [] };
+    if (!text) return out;
+    const clean = String(text).toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!clean) return out;
+    const tokens = clean.split(' ');
+
+    const NUM_WORDS = {
+      'two':'2','three':'3','four':'4','five':'5','six':'6','seven':'7','eight':'8','nine':'9',
+      'ten':'T','jack':'T','queen':'T','king':'T','ace':'A',
+    };
+    const RANK_LETTERS = {}; // disabled — single letters too trigger-happy with live STT
+    const COMMAND_WORDS = {
+      // shuffle/undo removed from voice — use buttons (X/U) instead to avoid phantom triggers
+    };
+    const ADJUST_VERBS = new Set(['plus','minus','skip','add','bump','down']);
+    const NUM_VAL = { 'one':1,'two':2,'three':3,'four':4,'five':5,'six':6,'seven':7,'eight':8,'nine':9,'ten':10 };
+    // Big silent-skip list: any noise the user (or Wispr) might emit that isn't
+    // a card or command. Keeps the unrecognized log short.
+    const SKIP = new Set([
+      // articles + filler
+      'a','an','the','and','then','also','of','with','to','for','is','was','his','her','their','that','this',
+      'got','have','had','on','in','at','as','it','its','another','more','total','too','it','very','still','already','just','also',
+      // table / seat / mode words (we don't track modes any more)
+      'mine','my','i','me','self','player','dealer','dealers','house','other','others','rest','table','seat','seats',
+      'first','second','third','fourth','fifth','sixth','seventh','eighth','one','position','spot',
+      // round / hand words
+      'up','upcard','hole','round','hand','hands','split','pair','pairs','soft','hard',
+      // narration verbs we don't act on
+      'show','shows','showed','showing','says','said','flip','flipped','reveals','revealed',
+      'hits','hit','hitting','draws','drew','drawing','bust','busts','busted','stand','stood','double','doubled',
+      // result words (no bankroll any more)
+      'wins','win','won','lose','lost','push','pushed','tied','blackjack','natural','surrender','surrendered',
+      // common phantom words from ambient noise / Scribe hallucinations
+      'okay','ok','yeah','yes','no','not','oh','uh','um','hmm','huh','like','so','well','right','sure',
+      'thanks','thank','you','please','sorry','what','hey','here','there','go','going','come','let','do',
+      'good','great','nice','cool','alright','now','look','see','know','think','want','need','get','make',
+      'can','will','would','should','could','may','might','be','been','being','are','were','but','or',
+      'all','some','any','much','many','each','every','few','them','they','we','our','your','he','she',
+      'face','back','shoe','wrong','oops','remove','down','new',
+    ]);
+
+    function rankOf(tok) {
+      if (NUM_WORDS[tok]) return NUM_WORDS[tok];
+      if (RANK_LETTERS[tok]) return RANK_LETTERS[tok];
+      return null;
+    }
+    function numericValue(tok) {
+      if (/^[0-9]+$/.test(tok)) return parseInt(tok, 10);
+      return NUM_VAL[tok] || null;
+    }
+    // Greedy split: "1064498" → ['T','6','4','4','9','8'].
+    // Lone "0" → 'T', lone "1" → 'A' (defensive; users say "ace" / "ten" normally).
+    function splitDigitMash(s) {
+      const ranks = [];
+      let i = 0;
+      while (i < s.length) {
+        if (s[i] === '1' && s[i+1] === '0') { ranks.push('T'); i += 2; continue; }
+        const c = s[i];
+        if (c >= '2' && c <= '9') { ranks.push(c); i += 1; continue; }
+        if (c === '0') { ranks.push('T'); i += 1; continue; }
+        if (c === '1') { ranks.push('A'); i += 1; continue; }
+        i += 1; // shouldn't happen — input is /^[0-9]+$/
+      }
+      return ranks;
+    }
+
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i]; if (!tok) continue;
+
+      // Adjust verb followed by a number
+      if (ADJUST_VERBS.has(tok)) {
+        const next = tokens[i+1];
+        const n = next ? numericValue(next) : null;
+        if (n != null) {
+          if (tok === 'plus' || tok === 'add' || tok === 'bump') out.actions.push({ type: 'adjust', rc: n,  cards: n });
+          else if (tok === 'minus' || tok === 'down')             out.actions.push({ type: 'adjust', rc: -n, cards: n });
+          else if (tok === 'skip')                                  out.actions.push({ type: 'adjust', rc: 0,  cards: n });
+          out.parsed.push(`${tok} ${next}`); i++; continue;
+        }
+      }
+      // Multi-digit run → greedy split into ranks
+      if (/^[0-9]+$/.test(tok)) {
+        for (const r of splitDigitMash(tok)) out.actions.push({ type: 'card', rank: r });
+        out.parsed.push(tok);
+        continue;
+      }
+      if (COMMAND_WORDS[tok]) {
+        out.actions.push({ type: COMMAND_WORDS[tok] });
+        out.parsed.push(tok);
+        continue;
+      }
+      const r = rankOf(tok);
+      if (r) {
+        out.actions.push({ type: 'card', rank: r });
+        out.parsed.push(tok);
+        continue;
+      }
+      if (SKIP.has(tok)) continue;
+      out.unrecognized.push(tok);
+    }
+    return out;
+  }
+
+  // ---------- Active deviations at current TC ----------
+  // For each I18 + Fab 4 hand, return entries where the action at `tc` differs
+  // from the basic-strategy action. User reads this panel to know when to play
+  // against their basic-strategy chart.
+  function activeDeviations(tc, rules) {
+    const out = [];
+    const HANDS = [
+      // [name, hand-cards, dealer, h17Required, fab4 (requires LS)]
+      ['16 vs T',  ['T','6'], 'T', false, false],
+      ['15 vs T',  ['T','5'], 'T', false, false],
+      ['T,T vs 5', ['T','T'], '5', false, false],
+      ['T,T vs 6', ['T','T'], '6', false, false],
+      ['10 vs T',  ['6','4'], 'T', false, false],
+      ['12 vs 3',  ['T','2'], '3', false, false],
+      ['12 vs 2',  ['T','2'], '2', false, false],
+      ['9 vs 2',   ['5','4'], '2', false, false],
+      ['10 vs A',  ['6','4'], 'A', true,  false],
+      ['9 vs 7',   ['5','4'], '7', false, false],
+      ['16 vs 9',  ['T','6'], '9', false, false],
+      ['13 vs 2',  ['T','3'], '2', false, false],
+      ['12 vs 4',  ['T','2'], '4', false, false],
+      ['12 vs 5',  ['T','2'], '5', false, false],
+      ['12 vs 6',  ['T','2'], '6', false, false],
+      ['13 vs 3',  ['T','3'], '3', false, false],
+      ['14 vs T',  ['T','4'], 'T', false, true],
+      ['15 vs 9',  ['T','5'], '9', false, true],
+      ['15 vs A',  ['T','5'], 'A', true,  true],
+    ];
+    for (const [name, hand, dealer, needsH17, isFab4] of HANDS) {
+      if (needsH17 && !rules.h17) continue;
+      if (isFab4  && !rules.ls)   continue;
+      const cls = classify(hand);
+      if (!cls) continue;
+      cls.fromSplit = false;
+      const basicAct = resolve(basic(cls, dealer, rules), cls, rules, '').code;
+      const curAct   = decide(cls, dealer, rules, tc).code;
+      if (curAct !== basicAct) {
+        out.push({ name, action: curAct, basic: basicAct, isFab4 });
+      }
+    }
+    return out;
+  }
+
+  return {
+    RANKS, HILO, VAL,
+    cardCount, decksRemaining, trueCount,
+    classify, basic, decide, resolve,
+    wongUnits, approxEdge, kellyCap, recommendBet,
+    handDelta, insuranceCall,
+    parseDictation, activeDeviations,
+    I18, FAB4, DUP,
+  };
+})();
+
+// expose for Node tests
+if (typeof module !== 'undefined' && module.exports) module.exports = { Lib };
+
+// ============================================================================
+// TESTS — run in browser via ?test=1 OR in Node via test runner
+// ============================================================================
+function runTests(L) {
+  const tests = [];
+  function t(name, fn) { tests.push({name, fn}); }
+  function eq(a, b, msg) { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${msg||'eq'}: expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`); }
+  function ok(c, msg) { if (!c) throw new Error(msg || 'expected truthy'); }
+
+  // Hi-Lo card values
+  t('Hi-Lo: 2..6 = +1', () => {
+    for (const r of ['2','3','4','5','6']) eq(L.cardCount(r), 1, r);
+  });
+  t('Hi-Lo: 7..9 = 0', () => {
+    for (const r of ['7','8','9']) eq(L.cardCount(r), 0, r);
+  });
+  t('Hi-Lo: T,A = -1', () => {
+    eq(L.cardCount('T'), -1, 'T'); eq(L.cardCount('A'), -1, 'A');
+  });
+
+  // Decks remaining
+  t('decksRemaining(0,8) = 8', () => eq(L.decksRemaining(0, 8), 8));
+  t('decksRemaining(208,8) = 4 (50% pen)', () => eq(L.decksRemaining(208, 8), 4));
+  t('decksRemaining(416,8) = 0', () => eq(L.decksRemaining(416, 8), 0));
+
+  // True count
+  t('TC: rc=8, dr=4 → 2.0', () => eq(L.trueCount(8, 4), 2));
+  t('TC: rc=6, dr=4 → 1.5', () => eq(L.trueCount(6, 4), 1.5));
+  t('TC: rc=10, dr=8 → 1.25', () => eq(L.trueCount(10, 8), 1.25));
+  t('TC: rc=-4, dr=2 → -2', () => eq(L.trueCount(-4, 2), -2));
+  t('TC: rc=1, dr=0 (guarded) → 4', () => eq(L.trueCount(1, 0), 4)); // guarded to 0.25
+  t('TC: rounds to quarter deck', () => eq(L.trueCount(7, 4), 1.75));
+
+  // Classify
+  t('classify ["T","6"] = hard 16', () => {
+    const c = L.classify(['T','6']);
+    eq(c.kind, 'hard'); eq(c.total, 16); eq(c.soft, false);
+  });
+  t('classify ["A","7"] = soft 18', () => {
+    const c = L.classify(['A','7']);
+    eq(c.kind, 'soft'); eq(c.total, 18); eq(c.soft, true);
+  });
+  t('classify ["A","6","2"] = soft 19', () => {
+    const c = L.classify(['A','6','2']);
+    eq(c.kind, 'soft'); eq(c.total, 19);
+  });
+  t('classify ["A","6","2","T"] = hard 19 (forced A=1)', () => {
+    const c = L.classify(['A','6','2','T']);
+    eq(c.kind, 'hard'); eq(c.total, 19); eq(c.soft, false);
+  });
+  t('classify ["8","8"] = pair', () => {
+    const c = L.classify(['8','8']);
+    ok(c.isPair); eq(c.pairRank, '8'); eq(c.kind, 'pair');
+  });
+  t('classify ["A","T"] = blackjack', () => {
+    const c = L.classify(['A','T']);
+    ok(c.isBJ); eq(c.total, 21);
+  });
+  t('classify ["A","A"] = pair (aces)', () => {
+    const c = L.classify(['A','A']);
+    ok(c.isPair); eq(c.pairRank, 'A');
+  });
+
+  // Basic strategy spot checks (H17 DAS).  Use TC=-1 to ensure I18 deviations don't fire.
+  const r = { h17: true, das: true, ls: false };
+  t('BS: 16 vs T no count → HIT', () => {
+    eq(L.decide(L.classify(['T','6']), 'T', r, -1).code, 'HIT');     // I18 kicks in at TC>=0; -1 keeps basic
+  });
+  t('BS: 11 vs A H17 → DOUBLE', () => {
+    eq(L.decide(L.classify(['7','4']), 'A', r, 0).code, 'DOUBLE');
+  });
+  t('BS: A,7 vs 9 → HIT', () => {
+    eq(L.decide(L.classify(['A','7']), '9', r, 0).code, 'HIT');
+  });
+  t('BS: A,7 vs T → HIT', () => {
+    eq(L.decide(L.classify(['A','7']), 'T', r, 0).code, 'HIT');
+  });
+  t('BS: A,7 vs A → HIT', () => {
+    eq(L.decide(L.classify(['A','7']), 'A', r, 0).code, 'HIT');
+  });
+  t('BS: A,7 vs 7 → STAND', () => {
+    eq(L.decide(L.classify(['A','7']), '7', r, 0).code, 'STAND');
+  });
+  t('BS: A,7 vs 6 → DOUBLE (H17)', () => {
+    eq(L.decide(L.classify(['A','7']), '6', r, 0).code, 'DOUBLE');
+  });
+  t('BS: A,8 vs 6 H17 → DOUBLE', () => {
+    eq(L.decide(L.classify(['A','8']), '6', r, 0).code, 'DOUBLE');
+  });
+  t('BS: A,9 vs 6 → STAND', () => {
+    eq(L.decide(L.classify(['A','9']), '6', r, 0).code, 'STAND');
+  });
+  t('BS: 8,8 vs T → SPLIT', () => {
+    eq(L.decide(L.classify(['8','8']), 'T', r, 0).code, 'SPLIT');
+  });
+  t('BS: T,T vs 6 no count → STAND', () => {
+    eq(L.decide(L.classify(['T','T']), '6', r, 0).code, 'STAND');    // I18 split at TC>=4; 0 keeps stand
+  });
+  t('BS: 12 vs 3 no count → HIT', () => {
+    eq(L.decide(L.classify(['T','2']), '3', r, 0).code, 'HIT');      // I18 stand at TC>=2
+  });
+  // Off-by-one regressions: hard 14/15/16 vs 7
+  t('BS: 14 vs 7 → HIT', () => eq(L.decide(L.classify(['T','4']), '7', r, 0).code, 'HIT'));
+  t('BS: 15 vs 7 → HIT', () => eq(L.decide(L.classify(['T','5']), '7', r, 0).code, 'HIT'));
+  t('BS: 16 vs 7 → HIT', () => eq(L.decide(L.classify(['T','6']), '7', r, 0).code, 'HIT'));
+  t('BS: 13 vs 6 → STAND', () => eq(L.decide(L.classify(['T','3']), '6', r, 0).code, 'STAND'));
+  t('BS: 14 vs 6 → STAND', () => eq(L.decide(L.classify(['T','4']), '6', r, 0).code, 'STAND'));
+  t('BS: 15 vs 6 → STAND', () => eq(L.decide(L.classify(['T','5']), '6', r, 0).code, 'STAND'));
+  // Pair 9,9 spread
+  t('BS: 9,9 vs 7 → STAND', () => eq(L.decide(L.classify(['9','9']), '7', r, 0).code, 'STAND'));
+  t('BS: 9,9 vs 8 → SPLIT', () => eq(L.decide(L.classify(['9','9']), '8', r, 0).code, 'SPLIT'));
+  t('BS: 9,9 vs 9 → SPLIT', () => eq(L.decide(L.classify(['9','9']), '9', r, 0).code, 'SPLIT'));
+  t('BS: 9,9 vs T → STAND', () => eq(L.decide(L.classify(['9','9']), 'T', r, 0).code, 'STAND'));
+  t('BS: 9,9 vs A → STAND', () => eq(L.decide(L.classify(['9','9']), 'A', r, 0).code, 'STAND'));
+  t('BS: 9,9 vs 6 → SPLIT', () => eq(L.decide(L.classify(['9','9']), '6', r, 0).code, 'SPLIT'));
+  // Aces split
+  t('BS: A,A → SPLIT', () => eq(L.decide(L.classify(['A','A']), '5', r, 0).code, 'SPLIT'));
+  t('BS: A,A → SPLIT vs A', () => eq(L.decide(L.classify(['A','A']), 'A', r, 0).code, 'SPLIT'));
+
+  // I18 deviations
+  t('I18: 16 vs T at TC=0 → STAND', () => {
+    eq(L.decide(L.classify(['T','6']), 'T', r, 0).code, 'STAND');
+  });
+  t('I18: 16 vs T at TC=-1 → HIT', () => {
+    eq(L.decide(L.classify(['T','6']), 'T', r, -1).code, 'HIT');
+  });
+  t('I18: 12 vs 3 at TC=2 → STAND', () => {
+    eq(L.decide(L.classify(['T','2']), '3', r, 2).code, 'STAND');
+  });
+  t('I18: 12 vs 3 at TC=1 → HIT', () => {
+    eq(L.decide(L.classify(['T','2']), '3', r, 1).code, 'HIT');
+  });
+  t('I18: T,T vs 5 at TC=5 → SPLIT', () => {
+    eq(L.decide(L.classify(['T','T']), '5', r, 5).code, 'SPLIT');
+  });
+  t('I18: T,T vs 5 at TC=4 → STAND', () => {
+    eq(L.decide(L.classify(['T','T']), '5', r, 4).code, 'STAND');
+  });
+  t('11 vs A H17 at TC=1 → DOUBLE (basic)', () => {
+    eq(L.decide(L.classify(['7','4']), 'A', r, 1).code, 'DOUBLE');
+  });
+  t('11 vs A H17 at TC=0 → DOUBLE (basic, no I18 entry)', () => {
+    eq(L.decide(L.classify(['7','4']), 'A', r, 0).code, 'DOUBLE');
+  });
+  t('11 vs A H17 at TC=-3 → DOUBLE (basic preserved)', () => {
+    eq(L.decide(L.classify(['7','4']), 'A', r, -3).code, 'DOUBLE');
+  });
+  t('I18: 12 vs 4 at TC=0 → STAND', () => {
+    eq(L.decide(L.classify(['T','2']), '4', r, 0).code, 'STAND');
+  });
+  t('I18: 13 vs 2 at TC=-1 → STAND (deviation hi)', () => {
+    eq(L.decide(L.classify(['T','3']), '2', r, -1).code, 'STAND');
+  });
+  // Negative-threshold deviations: at TC < threshold, must HIT (not STAND).
+  t('I18: 13 vs 2 at TC=-2 → HIT (below thresh)', () => {
+    eq(L.decide(L.classify(['T','3']), '2', r, -2).code, 'HIT');
+  });
+  t('I18: 12 vs 5 at TC=-2 → STAND (at thresh)', () => {
+    eq(L.decide(L.classify(['T','2']), '5', r, -2).code, 'STAND');
+  });
+  t('I18: 12 vs 5 at TC=-3 → HIT (below thresh)', () => {
+    eq(L.decide(L.classify(['T','2']), '5', r, -3).code, 'HIT');
+  });
+  t('I18: 12 vs 6 at TC=-1 → STAND (at thresh)', () => {
+    eq(L.decide(L.classify(['T','2']), '6', r, -1).code, 'STAND');
+  });
+  t('I18: 12 vs 6 at TC=-2 → HIT (below thresh)', () => {
+    eq(L.decide(L.classify(['T','2']), '6', r, -2).code, 'HIT');
+  });
+  t('I18: 13 vs 3 at TC=-2 → STAND', () => {
+    eq(L.decide(L.classify(['T','3']), '3', r, -2).code, 'STAND');
+  });
+  t('I18: 13 vs 3 at TC=-3 → HIT', () => {
+    eq(L.decide(L.classify(['T','3']), '3', r, -3).code, 'HIT');
+  });
+  t('I18: T,T vs 6 at TC=4 → SPLIT', () => {
+    eq(L.decide(L.classify(['T','T']), '6', r, 4).code, 'SPLIT');
+  });
+  t('I18: T,T vs 6 at TC=3 → STAND', () => {
+    eq(L.decide(L.classify(['T','T']), '6', r, 3).code, 'STAND');
+  });
+
+  // Fab 4 (with LS)
+  const r2 = { h17: true, das: true, ls: true };
+  t('Fab4: 14 vs T at TC=3 → SURR', () => {
+    eq(L.decide(L.classify(['T','4']), 'T', r2, 3).code, 'SURR');
+  });
+  t('Fab4: 14 vs T at TC=2 → HIT', () => {
+    eq(L.decide(L.classify(['T','4']), 'T', r2, 2).code, 'HIT');
+  });
+  t('Fab4: 15 vs 9 at TC=2 → SURR', () => {
+    eq(L.decide(L.classify(['T','5']), '9', r2, 2).code, 'SURR');
+  });
+  t('Fab4: 15 vs T at TC=0 → SURR (H17 LS)', () => {
+    eq(L.decide(L.classify(['T','5']), 'T', r2, 0).code, 'SURR');
+  });
+  t('Fab4: 15 vs A H17 at TC=1 → SURR', () => {
+    eq(L.decide(L.classify(['T','5']), 'A', r2, 1).code, 'SURR');
+  });
+  t('Without LS: 15 vs T at TC=0 → HIT', () => {
+    eq(L.decide(L.classify(['T','5']), 'T', { h17:true, das:true, ls:false }, 0).code, 'HIT');
+  });
+
+  // Wong ramp
+  t('Wong: TC=0 → 1u', () => eq(L.wongUnits(0, [1,2,4,8,12]), 1));
+  t('Wong: TC=1 → 1u', () => eq(L.wongUnits(1, [1,2,4,8,12]), 1));
+  t('Wong: TC=2 → 2u', () => eq(L.wongUnits(2, [1,2,4,8,12]), 2));
+  t('Wong: TC=2.5 → 2u', () => eq(L.wongUnits(2.5, [1,2,4,8,12]), 2));
+  t('Wong: TC=3 → 4u', () => eq(L.wongUnits(3, [1,2,4,8,12]), 4));
+  t('Wong: TC=4 → 8u', () => eq(L.wongUnits(4, [1,2,4,8,12]), 8));
+  t('Wong: TC=5 → 12u (max)', () => eq(L.wongUnits(5, [1,2,4,8,12]), 12));
+  t('Wong: TC=10 → 12u (capped)', () => eq(L.wongUnits(10, [1,2,4,8,12]), 12));
+  t('Wong: TC=-2 → 1u (floor)', () => eq(L.wongUnits(-2, [1,2,4,8,12]), 1));
+
+  // Bankroll math
+  t('Bank: W $100 → +100', () => eq(L.handDelta(100, 'W', '3:2'), 100));
+  t('Bank: L $100 → -100', () => eq(L.handDelta(100, 'L', '3:2'), -100));
+  t('Bank: P → 0', () => eq(L.handDelta(100, 'P', '3:2'), 0));
+  t('Bank: BJ 3:2 → +150', () => eq(L.handDelta(100, 'BJ', '3:2'), 150));
+  t('Bank: BJ 6:5 → +120', () => eq(L.handDelta(100, 'BJ', '6:5'), 120));
+  t('Bank: SURR → -50', () => eq(L.handDelta(100, 'SURR', '3:2'), -50));
+
+  // Insurance
+  t('Insurance: TC=2.5 thresh=3 → SKIP', () => eq(L.insuranceCall(2.5, 3), 'SKIP'));
+  t('Insurance: TC=3 thresh=3 → TAKE', () => eq(L.insuranceCall(3, 3), 'TAKE'));
+  t('Insurance: TC=4 thresh=3 → TAKE', () => eq(L.insuranceCall(4, 3), 'TAKE'));
+
+  // Voice / dictation parser (counter-only)
+  t('Voice: "ten six" → 2 cards', () => {
+    const r = L.parseDictation('ten six');
+    const cards = r.actions.filter(a => a.type === 'card');
+    eq(cards.map(c => c.rank).join(','), 'T,6');
+  });
+  t('Voice: "shuffle"/"shoe" → skipped (use button)', () => {
+    eq(L.parseDictation('shuffle').actions.length, 0);
+    eq(L.parseDictation('shoe').actions.length, 0);
+  });
+  t('Voice: "undo"/"back"/"oops" → skipped (use button)', () => {
+    eq(L.parseDictation('undo').actions.length, 0);
+    eq(L.parseDictation('back').actions.length, 0);
+    eq(L.parseDictation('oops').actions.length, 0);
+  });
+  t('Voice: "plus three" → adjust +3 / +3 cards', () => {
+    eq(L.parseDictation('plus three').actions[0], { type: 'adjust', rc: 3, cards: 3 });
+  });
+  t('Voice: "minus 2" → adjust -2 / +2 cards', () => {
+    eq(L.parseDictation('minus 2').actions[0], { type: 'adjust', rc: -2, cards: 2 });
+  });
+  t('Voice: "skip 5" → +5 cards no rc change', () => {
+    eq(L.parseDictation('skip 5').actions[0], { type: 'adjust', rc: 0, cards: 5 });
+  });
+  t('Voice: result/mode words are silently skipped', () => {
+    // counter-only mode → win/lose/dealer etc. are filler now
+    const r = L.parseDictation('win');
+    eq(r.actions.length, 0); eq(r.unrecognized.length, 0);
+    const r2 = L.parseDictation('dealer ten my six');
+    const cards = r2.actions.filter(a => a.type === 'card');
+    eq(cards.map(c => c.rank).join(','), 'T,6');
+  });
+  t('Voice: "I got an ace and a six" → 2 cards', () => {
+    const cards = L.parseDictation('I got an ace and a six').actions.filter(a => a.type === 'card');
+    eq(cards.length, 2); eq(cards[0].rank, 'A'); eq(cards[1].rank, '6');
+  });
+  t('Voice: "jack queen king" all map to T', () => {
+    const cards = L.parseDictation('jack queen king').actions.filter(a => a.type === 'card');
+    eq(cards.map(c => c.rank).join(','), 'T,T,T');
+  });
+  t('Voice: unrecognized goes to list', () => {
+    const r = L.parseDictation('foo ten bar');
+    eq(r.unrecognized.length, 2);
+    const cards = r.actions.filter(a => a.type === 'card');
+    eq(cards.length, 1); eq(cards[0].rank, 'T');
+  });
+  // Wispr Flow run-on digit transcripts (the user's actual data)
+  t('Voice digit-mash: "1064498" → 10,6,4,4,9,8', () => {
+    const cards = L.parseDictation('1064498').actions.filter(a => a.type === 'card');
+    eq(cards.map(c => c.rank).join(','), 'T,6,4,4,9,8');
+  });
+  t('Voice digit-mash: "1064498 dealer 10" → 7 cards (T 6 4 4 9 8 + T)', () => {
+    const cards = L.parseDictation('1064498 dealer 10').actions.filter(a => a.type === 'card');
+    eq(cards.map(c => c.rank).join(','), 'T,6,4,4,9,8,T');
+  });
+  t('Voice digit-mash: "Dealer 10 table jack" → T,T', () => {
+    const cards = L.parseDictation('Dealer 10 table jack').actions.filter(a => a.type === 'card');
+    eq(cards.map(c => c.rank).join(','), 'T,T');
+  });
+  t('Voice digit-mash: "225 is dealer 7, 43 Jack, Q." → 2,2,5,7,4,3,T (Q ignored — say "queen")', () => {
+    const cards = L.parseDictation('225 is dealer 7, 43 Jack, Q.').actions.filter(a => a.type === 'card');
+    eq(cards.map(c => c.rank).join(','), '2,2,5,7,4,3,T');
+  });
+  t('Voice digit-mash: "722 dealer 5310" → 7,2,2,5,3,T', () => {
+    const cards = L.parseDictation('722 dealer 5310').actions.filter(a => a.type === 'card');
+    eq(cards.map(c => c.rank).join(','), '7,2,2,5,3,T');
+  });
+  t('Voice digit-mash: "10" → T (single ten)', () => {
+    const cards = L.parseDictation('10').actions.filter(a => a.type === 'card');
+    eq(cards.map(c => c.rank).join(','), 'T');
+  });
+  t('Voice digit-mash: "1010" → T,T (two tens)', () => {
+    const cards = L.parseDictation('1010').actions.filter(a => a.type === 'card');
+    eq(cards.map(c => c.rank).join(','), 'T,T');
+  });
+  // Hi-Lo total over the whole dictation
+  t('Voice: dictation Hi-Lo sum is correct', () => {
+    // "1064498 dealer 10" = T(-1)+6(+1)+4(+1)+4(+1)+9(0)+8(0)+T(-1) = +1
+    const cards = L.parseDictation('1064498 dealer 10').actions.filter(a => a.type === 'card');
+    const rcDelta = cards.reduce((s, c) => s + L.cardCount(c.rank), 0);
+    eq(rcDelta, 1);
+  });
+
+  // activeDeviations
+  t('Devs: TC=0 H17 DAS no LS → just 16 vs T (only true deviation from Wong basic)', () => {
+    const r = { h17: true, das: true, ls: false };
+    const devs = L.activeDeviations(0, r);
+    eq(devs.length, 1);
+    eq(devs[0].name, '16 vs T'); eq(devs[0].action, 'STAND'); eq(devs[0].basic, 'HIT');
+  });
+  t('Devs: TC=+2 → 16vT, 12v3 active', () => {
+    const r = { h17: true, das: true, ls: false };
+    const names = L.activeDeviations(2, r).map(d => d.name);
+    ok(names.includes('16 vs T'));
+    ok(names.includes('12 vs 3'));
+  });
+  t('Devs: TC=+3 → adds 12v2 and 9v7', () => {
+    const r = { h17: true, das: true, ls: false };
+    const names = L.activeDeviations(3, r).map(d => d.name);
+    ok(names.includes('12 vs 2'));
+    ok(names.includes('9 vs 7'));
+  });
+  t('Devs: TC=-2 → "hit more" deviations active', () => {
+    const r = { h17: true, das: true, ls: false };
+    const devs = L.activeDeviations(-2, r);
+    const names = devs.map(d => d.name);
+    ok(names.includes('13 vs 2'), '13v2 deviates to HIT below -1');
+    ok(names.includes('12 vs 6'), '12v6 deviates to HIT below -1');
+  });
+  t('Devs: TC=+5 → max-count plays show', () => {
+    const r = { h17: true, das: true, ls: false };
+    const devs = L.activeDeviations(5, r);
+    const names = devs.map(d => d.name);
+    ok(names.includes('T,T vs 5'), 'T,T vs 5 splits at TC>=5');
+    ok(names.includes('16 vs 9'), '16 vs 9 stands at TC>=5');
+  });
+  t('Devs: Fab 4 only when LS enabled', () => {
+    const noLS = L.activeDeviations(3, { h17: true, das: true, ls: false });
+    const withLS = L.activeDeviations(3, { h17: true, das: true, ls: true  });
+    const fab4Names = withLS.filter(d => d.isFab4).map(d => d.name);
+    eq(noLS.filter(d => d.isFab4).length, 0, 'no fab4 without LS');
+    ok(fab4Names.includes('14 vs T'), '14vT surrenders at TC>=3');
+  });
+  t('Devs: 10 vs A only in H17', () => {
+    const s17 = L.activeDeviations(5, { h17: false, das: true, ls: false });
+    eq(s17.filter(d => d.name === '10 vs A').length, 0, 'S17 should not show 10 vs A');
+    const h17 = L.activeDeviations(5, { h17: true, das: true, ls: false });
+    ok(h17.some(d => d.name === '10 vs A'), 'H17 should show 10 vs A at TC>=4');
+  });
+
+  // recommendBet smoke test
+  t('recommendBet TC=0 → 1u', () => {
+    const setup = { ramp:[1,2,4,8,12], unit:25, bankroll:5000, kelly:0.25, h17:true };
+    const b = L.recommendBet(0, setup);
+    eq(b.units, 1);
+  });
+  t('recommendBet TC=4 large bankroll → 8u', () => {
+    const setup = { ramp:[1,2,4,8,12], unit:25, bankroll:500000, kelly:0.25, h17:true };
+    const b = L.recommendBet(4, setup);
+    eq(b.units, 8);
+  });
+  t('recommendBet TC=4 tiny bankroll → Kelly capped', () => {
+    const setup = { ramp:[1,2,4,8,12], unit:25, bankroll:500, kelly:0.25, h17:true };
+    const b = L.recommendBet(4, setup);
+    ok(b.capped, 'should cap');
+    ok(b.units < 8, 'should be less than ramp');
+  });
+
+  // Run them
+  let pass = 0, fail = 0;
+  const out = [];
+  for (const c of tests) {
+    try { c.fn(); pass++; out.push({ok:true, name:c.name}); }
+    catch (e) { fail++; out.push({ok:false, name:c.name, err: e.message}); }
+  }
+  return { pass, fail, total: tests.length, out };
+}
+if (typeof module !== 'undefined' && module.exports) module.exports.runTests = runTests;
+
+// ============================================================================
+// STATE — single source of truth (counter-only)
+// ============================================================================
+const State = (() => {
+  const KEY = 'bj-companion-state-v2';     // bumped: schema changed (no bank/round)
+  const blank = () => ({
+    setup: null,
+    shoe: { totalDecks: 8, cardsDealt: 0, runningCount: 0, shuffleAt: 208, shoes: 1 },
+    history: [],                            // undo stack: { type, before }
+  });
+
+  let s = blank();
+  function get()  { return s; }
+  function set(next)   { s = next; persist(); }
+  function patch(fn)   { fn(s); persist(); }
+  function persist()   { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch(e) {} }
+  function load()      { try { const raw = localStorage.getItem(KEY); if (raw) s = JSON.parse(raw); } catch(e) {} }
+  function reset()     { s = blank(); persist(); }
+
+  return { get, set, patch, persist, load, reset };
+})();
+
+// ============================================================================
+// UI — DOM rendering + event wiring (only runs in browser)
+// ============================================================================
+if (typeof document !== 'undefined') (function UI() {
+  const $ = sel => document.querySelector(sel);
+  const $$ = sel => Array.from(document.querySelectorAll(sel));
+  const L = Lib;
+  let micActive = false;
+  let micStarting = false; // guard against double-click during async startup
+  let currentApiKey = null;
+
+  async function toggleMic() {
+    if (micStarting) return; // prevent double-click
+    if (micActive) {
+      stopMic();
+    } else {
+      await startMic();
+    }
+  }
+
+  async function startMic() {
+    const s = State.get();
+    if (!s.setup || !s.setup.elevenLabsKey) {
+      updateMicUI('error', 'No API key — check settings');
+      return;
+    }
+    micStarting = true;
+    currentApiKey = s.setup.elevenLabsKey;
+    updateMicUI('connecting', 'Connecting...');
+
+    try {
+      // Wire ScribeWS callbacks
+      ScribeWS.onSessionStarted = () => {
+        micActive = true;
+        micStarting = false;
+        updateMicUI('on', 'Listening...');
+      };
+      ScribeWS.onPartial = (text) => {
+        $('#mic-partial').textContent = text;
+      };
+      ScribeWS.onCommit = (text) => {
+        $('#mic-partial').textContent = '';
+        const trimmed = (text || '').trim();
+        console.log('[BJ] Transcript:', JSON.stringify(trimmed));
+        if (!trimmed) return;
+        // Pre-check: only feed to applyDictation if parseDictation finds real actions
+        const preview = Lib.parseDictation(trimmed);
+        if (!preview.actions.length) {
+          if (preview.unrecognized.length) {
+            $('#mic-log').textContent = 'Skipped: ' + preview.unrecognized.slice(0, 6).join(', ');
+          }
+          return;
+        }
+        applyDictation(trimmed);
+        checkAdvisories();
+      };
+      ScribeWS.onError = (type, msg) => {
+        console.error('[BJ] ScribeWS error:', type, msg);
+        if (type === 'auth_error') {
+          stopMic();
+          updateMicUI('error', 'Invalid API key');
+        } else if (type === 'quota_exceeded') {
+          stopMic();
+          updateMicUI('error', 'API quota exceeded');
+        } else if (type === 'max_retries') {
+          stopMic();
+          updateMicUI('error', msg);
+        } else if (type === 'session_time_limit_exceeded') {
+          updateMicUI('connecting', 'Reconnecting...');
+        } else if (type === 'rate_limited') {
+          updateMicUI('connecting', 'Rate limited — retrying...');
+          setTimeout(() => ScribeWS.reconnect(currentApiKey), 5000);
+        } else {
+          // Catch-all for network, input_error, transcriber_error, etc.
+          stopMic();
+          updateMicUI('error', msg || type);
+          $('#mic-log').textContent = type + ': ' + (msg || 'unknown');
+        }
+      };
+      ScribeWS.onClose = (code, reason) => {
+        if (micActive) {
+          updateMicUI('connecting', 'Reconnecting...');
+          ScribeWS.reconnect(currentApiKey);
+        } else if (micStarting) {
+          // WS closed before session_started — show error, unlock toggle
+          stopMic();
+          updateMicUI('error', reason || 'Connection closed');
+          $('#mic-log').textContent = 'WS closed (' + code + '): ' + (reason || 'no reason');
+        }
+      };
+
+      // Start audio capture → ScribeWS
+      await AudioCapture.start((b64) => ScribeWS.sendAudio(b64));
+      await ScribeWS.connect(currentApiKey);
+    } catch (err) {
+      console.error('[BJ] Mic start failed:', err);
+      micStarting = false;
+      stopMic();
+      const msg = (err.name === 'NotAllowedError') ? 'Mic access required — check browser permissions' : (err.message || 'Mic error');
+      updateMicUI('error', msg);
+      $('#mic-log').textContent = msg;
+    }
+  }
+
+  function stopMic() {
+    micActive = false;
+    micStarting = false;
+    AudioCapture.stop();
+    ScribeWS.close();
+    ScribeWS.resetRetries();
+    updateMicUI('off', 'Mic off');
+    $('#mic-partial').textContent = '';
+  }
+
+  function updateMicUI(state, label) {
+    const dot = $('#mic-dot');
+    const lbl = $('#mic-label');
+    dot.className = 'mic-dot';
+    if (state === 'on') dot.classList.add('on');
+    else if (state === 'connecting') dot.classList.add('connecting');
+    lbl.textContent = label;
+    // Update mic button appearance
+    const btn = $('#btn-mic');
+    if (btn) {
+      btn.classList.toggle('primary', !micActive);
+      btn.classList.toggle('bad', micActive);
+      btn.innerHTML = micActive
+        ? '⏹ Stop <span class="kbd">M</span>'
+        : '🎤 Mic <span class="kbd">M</span>';
+    }
+  }
+
+  let prevCutCardReached = false;
+
+  function checkAdvisories() {
+    const s = State.get();
+    if (!s.setup) return;
+    const dr = Lib.decksRemaining(s.shoe.cardsDealt, s.shoe.totalDecks);
+    const tc = Lib.trueCount(s.shoe.runningCount, dr);
+    const units = Lib.wongUnits(tc, s.setup.ramp);
+    const maxUnits = s.setup.ramp[s.setup.ramp.length - 1];
+
+    // Bet tier
+    let tier;
+    if (tc < 0) tier = 'cold';
+    else if (tc < 2) tier = 'flat';
+    else if (units >= maxUnits) tier = 'max';
+    else if (tc < 4) tier = 'warm';
+    else tier = 'hot';
+    TTS.adviseBetTier(tier);
+
+    // Cut card
+    const cutReached = s.shoe.cardsDealt >= s.shoe.shuffleAt;
+    if (cutReached && !prevCutCardReached) TTS.adviseCutCard();
+    prevCutCardReached = cutReached;
+  }
+
+  // ============================================================================
+  // AUDIO — mic capture → 16 kHz mono PCM → base64 chunks
+  // ============================================================================
+  const AudioCapture = (() => {
+    let ctx, stream, worklet, scriptNode, source;
+    let onChunk = null; // callback: (base64String) => void
+
+    const PROCESSOR_CODE = `
+      class PCMProcessor extends AudioWorkletProcessor {
+        constructor() {
+          super();
+          this._buf = [];
+          this._count = 0;
+        }
+        process(inputs) {
+          const input = inputs[0];
+          if (!input || !input[0]) return true;
+          const samples = input[0]; // Float32Array, native sample rate
+          // Accumulate ~100ms of audio before posting
+          for (let i = 0; i < samples.length; i++) {
+            this._buf.push(samples[i]);
+          }
+          this._count += samples.length;
+          if (this._count >= sampleRate / 10) { // ~100ms
+            this.port.postMessage({ samples: new Float32Array(this._buf) });
+            this._buf = [];
+            this._count = 0;
+          }
+          return true;
+        }
+      }
+      registerProcessor('pcm-processor', PCMProcessor);
+    `;
+
+    function resample(float32, fromRate, toRate) {
+      if (fromRate === toRate) return float32;
+      const ratio = fromRate / toRate;
+      const newLen = Math.round(float32.length / ratio);
+      const out = new Float32Array(newLen);
+      for (let i = 0; i < newLen; i++) {
+        const srcIdx = i * ratio;
+        const lo = Math.floor(srcIdx);
+        const hi = Math.min(lo + 1, float32.length - 1);
+        const frac = srcIdx - lo;
+        out[i] = float32[lo] * (1 - frac) + float32[hi] * frac;
+      }
+      return out;
+    }
+
+    function floatToPCM16(float32) {
+      const buf = new ArrayBuffer(float32.length * 2);
+      const view = new DataView(buf);
+      for (let i = 0; i < float32.length; i++) {
+        const s = Math.max(-1, Math.min(1, float32[i]));
+        view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      }
+      return buf;
+    }
+
+    function arrayBufferToBase64(buffer) {
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    }
+
+    async function start(chunkCallback) {
+      onChunk = chunkCallback;
+      // Reuse existing stream if still live (avoids re-prompting for mic permission)
+      if (!stream || !stream.active) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true }
+        });
+      }
+      ctx = new AudioContext();
+      source = ctx.createMediaStreamSource(stream);
+
+      // Try AudioWorklet first; fall back to ScriptProcessorNode if it fails
+      // (AudioWorklet Blob URLs are blocked on file:// protocol)
+      try {
+        const blob = new Blob([PROCESSOR_CODE], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        await ctx.audioWorklet.addModule(url);
+        URL.revokeObjectURL(url);
+        worklet = new AudioWorkletNode(ctx, 'pcm-processor');
+        worklet.port.onmessage = (e) => {
+          const resampled = resample(e.data.samples, ctx.sampleRate, 16000);
+          const pcm = floatToPCM16(resampled);
+          const b64 = arrayBufferToBase64(pcm);
+          if (onChunk) onChunk(b64);
+        };
+        source.connect(worklet);
+        worklet.connect(ctx.destination);
+      } catch (_workletErr) {
+        // Fallback: ScriptProcessorNode (deprecated but works on file://)
+        const bufSize = 4096;
+        scriptNode = ctx.createScriptProcessor(bufSize, 1, 1);
+        let fbuf = [], fcount = 0;
+        scriptNode.onaudioprocess = (e) => {
+          const samples = e.inputBuffer.getChannelData(0);
+          for (let i = 0; i < samples.length; i++) fbuf.push(samples[i]);
+          fcount += samples.length;
+          if (fcount >= ctx.sampleRate / 10) {
+            const resampled = resample(new Float32Array(fbuf), ctx.sampleRate, 16000);
+            const pcm = floatToPCM16(resampled);
+            const b64 = arrayBufferToBase64(pcm);
+            if (onChunk) onChunk(b64);
+            fbuf = []; fcount = 0;
+          }
+        };
+        source.connect(scriptNode);
+        scriptNode.connect(ctx.destination);
+      }
+    }
+
+    function stop() {
+      if (worklet) { worklet.disconnect(); worklet = null; }
+      if (scriptNode) { scriptNode.disconnect(); scriptNode = null; }
+      if (source) { source.disconnect(); source = null; }
+      if (ctx) { ctx.close(); ctx = null; }
+      // Keep stream alive so we don't re-prompt for mic permission on toggle
+      onChunk = null;
+    }
+
+    function release() {
+      stop();
+      if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    }
+
+    function isActive() { return !!ctx; }
+
+    return { start, stop, release, isActive };
+  })();
+
+  // ============================================================================
+  // SCRIBE — ElevenLabs Scribe v2 realtime WebSocket
+  // ============================================================================
+  const ScribeWS = (() => {
+    let ws = null;
+    let retries = 0;
+    let reconnecting = false;
+    const MAX_RETRIES = 3;
+    const BASE_DELAY = 2000;
+
+    // Callbacks set by consumer
+    let onSessionStarted = null;
+    let onPartial = null;
+    let onCommit = null;
+    let onError = null;
+    let onClose = null;
+
+    async function fetchToken(apiKey) {
+      let resp;
+      try {
+        resp = await fetch('https://api.elevenlabs.io/v1/single-use-token/realtime_scribe', {
+          method: 'POST',
+          headers: { 'xi-api-key': apiKey },
+        });
+      } catch (fetchErr) {
+        throw new Error('Cannot reach ElevenLabs API — if using file://, try: python3 -m http.server');
+      }
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => '');
+        if (resp.status === 401) throw new Error('Invalid API key');
+        throw new Error(`Token fetch failed (${resp.status}): ${body}`);
+      }
+      const data = await resp.json();
+      return data.token;
+    }
+
+    function buildURL(token) {
+      const params = new URLSearchParams({
+        token,
+        model_id: 'scribe_v2_realtime',
+        audio_format: 'pcm_16000',
+        commit_strategy: 'vad',
+        vad_silence_threshold_secs: '1.2',
+        vad_threshold: '0.65',
+        language_code: 'en',
+        min_speech_duration_ms: '400',
+      });
+      // keyterms is an array param — append each value separately
+      ['ace','jack','queen','king'].forEach(k => params.append('keyterms', k));
+      return `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params}`;
+    }
+
+    async function connect(apiKey) {
+      close();
+      const token = await fetchToken(apiKey);
+      console.log('[BJ] Token acquired, connecting WebSocket...');
+      const url = buildURL(token);
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        console.log('[BJ] WebSocket opened');
+        retries = 0;
+      };
+
+      ws.onmessage = (e) => {
+        let msg;
+        try { msg = JSON.parse(e.data); } catch { return; }
+        switch (msg.message_type) {
+          case 'session_started':
+            if (onSessionStarted) onSessionStarted(msg);
+            break;
+          case 'partial_transcript':
+            if (onPartial) onPartial(msg.text);
+            break;
+          case 'committed_transcript':
+            if (onCommit) onCommit(msg.text);
+            break;
+          case 'auth_error':
+          case 'quota_exceeded':
+          case 'rate_limited':
+          case 'input_error':
+          case 'transcriber_error':
+          case 'error':
+            if (onError) onError(msg.message_type, msg.error || 'Unknown error');
+            break;
+          case 'session_time_limit_exceeded':
+            // Auto-reconnect seamlessly
+            if (onError) onError('session_time_limit_exceeded', 'Reconnecting...');
+            reconnect(apiKey);
+            break;
+        }
+      };
+
+      ws.onerror = (ev) => {
+        console.error('[BJ] WebSocket error:', ev);
+        if (onError) onError('network', 'WebSocket error');
+      };
+
+      ws.onclose = (e) => {
+        console.warn('[BJ] WebSocket closed:', e.code, e.reason);
+        if (onClose) onClose(e.code, e.reason);
+      };
+    }
+
+    async function reconnect(apiKey) {
+      if (reconnecting) return; // prevent parallel reconnect loops
+      reconnecting = true;
+      while (retries < MAX_RETRIES) {
+        retries++;
+        const delay = Math.min(BASE_DELAY * Math.pow(2, retries - 1), 8000);
+        await new Promise(r => setTimeout(r, delay));
+        try {
+          await connect(apiKey);
+          reconnecting = false;
+          return; // success — onopen will reset retries
+        } catch (err) {
+          if (onError) onError('reconnect_failed', err.message);
+        }
+      }
+      reconnecting = false;
+      if (onError) onError('max_retries', 'Connection lost. Tap mic to reconnect.');
+    }
+
+    function sendAudio(base64) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          message_type: 'input_audio_chunk',
+          audio_base_64: base64,
+          sample_rate: 16000,
+          commit: false, // VAD handles commit
+        }));
+      }
+    }
+
+    function close() {
+      if (ws) {
+        ws.onclose = null; // prevent reconnect trigger
+        ws.close();
+        ws = null;
+      }
+    }
+
+    function isConnected() { return ws && ws.readyState === WebSocket.OPEN; }
+    function resetRetries() { retries = 0; reconnecting = false; }
+
+    return {
+      connect, close, sendAudio, isConnected, resetRetries, reconnect,
+      set onSessionStarted(fn) { onSessionStarted = fn; },
+      set onPartial(fn) { onPartial = fn; },
+      set onCommit(fn) { onCommit = fn; },
+      set onError(fn) { onError = fn; },
+      set onClose(fn) { onClose = fn; },
+    };
+  })();
+
+  // ============================================================================
+  // TTS — browser SpeechSynthesis for short advisories
+  // ============================================================================
+  const TTS = (() => {
+    let voice = null;
+    let lastTier = null;
+
+    // Resolve preferred voice after browser loads voice list
+    function init() {
+      const pick = () => {
+        if (typeof speechSynthesis === 'undefined') return;
+        const voices = speechSynthesis.getVoices();
+        voice = voices.find(v => v.lang.startsWith('en') && v.localService) ||
+                voices.find(v => v.lang.startsWith('en')) ||
+                voices[0] || null;
+      };
+      pick();
+      if (typeof speechSynthesis !== 'undefined' && speechSynthesis.onvoiceschanged !== undefined) {
+        speechSynthesis.onvoiceschanged = pick;
+      }
+    }
+
+    function speak(text) {
+      if (typeof speechSynthesis === 'undefined' || !text) return;
+      const utt = new SpeechSynthesisUtterance(text);
+      utt.rate = 1.3;
+      if (voice) utt.voice = voice;
+      speechSynthesis.cancel(); // cancel any queued speech
+      speechSynthesis.speak(utt);
+    }
+
+    // Called after render() with current bet tier string.
+    // Only speaks when tier changes.
+    function adviseBetTier(tier) {
+      if (tier === lastTier) return;
+      lastTier = tier;
+      const phrases = {
+        cold: 'Min bet',
+        flat: 'Min bet',
+        warm: 'Ramp up',
+        hot: 'Bet big',
+        max: 'Bet max',
+      };
+      if (phrases[tier]) speak(phrases[tier]);
+    }
+
+    function adviseCutCard() {
+      speak('Cut card');
+    }
+
+    function adviseInsurance(take) {
+      speak(take ? 'Take insurance' : 'Skip insurance');
+    }
+
+    function reset() { lastTier = null; }
+
+    return { init, speak, adviseBetTier, adviseCutCard, adviseInsurance, reset };
+  })();
+
+  // ---- Test mode early exit ----
+  if (location.search.includes('test=1')) {
+    const res = runTests(L);
+    $('#test-screen').classList.remove('hide');
+    const lines = res.out.map(o => o.ok
+      ? `<span class="pass">PASS</span>  ${o.name}`
+      : `<span class="fail">FAIL</span>  ${o.name}\n        ${o.err}`).join('\n');
+    $('#test-out').innerHTML =
+      `${res.pass}/${res.total} passed (${res.fail} failed)\n\n${lines}`;
+    return;
+  }
+
+  // ---- Setup screen ----
+  function showSetup(prefill) {
+    $('#setup-screen').classList.remove('hide');
+    $('#game-screen').classList.add('hide');
+    if (prefill && prefill.setup) {
+      const c = prefill.setup;
+      $('#cfg-decks').value = c.decks;
+      $('#cfg-pen').value   = Math.round(c.penPct);
+      $('#cfg-h17').value   = String(!!c.h17);
+      $('#cfg-das').value   = String(!!c.das);
+      $('#cfg-ls').value    = String(!!c.ls);
+      $('#cfg-unit').value  = c.unit;
+      $('#cfg-ramp').value  = c.ramp.join(',');
+      if (c.elevenLabsKey) $('#cfg-apikey').value = c.elevenLabsKey;
+    }
+  }
+  function readSetup() {
+    const decks  = +$('#cfg-decks').value;
+    const penPct = +$('#cfg-pen').value;
+    const ramp   = $('#cfg-ramp').value.split(',').map(x => +x.trim()).filter(x => x > 0);
+    return {
+      decks, penPct,
+      h17:  $('#cfg-h17').value === 'true',
+      das:  $('#cfg-das').value === 'true',
+      ls:   $('#cfg-ls').value  === 'true',
+      unit: +$('#cfg-unit').value,
+      ramp: ramp.length ? ramp : [1,2,4,8,12],
+      elevenLabsKey: $('#cfg-apikey').value.trim(),
+    };
+  }
+  function startSession() {
+    const setup = readSetup();
+    State.patch(s => {
+      s.setup = setup;
+      s.shoe = {
+        totalDecks: setup.decks, cardsDealt: 0, runningCount: 0,
+        shuffleAt: Math.round(setup.decks * 52 * setup.penPct/100),
+        shoes: 1,
+      };
+      s.history = [];
+    });
+    $('#setup-screen').classList.add('hide');
+    $('#game-screen').classList.remove('hide');
+    render();
+  }
+  function defaults() {
+    $('#cfg-decks').value = 8;
+    $('#cfg-pen').value   = 50;
+    $('#cfg-h17').value   = 'true';
+    $('#cfg-das').value   = 'true';
+    $('#cfg-ls').value    = 'false';
+    $('#cfg-unit').value  = 25;
+    $('#cfg-ramp').value  = '1,2,4,8,12';
+    $('#cfg-apikey').value = '';
+  }
+
+  // ---- Card / count actions ----
+  function pushHistory(action) {
+    const s = State.get();
+    s.history.push(action);
+    if (s.history.length > 200) s.history.shift();
+  }
+
+  function tapCard(rank) {
+    const s = State.get();
+    if (!s.setup) return;
+    const before = JSON.parse(JSON.stringify(s.shoe));
+    State.patch(st => {
+      st.shoe.runningCount += L.cardCount(rank);
+      st.shoe.cardsDealt   += 1;
+    });
+    pushHistory({ type: 'card', before });
+    render();
+  }
+
+  function quickAdjust(rcDelta, cardsDelta) {
+    const s = State.get();
+    if (!s.setup) return;
+    const before = JSON.parse(JSON.stringify(s.shoe));
+    State.patch(st => {
+      st.shoe.runningCount += rcDelta;
+      st.shoe.cardsDealt   += cardsDelta;
+    });
+    pushHistory({ type: 'quickadj', before });
+    render();
+  }
+
+  function shuffle() {
+    const s = State.get();
+    pushHistory({ type: 'shuffle', before: JSON.parse(JSON.stringify(s.shoe)) });
+    State.patch(st => {
+      st.shoe.runningCount = 0;
+      st.shoe.cardsDealt   = 0;
+      st.shoe.shoes       += 1;
+    });
+    TTS.reset();
+    prevCutCardReached = false;
+    render();
+  }
+
+  function undo() {
+    const s = State.get();
+    const last = s.history.pop();
+    if (!last) return;
+    State.patch(st => { st.shoe = last.before; });
+    render();
+  }
+
+  // ---- Render ----
+  function fmt$(n)     { return (n < 0 ? '-' : '') + '$' + Math.abs(Math.round(n)).toLocaleString(); }
+  function fmtSign(n)  { return (n >= 0 ? '+' : '') + n; }
+
+  function render() {
+    const s = State.get();
+    if (!s.setup) { showSetup(s); return; }
+
+    // Counts
+    const dr = L.decksRemaining(s.shoe.cardsDealt, s.shoe.totalDecks);
+    const tc = L.trueCount(s.shoe.runningCount, dr);
+    $('#stat-rc .v').textContent = fmtSign(s.shoe.runningCount);
+    $('#stat-tc .v').textContent = (tc > 0 ? '+' : '') + tc.toFixed(2).replace(/\.00$/,'');
+    $('#stat-dr .v').textContent = dr.toFixed(1);
+    $('#stat-rc').classList.toggle('hot',  s.shoe.runningCount > 0);
+    $('#stat-rc').classList.toggle('cool', s.shoe.runningCount < 0);
+    $('#stat-tc').classList.toggle('hot',  tc > 0);
+    $('#stat-tc').classList.toggle('cool', tc < 0);
+
+    // Penetration
+    const total = s.shoe.totalDecks * 52;
+    const pct = Math.min(100, 100 * s.shoe.cardsDealt / total);
+    $('#pen-fill').style.width = pct + '%';
+    $('#pen-cut').style.left = (100 * s.shoe.shuffleAt / total) + '%';
+    $('#pen-label').textContent =
+      `${s.shoe.cardsDealt} / ${total} cards · cut at ${s.shoe.shuffleAt} · shoe ${s.shoe.shoes}` +
+      (s.shoe.cardsDealt >= s.shoe.shuffleAt ? ' · CUT CARD REACHED' : '');
+
+    // Bet recommendation (Wong ramp only — no Kelly cap any more)
+    const units    = L.wongUnits(tc, s.setup.ramp);
+    const dollars  = units * s.setup.unit;
+    const maxUnits = s.setup.ramp[s.setup.ramp.length - 1];
+
+    // Bet hero (color-coded)
+    let tier, status, sub;
+    if      (tc < 0)               { tier='cold'; status='DON’T BET MORE'; sub='Negative count — table min'; }
+    else if (tc < 2)               { tier='flat'; status='MIN BET';            sub='Neutral — table min'; }
+    else if (units >= maxUnits)    { tier='max';  status='BET MAX';             sub=`Top of ramp — ${units}u`; }
+    else if (tc < 4)               { tier='warm'; status='RAMP UP';             sub=`Count rising — ${units}u`; }
+    else                            { tier='hot';  status='BET BIG';             sub=`Hot count — ${units}u`; }
+    $('#bet-hero').className = 'bet-hero t-' + tier;
+    $('#bet-status').textContent    = status;
+    $('#bet-substatus').textContent = `${sub} · RC ${fmtSign(s.shoe.runningCount)} · TC ${(tc>=0?'+':'')+tc}`;
+    $('#bet-hero-units').textContent   = `${units}u`;
+    $('#bet-hero-dollars').textContent = fmt$(dollars);
+
+    // Active deviations panel
+    renderDeviations(tc, s.setup);
+  }
+
+  function renderDeviations(tc, setup) {
+    const rules = { h17: setup.h17, das: setup.das, ls: setup.ls };
+    const devs = L.activeDeviations(tc, rules);
+    $('#devs-tc').textContent = (tc >= 0 ? '+' : '') + tc;
+    const grid = $('#devs-grid');
+    grid.innerHTML = '';
+    if (!devs.length) {
+      $('#devs-empty').classList.remove('hide');
+      return;
+    }
+    $('#devs-empty').classList.add('hide');
+    // Sort: SURR first (most actionable), then SPLIT, DOUBLE, STAND, HIT
+    const order = { 'SURR':0, 'SPLIT':1, 'DOUBLE':2, 'STAND':3, 'HIT':4 };
+    devs.sort((a,b) => (order[a.action] ?? 9) - (order[b.action] ?? 9));
+    for (const d of devs) {
+      const chip = document.createElement('span');
+      chip.className = 'dev-chip dev-' + d.action;
+      const short = { 'STAND':'S', 'HIT':'H', 'DOUBLE':'D', 'SPLIT':'P', 'SURR':'SU' }[d.action];
+      chip.innerHTML = `${d.name}<span class="arr"> →</span> ${short}` + (d.isFab4 ? '<span class="arr"> · Fab4</span>' : '');
+      grid.appendChild(chip);
+    }
+  }
+
+  // ---- Bind events ----
+  $('#setup-save').onclick     = startSession;
+  $('#setup-defaults').onclick = defaults;
+  $('#btn-undo').onclick       = undo;
+  $('#btn-shuffle').onclick    = shuffle;
+  $('#btn-mic').onclick        = toggleMic;
+  $('#btn-settings').onclick   = () => { stopMic(); AudioCapture.release(); State.patch(()=>{}); showSetup(State.get()); };
+
+  // Voice / dictation
+  function applyDictation(text) {
+    const r = L.parseDictation(text);
+    if (!r.actions.length && !r.unrecognized.length) {
+      $('#mic-log').textContent = 'Nothing heard.';
+      return;
+    }
+    let cardCount = 0, rcDelta = 0;
+    for (const a of r.actions) {
+      if (a.type === 'card')        { tapCard(a.rank); cardCount++; rcDelta += L.cardCount(a.rank); }
+      else if (a.type === 'shuffle') shuffle();
+      else if (a.type === 'undo')    undo();
+      else if (a.type === 'adjust')  quickAdjust(a.rc, a.cards);
+    }
+    const adjusts = r.actions.filter(a => a.type === 'adjust');
+    const cmds    = r.actions.filter(a => a.type === 'shuffle' || a.type === 'undo').map(a => a.type);
+    const parts = [];
+    if (cardCount)     parts.push(`${cardCount} cards (RC ${rcDelta>=0?'+':''}${rcDelta})`);
+    if (adjusts.length) parts.push(adjusts.map(a => `adj rc${a.rc>=0?'+':''}${a.rc} c+${a.cards}`).join(' '));
+    if (cmds.length)    parts.push(cmds.join(', '));
+    let msg = 'Heard: ' + (parts.join(' · ') || '—');
+    if (r.unrecognized.length) msg += ` · skipped: ${r.unrecognized.slice(0, 6).join(', ')}`;
+    $('#mic-log').textContent = msg;
+  }
+
+  // Keyboard shortcuts (game screen only, ignored when typing in inputs).
+  document.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if ($('#game-screen').classList.contains('hide')) return;
+    const k = e.key;
+    if (k === 'u' || k === 'U' || k === 'Backspace') { e.preventDefault(); undo(); }
+    if (k === 'x' || k === 'X') { e.preventDefault(); shuffle(); }
+    if (k === 'm' || k === 'M') { e.preventDefault(); toggleMic(); }
+  });
+
+  // ---- Boot ----
+  State.load();
+  TTS.init();
+  const s = State.get();
+  // Migrate any v1 state shape that's missing setup.unit/ramp etc.
+  if (s.setup && (!s.setup.ramp || !s.setup.unit)) State.reset();
+  if (!State.get().setup) showSetup(State.get());
+  else {
+    $('#setup-screen').classList.add('hide');
+    $('#game-screen').classList.remove('hide');
+    render();
+  }
+})();
+</script>
+</body>
+</html>
