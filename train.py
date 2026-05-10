@@ -439,10 +439,10 @@ EMBEDDING_LR = 0.6      # learning rate for token embeddings (Adam)
 UNEMBEDDING_LR = 0.004  # learning rate for lm_head (Adam)
 MATRIX_LR = 0.04        # learning rate for matrix parameters (Muon)
 SCALAR_LR = 0.5         # learning rate for per-layer scalars (Adam)
-WEIGHT_DECAY = 0.2      # cautious weight decay for Muon
+WEIGHT_DECAY = 0.0      # cautious weight decay voor Muon (test: geen WD)
 ADAM_BETAS = (0.8, 0.95) # Adam beta1, beta2
-WARMUP_RATIO = 0.05     # fraction of time budget for LR warmup
-WARMDOWN_RATIO = 0.20   # fraction of time budget for LR warmdown
+WARMUP_RATIO = 0.00     # fraction of time budget for LR warmup
+WARMDOWN_RATIO = 0.45   # fraction of time budget for LR warmdown
 FINAL_LR_FRAC = 0.0     # final LR as fraction of initial
 
 # Model size
