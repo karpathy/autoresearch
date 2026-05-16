@@ -121,7 +121,7 @@ def _run_orchestrator(tag: str, batch_size: int, baseline_only: bool) -> None:
         if baseline_only:
             cmd.append("--baseline-only")
         else:
-            cmd.extend(["--batch-size", str(batch_size or 12)])
+            cmd.extend(["--max-experiments", str(batch_size or 12)])
 
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
