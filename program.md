@@ -112,3 +112,42 @@ The idea is that you are a completely autonomous researcher trying things out. I
 **NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
 
 As an example use case, a user might leave you running while they sleep. If each experiment takes you ~5 minutes then you can run approx 12/hour, for a total of about 100 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
+
+---
+
+## BANNED EXPERIMENTS — DO NOT TRY THESE
+
+> These have been attempted 55+ consecutive times on `autoresearch/apr` and ALL resulted in crashes or discards.
+> Attempting any variation of these is a waste of experiment budget. Skip immediately.
+
+**Muon optimizer / momentum warmup variants (ALL BANNED):**
+- Any form of "Muon momentum warmup" — µ_init, µ_final, warmup_steps on Muon
+- Gradual momentum increase schedules for Muon (linear, cosine, step, polynomial)
+- Warmup applied to beta1 or beta2 of Adam/AdamW
+- Nesterov warmup schedules
+- Delayed momentum kick-in strategies
+- Any experiment with "warmup" in the description that touches Muon momentum parameters
+
+If you find yourself about to implement any of these: **STOP. Pick a different direction.**
+
+---
+
+## FRESH DIRECTIONS — UNEXPLORED AS OF May 2026
+
+The following directions have NOT been attempted and have good theoretical basis. Prioritize these:
+
+1. **Deeper / wider architecture** — Try increasing `DEPTH` from 4 → 6 or 8 layers. Or increase `ASPECT_RATIO` from 48 → 64. Monitor VRAM carefully (8GB limit on RTX 5060). One change at a time.
+
+2. **Attention pattern changes** — Try grouped-query attention (GQA) with 2 KV heads instead of full multi-head. Or sliding-window local attention (window size 64 or 128). Reduces memory and may generalize better.
+
+3. **LR schedule shape** — The current schedule is linear decay. Try cosine decay (cosine annealing). Also try warmup-free constant LR for first 20% of steps then cosine decay.
+
+4. **Weight tying** — Tie embedding and unembedding (lm_head) weights. This is a proven trick that reduces parameters and often improves val_bpb at small scales. Simple 1-line change.
+
+5. **Gradient accumulation** — Accumulate gradients over 2–4 micro-steps before optimizer step. This effectively increases batch size without OOM. May improve training stability.
+
+6. **Optimizer switch** — Try pure AdamW (no Muon) with a well-tuned LR (1e-3 to 3e-3). Muon may not be benefiting at this scale. Compare baseline val_bpb.
+
+7. **LayerNorm placement** — Try pre-norm vs post-norm. Or replace LayerNorm with RMSNorm (remove mean-centering). These affect gradient flow and convergence speed.
+
+8. **Activation function** — Replace GELU with SwiGLU (swish-gated linear unit). Requires adjusting FFN dimension (use 2/3 × 4 × d_model for SwiGLU to keep param count similar).

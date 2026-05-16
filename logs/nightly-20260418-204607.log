@@ -1,0 +1,43 @@
+=== Autoresearch Nightly Run ===
+Date:       2026-04-18T20:46:07Z
+Tag:        apr
+Batch size: 1
+Profile:    rtx5060
+GPU:        1
+GCRM lease: none (shell-script fallback)
+
+[rag-gpu-reservation] Switching crsai-mcp-rag to CPU mode
+ Container crsai-mcp-rag Recreate 
+ Container crsai-mcp-rag Recreated 
+ Container crsai-mcp-rag Starting 
+ Container crsai-mcp-rag Started 
+GPU reservation applied for AutoResearch (shell-script mode)
+vLLM healthy at http://crsai-vllm:8000/v1
+[20:46:10] === Autoresearch Orchestrator (batch) ===
+[20:46:10] Branch: autoresearch/apr
+[20:46:10] LLM: http://crsai-vllm:8000/v1 / nemotron-cascade-2-nvfp4
+[20:46:10] Profile: rtx5060
+[20:46:10] Batch size: 1
+[20:46:10] Cumulative experiments so far: 31
+[20:46:10] Consecutive failures carried over: 0
+GCRM modules not importable — falling back to shell script
+[20:46:12] GCRM fallback: shell-script reservation was used
+[20:46:12] vLLM health check passed (attempt 1)
+[20:46:12] Checked out existing branch: autoresearch/apr
+[20:46:12] --- Experiment 32 [1/1] (best: 1.172754) ---
+[20:46:12] Querying LLM for proposal...
+[20:46:18] Proposal: Add a linear warmup for Muon optimizer momentum to align with the 5% learning rate warmup, improving training stability and convergence for better validation bits per byte.
+[20:46:18] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 16s
+[20:46:33] CRASHED — reverting
+[20:46:33] 
+[20:46:33] === Nightly Batch Summary ===
+[20:46:33] Experiments this run: 1
+[20:46:33] Cumulative experiments: 32
+[20:46:33] Best val_bpb: 1.172754
+[20:46:33] State persisted to: state.json
+[20:46:33] Results: results.tsv
+
+Exit code: 0
+Log: /workspace/autoresearch/logs/nightly-20260418-204607.log

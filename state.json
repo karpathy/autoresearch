@@ -1,0 +1,51 @@
+{
+  "tag": "apr",
+  "branch": "autoresearch/apr",
+  "total_experiments": 67,
+  "consecutive_failures": 0,
+  "best_val_bpb": null,
+  "runs": [
+    {
+      "date": "2026-04-11T13:04:02.782143+00:00",
+      "batch_size": 12,
+      "experiments_run": 1,
+      "best_bpb_after": 1.172754
+    },
+    {
+      "date": "2026-04-16T13:18:54.117263+00:00",
+      "batch_size": 12,
+      "experiments_run": 12,
+      "best_bpb_after": 1.172754
+    },
+    {
+      "date": "2026-04-18T18:04:24.255951+00:00",
+      "batch_size": 12,
+      "experiments_run": 12,
+      "best_bpb_after": 1.172754
+    },
+    {
+      "date": "2026-04-18T20:46:10.216386+00:00",
+      "batch_size": 1,
+      "experiments_run": 1,
+      "best_bpb_after": 1.172754
+    },
+    {
+      "date": "2026-04-18T20:57:09.060804+00:00",
+      "batch_size": 1,
+      "experiments_run": 1,
+      "best_bpb_after": 1.172754
+    },
+    {
+      "date": "2026-04-18T21:04:35.686106+00:00",
+      "batch_size": 12,
+      "experiments_run": 12,
+      "best_bpb_after": 1.172754
+    },
+    {
+      "date": "2026-04-20T16:19:32.849362+00:00",
+      "batch_size": 12,
+      "experiments_run": 11,
+      "best_bpb_after": 1.172754
+    }
+  ]
+}

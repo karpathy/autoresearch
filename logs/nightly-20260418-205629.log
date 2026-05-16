@@ -1,0 +1,66 @@
+=== Autoresearch Nightly Run ===
+Date:       2026-04-18T20:56:29Z
+Tag:        apr
+Batch size: 1
+Profile:    rtx5060
+GPU:        1
+GCRM lease: none (shell-script fallback)
+
+[rag-gpu-reservation] Switching crsai-mcp-rag to CPU mode
+ Container crsai-mcp-rag Recreate 
+ Container crsai-mcp-rag Recreated 
+ Container crsai-mcp-rag Starting 
+ Container crsai-mcp-rag Started 
+GPU reservation applied for AutoResearch (shell-script mode)
+vLLM healthy at http://crsai-vllm:8000/v1
+Tokenizer not found at /home/vscode/.cache/autoresearch/tokenizer/tokenizer.pkl; running one-time data/tokenizer prep
+Cache directory: /home/vscode/.cache/autoresearch
+
+Data: downloading 11 shards (0 already exist)...
+  Downloaded shard_00006.parquet
+  Downloaded shard_00007.parquet
+  Downloaded shard_00003.parquet
+  Downloaded shard_00001.parquet
+  Downloaded shard_00004.parquet
+  Downloaded shard_00005.parquet
+  Downloaded shard_00009.parquet
+  Downloaded shard_00000.parquet
+  Downloaded shard_06542.parquet
+Data: 11/11 shards ready at /home/vscode/.cache/autoresearch/data
+
+Tokenizer: training BPE tokenizer...
+Tokenizer: trained in 16.2s, saved to /home/vscode/.cache/autoresearch/tokenizer/tokenizer.pkl
+Tokenizer: building token_bytes lookup...
+Tokenizer: saved token_bytes to /home/vscode/.cache/autoresearch/tokenizer/token_bytes.pt
+Tokenizer: sanity check passed (vocab_size=8192)
+
+Done! Ready to train.
+[W418 20:57:08.437793999 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[20:57:09] === Autoresearch Orchestrator (batch) ===
+[20:57:09] Branch: autoresearch/apr
+[20:57:09] LLM: http://crsai-vllm:8000/v1 / nemotron-cascade-2-nvfp4
+[20:57:09] Profile: rtx5060
+[20:57:09] Batch size: 1
+[20:57:09] Cumulative experiments so far: 32
+[20:57:09] Consecutive failures carried over: 0
+GCRM modules not importable — falling back to shell script
+[20:57:11] GCRM fallback: shell-script reservation was used
+[20:57:11] vLLM health check passed (attempt 1)
+[20:57:11] Checked out existing branch: autoresearch/apr
+[20:57:11] --- Experiment 33 [1/1] (best: 1.172754) ---
+[20:57:11] Querying LLM for proposal...
+[20:57:13] Proposal: Add a linear warmup for Muon optimizer momentum to align with the 5% learning rate warmup, improving training stability and convergence for better validation bits per byte.
+[20:57:13] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 11s
+[20:57:24] CRASHED — reverting
+[20:57:24] 
+[20:57:24] === Nightly Batch Summary ===
+[20:57:24] Experiments this run: 1
+[20:57:24] Cumulative experiments: 33
+[20:57:24] Best val_bpb: 1.172754
+[20:57:24] State persisted to: state.json
+[20:57:24] Results: results.tsv
+
+Exit code: 0
+Log: /workspace/autoresearch/logs/nightly-20260418-205629.log

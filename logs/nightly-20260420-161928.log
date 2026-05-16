@@ -1,0 +1,128 @@
+=== Autoresearch Nightly Run ===
+Date:       2026-04-20T16:19:28Z
+Tag:        apr
+Batch size: 12
+Profile:    rtx5060
+GPU:        1
+GCRM lease: none (shell-script fallback)
+
+[rag-gpu-reservation] Switching crsai-mcp-rag to CPU mode
+ Container crsai-mcp-rag Recreate 
+ Container crsai-mcp-rag Recreated 
+ Container crsai-mcp-rag Starting 
+ Container crsai-mcp-rag Started 
+GPU reservation applied for AutoResearch (shell-script mode)
+LLM endpoint: http://crsai-vllm:8000/v1
+vLLM healthy at http://crsai-vllm:8000/v1
+warning: `VIRTUAL_ENV=/workspace/.venv` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+[16:19:32] === Autoresearch Orchestrator (batch) ===
+[16:19:32] Branch: autoresearch/apr
+[16:19:32] LLM: http://crsai-vllm:8000/v1 / nemotron-cascade-2-nvfp4
+[16:19:32] Profile: rtx5060
+[16:19:32] Batch size: 12
+[16:19:32] Cumulative experiments so far: 56
+[16:19:32] Consecutive failures carried over: 0
+GCRM modules not importable — falling back to shell script
+[16:19:35] GCRM fallback: shell-script reservation was used
+[16:19:35] vLLM health check passed (attempt 1)
+[16:19:35] Checked out existing branch: autoresearch/apr
+[16:19:35] --- Experiment 57 [1/12] (best: 1.172754) ---
+[16:19:35] Querying LLM for proposal (attempt 1/3)...
+[16:19:46] Proposal: Add a linear warmup to the Muon optimizer's momentum over the first 5% of training steps to align with the learning rate warmup, improving training stability and potentially lowering validation bits per byte.
+[16:19:46] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 341s
+[16:25:27] DISCARD — val_bpb=1.228155 (worse by 0.055401)
+[16:25:27] --- Experiment 58 [2/12] (best: 1.172754) ---
+[16:25:27] Querying LLM for proposal (attempt 1/3)...
+[16:25:35] Proposal: Add a linear warmup for the Muon optimizer's momentum over the first 5% of training steps to align with the learning rate warmup schedule, which can improve training stability and convergence for better validation bits per byte.
+[16:25:35] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 326s
+[16:31:02] DISCARD — val_bpb=1.228049 (worse by 0.055295)
+[16:31:02] --- Experiment 59 [3/12] (best: 1.172754) ---
+[16:31:02] Querying LLM for proposal (attempt 1/3)...
+[16:31:06] Proposal: Add a linear warmup for the Muon optimizer's momentum over the first 5% of training steps to align with the learning rate warmup schedule, improving training stability and potentially lowering validation bits per byte.
+[16:31:06] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 324s
+[16:36:30] DISCARD — val_bpb=1.228448 (worse by 0.055694)
+[16:36:30] --- Experiment 60 [4/12] (best: 1.172754) ---
+[16:36:30] Querying LLM for proposal (attempt 1/3)...
+[16:36:34] Proposal: Increase the value embedding gate capacity from 32 to 64 channels to improve expressiveness of value embeddings, potentially enhancing model capacity and lowering validation bits per byte without increasing memory footprint or changing other hyperparameters.
+[16:36:34] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 334s
+[16:42:07] DISCARD — val_bpb=1.230478 (worse by 0.057724)
+[16:42:07] --- Experiment 61 [5/12] (best: 1.172754) ---
+[16:42:07] Querying LLM for proposal (attempt 1/3)...
+[16:42:16] Proposal repeats recent idea, retrying
+[16:42:16] Querying LLM for proposal (attempt 2/3)...
+[16:42:18] Proposal repeats recent idea, retrying
+[16:42:18] Querying LLM for proposal (attempt 3/3)...
+[16:42:23] Proposal repeats recent idea, retrying
+[16:42:23] Could not obtain a novel proposal after retries, skipping experiment
+[16:42:23] --- Experiment 62 [6/12] (best: 1.172754) ---
+[16:42:23] Querying LLM for proposal (attempt 1/3)...
+[16:42:25] Proposal repeats recent idea, retrying
+[16:42:25] Querying LLM for proposal (attempt 2/3)...
+[16:42:28] Proposal repeats recent idea, retrying
+[16:42:28] Querying LLM for proposal (attempt 3/3)...
+[16:42:30] Proposal repeats recent idea, retrying
+[16:42:30] Could not obtain a novel proposal after retries, skipping experiment
+[16:42:30] --- Experiment 63 [7/12] (best: 1.172754) ---
+[16:42:30] Querying LLM for proposal (attempt 1/3)...
+[16:42:33] Proposal: Try adding a small linear warmup for the Muon optimizer's weight decay to align with the 5% learning rate warmup schedule, which can improve training stability and potentially lower validation bits per byte.
+[16:42:33] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 324s
+[16:47:57] DISCARD — val_bpb=1.240744 (worse by 0.067990)
+[16:47:58] --- Experiment 64 [8/12] (best: 1.172754) ---
+[16:47:58] Querying LLM for proposal (attempt 1/3)...
+[16:48:01] Proposal repeats recent idea, retrying
+[16:48:01] Querying LLM for proposal (attempt 2/3)...
+[16:48:03] Proposal: Add a linear warmup for the Muon optimizer's weight decay to align with the 5% learning rate warmup schedule, improving training stability and potentially lowering validation bits per byte.
+[16:48:03] Replacements: 1
+  Running training (600s timeout)...
+  Finished in 324s
+[16:53:27] DISCARD — val_bpb=1.231196 (worse by 0.058442)
+[16:53:27] --- Experiment 65 [9/12] (best: 1.172754) ---
+[16:53:27] Querying LLM for proposal (attempt 1/3)...
+[16:53:30] Proposal repeats recent idea, retrying
+[16:53:30] Querying LLM for proposal (attempt 2/3)...
+[16:53:32] Proposal repeats recent idea, retrying
+[16:53:32] Querying LLM for proposal (attempt 3/3)...
+[16:54:26] LLM error: Could not parse LLM response as JSON:
+{
+  "description": "Reduce the learning rate warmup duration from 5% to 3% of training steps to focus optimization early while maintaining stability, potentially improving convergence and lowering validation bits per byte without changing model size or memory.",
+  "replacements": [
+    {
+      "old": "WARMUP_RATIO = 0.05     # fraction of time budget for LR warmup\nWARMDOWN_RATIO = 0.5    # fraction of time budget for LR warmdown\nFINAL_LR_FRAC = 0.0     # final LR as fraction of initial",
+     
+[16:54:56] --- Experiment 66 [10/12] (best: 1.172754) ---
+[16:54:56] Querying LLM for proposal (attempt 1/3)...
+[16:54:59] Proposal repeats recent idea, retrying
+[16:54:59] Querying LLM for proposal (attempt 2/3)...
+[16:55:02] Proposal repeats recent idea, retrying
+[16:55:02] Querying LLM for proposal (attempt 3/3)...
+[16:55:04] Proposal repeats recent idea, retrying
+[16:55:04] Could not obtain a novel proposal after retries, skipping experiment
+[16:55:04] --- Experiment 67 [11/12] (best: 1.172754) ---
+[16:55:04] Querying LLM for proposal (attempt 1/3)...
+[16:55:06] Proposal repeats recent idea, retrying
+[16:55:06] Querying LLM for proposal (attempt 2/3)...
+[16:55:09] Proposal repeats recent idea, retrying
+[16:55:09] Querying LLM for proposal (attempt 3/3)...
+[16:55:10] Proposal repeats recent idea, retrying
+[16:55:10] Could not obtain a novel proposal after retries, skipping experiment
+[16:55:10] 3 consecutive failures (across runs). Resetting failure counter for next nightly run.
+[16:55:10] 
+[16:55:10] === Nightly Batch Summary ===
+[16:55:10] Experiments this run: 11
+[16:55:10] Cumulative experiments: 67
+[16:55:10] Best val_bpb: 1.172754
+[16:55:10] State persisted to: state.json
+[16:55:10] Results: results.tsv
+
+Exit code: 0
+Log: /workspace/autoresearch/logs/nightly-20260420-161928.log
