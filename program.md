@@ -93,15 +93,20 @@ The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autorese
 
 LOOP FOREVER:
 
-1. Look at the git state: the current branch/commit we're on
-2. Tune `train.py` with an experimental idea by directly hacking the code.
-3. git commit
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
-8. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
-9. If val_bpb is equal or worse, you git reset back to where you started
+1. **Consult History**: Read `knowledge.md` (create it if it doesn't exist) to avoid repeating failed ideas and to guide your next hypothesis.
+2. **Hypothesize**: Tune `train.py` with an experimental idea by directly hacking the code.
+3. **Commit**: git commit your change.
+4. **Run**: Execute `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context).
+5. **Evaluate**: Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`.
+6. **The Critic Loop (Error Handling)**: If the grep output is empty, the run crashed. 
+   - Run `tail -n 50 run.log` to read the Python stack trace.
+   - You have **up to 3 attempts** to fix the bug in `train.py`.
+   - For each attempt: modify `train.py`, run `uv run train.py > run.log 2>&1`, and check the logs.
+   - If it still crashes after 3 attempts, consider the idea fundamentally broken. Record "crash" in `results.tsv` and `git reset --hard HEAD~1` (revert to previous working state).
+7. **Record**: If the run finished successfully, record the results in `results.tsv` (NOTE: do not commit the `results.tsv` or `knowledge.md` files, leave them untracked by git).
+8. **Learn & Advance**: 
+   - If `val_bpb` improved (lower): keep the commit. Add a brief note to `knowledge.md` explaining what principle worked.
+   - If `val_bpb` is equal or worse: `git reset --hard HEAD~1` to revert. Add a brief note to `knowledge.md` explaining why the hypothesis failed.
 
 The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
 
