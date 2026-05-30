@@ -7,18 +7,20 @@ requires-python = ">=3.10"
 dependencies = [
     "kernels>=0.11.7",
     "matplotlib>=3.10.8",
-    "numpy>=2.2.6",
+    "numpy>=2.2.6; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "numpy<2.0.0; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "pandas>=2.3.3",
     "pyarrow>=21.0.0",
     "requests>=2.32.0",
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
-    "torch==2.9.1",
+    "torch==2.9.1; sys_platform == 'linux' or (sys_platform == 'darwin' and platform_machine == 'arm64') or sys_platform == 'win32'",
+    "torch==2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu128" },
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
 ]
 
 [[tool.uv.index]]
