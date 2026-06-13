@@ -27,8 +27,8 @@ import torch
 # Constants (fixed, do not modify)
 # ---------------------------------------------------------------------------
 
-MAX_SEQ_LEN = 2048       # context length
-TIME_BUDGET = 300        # training time budget in seconds (5 minutes)
+MAX_SEQ_LEN = 2048  # context length
+TIME_BUDGET = 300  # training time budget in seconds (5 minutes)
 EVAL_TOKENS = 40 * 524288  # number of tokens for val eval
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "autoresearch")
 DATA_DIR = os.path.join(CACHE_DIR, "data")
 TOKENIZER_DIR = os.path.join(CACHE_DIR, "tokenizer")
 BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main"
-MAX_SHARD = 6542 # the last datashard is shard_06542.parquet
+MAX_SHARD = 6542  # the last datashard is shard_06542.parquet
 VAL_SHARD = MAX_SHARD  # pinned validation shard (shard_06542)
 VAL_FILENAME = f"shard_{VAL_SHARD:05d}.parquet"
 VOCAB_SIZE = 8192
@@ -54,6 +54,7 @@ BOS_TOKEN = "<|reserved_0|>"
 # Data download
 # ---------------------------------------------------------------------------
 
+
 def download_single_shard(index):
     """Download one parquet shard with retries. Returns True on success."""
     filename = f"shard_{index:05d}.parquet"
@@ -67,11 +68,16 @@ def download_single_shard(index):
         try:
             response = requests.get(url, stream=True, timeout=30)
             response.raise_for_status()
+            content_length = int(response.headers.get("Content-Length", 0))
             temp_path = filepath + ".tmp"
             with open(temp_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=1024 * 1024):
                     if chunk:
                         f.write(chunk)
+            if content_length > 0:
+                downloaded_size = os.path.getsize(temp_path)
+                if downloaded_size != content_length:
+                    raise IOError(f"Truncated download: expected {content_length} bytes, got {downloaded_size} bytes")
             os.rename(temp_path, filepath)
             print(f"  Downloaded {filename}")
             return True
@@ -84,7 +90,7 @@ def download_single_shard(index):
                     except OSError:
                         pass
             if attempt < max_attempts:
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
     return False
 
 
@@ -97,7 +103,11 @@ def download_data(num_shards, download_workers=8):
         ids.append(VAL_SHARD)
 
     # Count what's already downloaded
-    existing = sum(1 for i in ids if os.path.exists(os.path.join(DATA_DIR, f"shard_{i:05d}.parquet")))
+    existing = sum(
+        1
+        for i in ids
+        if os.path.exists(os.path.join(DATA_DIR, f"shard_{i:05d}.parquet"))
+    )
     if existing == len(ids):
         print(f"Data: all {len(ids)} shards already downloaded at {DATA_DIR}")
         return
@@ -112,13 +122,19 @@ def download_data(num_shards, download_workers=8):
     ok = sum(1 for r in results if r)
     print(f"Data: {ok}/{len(ids)} shards ready at {DATA_DIR}")
 
+
 # ---------------------------------------------------------------------------
 # Tokenizer training
 # ---------------------------------------------------------------------------
 
+
 def list_parquet_files():
     """Return sorted list of parquet file paths in the data directory."""
-    files = sorted(f for f in os.listdir(DATA_DIR) if f.endswith(".parquet") and not f.endswith(".tmp"))
+    files = sorted(
+        f
+        for f in os.listdir(DATA_DIR)
+        if f.endswith(".parquet")
+    )
     return [os.path.join(DATA_DIR, f) for f in files]
 
 
@@ -151,7 +167,9 @@ def train_tokenizer():
 
     parquet_files = list_parquet_files()
     if len(parquet_files) < 2:
-        print("Tokenizer: need at least 2 data shards (1 train + 1 val). Download more data first.")
+        print(
+            "Tokenizer: need at least 2 data shards (1 train + 1 val). Download more data first."
+        )
         sys.exit(1)
 
     # --- Train with rustbpe ---
@@ -160,7 +178,9 @@ def train_tokenizer():
 
     tokenizer = rustbpe.Tokenizer()
     vocab_size_no_special = VOCAB_SIZE - len(SPECIAL_TOKENS)
-    tokenizer.train_from_iterator(text_iterator(), vocab_size_no_special, pattern=SPLIT_PATTERN)
+    tokenizer.train_from_iterator(
+        text_iterator(), vocab_size_no_special, pattern=SPLIT_PATTERN
+    )
 
     # Build tiktoken encoding from trained merges
     pattern = tokenizer.get_pattern()
@@ -190,7 +210,7 @@ def train_tokenizer():
         if token_str in special_set:
             token_bytes_list.append(0)
         else:
-            token_bytes_list.append(len(token_str.encode("utf-8")))
+            token_bytes_list.append(len(enc.decode_single_token_bytes(token_id)))
     token_bytes_tensor = torch.tensor(token_bytes_list, dtype=torch.int32)
     torch.save(token_bytes_tensor, token_bytes_path)
     print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
@@ -202,9 +222,11 @@ def train_tokenizer():
     assert decoded == test, f"Tokenizer roundtrip failed: {test!r} -> {decoded!r}"
     print(f"Tokenizer: sanity check passed (vocab_size={enc.n_vocab})")
 
+
 # ---------------------------------------------------------------------------
 # Runtime utilities (imported by train.py)
 # ---------------------------------------------------------------------------
+
 
 class Tokenizer:
     """Minimal tokenizer wrapper. Training is handled above."""
@@ -227,7 +249,11 @@ class Tokenizer:
 
     def encode(self, text, prepend=None, num_threads=8):
         if prepend is not None:
-            prepend_id = prepend if isinstance(prepend, int) else self.enc.encode_single_token(prepend)
+            prepend_id = (
+                prepend
+                if isinstance(prepend, int)
+                else self.enc.encode_single_token(prepend)
+            )
         if isinstance(text, str):
             ids = self.enc.encode_ordinary(text)
             if prepend is not None:
@@ -248,10 +274,14 @@ class Tokenizer:
 def get_token_bytes(device="cpu"):
     path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
     with open(path, "rb") as f:
-        return torch.load(f, map_location=device)
+        try:
+            return torch.load(f, map_location=device, weights_only=True)
+        except TypeError:
+            f.seek(0)
+            return torch.load(f, map_location=device)
 
 
-def _document_batches(split, tokenizer_batch_size=128):
+def _document_batches(split, tokenizer_batch_size=128, rank=0, world_size=1):
     """Infinite iterator over document batches from parquet files."""
     parquet_paths = list_parquet_files()
     assert len(parquet_paths) > 0, "No parquet files found. Run prepare.py first."
@@ -267,13 +297,15 @@ def _document_batches(split, tokenizer_batch_size=128):
             pf = pq.ParquetFile(filepath)
             for rg_idx in range(pf.num_row_groups):
                 rg = pf.read_row_group(rg_idx)
-                batch = rg.column('text').to_pylist()
-                for i in range(0, len(batch), tokenizer_batch_size):
-                    yield batch[i:i+tokenizer_batch_size], epoch
+                batch = rg.column("text").to_pylist()
+                # Shard documents at source for rank-aware loading
+                sharded_batch = [doc for idx, doc in enumerate(batch) if (idx + rank) % world_size == 0]
+                for i in range(0, len(sharded_batch), tokenizer_batch_size):
+                    yield sharded_batch[i : i + tokenizer_batch_size], epoch
         epoch += 1
 
 
-def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
+def make_dataloader(tokenizer, B, T, split, buffer_size=1000, rank=0, world_size=1):
     """
     BOS-aligned dataloader with best-fit packing.
     Every row starts with BOS. Documents packed using best-fit to minimize cropping.
@@ -282,7 +314,7 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
     """
     assert split in ["train", "val"]
     row_capacity = T + 1
-    batches = _document_batches(split)
+    batches = _document_batches(split, rank=rank, world_size=world_size)
     bos_token = tokenizer.get_bos_token_id()
     doc_buffer = []
     epoch = 1
@@ -297,10 +329,10 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
     row_buffer = torch.empty((B, row_capacity), dtype=torch.long)
     cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=True)
     gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device="cuda")
-    cpu_inputs = cpu_buffer[:B * T].view(B, T)
-    cpu_targets = cpu_buffer[B * T:].view(B, T)
-    inputs = gpu_buffer[:B * T].view(B, T)
-    targets = gpu_buffer[B * T:].view(B, T)
+    cpu_inputs = cpu_buffer[: B * T].view(B, T)
+    cpu_targets = cpu_buffer[B * T :].view(B, T)
+    inputs = gpu_buffer[: B * T].view(B, T)
+    targets = gpu_buffer[B * T :].view(B, T)
 
     while True:
         for row_idx in range(B):
@@ -322,13 +354,19 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
 
                 if best_idx >= 0:
                     doc = doc_buffer.pop(best_idx)
-                    row_buffer[row_idx, pos:pos + len(doc)] = torch.tensor(doc, dtype=torch.long)
+                    row_buffer[row_idx, pos : pos + len(doc)] = torch.tensor(
+                        doc, dtype=torch.long
+                    )
                     pos += len(doc)
                 else:
                     # No doc fits — crop shortest to fill remaining
-                    shortest_idx = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
+                    shortest_idx = min(
+                        range(len(doc_buffer)), key=lambda i: len(doc_buffer[i])
+                    )
                     doc = doc_buffer.pop(shortest_idx)
-                    row_buffer[row_idx, pos:pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
+                    row_buffer[row_idx, pos : pos + remaining] = torch.tensor(
+                        doc[:remaining], dtype=torch.long
+                    )
                     pos += remaining
 
         cpu_inputs.copy_(row_buffer[:, :-1])
@@ -336,9 +374,11 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
         gpu_buffer.copy_(cpu_buffer, non_blocking=True)
         yield inputs, targets, epoch
 
+
 # ---------------------------------------------------------------------------
 # Evaluation (DO NOT CHANGE — this is the fixed metric)
 # ---------------------------------------------------------------------------
+
 
 @torch.no_grad()
 def evaluate_bpb(model, tokenizer, batch_size):
@@ -356,7 +396,7 @@ def evaluate_bpb(model, tokenizer, batch_size):
     total_bytes = 0
     for _ in range(steps):
         x, y, _ = next(val_loader)
-        loss_flat = model(x, y, reduction='none').view(-1)
+        loss_flat = model(x, y, reduction="none").view(-1)
         y_flat = y.view(-1)
         nbytes = token_bytes[y_flat]
         mask = nbytes > 0
@@ -364,14 +404,27 @@ def evaluate_bpb(model, tokenizer, batch_size):
         total_bytes += nbytes.sum().item()
     return total_nats / (math.log(2) * total_bytes)
 
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Prepare data and tokenizer for autoresearch")
-    parser.add_argument("--num-shards", type=int, default=10, help="Number of training shards to download (-1 = all). Val shard is always pinned.")
-    parser.add_argument("--download-workers", type=int, default=8, help="Number of parallel download workers")
+    parser = argparse.ArgumentParser(
+        description="Prepare data and tokenizer for autoresearch"
+    )
+    parser.add_argument(
+        "--num-shards",
+        type=int,
+        default=10,
+        help="Number of training shards to download (-1 = all). Val shard is always pinned.",
+    )
+    parser.add_argument(
+        "--download-workers",
+        type=int,
+        default=8,
+        help="Number of parallel download workers",
+    )
     args = parser.parse_args()
 
     num_shards = MAX_SHARD if args.num_shards == -1 else args.num_shards
