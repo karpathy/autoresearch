@@ -8,11 +8,12 @@ The idea: give an AI agent a small but real LLM training setup and let it experi
 
 ## How it works
 
-The repo is deliberately kept small and only really has three files that matter:
+The repo is deliberately kept small and only really has four files that matter:
 
 - **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
 - **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
 - **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+- **`dashboard.py`** — a dependency-free, zero-config real-time dashboard. Run `python dashboard.py` to stream live experiment data & logs via HTTP. Note: The dashboard UI loads Chart.js from a public CDN and requires an active internet connection to load the chart.
 
 By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
 
