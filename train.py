@@ -609,8 +609,14 @@ total_tokens = step * TOTAL_BATCH_SIZE
 
 # Final eval
 model.eval()
+checkpoint_path = "checkpoint_preeval.pt"
+torch.save(model.state_dict(), checkpoint_path)
 with autocast_ctx:
     val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+
+# Clean up checkpoint if evaluation succeeded
+if os.path.exists(checkpoint_path):
+    os.remove(checkpoint_path)
 
 # Final summary
 t_end = time.time()
