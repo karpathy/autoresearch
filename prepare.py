@@ -55,23 +55,42 @@ BOS_TOKEN = "<|reserved_0|>"
 # ---------------------------------------------------------------------------
 
 def download_single_shard(index):
-    """Download one parquet shard with retries. Returns True on success."""
     filename = f"shard_{index:05d}.parquet"
     filepath = os.path.join(DATA_DIR, filename)
-    if os.path.exists(filepath):
-        return True
-
     url = f"{BASE_URL}/{filename}"
+
+    if os.path.exists(filepath):
+        try:
+            response = requests.head(url, timeout=10)
+            response.raise_for_status()
+            content_length = int(response.headers.get("Content-Length", 0))
+            if content_length > 0:
+                local_size = os.path.getsize(filepath)
+                if local_size == content_length:
+                    return True
+                else:
+                    print(f"  Cached {filename} is corrupted or incomplete ({local_size} vs expected {content_length} bytes). Redownloading...")
+            else:
+                return True
+        except Exception:
+            if os.path.getsize(filepath) > 0:
+                return True
+
     max_attempts = 5
     for attempt in range(1, max_attempts + 1):
         try:
             response = requests.get(url, stream=True, timeout=30)
             response.raise_for_status()
+            content_length = int(response.headers.get("Content-Length", 0))
             temp_path = filepath + ".tmp"
             with open(temp_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=1024 * 1024):
                     if chunk:
                         f.write(chunk)
+            if content_length > 0:
+                downloaded_size = os.path.getsize(temp_path)
+                if downloaded_size != content_length:
+                    raise IOError(f"Truncated download: expected {content_length} bytes, got {downloaded_size} bytes")
             os.rename(temp_path, filepath)
             print(f"  Downloaded {filename}")
             return True
