@@ -190,7 +190,7 @@ def train_tokenizer():
         if token_str in special_set:
             token_bytes_list.append(0)
         else:
-            token_bytes_list.append(len(token_str.encode("utf-8")))
+            token_bytes_list.append(len(enc.decode_single_token_bytes(token_id)))
     token_bytes_tensor = torch.tensor(token_bytes_list, dtype=torch.int32)
     torch.save(token_bytes_tensor, token_bytes_path)
     print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
