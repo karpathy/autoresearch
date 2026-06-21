@@ -460,7 +460,42 @@ torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 device = torch.device("cuda")
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-H100_BF16_PEAK_FLOPS = 989.5e12
+def get_device_peak_flops(device_name: str) -> float:
+    name = device_name.lower()
+    if "h100" in name:
+        return 989.5e12
+    elif "a100" in name:
+        return 312.0e12
+    elif "4090" in name:
+        return 165.0e12
+    elif "3090" in name:
+        return 142.0e12
+    elif "a6000" in name:
+        return 154.0e12
+    elif "l40s" in name:
+        return 366.0e12
+    elif "l40" in name:
+        return 181.0e12
+    elif "l4" in name:
+        return 121.0e12
+    elif "a10g" in name or "a10" in name:
+        return 125.0e12
+    elif "4080" in name:
+        return 97.0e12
+    elif "3080" in name:
+        return 68.0e12
+    return 989.5e12
+
+if torch.cuda.is_available():
+    try:
+        gpu_name = torch.cuda.get_device_name(0)
+    except Exception:
+        gpu_name = "Unknown GPU"
+else:
+    gpu_name = "CPU"
+
+PEAK_FLOPS = get_device_peak_flops(gpu_name)
+print(f"Detected GPU: {gpu_name} (using peak FLOPS: {PEAK_FLOPS / 1e12:.1f} TFLOPS for MFU)")
 
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
@@ -584,7 +619,7 @@ while True:
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1))
     pct_done = 100 * progress
     tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
-    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
+    mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / PEAK_FLOPS
     remaining = max(0, TIME_BUDGET - total_training_time)
 
     print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
@@ -615,7 +650,7 @@ with autocast_ctx:
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
+steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / PEAK_FLOPS if total_training_time > 0 else 0
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
 print("---")
