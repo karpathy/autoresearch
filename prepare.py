@@ -138,14 +138,38 @@ def text_iterator(max_chars=1_000_000_000, doc_cap=10_000):
                     return
 
 
+def _file_sha256(filepath):
+    import hashlib
+    h = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def train_tokenizer():
     """Train BPE tokenizer using rustbpe, save as tiktoken pickle."""
     tokenizer_pkl = os.path.join(TOKENIZER_DIR, "tokenizer.pkl")
     token_bytes_path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
+    tokenizer_sha_path = tokenizer_pkl + ".sha256"
+    token_bytes_sha_path = token_bytes_path + ".sha256"
 
     if os.path.exists(tokenizer_pkl) and os.path.exists(token_bytes_path):
-        print(f"Tokenizer: already trained at {TOKENIZER_DIR}")
-        return
+        if os.path.exists(tokenizer_sha_path) and os.path.exists(token_bytes_sha_path):
+            try:
+                with open(tokenizer_sha_path, "r") as f:
+                    expected_tok_sha = f.read().strip()
+                with open(token_bytes_sha_path, "r") as f:
+                    expected_bytes_sha = f.read().strip()
+                if _file_sha256(tokenizer_pkl) == expected_tok_sha and _file_sha256(token_bytes_path) == expected_bytes_sha:
+                    print(f"Tokenizer: already trained at {TOKENIZER_DIR} (integrity check passed)")
+                    return
+                else:
+                    print("Tokenizer cache integrity check failed: checksum mismatch. Retraining...")
+            except Exception as e:
+                print(f"Warning: error verifying tokenizer cache integrity ({e}). Retraining...")
+        else:
+            print("Tokenizer cache found but integrity checksums are missing. Retraining...")
 
     os.makedirs(TOKENIZER_DIR, exist_ok=True)
 
@@ -178,6 +202,13 @@ def train_tokenizer():
     with open(tokenizer_pkl, "wb") as f:
         pickle.dump(enc, f)
 
+    try:
+        tok_sha = _file_sha256(tokenizer_pkl)
+        with open(tokenizer_pkl + ".sha256", "w") as f:
+            f.write(tok_sha)
+    except Exception as e:
+        print(f"Warning: failed to save tokenizer checksum: {e}")
+
     t1 = time.time()
     print(f"Tokenizer: trained in {t1 - t0:.1f}s, saved to {tokenizer_pkl}")
 
@@ -193,6 +224,12 @@ def train_tokenizer():
             token_bytes_list.append(len(token_str.encode("utf-8")))
     token_bytes_tensor = torch.tensor(token_bytes_list, dtype=torch.int32)
     torch.save(token_bytes_tensor, token_bytes_path)
+    try:
+        bytes_sha = _file_sha256(token_bytes_path)
+        with open(token_bytes_path + ".sha256", "w") as f:
+            f.write(bytes_sha)
+    except Exception as e:
+        print(f"Warning: failed to save token_bytes checksum: {e}")
     print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
 
     # Sanity check
@@ -247,8 +284,28 @@ class Tokenizer:
 
 def get_token_bytes(device="cpu"):
     path = os.path.join(TOKENIZER_DIR, "token_bytes.pt")
+    sha_path = path + ".sha256"
+    if os.path.exists(path) and os.path.exists(sha_path):
+        try:
+            with open(sha_path, "r") as f:
+                expected_sha = f.read().strip()
+            
+            import hashlib
+            h = hashlib.sha256()
+            with open(path, "rb") as f_hash:
+                for chunk in iter(lambda: f_hash.read(65536), b""):
+                    h.update(chunk)
+            if h.hexdigest() != expected_sha:
+                print("Warning: token_bytes.pt checksum mismatch. Cache might be corrupted.")
+        except Exception as e:
+            print(f"Warning verifying token_bytes.pt checksum: {e}")
+
     with open(path, "rb") as f:
-        return torch.load(f, map_location=device)
+        try:
+            return torch.load(f, map_location=device, weights_only=True)
+        except TypeError:
+            f.seek(0)
+            return torch.load(f, map_location=device)
 
 
 def _document_batches(split, tokenizer_batch_size=128):
