@@ -68,6 +68,28 @@ pyproject.toml  — dependencies
 
 This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
 
+### Running on Cloud GPUs (RunPod, Lambda Labs, etc.)
+
+Many GPU cloud environments run everything as root by default. Because Claude Code blocks `--dangerously-skip-permissions` under root for security reasons, running in fully autonomous mode is blocked out-of-the-box. 
+
+To run autonomously on these systems, use the provided `setup-cloud.sh` script to set up a non-root user (`researcher`), copy the workspace, and configure git:
+
+```bash
+# 1. Run the setup script as root
+bash setup-cloud.sh
+
+# 2. Start the autonomous loop under the new researcher user
+su - researcher -c 'cd ~/autoresearch && claude --dangerously-skip-permissions'
+```
+
+### Custom Codebases & Evaluation Time
+
+If you adapt autoresearch to use custom model codebases or custom evaluation datasets, benchmark the evaluation time first. A sliding window evaluation on a massive dataset can take 20+ minutes, significantly reducing the number of experiments completed per hour compared to the default dataset which evaluates in seconds.
+
+### Environment Variables Fallback
+
+If Claude Code cannot be run in your environment (e.g., no Node.js support, locked down environments, etc.), you can still automate hyperparameter tuning by running `train.py` with environment variables to override hyperparameters, since `train.py` loads hyperparameters from `os.environ`.
+
 Seeing as there seems to be a lot of interest in tinkering with autoresearch on much smaller compute platforms than an H100, a few extra words. If you're going to try running autoresearch on smaller computers (Macbooks etc.), I'd recommend one of the forks below. On top of this, here are some recommendations for how to tune the defaults for much smaller models for aspiring forks:
 
 1. To get half-decent results I'd use a dataset with a lot less entropy, e.g. this [TinyStories dataset](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean). These are GPT-4 generated short stories. Because the data is a lot narrower in scope, you will see reasonable results with a lot smaller models (if you try to sample from them after training).
