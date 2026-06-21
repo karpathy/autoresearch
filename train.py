@@ -597,6 +597,66 @@ while True:
     elif (step + 1) % 5000 == 0:
         gc.collect()
 
+    # Safe PyTorch Profiler Integration
+    if os.environ.get("AUTORESEARCH_PROFILE") == "1":
+        if step == 15:
+            try:
+                print("\n=== STARTING PYTORCH PROFILER ===")
+                import torch.profiler
+                global prof, profiler_active
+                prof = torch.profiler.profile(
+                    activities=[
+                        torch.profiler.ProfilerActivity.CPU,
+                        torch.profiler.ProfilerActivity.CUDA,
+                    ],
+                    schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
+                    record_shapes=False,
+                    profile_memory=True,
+                    with_stack=False
+                )
+                prof.start()
+                profiler_active = True
+            except Exception as e:
+                print(f"\nWarning: Failed to start PyTorch Profiler: {e}")
+                profiler_active = False
+        elif step > 15 and step <= 20 and 'profiler_active' in globals() and profiler_active:
+            try:
+                prof.step()
+                if step == 20:
+                    prof.stop()
+                    print("\n=== STOPPING PYTORCH PROFILER AND GENERATING SUMMARY ===")
+                    key_averages = prof.key_averages()
+                    sorted_events = sorted(key_averages, key=lambda x: x.cuda_time_total, reverse=True)
+                    
+                    summary_lines = [
+                        "# PyTorch Profiler CUDA Kernel Summary\n",
+                        "| Kernel / Operation | Calls | Total CUDA Time (ms) | Average CUDA Time (ms) | CUDA Memory (MB) |",
+                        "| --- | --- | --- | --- | --- |"
+                    ]
+                    for evt in sorted_events[:15]:
+                        name = evt.key
+                        if len(name) > 60:
+                            name = name[:57] + "..."
+                        name = name.replace("|", "\\|")
+                        calls = evt.count
+                        total_cuda_ms = evt.cuda_time_total / 1000.0
+                        avg_cuda_ms = (evt.cuda_time_total / calls / 1000.0) if calls > 0 else 0.0
+                        
+                        mem_usage = getattr(evt, "device_memory_usage", 0)
+                        if mem_usage is None:
+                            mem_usage = 0
+                        mem_mb = mem_usage / 1024.0 / 1024.0
+                        
+                        summary_lines.append(f"| {name} | {calls} | {total_cuda_ms:.3f} | {avg_cuda_ms:.3f} | {mem_mb:.3f} |")
+                    
+                    with open("profiler_summary.md", "w") as f_prof:
+                        f_prof.write("\n".join(summary_lines) + "\n")
+                    print("📝 Profiler summary saved to profiler_summary.md")
+                    profiler_active = False
+            except Exception as e:
+                print(f"\nWarning: Error during PyTorch Profiler execution: {e}")
+                profiler_active = False
+
     step += 1
 
     # Time's up — but only stop after warmup steps so we don't count compilation
