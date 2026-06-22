@@ -50,6 +50,12 @@ SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| 
 SPECIAL_TOKENS = [f"<|reserved_{i}|>" for i in range(4)]
 BOS_TOKEN = "<|reserved_0|>"
 
+
+def build_token_byte_lengths(mergeable_ranks, n_vocab):
+    """Return raw byte lengths for BPE tokens, with special tokens counted as 0."""
+    rank_to_nbytes = {rank: len(raw) for raw, rank in mergeable_ranks.items()}
+    return [rank_to_nbytes.get(token_id, 0) for token_id in range(n_vocab)]
+
 # ---------------------------------------------------------------------------
 # Data download
 # ---------------------------------------------------------------------------
@@ -183,14 +189,7 @@ def train_tokenizer():
 
     # --- Build token_bytes lookup for BPB evaluation ---
     print("Tokenizer: building token_bytes lookup...")
-    special_set = set(SPECIAL_TOKENS)
-    token_bytes_list = []
-    for token_id in range(enc.n_vocab):
-        token_str = enc.decode([token_id])
-        if token_str in special_set:
-            token_bytes_list.append(0)
-        else:
-            token_bytes_list.append(len(token_str.encode("utf-8")))
+    token_bytes_list = build_token_byte_lengths(mergeable_ranks, enc.n_vocab)
     token_bytes_tensor = torch.tensor(token_bytes_list, dtype=torch.int32)
     torch.save(token_bytes_tensor, token_bytes_path)
     print(f"Tokenizer: saved token_bytes to {token_bytes_path}")
