@@ -4,15 +4,16 @@
 
 *One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069) and [this tweet](https://x.com/karpathy/status/2031135152349524125).
+The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one could iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069) and [this tweet](https://x.com/karpathy/status/2031135152349524125).
 
 ## How it works
 
-The repo is deliberately kept small and only really has three files that matter:
+The repo is deliberately kept small and only really has a few files that matter:
 
 - **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
 - **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
 - **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+- **`config.yaml`** — optional local machine configuration (e.g. inference server lifecycle management). Not committed to git.
 
 By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
 
@@ -52,10 +53,15 @@ The `program.md` file is essentially a super lightweight "skill".
 ## Project structure
 
 ```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
+prepare.py            — constants, data prep + runtime utilities (do not modify)
+train.py              — model, optimizer, training loop (agent modifies this)
+inference_server.py   — generic inference server lifecycle manager
+program.md            — agent instructions
+config.yaml           — local machine config, gitignored (inference server, etc.)
+pyproject.toml        — dependencies
+scripts/
+  install_llama_cpp.sh      — build llama.cpp from source with CUDA
+  llama_cpp_controller.sh   — start/stop/restart llama-server
 ```
 
 ## Design choices
@@ -63,6 +69,40 @@ pyproject.toml  — dependencies
 - **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
 - **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
 - **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+
+## Inference server / GPU memory management
+
+If you run an inference server (llama.cpp, vLLM, Ollama, TGI, etc.) on the same GPU, `train.py` can automatically stop it before training and restart it afterward — even if training crashes.
+
+Configure `config.yaml` (created locally, not committed to git):
+
+```yaml
+inference_server:
+  enabled: true
+  stop_before_training: true
+  restart_after_training: true
+  stop_command: "bash scripts/llama_cpp_controller.sh stop"
+  start_command: "bash scripts/llama_cpp_controller.sh start"
+  stop_timeout: 30
+  fail_safe: true          # don't abort training if stop/start fails
+```
+
+Works with any inference library — just change the commands:
+
+| Library   | `stop_command`                               | `start_command`                                    |
+|-----------|----------------------------------------------|----------------------------------------------------|
+| llama.cpp | `bash scripts/llama_cpp_controller.sh stop`  | `bash scripts/llama_cpp_controller.sh start`       |
+| vLLM      | `pkill -f 'python -m vllm' \|\| true`        | `python -m vllm.entrypoints.openai.api_server ...` |
+| Ollama    | `systemctl stop ollama`                      | `systemctl start ollama`                           |
+| TGI       | `pkill -f text-generation-server \|\| true`  | `text-generation-launcher --model-id ...`          |
+
+Set `enabled: false` (or omit `config.yaml`) to disable the feature entirely. The feature is **opt-in and disabled by default** — it has no effect unless you create `config.yaml` with `enabled: true`.
+
+To install llama.cpp from source with CUDA support:
+
+```bash
+bash scripts/install_llama_cpp.sh
+```
 
 ## Platform support
 
