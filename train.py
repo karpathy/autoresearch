@@ -17,13 +17,34 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb, DEVICE
+TIME_BUDGET = int(os.environ.get("TIME_BUDGET", TIME_BUDGET))
 
-from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
+if torch.cuda.is_available():
+    from kernels import get_kernel
+    cap = torch.cuda.get_device_capability()
+    repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
+    fa3 = get_kernel(repo).flash_attn_interface
+else:
+    class FlashAttnFallback:
+        @staticmethod
+        def flash_attn_func(q, k, v, causal=True, window_size=None, **kwargs):
+            q_t = q.transpose(1, 2)
+            k_t = k.transpose(1, 2)
+            v_t = v.transpose(1, 2)
+            B, H, T, D = q_t.shape
+            attn_mask = None
+            if causal:
+                attn_mask = torch.tril(torch.ones(T, T, dtype=torch.bool, device=q.device))
+                if window_size is not None and isinstance(window_size, (list, tuple)):
+                    w = window_size[0]
+                    if w > 0 and w < T:
+                        window_mask = torch.triu(torch.ones(T, T, dtype=torch.bool, device=q.device), diagonal=-w+1)
+                        attn_mask = attn_mask & window_mask
+            y_t = F.scaled_dot_product_attention(q_t, k_t, v_t, attn_mask=attn_mask)
+            y = y_t.transpose(1, 2)
+            return y
+    fa3 = FlashAttnFallback()
 
 # ---------------------------------------------------------------------------
 # GPT Model
@@ -456,10 +477,16 @@ DEVICE_BATCH_SIZE = 128  # per-device batch size (reduce if OOM)
 
 t_start = time.time()
 torch.manual_seed(42)
-torch.cuda.manual_seed(42)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
-device = torch.device("cuda")
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+device = torch.device(DEVICE)
+if DEVICE == "cuda":
+    autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+elif DEVICE == "mps":
+    autocast_ctx = torch.amp.autocast(device_type="mps", dtype=torch.bfloat16)
+else:
+    autocast_ctx = torch.amp.autocast(device_type="cpu", dtype=torch.bfloat16)
 H100_BF16_PEAK_FLOPS = 989.5e12
 
 tokenizer = Tokenizer.from_directory()
@@ -541,7 +568,10 @@ total_training_time = 0
 step = 0
 
 while True:
-    torch.cuda.synchronize()
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elif device.type == "mps":
+        torch.mps.synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
@@ -571,7 +601,10 @@ while True:
         print("FAIL")
         exit(1)
 
-    torch.cuda.synchronize()
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elif device.type == "mps":
+        torch.mps.synchronize()
     t1 = time.time()
     dt = t1 - t0
 
@@ -616,7 +649,7 @@ with autocast_ctx:
 t_end = time.time()
 startup_time = t_start_training - t_start
 steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
-peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if torch.cuda.is_available() else (torch.mps.current_allocated_memory() / 1024 / 1024 if device.type == "mps" else 0.0)
 
 print("---")
 print(f"val_bpb:          {val_bpb:.6f}")

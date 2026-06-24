@@ -18,7 +18,7 @@ dependencies = [
 
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu128" },
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
 ]
 
 [[tool.uv.index]]
