@@ -103,16 +103,17 @@ def assemble_user_prompt(train_py_content, results_tsv_content):
     )
     return user_prompt
 
-def assemble_codex_prompt(mode, results_tsv_content, method_pack="", experiment_brief=""):
+def assemble_codex_prompt(mode, results_tsv_content, method_pack="", experiment_brief="", search_enabled=False):
     """Assemble prompt for Codex CLI."""
     prompt = "You are an autonomous machine learning researcher. Your goal is to modify `train.py` to achieve a lower validation bits per byte (val_bpb) than the baseline.\n\n"
+    if search_enabled:
+        prompt += "Note: You have access to a web/arXiv search tool. If you need to verify literature, paper implementations, or hyperparameter setups (e.g. SwiGLU, GQA, Muon), feel free to search the web.\n\n"
     if mode == "loopgraph":
         prompt += f"Use the method pack and experiment brief to guide your changes. Here is the method pack:\n{method_pack}\n\nHere is the experiment brief:\n{experiment_brief}\n\n"
     prompt += f"Here is the history of previous experiments:\n{results_tsv_content}\n\n"
     prompt += "Please choose a new hypothesis/optimization to test, modify `train.py` accordingly, and ensure the code compiles and runs correctly.\n"
     prompt += "CRITICAL: At the very end of your response, write exactly: DESCRIPTION: <a concise one-line description of your change>."
     return prompt
-
 def extract_codex_description(stdout, default_desc):
     """Extract description from Codex CLI stdout."""
     match = re.search(r"DESCRIPTION:\s*(.*)", stdout, re.IGNORECASE)
@@ -170,6 +171,7 @@ def main():
     parser.add_argument("--max-experiments", type=int, default=5, help="Number of loop iterations")
     parser.add_argument("--time-budget", type=int, default=300, help="Training budget per experiment in seconds")
     parser.add_argument("--api-provider", choices=["openai", "openrouter", "codex"], default="codex", help="API provider to use")
+    parser.add_argument("--search", action="store_true", help="Enable live web search tool for the agent")
     
     args = parser.parse_args()
     
@@ -244,10 +246,14 @@ def main():
         
         results_content = read_results_tsv(results_path)
         if args.api_provider == "codex":
-            prompt = assemble_codex_prompt(args.mode, results_content, method_pack, experiment_brief)
+            prompt = assemble_codex_prompt(args.mode, results_content, method_pack, experiment_brief, search_enabled=args.search)
             print("Calling Codex CLI...")
+            cmd = ["codex"]
+            if args.search:
+                cmd.append("--search")
+            cmd.extend(["exec", "--dangerously-bypass-approvals-and-sandbox", prompt])
             res_codex = subprocess.run(
-                ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt],
+                cmd,
                 capture_output=True, text=True, env=env
             )
             if res_codex.returncode != 0:
@@ -299,28 +305,81 @@ def main():
         res_hash = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=env)
         commit_hash = res_hash.stdout.strip()
         
-        # Execute the training run
-        log_path = f"run_{exp_num}.log"
-        print(f"Running training, logging to {log_path}...")
-        
-        run_env = env.copy()
-        run_env["TIME_BUDGET"] = str(args.time_budget)
-        
-        with open(log_path, "w") as log_f:
-            res_run = subprocess.run(["python", "train.py"], env=run_env, stdout=log_f, stderr=subprocess.STDOUT)
+        # Execute the training run with self-correction retry loop
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            log_path = f"run_{exp_num}_attempt_{attempt}.log" if attempt > 0 else f"run_{exp_num}.log"
+            print(f"Running training (attempt {attempt}/{max_retries}), logging to {log_path}...")
             
-        # Parse the execution logs
-        with open(log_path, "r") as log_f:
-            log_text = log_f.read()
+            run_env = env.copy()
+            run_env["TIME_BUDGET"] = str(args.time_budget)
             
-        val_bpb, peak_vram_mb, status, error_msg = parse_log(log_text, res_run.returncode)
-        
-        print(f"Run status: {status}")
-        if val_bpb is not None:
-            print(f"val_bpb: {val_bpb:.6f}")
-        if peak_vram_mb is not None:
-            print(f"peak_vram_mb: {peak_vram_mb:.1f}")
+            with open(log_path, "w") as log_f:
+                res_run = subprocess.run(["python", "train.py"], env=run_env, stdout=log_f, stderr=subprocess.STDOUT)
+                
+            # Parse the execution logs
+            with open(log_path, "r") as log_f:
+                log_text = log_f.read()
+                
+            val_bpb, peak_vram_mb, status, error_msg = parse_log(log_text, res_run.returncode)
             
+            print(f"Run status (attempt {attempt}): {status}")
+            if status != "crash":
+                break  # Succeeded or silent fail without crash trace; exit retry loop
+                
+            if attempt == max_retries:
+                print("Max retries reached. Experiment failed.")
+                break
+                
+            print(f"Attempt {attempt} crashed. Attempting self-correction...")
+            error_lines = log_text.splitlines()
+            traceback_text = "\n".join(error_lines[-30:])
+            
+            if args.api_provider == "codex":
+                fix_prompt = f"The previous edit you made to `train.py` caused a crash during execution. Here is the traceback:\n\n{traceback_text}\n\nPlease analyze the code and modify `train.py` to fix this issue. CRITICAL: Write DESCRIPTION: <one-line description> at the end."
+                print("Calling Codex for self-correction...")
+                cmd_fix = ["codex"]
+                if args.search:
+                    cmd_fix.append("--search")
+                cmd_fix.extend(["exec", "--dangerously-bypass-approvals-and-sandbox", fix_prompt])
+                res_codex = subprocess.run(
+                    cmd_fix,
+                    capture_output=True, text=True, env=env
+                )
+                if res_codex.returncode != 0:
+                    print(f"Codex self-correction failed: {res_codex.stderr}", file=sys.stderr)
+                    break
+                description = extract_codex_description(res_codex.stdout, description)
+            else:
+                with open("train.py", "r") as f:
+                    current_code = f.read()
+                fix_usr_prompt = (
+                    f"The code you proposed crashed during execution. Here is the traceback:\n\n{traceback_text}\n\n"
+                    f"Here is the current content of `train.py`:\n```python\n{current_code}\n```\n\n"
+                    f"Please modify `train.py` to fix the crash. Output the complete updated code inside a ```python code block. "
+                    f"Include a line 'Description: <brief summary of your fix>'."
+                )
+                fix_messages = [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": fix_usr_prompt}
+                ]
+                try:
+                    llm_response = call_llm(args.api_provider, args.model, fix_messages)
+                except Exception as e:
+                    print(f"LLM API self-correction failed: {e}", file=sys.stderr)
+                    break
+                proposed_code = extract_code_block(llm_response)
+                description = extract_description(llm_response, description)
+                with open("train.py", "w") as f:
+                    f.write(proposed_code)
+                    
+            # Amend the commit with the fix
+            commit_msg = f"experiment {exp_num} (fix): {description}"
+            print(f"Amending commit: {commit_msg}")
+            subprocess.run(["git", "commit", "--amend", "-am", commit_msg], check=True, env=env)
+            
+            res_hash = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=env)
+            commit_hash = res_hash.stdout.strip()
         keep_experiment = False
         if status == "success" and val_bpb is not None:
             if val_bpb < best_val_bpb:

@@ -130,6 +130,9 @@ def test_assemble_codex_prompt():
     assert "Custom Method Pack Reference Content" in prompt
     assert "Custom Experiment Brief Rules Content" in prompt
     assert "DESCRIPTION:" in prompt
+    
+    prompt_search = assemble_codex_prompt("loopgraph", "commit\tval_bpb\tstatus\n...", "Custom Method Pack Reference Content", "Custom Experiment Brief Rules Content", search_enabled=True)
+    assert "web/arXiv search" in prompt_search
 
 def test_extract_codex_description():
     stdout = "Blah blah.\nDESCRIPTION: My cool optimization\nMore output."
