@@ -587,6 +587,7 @@ t_start_training = time.time()
 smooth_train_loss = 0
 total_training_time = 0
 step = 0
+min_steps = 10 if (DEVICE == "cuda" and TIME_BUDGET > 30) else 1
 
 while True:
     if device.type == "cuda":
@@ -629,7 +630,7 @@ while True:
     t1 = time.time()
     dt = t1 - t0
 
-    if step > 10:
+    if step > min_steps:
         total_training_time += dt
 
     # Logging
@@ -654,7 +655,6 @@ while True:
     step += 1
 
     # Time's up — but only stop after warmup steps so we don't count compilation
-    min_steps = 10 if (DEVICE == "cuda" and TIME_BUDGET > 30) else 1
     if step > min_steps and total_training_time >= TIME_BUDGET:
         break
 
@@ -670,7 +670,7 @@ with autocast_ctx:
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
+steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - min_steps) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024 if torch.cuda.is_available() else (torch.mps.current_allocated_memory() / 1024 / 1024 if device.type == "mps" else 0.0)
 
 print("---")
