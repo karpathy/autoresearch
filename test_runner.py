@@ -3,7 +3,9 @@ from run_agent import (
     extract_description,
     parse_log,
     assemble_system_prompt,
-    assemble_user_prompt
+    assemble_user_prompt,
+    assemble_codex_prompt,
+    extract_codex_description
 )
 
 def test_extract_code_block_python():
@@ -122,6 +124,17 @@ def test_assemble_user_prompt():
     prompt = assemble_user_prompt(code, results)
     assert code in prompt
     assert results in prompt
+
+def test_assemble_codex_prompt():
+    prompt = assemble_codex_prompt("loopgraph", "commit\tval_bpb\tstatus\n...", "Custom Method Pack Reference Content", "Custom Experiment Brief Rules Content")
+    assert "Custom Method Pack Reference Content" in prompt
+    assert "Custom Experiment Brief Rules Content" in prompt
+    assert "DESCRIPTION:" in prompt
+
+def test_extract_codex_description():
+    stdout = "Blah blah.\nDESCRIPTION: My cool optimization\nMore output."
+    desc = extract_codex_description(stdout, "default")
+    assert desc == "My cool optimization"
 
 if __name__ == "__main__":
     import sys

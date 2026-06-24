@@ -103,6 +103,23 @@ def assemble_user_prompt(train_py_content, results_tsv_content):
     )
     return user_prompt
 
+def assemble_codex_prompt(mode, results_tsv_content, method_pack="", experiment_brief=""):
+    """Assemble prompt for Codex CLI."""
+    prompt = "You are an autonomous machine learning researcher. Your goal is to modify `train.py` to achieve a lower validation bits per byte (val_bpb) than the baseline.\n\n"
+    if mode == "loopgraph":
+        prompt += f"Use the method pack and experiment brief to guide your changes. Here is the method pack:\n{method_pack}\n\nHere is the experiment brief:\n{experiment_brief}\n\n"
+    prompt += f"Here is the history of previous experiments:\n{results_tsv_content}\n\n"
+    prompt += "Please choose a new hypothesis/optimization to test, modify `train.py` accordingly, and ensure the code compiles and runs correctly.\n"
+    prompt += "CRITICAL: At the very end of your response, write exactly: DESCRIPTION: <a concise one-line description of your change>."
+    return prompt
+
+def extract_codex_description(stdout, default_desc):
+    """Extract description from Codex CLI stdout."""
+    match = re.search(r"DESCRIPTION:\s*(.*)", stdout, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return default_desc
+
 def call_llm(provider, model, messages):
     """Call the LLM API using requests."""
     if provider == "openai":
@@ -152,7 +169,7 @@ def main():
     parser.add_argument("--model", default="gpt-4o-mini", help="LLM model name")
     parser.add_argument("--max-experiments", type=int, default=5, help="Number of loop iterations")
     parser.add_argument("--time-budget", type=int, default=300, help="Training budget per experiment in seconds")
-    parser.add_argument("--api-provider", choices=["openai", "openrouter"], default="openai", help="API provider to use")
+    parser.add_argument("--api-provider", choices=["openai", "openrouter", "codex"], default="codex", help="API provider to use")
     
     args = parser.parse_args()
     
@@ -225,36 +242,48 @@ def main():
     for exp_num in range(1, args.max_experiments + 1):
         print(f"\n=== Starting Experiment {exp_num}/{args.max_experiments} ===")
         
-        with open("train.py", "r") as f:
-            train_py_content = f.read()
-            
         results_content = read_results_tsv(results_path)
-        
-        sys_prompt = assemble_system_prompt(args.mode, method_pack, experiment_brief)
-        usr_prompt = assemble_user_prompt(train_py_content, results_content)
-        
-        messages = [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": usr_prompt}
-        ]
-        
-        print(f"Calling LLM ({args.api_provider}, model: {args.model})...")
-        try:
-            llm_response = call_llm(args.api_provider, args.model, messages)
-        except Exception as e:
-            print(f"LLM API call failed: {e}", file=sys.stderr)
-            print("Stopping experiment loop due to API error.")
-            break
+        if args.api_provider == "codex":
+            prompt = assemble_codex_prompt(args.mode, results_content, method_pack, experiment_brief)
+            print("Calling Codex CLI...")
+            res_codex = subprocess.run(
+                ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt],
+                capture_output=True, text=True, env=env
+            )
+            if res_codex.returncode != 0:
+                print(f"Codex run failed (code {res_codex.returncode}): {res_codex.stderr}", file=sys.stderr)
+                print("Stopping experiment loop.")
+                break
+            description = extract_codex_description(res_codex.stdout, f"experiment_{exp_num}")
+            print(f"Proposed change description: {description}")
+        else:
+            with open("train.py", "r") as f:
+                train_py_content = f.read()
+                
+            sys_prompt = assemble_system_prompt(args.mode, method_pack, experiment_brief)
+            usr_prompt = assemble_user_prompt(train_py_content, results_content)
             
-        proposed_code = extract_code_block(llm_response)
-        description = extract_description(llm_response, f"experiment_{exp_num}")
-        
-        print(f"Proposed change description: {description}")
-        
-        # Apply changes temporarily to check for diff
-        with open("train.py", "w") as f:
-            f.write(proposed_code)
+            messages = [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": usr_prompt}
+            ]
             
+            print(f"Calling LLM ({args.api_provider}, model: {args.model})...")
+            try:
+                llm_response = call_llm(args.api_provider, args.model, messages)
+            except Exception as e:
+                print(f"LLM API call failed: {e}", file=sys.stderr)
+                print("Stopping experiment loop due to API error.")
+                break
+                
+            proposed_code = extract_code_block(llm_response)
+            description = extract_description(llm_response, f"experiment_{exp_num}")
+            
+            print(f"Proposed change description: {description}")
+            
+            # Apply changes temporarily to check for diff
+            with open("train.py", "w") as f:
+                f.write(proposed_code)
         res_diff = subprocess.run(["git", "diff", "--quiet", "train.py"], env=env)
         if res_diff.returncode == 0:
             print("No changes detected in train.py. Skipping this iteration.")
