@@ -1,8 +1,13 @@
-"""Seed the ResearchFS database with the initial paper/method corpus."""
+"""Seed the ResearchFS database and ingest papers/methods into ResearchFS."""
 
+import argparse
+import os
 from pathlib import Path
+from typing import Callable, Optional
 
+from researchfs import extractor
 from researchfs.db import get_connection, initialize_db
+from researchfs.fetcher import fetch_arxiv_source, fetch_github_readme
 
 
 def _load_markdown(filepath: Path) -> str:
@@ -147,17 +152,24 @@ def seed_initial_data(conn=None) -> None:
     paper_ids = {}
     for paper in papers:
         cur.execute(
-            """
-            INSERT OR IGNORE INTO papers (title, authors, abstract, url, publish_date)
-            VALUES (:title, :authors, :abstract, :url, :publish_date)
-            """,
-            paper,
-        )
-        cur.execute(
             "SELECT paper_id FROM papers WHERE title = ?",
             (paper["title"],),
         )
-        paper_ids[paper["title"]] = cur.fetchone()["paper_id"]
+        row = cur.fetchone()
+        if row is None:
+            cur.execute(
+                """
+                INSERT INTO papers (title, authors, abstract, url, publish_date)
+                VALUES (:title, :authors, :abstract, :url, :publish_date)
+                """,
+                paper,
+            )
+            cur.execute(
+                "SELECT paper_id FROM papers WHERE title = ?",
+                (paper["title"],),
+            )
+            row = cur.fetchone()
+        paper_ids[paper["title"]] = row["paper_id"]
 
     # -----------------------------------------------------------------------
     # Chunks
@@ -594,6 +606,263 @@ def ensure_seed(conn=None) -> None:
             conn.close()
 
 
+def _build_llm_fn() -> Optional[Callable[[str], str]]:
+    """Return a callable LLM client if one can be configured locally.
+
+    Supports OpenAI-compatible endpoints via the ``OPENAI_API_KEY`` environment
+    variable.  Returns ``None`` if no local LLM can be built so callers can fall
+    back to ingestion without extraction.
+    """
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    try:
+        import openai
+    except Exception:  # pragma: no cover - optional dependency
+        return None
+
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url=os.environ.get("OPENAI_BASE_URL"),
+    )
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+
+    def _llm(prompt: str) -> str:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+        )
+        return response.choices[0].message.content
+
+    return _llm
+
+
+def ingest_paper(
+    meta: dict,
+    llm_fn: Optional[Callable[[str], str]] = None,
+    conn=None,
+    dry_run: bool = False,
+) -> dict:
+    """Insert (or plan) a paper, its chunks, and extracted methods into ResearchFS.
+
+    Parameters
+    ----------
+    meta:
+        Paper metadata dict. Must contain ``title``; ``content`` or
+        ``abstract`` is used for chunking.
+    llm_fn:
+        Optional callable ``llm_fn(prompt) -> response_text`` used to extract
+        methods.  If ``None``, only the paper and chunks are ingested.
+    conn:
+        Optional SQLite connection.  A new connection is opened if none is
+        provided (and ``dry_run`` is ``False``).
+    dry_run:
+        If ``True``, no database writes are performed.  A planned summary is
+        returned instead.
+
+    Returns
+    -------
+    dict
+        ``{paper_id, chunk_ids, method_ids}`` on a real run, or
+        ``{planned: {...}}`` on a dry run.
+    """
+    if dry_run:
+        content = meta.get("content", meta.get("abstract", ""))
+        chunks = extractor.chunk_text(content)
+        planned = {
+            "paper": {
+                "title": meta.get("title"),
+                "authors": meta.get("authors"),
+                "abstract": meta.get("abstract"),
+                "url": meta.get("url"),
+                "publish_date": meta.get("publish_date"),
+            },
+            "chunks": [
+                {"section": "extracted", "content": chunk} for chunk in chunks
+            ],
+            "methods": [],
+            "method_sources": [],
+        }
+        if llm_fn is not None:
+            try:
+                result = extractor.extract_methods_from_paper(meta, llm_fn)
+                for method in result.get("methods", []):
+                    planned["methods"].append(
+                        {
+                            "name": method.get("name"),
+                            "description": method.get("description", ""),
+                            "implementation_hint": method.get("implementation_hint", ""),
+                            "risks": method.get("risks", ""),
+                            "category": method.get("category", ""),
+                        }
+                    )
+                    for idx in method.get("source_chunk_indices") or []:
+                        if isinstance(idx, int) and 0 <= idx < len(chunks):
+                            planned["method_sources"].append(
+                                {
+                                    "method_name": method.get("name"),
+                                    "chunk_index": idx,
+                                }
+                            )
+            except Exception as exc:  # pragma: no cover
+                planned["extraction_error"] = str(exc)
+        return {"planned": planned}
+
+    close = False
+    if conn is None:
+        initialize_db()
+        conn = get_connection()
+        close = True
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT paper_id FROM papers WHERE title = ?",
+            (meta["title"],),
+        )
+        existing = cur.fetchone()
+        if existing:
+            return {"paper_id": existing["paper_id"], "chunk_ids": [], "method_ids": []}
+
+        cur.execute(
+            """
+            INSERT INTO papers (title, authors, abstract, url, publish_date)
+            VALUES (:title, :authors, :abstract, :url, :publish_date)
+            """,
+            {
+                "title": meta.get("title"),
+                "authors": meta.get("authors"),
+                "abstract": meta.get("abstract"),
+                "url": meta.get("url"),
+                "publish_date": meta.get("publish_date"),
+            },
+        )
+        paper_id = cur.lastrowid
+
+        content = meta.get("content", meta.get("abstract", ""))
+        chunks = extractor.chunk_text(content)
+        chunk_ids = []
+        for chunk in chunks:
+            cur.execute(
+                "INSERT INTO chunks (paper_id, section, content) VALUES (?, ?, ?)",
+                (paper_id, "extracted", chunk),
+            )
+            chunk_ids.append(cur.lastrowid)
+
+        method_ids = []
+        if llm_fn is not None:
+            result = extractor.extract_methods_from_paper(meta, llm_fn)
+            for method in result.get("methods", []):
+                cur.execute(
+                    """
+                    INSERT OR IGNORE INTO methods
+                    (name, description, implementation_hint, risks, category)
+                    VALUES (:name, :description, :implementation_hint, :risks, :category)
+                    """,
+                    {
+                        "name": method.get("name"),
+                        "description": method.get("description", ""),
+                        "implementation_hint": method.get("implementation_hint", ""),
+                        "risks": method.get("risks", ""),
+                        "category": method.get("category", ""),
+                    },
+                )
+                cur.execute(
+                    "SELECT method_id FROM methods WHERE name = ?",
+                    (method["name"],),
+                )
+                method_id = cur.fetchone()["method_id"]
+                method_ids.append(method_id)
+
+                for idx in method.get("source_chunk_indices") or []:
+                    if isinstance(idx, int) and 0 <= idx < len(chunk_ids):
+                        cur.execute(
+                            "INSERT OR IGNORE INTO method_sources (method_id, chunk_id) VALUES (?, ?)",
+                            (method_id, chunk_ids[idx]),
+                        )
+
+        conn.commit()
+        return {"paper_id": paper_id, "chunk_ids": chunk_ids, "method_ids": method_ids}
+    finally:
+        if close:
+            conn.close()
+
+
+def main() -> None:
+    """CLI entry point for ResearchFS ingestion."""
+    parser = argparse.ArgumentParser(
+        prog="researchfs.ingest",
+        description="Ingest papers and methods into ResearchFS.",
+    )
+    parser.add_argument("--arxiv", metavar="ID", help="Ingest an arXiv paper by ID")
+    parser.add_argument("--repo", metavar="PATH", help="Ingest a GitHub README as a paper")
+    parser.add_argument(
+        "--extract",
+        action="store_true",
+        help="Extract methods with a local LLM (only if one can be configured)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show the records that would be created without writing to the DB",
+    )
+    parser.add_argument(
+        "--seed",
+        action="store_true",
+        help="Seed the database with the v0 corpus",
+    )
+
+    args = parser.parse_args()
+
+    if args.seed:
+        seed_initial_data()
+        print("Seeded researchfs.db")
+        return
+
+    if not args.arxiv and not args.repo:
+        parser.print_help()
+        return
+
+    llm_fn: Optional[Callable[[str], str]] = None
+    if args.extract:
+        llm_fn = _build_llm_fn()
+        if llm_fn is None:
+            print(
+                "Warning: --extract was requested but no local LLM could be built. "
+                "Set OPENAI_API_KEY (and optionally OPENAI_BASE_URL / OPENAI_MODEL) "
+                "or implement _build_llm_fn(). Ingesting without extraction."
+            )
+
+    if args.arxiv:
+        meta = fetch_arxiv_source(args.arxiv)
+    else:
+        meta = fetch_github_readme(args.repo)
+
+    result = ingest_paper(meta, llm_fn=llm_fn, dry_run=args.dry_run)
+
+    if args.dry_run:
+        planned = result.get("planned", {})
+        paper = planned.get("paper", {})
+        print("DRY RUN - planned ingestion")
+        print("=" * 40)
+        print(f"Paper title : {paper.get('title')}")
+        print(f"Authors     : {paper.get('authors')}")
+        print(f"URL         : {paper.get('url')}")
+        print(f"Publish date: {paper.get('publish_date')}")
+        print(f"Chunks      : {len(planned.get('chunks', []))}")
+        methods = planned.get("methods", [])
+        print(f"Methods     : {len(methods)}")
+        for method in methods:
+            print(f"  - {method.get('name')} ({method.get('category')})")
+        if planned.get("extraction_error"):
+            print(f"Extraction error: {planned['extraction_error']}")
+    else:
+        print("Ingested:")
+        print(f"  paper_id : {result['paper_id']}")
+        print(f"  chunk_ids: {result['chunk_ids']}")
+        print(f"  method_ids: {result['method_ids']}")
+
+
 if __name__ == "__main__":
-    seed_initial_data()
-    print("Seeded researchfs.db")
+    main()

@@ -141,8 +141,10 @@ def test_extract_codex_description():
 
 import sqlite3
 from researchfs.db import initialize_db
-from researchfs.ingest import seed_initial_data
+from researchfs.ingest import seed_initial_data, ingest_paper
 from researchfs import retrieve as rfs
+from researchfs.extractor import chunk_text, extract_json_block
+from researchfs.fetcher import clean_latex
 from evals.nanochat_bpb import metrics
 from agents.editor import apply_hunks, check_syntax, HunkError
 
@@ -153,6 +155,41 @@ def _in_memory_db():
     initialize_db(conn)
     seed_initial_data(conn)
     return conn
+
+
+def test_chunk_text_overlap_and_boundaries():
+    text = "\n\n".join([f"Paragraph {i}." for i in range(20)])
+    chunks = chunk_text(text, chunk_size=100, overlap=20)
+    assert len(chunks) > 1
+    # Consecutive chunks must overlap (last chunk may be shorter / non-overlapping tail)
+    for a, b in zip(chunks[:-1], chunks[1:]):
+        assert any(fragment in b for fragment in a[-20:]), "Chunks should overlap"
+
+    # Short text should return a single non-empty chunk
+    short = "Tiny."
+    assert chunk_text(short, chunk_size=1000, overlap=100) == ["Tiny."]
+
+
+def test_extract_json_block_variants():
+    block = '```json\n{"methods": [{"name": "x"}]}\n```'
+    assert extract_json_block(block) == '{"methods": [{"name": "x"}]}'
+
+    raw = '{"methods": [{"name": "y"}]}'
+    assert extract_json_block(raw) == raw
+
+    fallback = "plain text"
+    assert extract_json_block(fallback) == fallback
+
+
+def test_clean_latex():
+    latex = "Hello % comment here\nworld!\n\n% another comment\n"
+    cleaned = clean_latex(latex)
+    assert "comment" not in cleaned
+    assert "another" not in cleaned
+    assert "Hello " in cleaned
+    assert "world!" in cleaned
+    # Blank lines should be removed
+    assert "\n\n" not in cleaned
 
 
 def test_get_method_pack_contains_methods():
@@ -191,6 +228,61 @@ def test_search_methods():
     pack_empty = rfs.search_methods("", conn)
     assert "SwiGLU MLP" in pack_empty
     assert "Grouped-Query Attention" in pack_empty
+
+
+def test_ingest_paper_without_llm():
+    conn = _in_memory_db()
+    meta = {
+        "title": "Test Paper Without LLM",
+        "authors": "Test Author",
+        "abstract": "A paper about testing.",
+        "url": "https://example.com/test",
+        "publish_date": "2026-06-26",
+        "content": "\n\n".join([f"This is paragraph {i} of the test paper." for i in range(5)]),
+    }
+    result = ingest_paper(meta, conn=conn)
+
+    # Verify paper was inserted
+    assert result["paper_id"] is not None
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM papers WHERE paper_id = ?", (result["paper_id"],))
+    row = cur.fetchone()
+    assert row["title"] == meta["title"]
+
+    # Verify chunks were inserted
+    assert len(result["chunk_ids"]) > 0
+    cur.execute("SELECT COUNT(*) FROM chunks WHERE paper_id = ?", (result["paper_id"],))
+    assert cur.fetchone()[0] == len(result["chunk_ids"])
+
+    # search_methods should still return the seeded methods without crashing
+    pack = rfs.search_methods("", conn)
+    assert "SwiGLU MLP" in pack
+
+
+def test_ingest_paper_with_stub_llm():
+    conn = _in_memory_db()
+    stub_response = '{"methods":[{"name":"Stub Test Method","description":"A stub keyword test method","implementation_hint":"do nothing","risks":"none","category":"attention","source_chunk_indices":[0]}]}'
+
+    def stub_llm(_prompt):
+        return f"```json\n{stub_response}\n```"
+
+    meta = {
+        "title": "Test Paper With Stub LLM",
+        "authors": "Test Author",
+        "abstract": "A paper about stub LLMs.",
+        "url": "https://example.com/stub",
+        "publish_date": "2026-06-26",
+        "content": "This is the content. It needs enough text to create at least one chunk.",
+    }
+    result = ingest_paper(meta, llm_fn=stub_llm, conn=conn)
+
+    assert result["paper_id"] is not None
+    assert len(result["chunk_ids"]) > 0
+    assert len(result["method_ids"]) == 1
+
+    pack = rfs.search_methods("stub keyword", conn)
+    assert "Stub Test Method" in pack
+
 
 def test_get_experiment_brief():
     conn = _in_memory_db()
