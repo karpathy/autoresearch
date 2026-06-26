@@ -139,6 +139,133 @@ def test_extract_codex_description():
     desc = extract_codex_description(stdout, "default")
     assert desc == "My cool optimization"
 
+import sqlite3
+from researchfs.db import initialize_db
+from researchfs.ingest import seed_initial_data
+from researchfs import retrieve as rfs
+from evals.nanochat_bpb import metrics
+from agents.editor import apply_hunks, check_syntax, HunkError
+
+
+def _in_memory_db():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    initialize_db(conn)
+    seed_initial_data(conn)
+    return conn
+
+
+def test_get_method_pack_contains_methods():
+    conn = _in_memory_db()
+    pack = rfs.get_method_pack(conn)
+    assert "SwiGLU MLP" in pack
+    assert "Grouped-Query Attention (GQA)" in pack
+    assert "Muon LR Tuning" in pack
+    assert "Sliding Window Attention Patterns" in pack
+    assert "Hashed n-gram Value Embeddings" in pack
+    assert "Token Shifting" in pack
+    assert "FP8 / bf16 Training" in pack
+    assert "https://arxiv.org/abs/2305.13245" in pack
+
+
+def test_get_experiment_brief():
+    conn = _in_memory_db()
+    brief = rfs.get_experiment_brief("nanochat_autoresearch", conn)
+    assert "minimize validation bits per byte" in brief.lower()
+
+
+def test_log_and_update_experiment():
+    conn = _in_memory_db()
+    run_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    exp_id = rfs.log_experiment("abc123", None, None, "pending", "test", run_id, conn)
+    rfs.update_experiment(exp_id, 2.123, 0.5, "keep", "updated", conn)
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM experiments WHERE experiment_id = ?", (exp_id,))
+    row = cur.fetchone()
+    assert row["status"] == "keep"
+    assert abs(row["val_bpb"] - 2.123) < 1e-6
+
+
+def test_log_retrieval_and_token_usage():
+    conn = _in_memory_db()
+    run_id = rfs.start_agent_run("baseline", "gpt-4o-mini", conn)
+    exp_id = rfs.log_experiment("def456", 2.0, 0.4, "keep", "test", run_id, conn)
+    rfs.log_retrieval_event("method_pack", "all", "content", run_id, exp_id, conn)
+    rfs.log_token_usage(100, 50, 0.001, exp_id, conn)
+    summary = rfs.get_agent_run_summary(run_id, conn)
+    assert summary["retrieval_count"] == 1
+    assert summary["tokens"]["prompt_tokens"] == 100
+    assert summary["tokens"]["completion_tokens"] == 50
+
+
+def test_load_run_calculates_best_and_mean_bpb():
+    conn = _in_memory_db()
+    run_id = rfs.start_agent_run("baseline", "gpt-4o-mini", conn)
+    rfs.log_experiment("baseline", 2.500, 0.5, "keep", "baseline", run_id, conn)
+    rfs.log_experiment("abc", 2.450, 0.5, "keep", "better", run_id, conn)
+    rfs.log_experiment("def", 2.480, 0.5, "discard", "worse", run_id, conn)
+    rfs.log_experiment("ghi", None, None, "crash", "crash", run_id, conn)
+    summary = metrics.load_run(run_id, conn)
+    assert abs(summary["baseline_bpb"] - 2.500) < 1e-6
+    assert abs(summary["best_bpb"] - 2.450) < 1e-6
+    assert abs(summary["improvement"] - 0.050) < 1e-6
+    assert summary["total_experiments"] == 4
+    assert summary["kept"] == 2
+    assert summary["crashed"] == 1
+    assert summary["discarded"] == 1
+
+
+def test_compare_runs_rejects_wrong_modes():
+    conn = _in_memory_db()
+    baseline_id = rfs.start_agent_run("baseline", "gpt-4o-mini", conn)
+    loopgraph_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    rfs.log_experiment("baseline", 2.500, 0.5, "keep", "baseline", baseline_id, conn)
+    rfs.log_experiment("baseline", 2.500, 0.5, "keep", "baseline", loopgraph_id, conn)
+    comparison = metrics.compare_runs(baseline_id, loopgraph_id, conn)
+    assert comparison["baseline"]["mode"] == "baseline"
+    assert comparison["researchfs"]["mode"] == "loopgraph"
+
+
+def test_format_comparison_includes_key_metrics():
+    conn = _in_memory_db()
+    baseline_id = rfs.start_agent_run("baseline", "gpt-4o-mini", conn)
+    loopgraph_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    baseline_exp_id = rfs.log_experiment("baseline", 2.500, 0.5, "keep", "baseline", baseline_id, conn)
+    rfs.log_token_usage(10_000_000, 2_000_000, None, baseline_exp_id, conn)
+    exp_id = rfs.log_experiment("abc", 2.450, 0.5, "keep", "better", loopgraph_id, conn)
+    rfs.log_token_usage(1_000_000, 200_000, None, exp_id, conn)
+    rfs.log_retrieval_event("method_pack", "all", "content", loopgraph_id, None, conn)
+    rfs.log_retrieval_event("experiment_brief", "nanochat", "content", loopgraph_id, None, conn)
+    comparison = metrics.compare_runs(baseline_id, loopgraph_id, conn)
+    text = metrics.format_comparison(comparison)
+    assert "Agent Run Comparison" in text
+    assert "2.500000" in text
+    assert "2.450000" in text
+    assert "fewer tokens" in text
+
+
+def test_cost_estimate_uses_model_rates():
+    cost = metrics.estimate_cost(1_000_000, 200_000, "gpt-4o-mini")
+    assert cost > 0
+    assert cost == (1_000_000 * 0.00015 + 200_000 * 0.0006) / 1000
+
+
+def test_apply_hunks_success():
+    content = "line 1\nline 2\nline 3"
+    response = "some text\n<<<<<<< SEARCH\nline 2\n=======\nline 2 modified\n>>>>>>>"
+    res = apply_hunks(content, response)
+    assert res == "line 1\nline 2 modified\nline 3"
+
+
+def test_apply_hunks_not_found():
+    content = "line 1\nline 2\nline 3"
+    response = "<<<<<<< SEARCH\nmissing line\n=======\nreplacement\n>>>>>>>"
+    try:
+        apply_hunks(content, response)
+        assert False, "Should raise HunkError"
+    except HunkError:
+        pass
+
 if __name__ == "__main__":
     import sys
     try:
