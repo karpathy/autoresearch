@@ -164,6 +164,8 @@ def call_llm(provider, model, messages):
         "content": data["choices"][0]["message"]["content"],
         "usage": data.get("usage", {}),
     }
+def read_results_tsv(filepath):
+    """Read the results.tsv file if it exists."""
     if not os.path.exists(filepath):
         return ""
     with open(filepath, "r") as f:
