@@ -19,6 +19,7 @@ import torch.nn.functional as F
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb, DEVICE
 TIME_BUDGET = int(os.environ.get("TIME_BUDGET", TIME_BUDGET))
+STEPS_BUDGET = int(os.environ.get("STEPS_BUDGET", 0))
 
 if DEVICE != "cuda":
     def dummy_compile(*args, **kwargs):
@@ -610,7 +611,10 @@ while True:
         x, y, epoch = next(train_loader)
 
     # Progress and schedules
-    progress = min(total_training_time / TIME_BUDGET, 1.0)
+    if STEPS_BUDGET > 0:
+        progress = min(step / STEPS_BUDGET, 1.0)
+    else:
+        progress = min(total_training_time / TIME_BUDGET, 1.0)
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
@@ -660,9 +664,13 @@ while True:
 
     step += 1
 
-    # Time's up — but only stop after warmup steps so we don't count compilation
-    if step > min_steps and total_training_time >= TIME_BUDGET:
-        break
+    # Budget check
+    if STEPS_BUDGET > 0:
+        if step >= STEPS_BUDGET:
+            break
+    else:
+        if step > min_steps and total_training_time >= TIME_BUDGET:
+            break
 
 print()  # newline after \r training log
 

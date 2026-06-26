@@ -16,6 +16,7 @@ def _run_agent(
     model: str,
     max_experiments: int,
     time_budget: int,
+    steps_budget: int,
     api_provider: str,
     search: bool,
     env: dict,
@@ -27,6 +28,7 @@ def _run_agent(
         "--model", model,
         "--max-experiments", str(max_experiments),
         "--time-budget", str(time_budget),
+        "--steps-budget", str(steps_budget),
         "--api-provider", api_provider,
     ]
     if search:
@@ -103,6 +105,9 @@ def main():
         "--time-budget", type=int, default=300, help="Training budget per experiment in seconds"
     )
     parser.add_argument(
+        "--steps-budget", type=int, default=0, help="Training budget per experiment in steps"
+    )
+    parser.add_argument(
         "--api-provider", choices=["openai", "openrouter", "codex"], default="codex",
         help="API provider to use"
     )
@@ -125,12 +130,14 @@ def main():
     model = args.model
     max_experiments = args.max_experiments
     time_budget = args.time_budget
+    steps_budget = args.steps_budget
 
     if args.fast:
         model = "gpt-4o-mini"
         max_experiments = 2
         time_budget = 60
-        print(f"Fast mode enabled: model={model}, max-experiments={max_experiments}, time-budget={time_budget}")
+        steps_budget = 50
+        print(f"Fast mode enabled: model={model}, max-experiments={max_experiments}, time-budget={time_budget}, steps-budget={steps_budget}")
 
     env = os.environ.copy()
     if "GIT_AUTHOR_NAME" not in env:
@@ -157,11 +164,11 @@ def main():
 
     try:
         baseline_run_id = _run_agent(
-            "baseline", model, max_experiments, time_budget, args.api_provider, args.search, env
+            "baseline", model, max_experiments, time_budget, steps_budget, args.api_provider, args.search, env
         )
         _checkout(original_branch, env)
         loopgraph_run_id = _run_agent(
-            "loopgraph", model, max_experiments, time_budget, args.api_provider, args.search, env
+            "loopgraph", model, max_experiments, time_budget, steps_budget, args.api_provider, args.search, env
         )
     finally:
         _checkout(original_branch, env)

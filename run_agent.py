@@ -177,6 +177,7 @@ def main():
     parser.add_argument("--model", default="gpt-4o-mini", help="LLM model name")
     parser.add_argument("--max-experiments", type=int, default=5, help="Number of loop iterations")
     parser.add_argument("--time-budget", type=int, default=300, help="Training budget per experiment in seconds")
+    parser.add_argument("--steps-budget", type=int, default=0, help="Training budget per experiment in steps (overrides time-budget if > 0)")
     parser.add_argument("--api-provider", choices=["openai", "openrouter", "codex"], default="codex", help="API provider to use")
     parser.add_argument("--search", action="store_true", help="Enable live web search tool for the agent")
     
@@ -234,6 +235,7 @@ def main():
     baseline_log = "run_baseline.log"
     run_env = env.copy()
     run_env["TIME_BUDGET"] = str(args.time_budget)
+    run_env["STEPS_BUDGET"] = str(args.steps_budget)
     
     with open(baseline_log, "w") as log_f:
         res_run = subprocess.run(["python", "train.py"], env=run_env, stdout=log_f, stderr=subprocess.STDOUT)
@@ -368,6 +370,7 @@ def main():
             
             run_env = env.copy()
             run_env["TIME_BUDGET"] = str(args.time_budget)
+            run_env["STEPS_BUDGET"] = str(args.steps_budget)
             
             with open(log_path, "w") as log_f:
                 res_run = subprocess.run(["python", "train.py"], env=run_env, stdout=log_f, stderr=subprocess.STDOUT)

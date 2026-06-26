@@ -56,10 +56,11 @@ def _checkout(branch: str, env: dict) -> None:
     subprocess.run(["git", "checkout", branch], env=env, check=False)
 
 
-def _run_train(time_budget: int, env: dict, log_path: str) -> tuple[float | None, float | None, str, str]:
+def _run_train(time_budget: int, steps_budget: int, env: dict, log_path: str) -> tuple[float | None, float | None, str, str]:
     """Run train.py and parse the log. Returns (val_bpb, peak_vram_mb, status, error_msg)."""
     run_env = env.copy()
     run_env["TIME_BUDGET"] = str(time_budget)
+    run_env["STEPS_BUDGET"] = str(steps_budget)
     with open(log_path, "w") as log_f:
         res = subprocess.run(
             ["uv", "run", "python", "train.py"],
@@ -118,6 +119,7 @@ def run_agent_mode(
     time_budget: int,
     llm_fn: Callable[[str], str],
     experiments: Optional[list[dict]] = None,
+    steps_budget: int = 0,
 ) -> int:
     """Run the propose-train-evaluate loop using the supplied LLM callable."""
     initialize_db()
@@ -159,7 +161,7 @@ def run_agent_mode(
 
     # Baseline run
     print("\n=== Running baseline experiment ===")
-    val_bpb, peak_vram_mb, status, error_msg = _run_train(time_budget, env, "run_baseline.log")
+    val_bpb, peak_vram_mb, status, error_msg = _run_train(time_budget, steps_budget, env, "run_baseline.log")
     if status == "crash" or val_bpb is None:
         raise RuntimeError(f"Baseline run failed: {error_msg}")
 
@@ -268,7 +270,7 @@ def run_agent_mode(
 
             # 5. Run training
             log_path = f"run_{exp_num}_attempt_{attempt}.log"
-            val_bpb, peak_vram_mb, status, error_msg = _run_train(time_budget, env, log_path)
+            val_bpb, peak_vram_mb, status, error_msg = _run_train(time_budget, steps_budget, env, log_path)
 
             if status == "crash":
                 print(f"Training crashed: {error_msg}")
