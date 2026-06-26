@@ -112,6 +112,20 @@ def assemble_harness_prompt(
     return prompt
 
 
+
+def assemble_retrieval_prompt(results_content: str, experiment_brief: str) -> str:
+    """Assemble prompt to ask the agent for a search query to query ResearchFS."""
+    prompt = (
+        "You are an expert machine learning researcher agent.\n"
+        "Your goal is to optimize the training script `train.py` to minimize the validation bits per byte (val_bpb) on a pretraining task.\n\n"
+        f"Experiment Brief:\n{experiment_brief}\n\n"
+        f"Here is the history of previous experiments:\n{results_content}\n\n"
+        "Based on the results, decide what optimization area you want to explore next (e.g. attention, MLP, optimizer learning rate, precision, regularization).\n"
+        "Output a single search query (1-2 keywords, e.g. 'MLP SwiGLU', 'GQA attention', or 'Muon LR') to search our literature database for relevant methods and code implementations.\n"
+        "Reply ONLY with the search query text, nothing else. Do not include markdown blocks or explanation."
+    )
+    return prompt
+
 def run_agent_mode(
     mode: str,
     model: str,
@@ -197,6 +211,17 @@ def run_agent_mode(
         experiment_id = None
         prompt_tokens_accum = 0
         completion_tokens_accum = 0
+        query = ""
+        current_method_pack = ""
+        if mode == "loopgraph":
+            retrieval_prompt = assemble_retrieval_prompt(results_content, experiment_brief)
+            prompt_tokens_accum += _estimate_tokens(retrieval_prompt)
+            print("Calling harness LLM for retrieval query...")
+            query_res = llm_fn(retrieval_prompt)
+            completion_tokens_accum += _estimate_tokens(query_res)
+            query = query_res.strip().strip('"').strip("'")
+            print(f"Agent chose search query: '{query}'")
+            current_method_pack = rfs.search_methods(query)
 
         for attempt in range(max_retries):
             if attempt > 0:
@@ -209,7 +234,7 @@ def run_agent_mode(
 
             # Assemble prompt with the error from previous attempt if any
             prompt = assemble_harness_prompt(
-                mode, results_content, method_pack, experiment_brief, original_train_code, last_error
+                mode, results_content, current_method_pack, experiment_brief, original_train_code, last_error
             )
 
             prompt_tokens = _estimate_tokens(prompt)
@@ -266,6 +291,14 @@ def run_agent_mode(
                     status="pending",
                     description=description,
                     agent_run_id=agent_run_id,
+                )
+            if mode == "loopgraph":
+                rfs.log_retrieval_event(
+                    event_type="agent_search",
+                    query=query,
+                    retrieved_content=current_method_pack[:2000],
+                    agent_run_id=agent_run_id,
+                    experiment_id=experiment_id,
                 )
 
             # 5. Run training

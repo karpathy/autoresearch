@@ -168,6 +168,30 @@ def test_get_method_pack_contains_methods():
     assert "https://arxiv.org/abs/2305.13245" in pack
 
 
+
+def test_search_methods():
+    conn = _in_memory_db()
+    
+    # Test specific keyword
+    pack = rfs.search_methods("SwiGLU", conn)
+    assert "SwiGLU MLP" in pack
+    assert "Grouped-Query Attention" not in pack
+    
+    # Test category search
+    pack_attn = rfs.search_methods("attention", conn)
+    assert "Grouped-Query Attention" in pack_attn
+    assert "Token Shifting" in pack_attn
+    assert "SwiGLU MLP" not in pack_attn
+    
+    # Test case-insensitivity
+    pack_case = rfs.search_methods("muon", conn)
+    assert "Muon LR Tuning" in pack_case
+    
+    # Test empty query fallback
+    pack_empty = rfs.search_methods("", conn)
+    assert "SwiGLU MLP" in pack_empty
+    assert "Grouped-Query Attention" in pack_empty
+
 def test_get_experiment_brief():
     conn = _in_memory_db()
     brief = rfs.get_experiment_brief("nanochat_autoresearch", conn)

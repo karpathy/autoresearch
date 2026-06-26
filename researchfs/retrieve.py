@@ -56,6 +56,70 @@ def get_method_pack(conn=None) -> str:
             conn.close()
 
 
+def search_methods(query: str, conn=None) -> str:
+    """Search for methods matching the query keywords and return a formatted method pack."""
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+
+    try:
+        cur = conn.cursor()
+        keywords = [k.strip() for k in query.split() if k.strip()]
+        if not keywords:
+            return get_method_pack(conn)
+
+        conditions = []
+        params = []
+        for kw in keywords:
+            conditions.append("(m.name LIKE ? OR m.description LIKE ? OR m.category LIKE ?)")
+            like_pattern = f"%{kw}%"
+            params.extend([like_pattern, like_pattern, like_pattern])
+
+        sql = f"""
+            SELECT m.method_id, m.name, m.description, m.implementation_hint, m.risks, m.category
+            FROM methods m
+            WHERE {" AND ".join(conditions)}
+            ORDER BY m.category, m.name
+        """
+        cur.execute(sql, params)
+        methods = cur.fetchall()
+
+        if not methods:
+            return f"# Method Pack Search Results\n\nNo methods found matching query: '{query}'"
+
+        lines = [f"# Method Pack Search Results for: '{query}'\n"]
+        for method in methods:
+            lines.append(f"## {method['name']} ({method['category']})")
+            lines.append(f"**Description:** {method['description']}")
+            lines.append(f"**Implementation hint:** {method['implementation_hint']}")
+            if method["risks"]:
+                lines.append(f"**Risks:** {method['risks']}")
+
+            # Source provenance
+            cur.execute(
+                """
+                SELECT p.title, p.url, c.section, c.content
+                FROM method_sources ms
+                JOIN chunks c ON ms.chunk_id = c.chunk_id
+                JOIN papers p ON c.paper_id = p.paper_id
+                WHERE ms.method_id = ?
+                """,
+                (method["method_id"],),
+            )
+            sources = cur.fetchall()
+            if sources:
+                lines.append("**Sources:**")
+                for src in sources:
+                    lines.append(f"- {src['title']} ({src['url']}) [{src['section']}]")
+            lines.append("")
+
+        return "\n".join(lines)
+    finally:
+        if close:
+            conn.close()
+
+
 def get_experiment_brief(name: str = "nanochat_autoresearch", conn=None) -> str:
     """Return the named experiment brief content."""
     close = False
