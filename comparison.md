@@ -1,20 +1,20 @@
 # Agent Run Comparison: Baseline vs ResearchFS
 
-| Metric | Baseline (8) | ResearchFS (7) |
+| Metric | Baseline (9) | ResearchFS (10) |
 |---|---|---|
 | Model | kimi | kimi |
-| Baseline BPB | 2.065449 | 2.095255 |
-| Best BPB | 2.065449 | 2.084694 |
-| Mean kept BPB | 2.065449 | 2.090039 |
-| BPB improvement | 0.000000 | 0.010561 |
+| Baseline BPB | 1.875357 | 1.875359 |
+| Best BPB | 1.875357 | 1.841988 |
+| Mean kept BPB | 1.875357 | 1.859735 |
+| BPB improvement | 0.000000 | 0.033371 |
 | Total experiments | 3 | 3 |
 | Kept / Crashed / Discarded | 1/0/2 | 3/0/0 |
-| Prompt tokens | 15,029 | 20,686 |
-| Completion tokens | 1,465 | 1,139 |
-| Total tokens | 16,494 | 21,825 |
+| Prompt tokens | 23,121 | 31,543 |
+| Completion tokens | 1,782 | 6,116 |
+| Total tokens | 24,903 | 37,659 |
 | Estimated cost | $0.0000 | $0.0000 |
 | Retrieval/context calls | 0 | 2 |
-| Tokens per BPB improvement | N/A | 2,066,565 |
+| Tokens per BPB improvement | N/A | 1,128,494 |
 
-ResearchFS best BPB is **0.019245 worse** than baseline.
-ResearchFS used **-32.3% fewer tokens** than baseline.
+ResearchFS best BPB is **0.033369 better** than baseline.
+ResearchFS used **-51.2% fewer tokens** than baseline.
