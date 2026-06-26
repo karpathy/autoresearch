@@ -127,12 +127,16 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        # Parameter-matched hidden dimension: 8/3 * n_embd rounded to nearest 64
+        self.hidden_dim = int(8 / 3 * config.n_embd)
+        self.hidden_dim = ((self.hidden_dim + 63) // 64) * 64
+        self.c_fc = nn.Linear(config.n_embd, 2 * self.hidden_dim, bias=False)
+        self.c_proj = nn.Linear(self.hidden_dim, config.n_embd, bias=False)
 
     def forward(self, x):
         x = self.c_fc(x)
-        x = F.relu(x).square()
+        gate, val = x.chunk(2, dim=-1)
+        x = F.silu(gate) * val
         x = self.c_proj(x)
         return x
 
