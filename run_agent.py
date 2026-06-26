@@ -7,6 +7,11 @@ import re
 import subprocess
 import requests
 
+from researchfs.db import initialize_db
+from researchfs import retrieve as rfs
+from researchfs.ingest import ensure_seed
+from evals.nanochat_bpb.metrics import estimate_cost, load_run
+
 def extract_code_block(response_text):
     """Extract code from LLM response markdown block.
     
@@ -155,10 +160,10 @@ def call_llm(provider, model, messages):
     response = requests.post(url, headers=headers, json=payload, timeout=90)
     response.raise_for_status()
     data = response.json()
-    return data["choices"][0]["message"]["content"]
-
-def read_results_tsv(filepath):
-    """Read the results.tsv file if it exists."""
+    return {
+        "content": data["choices"][0]["message"]["content"],
+        "usage": data.get("usage", {}),
+    }
     if not os.path.exists(filepath):
         return ""
     with open(filepath, "r") as f:
@@ -174,7 +179,11 @@ def main():
     parser.add_argument("--search", action="store_true", help="Enable live web search tool for the agent")
     
     args = parser.parse_args()
-    
+
+    # Initialize ResearchFS database and start this agent run.
+    initialize_db()
+    ensure_seed()
+    agent_run_id = rfs.start_agent_run(args.mode, args.model)
     # Configure git author env vars if not set
     env = os.environ.copy()
     if "GIT_AUTHOR_NAME" not in env:
@@ -200,18 +209,24 @@ def main():
     # Load reference files if mode is loopgraph
     method_pack = ""
     experiment_brief = ""
+    # Load reference context from ResearchFS if mode is loopgraph.
+    method_pack = ""
+    experiment_brief = ""
     if args.mode == "loopgraph":
-        try:
-            with open("method_pack.md", "r") as f:
-                method_pack = f.read()
-        except FileNotFoundError:
-            print("Warning: method_pack.md not found", file=sys.stderr)
-        try:
-            with open("experiment_brief.md", "r") as f:
-                experiment_brief = f.read()
-        except FileNotFoundError:
-            print("Warning: experiment_brief.md not found", file=sys.stderr)
-            
+        method_pack = rfs.get_method_pack()
+        experiment_brief = rfs.get_experiment_brief("nanochat_autoresearch")
+        rfs.log_retrieval_event(
+            event_type="method_pack",
+            query="all",
+            retrieved_content=method_pack[:2000],
+            agent_run_id=agent_run_id,
+        )
+        rfs.log_retrieval_event(
+            event_type="experiment_brief",
+            query="nanochat_autoresearch",
+            retrieved_content=experiment_brief[:2000],
+            agent_run_id=agent_run_id,
+        )
     # Step 1: Run Baseline
     print("Running baseline experiment...")
     baseline_log = "run_baseline.log"
@@ -237,11 +252,23 @@ def main():
     
     with open(results_path, "a") as f:
         f.write(f"baseline\t{val_bpb_str}\t{mem_gb_str}\tkeep\tbaseline\n")
+
+    rfs.log_experiment(
+        commit_hash="baseline",
+        val_bpb=baseline_val_bpb,
+        memory_gb=peak_vram_mb / 1024 if peak_vram_mb is not None else None,
+        status="keep",
+        description="baseline",
+        agent_run_id=agent_run_id,
+    )
         
     best_val_bpb = baseline_val_bpb
     
     # Step 2: Iterative Propose-Train-Evaluate Loop
     for exp_num in range(1, args.max_experiments + 1):
+        print(f"\n=== Starting Experiment {exp_num}/{args.max_experiments} ===")
+        prompt_tokens = 0
+        completion_tokens = 0
         print(f"\n=== Starting Experiment {exp_num}/{args.max_experiments} ===")
         
         results_content = read_results_tsv(results_path)
@@ -281,9 +308,19 @@ def main():
                 print(f"LLM API call failed: {e}", file=sys.stderr)
                 print("Stopping experiment loop due to API error.")
                 break
-                
-            proposed_code = extract_code_block(llm_response)
-            description = extract_description(llm_response, f"experiment_{exp_num}")
+
+            usage = llm_response.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
+
+            proposed_code = extract_code_block(llm_response["content"])
+            description = extract_description(llm_response["content"], f"experiment_{exp_num}")
+
+            print(f"Proposed change description: {description}")
+
+            # Apply changes temporarily to check for diff
+            with open("train.py", "w") as f:
+                f.write(proposed_code)
             
             print(f"Proposed change description: {description}")
             
@@ -304,7 +341,23 @@ def main():
         
         res_hash = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=env)
         commit_hash = res_hash.stdout.strip()
-        
+
+        # Log this experiment in ResearchFS.
+        experiment_id = rfs.log_experiment(
+            commit_hash=commit_hash,
+            val_bpb=None,
+            memory_gb=None,
+            status="pending",
+            description=description,
+            agent_run_id=agent_run_id,
+        )
+        if prompt_tokens or completion_tokens:
+            rfs.log_token_usage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost=estimate_cost(prompt_tokens, completion_tokens, args.model),
+                experiment_id=experiment_id,
+            )
         # Execute the training run with self-correction retry loop
         max_retries = 2
         for attempt in range(max_retries + 1):
@@ -368,8 +421,8 @@ def main():
                 except Exception as e:
                     print(f"LLM API self-correction failed: {e}", file=sys.stderr)
                     break
-                proposed_code = extract_code_block(llm_response)
-                description = extract_description(llm_response, description)
+                proposed_code = extract_code_block(llm_response["content"])
+                description = extract_description(llm_response["content"], description)
                 with open("train.py", "w") as f:
                     f.write(proposed_code)
                     
@@ -405,5 +458,28 @@ def main():
         with open(results_path, "a") as f:
             f.write(f"{commit_hash}\t{val_bpb_str}\t{mem_gb_str}\t{status_str}\t{description}\n")
 
+        # Update ResearchFS with the final outcome.
+        rfs.update_experiment(
+            experiment_id=experiment_id,
+            val_bpb=val_bpb if val_bpb is not None else None,
+            memory_gb=peak_vram_mb / 1024 if peak_vram_mb is not None else None,
+            status=status_str,
+            description=description,
+        )
+
+    rfs.finish_agent_run(agent_run_id)
+
+    # Print a concise summary of this run.
+    summary = load_run(agent_run_id)
+    print("\n=== Agent Run Summary ===")
+    print(f"  agent_run_id: {agent_run_id}")
+    print(f"  mode: {summary['mode']}")
+    print(f"  best_bpb: {summary['best_bpb']:.6f}" if summary['best_bpb'] is not None else "  best_bpb: N/A")
+    print(f"  total_experiments: {summary['total_experiments']}")
+    print(f"  kept/crashed/discarded: {summary['kept']}/{summary['crashed']}/{summary['discarded']}")
+    print(f"  total_tokens: {summary['total_tokens']:,}")
+    print(f"  estimated_cost: ${summary['cost']:.4f}")
+    print(f"  retrieval_events: {summary['retrieval_count']}")
+    print(f"\nCompare with: python compare_runs.py --list")
 if __name__ == "__main__":
     main()
