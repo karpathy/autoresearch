@@ -88,6 +88,12 @@ CREATE TABLE IF NOT EXISTS token_usage (
     cost REAL,
     timestamp TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS retrieved_methods (
+    event_id INTEGER NOT NULL REFERENCES retrieval_events(event_id) ON DELETE CASCADE,
+    method_id INTEGER NOT NULL REFERENCES methods(method_id) ON DELETE CASCADE,
+    PRIMARY KEY(event_id, method_id)
+);
 """
 
 

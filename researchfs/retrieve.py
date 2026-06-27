@@ -6,6 +6,131 @@ from typing import Optional
 from researchfs.db import get_connection
 
 
+def _get_empirical_stats(method_id: int, conn, baselines: dict) -> dict:
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT DISTINCT e.experiment_id, e.status, e.val_bpb, e.agent_run_id
+        FROM experiments e
+        JOIN retrieval_events re ON e.experiment_id = re.experiment_id
+        JOIN retrieved_methods rm ON re.event_id = rm.event_id
+        WHERE rm.method_id = ? AND e.status IN ('keep', 'discard', 'crash')
+        """,
+        (method_id,),
+    )
+    exps = cur.fetchall()
+
+    keeps = 0
+    discards = 0
+    crashes = 0
+    deltas = []
+
+    for exp in exps:
+        status = exp["status"]
+        if status == "keep":
+            keeps += 1
+            val_bpb = exp["val_bpb"]
+            run_id = exp["agent_run_id"]
+            if val_bpb is not None and run_id is not None:
+                if run_id not in baselines:
+                    cur.execute(
+                        """
+                        SELECT val_bpb FROM experiments
+                        WHERE agent_run_id = ? AND commit_hash = 'baseline' AND val_bpb IS NOT NULL
+                        LIMIT 1
+                        """,
+                        (run_id,),
+                    )
+                    row = cur.fetchone()
+                    baselines[run_id] = row["val_bpb"] if row else None
+                base_bpb = baselines[run_id]
+                if base_bpb is not None:
+                    deltas.append(val_bpb - base_bpb)
+        elif status == "discard":
+            discards += 1
+        elif status == "crash":
+            crashes += 1
+
+    total_runs = keeps + discards + crashes
+    success_rate = keeps / total_runs if total_runs > 0 else 0.5
+    avg_bpb_delta = sum(deltas) / len(deltas) if deltas else 0.0
+
+    return {
+        "total_runs": total_runs,
+        "keeps": keeps,
+        "discards": discards,
+        "crashes": crashes,
+        "success_rate": success_rate,
+        "avg_bpb_delta": avg_bpb_delta,
+    }
+
+
+def _build_method_pack(methods: list, conn, header: str) -> tuple[str, list[int]]:
+    """Helper to calculate stats, sort methods, format them, and return (pack_str, method_ids)."""
+    baselines = {}
+    methods_with_stats = []
+    for method in methods:
+        stats = _get_empirical_stats(method["method_id"], conn, baselines)
+        method_with_stat = dict(method)
+        method_with_stat["stats"] = stats
+        methods_with_stats.append(method_with_stat)
+
+    # Sorting: Sort methods by success rate descending, then keeps descending, then category, then name
+    # (unrun methods have default success rate 0.5 for sorting)
+    def sort_key(m):
+        stats = m["stats"]
+        success_rate = stats["success_rate"]
+        keeps = stats["keeps"]
+        category = m["category"] or ""
+        name = m["name"] or ""
+        return (-success_rate, -keeps, category, name)
+
+    methods_with_stats.sort(key=sort_key)
+
+    lines = [header]
+    sorted_ids = []
+    for m in methods_with_stats:
+        sorted_ids.append(m["method_id"])
+        lines.append(f"## {m['name']} ({m['category']})")
+        lines.append(f"**Description:** {m['description']}")
+        lines.append(f"**Implementation hint:** {m['implementation_hint']}")
+        if m["risks"]:
+            lines.append(f"**Risks:** {m['risks']}")
+
+        # Empirical Swarm Stats
+        stats = m["stats"]
+        if stats["total_runs"] > 0:
+            lines.append(
+                f"**Empirical Swarm Stats:** {stats['total_runs']} runs, "
+                f"{stats['success_rate']:.0%} success ({stats['keeps']} keeps, "
+                f"{stats['discards']} discards, {stats['crashes']} crashes), "
+                f"avg {stats['avg_bpb_delta']:+.6f} BPB."
+            )
+        else:
+            lines.append("**Empirical Swarm Stats:** No runs yet.")
+
+        # Source provenance
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT p.title, p.url, c.section, c.content
+            FROM method_sources ms
+            JOIN chunks c ON ms.chunk_id = c.chunk_id
+            JOIN papers p ON c.paper_id = p.paper_id
+            WHERE ms.method_id = ?
+            """,
+            (m["method_id"],),
+        )
+        sources = cur.fetchall()
+        if sources:
+            lines.append("**Sources:**")
+            for src in sources:
+                lines.append(f"- {src['title']} ({src['url']}) [{src['section']}]")
+        lines.append("")
+
+    return "\n".join(lines), sorted_ids
+
+
 def get_method_pack(conn=None) -> str:
     """Return a formatted method pack string for agent prompts."""
     close = False
@@ -19,45 +144,23 @@ def get_method_pack(conn=None) -> str:
             """
             SELECT m.method_id, m.name, m.description, m.implementation_hint, m.risks, m.category
             FROM methods m
-            ORDER BY m.category, m.name
             """
         )
         methods = cur.fetchall()
-
-        lines = ["# Method Pack: Autoresearch Optimization Catalog\n"]
-        for method in methods:
-            lines.append(f"## {method['name']} ({method['category']})")
-            lines.append(f"**Description:** {method['description']}")
-            lines.append(f"**Implementation hint:** {method['implementation_hint']}")
-            if method["risks"]:
-                lines.append(f"**Risks:** {method['risks']}")
-
-            # Source provenance
-            cur.execute(
-                """
-                SELECT p.title, p.url, c.section, c.content
-                FROM method_sources ms
-                JOIN chunks c ON ms.chunk_id = c.chunk_id
-                JOIN papers p ON c.paper_id = p.paper_id
-                WHERE ms.method_id = ?
-                """,
-                (method["method_id"],),
-            )
-            sources = cur.fetchall()
-            if sources:
-                lines.append("**Sources:**")
-                for src in sources:
-                    lines.append(f"- {src['title']} ({src['url']}) [{src['section']}]")
-            lines.append("")
-
-        return "\n".join(lines)
+        method_list = [dict(m) for m in methods]
+        pack_str, _ = _build_method_pack(
+            method_list,
+            conn,
+            "# Method Pack: Autoresearch Optimization Catalog\n"
+        )
+        return pack_str
     finally:
         if close:
             conn.close()
 
 
-def search_methods(query: str, conn=None) -> str:
-    """Search for methods matching the query keywords and return a formatted method pack."""
+def search_methods_and_ids(query: str, conn=None) -> tuple[str, list[int]]:
+    """Search for methods matching the query keywords and return a tuple of (formatted_method_pack, list_of_method_ids)."""
     close = False
     if conn is None:
         conn = get_connection()
@@ -67,7 +170,21 @@ def search_methods(query: str, conn=None) -> str:
         cur = conn.cursor()
         keywords = [k.strip() for k in query.split() if k.strip()]
         if not keywords:
-            return get_method_pack(conn)
+            # Fall back to returning all methods
+            cur.execute(
+                """
+                SELECT m.method_id, m.name, m.description, m.implementation_hint, m.risks, m.category
+                FROM methods m
+                """
+            )
+            methods = cur.fetchall()
+            method_list = [dict(m) for m in methods]
+            pack_str, ids = _build_method_pack(
+                method_list,
+                conn,
+                "# Method Pack: Autoresearch Optimization Catalog\n"
+            )
+            return pack_str, ids
 
         conditions = []
         params = []
@@ -80,46 +197,29 @@ def search_methods(query: str, conn=None) -> str:
             SELECT m.method_id, m.name, m.description, m.implementation_hint, m.risks, m.category
             FROM methods m
             WHERE {" AND ".join(conditions)}
-            ORDER BY m.category, m.name
         """
         cur.execute(sql, params)
         methods = cur.fetchall()
 
         if not methods:
-            return f"# Method Pack Search Results\n\nNo methods found matching query: '{query}'"
+            return f"# Method Pack Search Results\n\nNo methods found matching query: '{query}'", []
 
-        lines = [f"# Method Pack Search Results for: '{query}'\n"]
-        for method in methods:
-            lines.append(f"## {method['name']} ({method['category']})")
-            lines.append(f"**Description:** {method['description']}")
-            lines.append(f"**Implementation hint:** {method['implementation_hint']}")
-            if method["risks"]:
-                lines.append(f"**Risks:** {method['risks']}")
-
-            # Source provenance
-            cur.execute(
-                """
-                SELECT p.title, p.url, c.section, c.content
-                FROM method_sources ms
-                JOIN chunks c ON ms.chunk_id = c.chunk_id
-                JOIN papers p ON c.paper_id = p.paper_id
-                WHERE ms.method_id = ?
-                """,
-                (method["method_id"],),
-            )
-            sources = cur.fetchall()
-            if sources:
-                lines.append("**Sources:**")
-                for src in sources:
-                    lines.append(f"- {src['title']} ({src['url']}) [{src['section']}]")
-            lines.append("")
-
-        return "\n".join(lines)
+        method_list = [dict(m) for m in methods]
+        pack_str, ids = _build_method_pack(
+            method_list,
+            conn,
+            f"# Method Pack Search Results for: '{query}'\n"
+        )
+        return pack_str, ids
     finally:
         if close:
             conn.close()
 
 
+def search_methods(query: str, conn=None) -> str:
+    """Search for methods matching the query keywords and return a formatted method pack."""
+    pack, _ = search_methods_and_ids(query, conn)
+    return pack
 def get_experiment_brief(name: str = "nanochat_autoresearch", conn=None) -> str:
     """Return the named experiment brief content."""
     close = False
@@ -262,6 +362,7 @@ def log_retrieval_event(
     agent_run_id: Optional[int] = None,
     experiment_id: Optional[int] = None,
     conn=None,
+    method_ids: Optional[list[int]] = None,
 ) -> int:
     """Log a retrieval event for token/cost auditing."""
     close = False
@@ -279,12 +380,24 @@ def log_retrieval_event(
             """,
             (agent_run_id, experiment_id, event_type, query, retrieved_content),
         )
+        event_id = cur.lastrowid
+
+        if method_ids:
+            unique_method_ids = list(dict.fromkeys(method_ids))
+            for method_id in unique_method_ids:
+                cur.execute(
+                    """
+                    INSERT INTO retrieved_methods (event_id, method_id)
+                    VALUES (?, ?)
+                    """,
+                    (event_id, method_id),
+                )
+
         conn.commit()
-        return cur.lastrowid
+        return event_id
     finally:
         if close:
             conn.close()
-
 
 def log_token_usage(
     prompt_tokens: int,

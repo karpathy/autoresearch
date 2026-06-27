@@ -213,6 +213,7 @@ def run_agent_mode(
         completion_tokens_accum = 0
         query = ""
         current_method_pack = ""
+        method_ids = None
         if mode == "loopgraph":
             retrieval_prompt = assemble_retrieval_prompt(results_content, experiment_brief)
             prompt_tokens_accum += _estimate_tokens(retrieval_prompt)
@@ -221,7 +222,7 @@ def run_agent_mode(
             completion_tokens_accum += _estimate_tokens(query_res)
             query = query_res.strip().strip('"').strip("'")
             print(f"Agent chose search query: '{query}'")
-            current_method_pack = rfs.search_methods(query)
+            current_method_pack, method_ids = rfs.search_methods_and_ids(query)
 
         for attempt in range(max_retries):
             if attempt > 0:
@@ -299,6 +300,7 @@ def run_agent_mode(
                     retrieved_content=current_method_pack[:2000],
                     agent_run_id=agent_run_id,
                     experiment_id=experiment_id,
+                    method_ids=method_ids,
                 )
 
             # 5. Run training

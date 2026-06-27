@@ -382,6 +382,166 @@ def test_apply_hunks_not_found():
     except HunkError:
         pass
 
+
+def test_empirical_feedback_and_stats():
+    conn = _in_memory_db()
+
+    # Get method IDs
+    cur = conn.cursor()
+    cur.execute("SELECT method_id, name FROM methods")
+    methods_dict = {row["name"]: row["method_id"] for row in cur.fetchall()}
+    swiglu_id = methods_dict["SwiGLU MLP"]
+    gqa_id = methods_dict["Grouped-Query Attention (GQA)"]
+
+    # 1. Agent run 1
+    run_id1 = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+
+    # Baseline for run 1
+    baseline_id1 = rfs.log_experiment("baseline", 2.500, 0.5, "keep", "baseline", run_id1, conn)
+
+    # Exp 1: SwiGLU keep (val_bpb = 2.450 -> delta = -0.050)
+    exp1_id = rfs.log_experiment("commit1", 2.450, 0.5, "keep", "better SwiGLU", run_id1, conn)
+    rfs.log_retrieval_event("agent_search", "SwiGLU", "retrieved content 1", run_id1, exp1_id, conn, method_ids=[swiglu_id])
+
+    # Exp 2: SwiGLU discard (val_bpb = 2.520)
+    exp2_id = rfs.log_experiment("commit2", 2.520, 0.5, "discard", "worse SwiGLU", run_id1, conn)
+    rfs.log_retrieval_event("agent_search", "SwiGLU", "retrieved content 2", run_id1, exp2_id, conn, method_ids=[swiglu_id])
+
+    # Exp 3: SwiGLU crash (val_bpb = None)
+    exp3_id = rfs.log_experiment("commit3", None, 0.0, "crash", "crashed SwiGLU", run_id1, conn)
+    rfs.log_retrieval_event("agent_search", "SwiGLU", "retrieved content 3", run_id1, exp3_id, conn, method_ids=[swiglu_id])
+
+    # Exp 4: GQA keep (val_bpb = 2.400 -> delta = -0.100)
+    exp4_id = rfs.log_experiment("commit4", 2.400, 0.5, "keep", "better GQA", run_id1, conn)
+    rfs.log_retrieval_event("agent_search", "GQA", "retrieved content 4", run_id1, exp4_id, conn, method_ids=[gqa_id])
+
+    # Exp 5: GQA keep (val_bpb = 2.380 -> delta = -0.120)
+    exp5_id = rfs.log_experiment("commit5", 2.380, 0.5, "keep", "even better GQA", run_id1, conn)
+    rfs.log_retrieval_event("agent_search", "GQA", "retrieved content 5", run_id1, exp5_id, conn, method_ids=[gqa_id])
+
+    # Verify retrieved_methods table population
+    cur.execute("SELECT COUNT(*) FROM retrieved_methods")
+    assert cur.fetchone()[0] == 5
+
+    # Get method pack for search query "SwiGLU"
+    pack, ids = rfs.search_methods_and_ids("SwiGLU", conn)
+    assert swiglu_id in ids
+
+    # Check stats for SwiGLU
+    # 3 runs, 33% success (1 keeps, 1 discards, 1 crashes), avg -0.050000 BPB.
+    expected_swiglu_stats = "3 runs, 33% success (1 keeps, 1 discards, 1 crashes), avg -0.050000 BPB"
+    assert expected_swiglu_stats in pack
+
+    # Get method pack for GQA
+    pack_gqa, ids_gqa = rfs.search_methods_and_ids("Grouped-Query", conn)
+    assert gqa_id in ids_gqa
+    expected_gqa_stats = "2 runs, 100% success (2 keeps, 0 discards, 0 crashes), avg -0.110000 BPB"
+    assert expected_gqa_stats in pack_gqa
+
+    # Verify sorting in the full method pack
+    # GQA success rate: 1.0 (keeps=2)
+    # Unrun methods success rate: 0.5 (keeps=0)
+    # SwiGLU success rate: 0.33 (keeps=1)
+    # So GQA should be first, followed by unrun methods (e.g. Muon), followed by SwiGLU MLP.
+    full_pack = rfs.get_method_pack(conn)
+
+    # Let's verify sorting order via positions of the headers
+    pos_gqa = full_pack.find("Grouped-Query Attention (GQA)")
+    pos_swiglu = full_pack.find("SwiGLU MLP")
+    pos_muon = full_pack.find("Muon LR Tuning")
+
+    assert pos_gqa < pos_muon
+    assert pos_muon < pos_swiglu
+
+def test_log_retrieval_event_with_methods():
+    conn = _in_memory_db()
+    run_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    exp_id = rfs.log_experiment("def456", 2.0, 0.4, "keep", "test", run_id, conn)
+    
+    event_id = rfs.log_retrieval_event(
+        event_type="agent_search",
+        query="attention",
+        retrieved_content="content",
+        agent_run_id=run_id,
+        experiment_id=exp_id,
+        conn=conn,
+        method_ids=[1, 2],
+    )
+    
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM retrieved_methods WHERE event_id = ? ORDER BY method_id", (event_id,))
+    rows = cur.fetchall()
+    assert len(rows) == 2
+    assert rows[0]["method_id"] == 1
+    assert rows[1]["method_id"] == 2
+
+
+def test_method_stats_calculation():
+    conn = _in_memory_db()
+    
+    cur = conn.cursor()
+    cur.execute("SELECT method_id FROM methods WHERE name = ?", ("Grouped-Query Attention (GQA)",))
+    method_id = cur.fetchone()["method_id"]
+    
+    run_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    
+    # Experiment 1 (baseline): val_bpb = 2.0
+    exp1_id = rfs.log_experiment("baseline", 2.0, 0.5, "keep", "baseline", run_id, conn)
+    
+    # Experiment 2 (keep): val_bpb = 1.95, linked to Method A
+    exp2_id = rfs.log_experiment("commit2", 1.95, 0.5, "keep", "keep exp", run_id, conn)
+    rfs.log_retrieval_event("agent_search", "query", "retrieved", run_id, exp2_id, conn, method_ids=[method_id])
+    
+    # Experiment 3 (discard): val_bpb = 2.05, linked to Method A
+    exp3_id = rfs.log_experiment("commit3", 2.05, 0.5, "discard", "discard exp", run_id, conn)
+    rfs.log_retrieval_event("agent_search", "query", "retrieved", run_id, exp3_id, conn, method_ids=[method_id])
+    
+    # Experiment 4 (crash): val_bpb = None, linked to Method A
+    exp4_id = rfs.log_experiment("commit4", None, None, "crash", "crash exp", run_id, conn)
+    rfs.log_retrieval_event("agent_search", "query", "retrieved", run_id, exp4_id, conn, method_ids=[method_id])
+    
+    pack = rfs.search_methods("Grouped-Query Attention", conn)
+    expected_stats = "3 runs, 33% success (1 keeps, 1 discards, 1 crashes), avg -0.050000 BPB"
+    assert expected_stats in pack
+
+
+def test_method_pack_stats_formatting():
+    conn = _in_memory_db()
+    
+    cur = conn.cursor()
+    cur.execute("SELECT method_id, name FROM methods")
+    methods_dict = {row["name"]: row["method_id"] for row in cur.fetchall()}
+    swiglu_id = methods_dict["SwiGLU MLP"]
+    gqa_id = methods_dict["Grouped-Query Attention (GQA)"]
+    muon_id = methods_dict["Muon LR Tuning"]
+    
+    run_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    rfs.log_experiment("baseline", 2.0, 0.5, "keep", "baseline", run_id, conn)
+    
+    exp_gqa = rfs.log_experiment("gqa_commit", 1.9, 0.5, "keep", "GQA keep", run_id, conn)
+    rfs.log_retrieval_event("agent_search", "GQA", "retrieved", run_id, exp_gqa, conn, method_ids=[gqa_id])
+    
+    exp_swiglu = rfs.log_experiment("swiglu_commit", 2.1, 0.5, "discard", "SwiGLU discard", run_id, conn)
+    rfs.log_retrieval_event("agent_search", "SwiGLU", "retrieved", run_id, exp_swiglu, conn, method_ids=[swiglu_id])
+    
+    pack = rfs.get_method_pack(conn)
+    
+    assert "1 runs, 100% success (1 keeps, 0 discards, 0 crashes), avg -0.100000 BPB" in pack
+    assert "1 runs, 0% success (0 keeps, 1 discards, 0 crashes), avg +0.000000 BPB" in pack
+    assert "No runs yet" in pack
+    
+    pos_gqa = pack.find("Grouped-Query Attention (GQA)")
+    pos_muon = pack.find("Muon LR Tuning")
+    pos_swiglu = pack.find("SwiGLU MLP")
+    
+    assert pos_gqa < pos_muon
+    assert pos_muon < pos_swiglu
+    
+    pack_search_gqa = rfs.search_methods("Grouped-Query Attention", conn)
+    assert "1 runs, 100% success (1 keeps, 0 discards, 0 crashes), avg -0.100000 BPB" in pack_search_gqa
+    
+    pack_search_muon = rfs.search_methods("Muon", conn)
+    assert "No runs yet" in pack_search_muon
 if __name__ == "__main__":
     import sys
     try:
