@@ -230,6 +230,79 @@ def test_search_methods():
     assert "Grouped-Query Attention" in pack_empty
 
 
+def test_fts_retrieves_method_by_chunk_term():
+    conn = _in_memory_db()
+    cur = conn.cursor()
+
+    # Seed a paper + chunk whose content contains terms absent from the method name/description.
+    cur.execute(
+        "INSERT INTO papers (title, authors, abstract, url, publish_date) VALUES (?, ?, ?, ?, ?)",
+        ("Muon Optimizer Paper", "Test Author", "Abstract", "https://example.com/muon", "2026-06-27"),
+    )
+    paper_id = cur.lastrowid
+    cur.execute(
+        "INSERT INTO chunks (paper_id, section, content) VALUES (?, ?, ?)",
+        (
+            paper_id,
+            "Introduction",
+            "The Newton-Schulz iterations produce orthogonal weight matrices for stable optimization.",
+        ),
+    )
+    chunk_id = cur.lastrowid
+
+    # Method name/description deliberately do NOT mention Newton-Schulz/orthogonal.
+    cur.execute(
+        "INSERT INTO methods (name, description, implementation_hint, risks, category) VALUES (?, ?, ?, ?, ?)",
+        ("Muon", "Matrix optimizer via polar decomposition", "Use with large batches", "Instability", "optimizer"),
+    )
+    method_id = cur.lastrowid
+    cur.execute(
+        "INSERT INTO method_sources (method_id, chunk_id) VALUES (?, ?)",
+        (method_id, chunk_id),
+    )
+
+    pack, ids = rfs.search_methods_and_ids("Newton-Schulz", conn)
+    assert method_id in ids, "Expected Muon to be retrieved via chunk provenance for 'Newton-Schulz'"
+    assert "Muon" in pack
+
+    pack2, ids2 = rfs.search_methods_and_ids("orthogonal", conn)
+    assert method_id in ids2, "Expected Muon to be retrieved via chunk provenance for 'orthogonal'"
+
+
+def test_fts_ranking_prefers_successful_method():
+    conn = _in_memory_db()
+    cur = conn.cursor()
+
+    # Two methods match the same query term in their descriptions.
+    cur.execute(
+        "INSERT INTO methods (name, description, implementation_hint, risks, category) VALUES (?, ?, ?, ?, ?)",
+        ("Alpha Method", "A rankingtest optimizer for experiments", "Hint", "Risk", "test"),
+    )
+    alpha_id = cur.lastrowid
+    cur.execute(
+        "INSERT INTO methods (name, description, implementation_hint, risks, category) VALUES (?, ?, ?, ?, ?)",
+        ("Beta Method", "Another rankingtest optimizer for experiments", "Hint", "Risk", "test"),
+    )
+    beta_id = cur.lastrowid
+
+    def make_run_and_experiment(method_id, final_status):
+        run_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+        exp_id = rfs.log_experiment("abc123", 1.0, 0.5, "pending", "test", run_id, conn)
+        rfs.log_retrieval_event(
+            "search", "rankingtest", "content", agent_run_id=run_id, experiment_id=exp_id, conn=conn, method_ids=[method_id]
+        )
+        rfs.update_experiment(exp_id, status=final_status, conn=conn)
+        return exp_id
+
+    make_run_and_experiment(alpha_id, "keep")
+    make_run_and_experiment(beta_id, "discard")
+
+    pack, ids = rfs.search_methods_and_ids("rankingtest", conn)
+    assert alpha_id in ids
+    assert beta_id in ids
+    assert ids.index(alpha_id) < ids.index(beta_id), "Expected the 100% successful method to rank first"
+
+
 def test_ingest_paper_without_llm():
     conn = _in_memory_db()
     meta = {

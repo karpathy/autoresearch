@@ -1,6 +1,7 @@
 """Retrieval and logging API for ResearchFS v0."""
 
 import json
+import re
 from typing import Optional
 
 from researchfs.db import get_connection
@@ -65,7 +66,9 @@ def _get_empirical_stats(method_id: int, conn, baselines: dict) -> dict:
     }
 
 
-def _build_method_pack(methods: list, conn, header: str) -> tuple[str, list[int]]:
+def _build_method_pack(
+    methods: list, conn, header: str, sort_key=None
+) -> tuple[str, list[int]]:
     """Helper to calculate stats, sort methods, format them, and return (pack_str, method_ids)."""
     baselines = {}
     methods_with_stats = []
@@ -77,13 +80,14 @@ def _build_method_pack(methods: list, conn, header: str) -> tuple[str, list[int]
 
     # Sorting: Sort methods by success rate descending, then keeps descending, then category, then name
     # (unrun methods have default success rate 0.5 for sorting)
-    def sort_key(m):
-        stats = m["stats"]
-        success_rate = stats["success_rate"]
-        keeps = stats["keeps"]
-        category = m["category"] or ""
-        name = m["name"] or ""
-        return (-success_rate, -keeps, category, name)
+    if sort_key is None:
+        def sort_key(m):
+            stats = m["stats"]
+            success_rate = stats["success_rate"]
+            keeps = stats["keeps"]
+            category = m["category"] or ""
+            name = m["name"] or ""
+            return (-success_rate, -keeps, category, name)
 
     methods_with_stats.sort(key=sort_key)
 
@@ -159,6 +163,108 @@ def get_method_pack(conn=None) -> str:
             conn.close()
 
 
+def _search_methods_hybrid(
+    query: str, conn
+) -> tuple[list[dict], list[int], dict[int, float]]:
+    """Run FTS5 hybrid search and return (method_rows, ordered_ids, method_ranks).
+
+    method_ranks maps method_id to the best (lowest) FTS5 rank found either
+    directly in methods_fts or indirectly via chunks_fts + method_sources.
+    """
+    cur = conn.cursor()
+    keywords = [k.strip() for k in query.split() if k.strip()]
+    if not keywords:
+        cur.execute(
+            """
+            SELECT m.method_id, m.name, m.description, m.implementation_hint, m.risks, m.category
+            FROM methods m
+            """
+        )
+        methods = [dict(m) for m in cur.fetchall()]
+        return methods, [m["method_id"] for m in methods], {}
+
+    # Normalize keywords to avoid FTS5 query-syntax errors (e.g. hyphens become spaces).
+    normalized_keywords = []
+    for kw in keywords:
+        normalized = re.sub(r"[^a-zA-Z0-9]+", " ", kw).strip()
+        if normalized:
+            normalized_keywords.extend(normalized.split())
+    fts_query = " ".join(normalized_keywords)
+    method_ranks: dict[int, float] = {}
+
+    # Method-direct matches
+    cur.execute(
+        "SELECT rowid, rank FROM methods_fts WHERE methods_fts MATCH ?",
+        (fts_query,),
+    )
+    for row in cur.fetchall():
+        method_id = row["rowid"]
+        rank = row["rank"]
+        method_ranks[method_id] = min(method_ranks.get(method_id, float("inf")), rank)
+
+    # Chunk-provenance matches: chunk -> method_sources -> method_id
+    cur.execute(
+        """
+        SELECT chunks_fts.rowid, chunks_fts.rank, ms.method_id
+        FROM chunks_fts
+        JOIN method_sources ms ON chunks_fts.rowid = ms.chunk_id
+        WHERE chunks_fts MATCH ?
+        """,
+        (fts_query,),
+    )
+    for row in cur.fetchall():
+        method_id = row["method_id"]
+        rank = row["rank"]
+        method_ranks[method_id] = min(method_ranks.get(method_id, float("inf")), rank)
+
+    if not method_ranks:
+        return [], [], {}
+
+    ids = list(method_ranks.keys())
+    placeholders = ",".join("?" * len(ids))
+    cur.execute(
+        f"""
+        SELECT m.method_id, m.name, m.description, m.implementation_hint, m.risks, m.category
+        FROM methods m
+        WHERE m.method_id IN ({placeholders})
+        """,
+        ids,
+    )
+    methods = [dict(m) for m in cur.fetchall()]
+    return methods, ids, method_ranks
+
+
+def _score_methods(
+    methods: list[dict], conn, method_ranks: dict[int, float]
+) -> tuple[list[dict], list[int]]:
+    """Combine FTS5 rank with empirical success rate and return ordered rows/ids."""
+    baselines = {}
+    scored = []
+
+    if method_ranks:
+        ranks = list(method_ranks.values())
+        min_rank = min(ranks)
+        max_rank = max(ranks)
+        rank_range = max_rank - min_rank if max_rank > min_rank else 1.0
+    else:
+        min_rank = max_rank = 0.0
+        rank_range = 1.0
+
+    for method in methods:
+        stats = _get_empirical_stats(method["method_id"], conn, baselines)
+        method["stats"] = stats
+        rank = method_ranks.get(method["method_id"], max_rank)
+        normalized_rank = (rank - min_rank) / rank_range if rank_range else 0.0
+        rank_score = 1.0 - normalized_rank
+        # Success rate is weighted more heavily so proven empirical wins over tiny rank differences.
+        method["_score"] = stats["success_rate"] * 0.6 + rank_score * 0.4
+        scored.append(method)
+
+    scored.sort(key=lambda m: (-m["_score"], m["category"] or "", m["name"] or ""))
+    ids = [m["method_id"] for m in scored]
+    return scored, ids
+
+
 def search_methods_and_ids(query: str, conn=None) -> tuple[str, list[int]]:
     """Search for methods matching the query keywords and return a tuple of (formatted_method_pack, list_of_method_ids)."""
     close = False
@@ -167,48 +273,26 @@ def search_methods_and_ids(query: str, conn=None) -> tuple[str, list[int]]:
         close = True
 
     try:
-        cur = conn.cursor()
-        keywords = [k.strip() for k in query.split() if k.strip()]
-        if not keywords:
-            # Fall back to returning all methods
-            cur.execute(
-                """
-                SELECT m.method_id, m.name, m.description, m.implementation_hint, m.risks, m.category
-                FROM methods m
-                """
-            )
-            methods = cur.fetchall()
-            method_list = [dict(m) for m in methods]
-            pack_str, ids = _build_method_pack(
-                method_list,
-                conn,
-                "# Method Pack: Autoresearch Optimization Catalog\n"
-            )
-            return pack_str, ids
-
-        conditions = []
-        params = []
-        for kw in keywords:
-            conditions.append("(m.name LIKE ? OR m.description LIKE ? OR m.category LIKE ?)")
-            like_pattern = f"%{kw}%"
-            params.extend([like_pattern, like_pattern, like_pattern])
-
-        sql = f"""
-            SELECT m.method_id, m.name, m.description, m.implementation_hint, m.risks, m.category
-            FROM methods m
-            WHERE {" AND ".join(conditions)}
-        """
-        cur.execute(sql, params)
-        methods = cur.fetchall()
+        methods, _, method_ranks = _search_methods_hybrid(query, conn)
 
         if not methods:
             return f"# Method Pack Search Results\n\nNo methods found matching query: '{query}'", []
 
-        method_list = [dict(m) for m in methods]
-        pack_str, ids = _build_method_pack(
-            method_list,
+        if not method_ranks:
+            # Empty query fallback: preserve default success-rate ordering.
+            pack_str, ids = _build_method_pack(
+                methods,
+                conn,
+                "# Method Pack: Autoresearch Optimization Catalog\n",
+            )
+            return pack_str, ids
+
+        ordered_methods, ids = _score_methods(methods, conn, method_ranks)
+        pack_str, _ = _build_method_pack(
+            ordered_methods,
             conn,
-            f"# Method Pack Search Results for: '{query}'\n"
+            f"# Method Pack Search Results for: '{query}'\n",
+            sort_key=lambda m: (-m["_score"], m["category"] or "", m["name"] or ""),
         )
         return pack_str, ids
     finally:

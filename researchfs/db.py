@@ -94,6 +94,59 @@ CREATE TABLE IF NOT EXISTS retrieved_methods (
     method_id INTEGER NOT NULL REFERENCES methods(method_id) ON DELETE CASCADE,
     PRIMARY KEY(event_id, method_id)
 );
+
+CREATE VIRTUAL TABLE IF NOT EXISTS methods_fts USING fts5(
+    method_id UNINDEXED,
+    name,
+    description,
+    implementation_hint,
+    risks,
+    category,
+    content='methods',
+    content_rowid='method_id'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    chunk_id UNINDEXED,
+    section,
+    content,
+    content='chunks',
+    content_rowid='chunk_id'
+);
+
+CREATE TRIGGER IF NOT EXISTS methods_ai AFTER INSERT ON methods BEGIN
+    INSERT INTO methods_fts(rowid, method_id, name, description, implementation_hint, risks, category)
+    VALUES (new.method_id, new.method_id, new.name, new.description, new.implementation_hint, new.risks, new.category);
+END;
+
+CREATE TRIGGER IF NOT EXISTS methods_ad AFTER DELETE ON methods BEGIN
+    INSERT INTO methods_fts(methods_fts, rowid, method_id, name, description, implementation_hint, risks, category)
+    VALUES ('delete', old.method_id, old.method_id, old.name, old.description, old.implementation_hint, old.risks, old.category);
+END;
+
+CREATE TRIGGER IF NOT EXISTS methods_au AFTER UPDATE ON methods BEGIN
+    INSERT INTO methods_fts(methods_fts, rowid, method_id, name, description, implementation_hint, risks, category)
+    VALUES ('delete', old.method_id, old.method_id, old.name, old.description, old.implementation_hint, old.risks, old.category);
+    INSERT INTO methods_fts(rowid, method_id, name, description, implementation_hint, risks, category)
+    VALUES (new.method_id, new.method_id, new.name, new.description, new.implementation_hint, new.risks, new.category);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+    INSERT INTO chunks_fts(rowid, chunk_id, section, content)
+    VALUES (new.chunk_id, new.chunk_id, new.section, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, chunk_id, section, content)
+    VALUES ('delete', old.chunk_id, old.chunk_id, old.section, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, chunk_id, section, content)
+    VALUES ('delete', old.chunk_id, old.chunk_id, old.section, old.content);
+    INSERT INTO chunks_fts(rowid, chunk_id, section, content)
+    VALUES (new.chunk_id, new.chunk_id, new.section, new.content);
+END;
 """
 
 
@@ -106,6 +159,35 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+def ensure_fts_populated(conn: sqlite3.Connection | None = None) -> None:
+    """Bulk-populate FTS5 tables from existing rows when they are empty."""
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+    try:
+        methods_count = conn.execute("SELECT COUNT(*) FROM methods_fts").fetchone()[0]
+        if methods_count == 0:
+            conn.execute(
+                """
+                INSERT INTO methods_fts(rowid, method_id, name, description, implementation_hint, risks, category)
+                SELECT method_id, method_id, name, description, implementation_hint, risks, category FROM methods
+                """
+            )
+        chunks_count = conn.execute("SELECT COUNT(*) FROM chunks_fts").fetchone()[0]
+        if chunks_count == 0:
+            conn.execute(
+                """
+                INSERT INTO chunks_fts(rowid, chunk_id, section, content)
+                SELECT chunk_id, chunk_id, section, content FROM chunks
+                """
+            )
+        conn.commit()
+    finally:
+        if close:
+            conn.close()
+
+
 def initialize_db(conn: sqlite3.Connection | None = None) -> None:
     """Create ResearchFS tables if they do not exist."""
     close = False
@@ -114,6 +196,7 @@ def initialize_db(conn: sqlite3.Connection | None = None) -> None:
         close = True
     try:
         conn.executescript(SCHEMA)
+        ensure_fts_populated(conn)
         conn.commit()
     finally:
         if close:
