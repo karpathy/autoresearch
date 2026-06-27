@@ -70,11 +70,13 @@ read-only `prepare.py`:
 2. **Subsampled val set.** `MAPCallback` runs inference one image at a time
    (`batch_size=1`) over the *entire* val set, which dominates the budget. So
    `val_dataset_config` points at `combined_val_sub.parquet` — a **deterministic
-   (seed=42), stratified 1000-image subsample** of the 3209-image val set, built by
+   (seed=42), stratified 400-image subsample** of the 3209-image val set, built by
    `libs/VDA2/scripts/make_val_subsample.py`: proportional by `source`, rarest-class-first
-   so all 57 val classes are covered, then random fill. This is a *progress signal*, not
-   the parity gate — regenerate it (same script/seed) if `sources` change, and never edit
-   it ad hoc mid-run.
+   so all 57 val classes are covered, then random fill. 400 keeps the bs=1 val pass to
+   ~1–1.5 min (a small fraction of the budget, so most of it is training); raise/lower
+   `--target` to trade val stability against epochs-per-budget. This is a *progress
+   signal*, not the parity gate — regenerate it (same script/seed) if `sources` change,
+   and never edit it ad hoc mid-run.
 
 Once you get confirmation, kick off the experimentation.
 
