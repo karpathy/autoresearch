@@ -61,13 +61,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--steps-budget",
         type=int,
-        default=50,
-        help="Training steps budget per experiment",
+        default=0,
+        help="Training steps budget per experiment (0 = use time budget)",
     )
     parser.add_argument(
         "--time-budget",
         type=int,
-        default=60,
+        default=30,
         help="Training time budget per experiment in seconds",
     )
     parser.add_argument(

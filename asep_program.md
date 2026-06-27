@@ -16,8 +16,8 @@ experiment:
     --mode {mode}
     --metric val_bpb
     --max-experiments 1
-    --steps-budget 50
-    --time-budget 60
+    --steps-budget 0
+    --time-budget 30
     --api-provider openrouter
     --model z-ai/glm-4.5-air:free
     --device mps
