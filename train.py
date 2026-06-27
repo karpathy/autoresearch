@@ -9,6 +9,7 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import gc
+import hashlib
 import math
 import time
 from dataclasses import dataclass, asdict
@@ -460,7 +461,17 @@ torch.cuda.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 device = torch.device("cuda")
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
-H100_BF16_PEAK_FLOPS = 989.5e12
+# GPU-specific peak BF16 Tensor Core FLOPS (fixes #547)
+GPU_PEAK_FLOPS = {
+    (7, 0): 125e12,    # V100 SXM2
+    (8, 0): 312e12,    # A100 SXM
+    (8, 6): 142e12,    # RTX 3090 / A10G
+    (8, 9): 330e12,    # L4 / L40S / RTX 4090
+    (9, 0): 989.5e12,  # H100 SXM
+    (10, 0): 2250e12,  # B200 SXM (Blackwell sm_100)
+    (10, 2): 660e12,   # RTX 5090 (Blackwell sm_120)
+}
+H100_BF16_PEAK_FLOPS = GPU_PEAK_FLOPS.get(cap, 989.5e12)  # fall back to H100 if unknown
 
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
@@ -607,6 +618,69 @@ print()  # newline after \r training log
 
 total_tokens = step * TOTAL_BATCH_SIZE
 
+
+# ---------------------------------------------------------------------------
+# Experiment integrity log (see issue #599)
+# Appends one tamper-evident line to integrity.log binding val_bpb to sha256
+# of the key source files + model weights sample + real optimizer-step count.
+# Detection only; stdlib only; never crashes a run.
+# ---------------------------------------------------------------------------
+
+def log_integrity(val_bpb, model, optimizer, total_training_time):
+    """Append one tamper-evident receipt line to integrity.log (stdlib only)."""
+    try:
+        import datetime
+        def sha256_file(path):
+            h = hashlib.sha256()
+            try:
+                with open(path, "rb") as f:
+                    for chunk in iter(lambda: f.read(65536), b""):
+                        h.update(chunk)
+            except OSError:
+                return "missing"
+            return h.hexdigest()[:16]
+
+        train_hash = sha256_file("train.py")
+        prepare_hash = sha256_file("prepare.py")
+
+        # Count real optimizer steps from internal state (not the loop variable)
+        real_opt_steps = 0
+        for group in optimizer.param_groups:
+            for p in group["params"]:
+                st = optimizer.state.get(p, {})
+                if "step" in st:
+                    real_opt_steps = max(real_opt_steps, int(st["step"]))
+                    break
+            if real_opt_steps:
+                break
+
+        # Hash first 1 MB of model weights
+        model_h = hashlib.sha256()
+        bytes_seen = 0
+        for p in model.parameters():
+            if bytes_seen >= 1_048_576:
+                break
+            raw = p.detach().float().cpu().numpy().tobytes()
+            model_h.update(raw[:max(0, 1_048_576 - bytes_seen)])
+            bytes_seen += len(raw)
+        model_hash = model_h.hexdigest()[:16]
+
+        ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        line = (
+            f"{ts}\t"
+            f"val_bpb={val_bpb:.6f}\t"
+            f"train_sha256={train_hash}\t"
+            f"prepare_sha256={prepare_hash}\t"
+            f"model_sha256={model_hash}\t"
+            f"real_opt_steps={real_opt_steps}\t"
+            f"training_sec={total_training_time:.1f}\n"
+        )
+        with open("integrity.log", "a") as f:
+            f.write(line)
+        print(f"integrity_log: {line.strip()}")
+    except Exception as e:
+        print(f"integrity_log: skipped ({e})")
+
 # Final eval
 model.eval()
 with autocast_ctx:
@@ -615,7 +689,7 @@ with autocast_ctx:
 # Final summary
 t_end = time.time()
 startup_time = t_start_training - t_start
-steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0
+steady_state_mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 11) / total_training_time / H100_BF16_PEAK_FLOPS if total_training_time > 0 else 0  # fix #556: steps 0..10 are skipped (11 steps)
 peak_vram_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
 
 print("---")
@@ -628,3 +702,6 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
+
+# Write tamper-evident integrity receipt (issue #599)
+log_integrity(val_bpb, model, optimizer, total_training_time)
