@@ -24,3 +24,10 @@ results.tsv
 
 # ResearchFS DB
 researchfs.db
+
+# ASEP workspace state
+.asep/
+
+# Agent run logs
+run_*.log
+run_baseline.log
