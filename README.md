@@ -1,5 +1,11 @@
 # autoresearch
 
+> **This fork** repurposes the loop to drive the **RF-DETR VDA combined-detection**
+> training in the `videa-ml` repo (not the upstream nanochat GPT). See `program.md` —
+> it is rewritten to edit the real RF-DETR config/model, optimize `val_mAP50`, and run
+> fixed 30-minute experiments. The `train.py` / `prepare.py` files below are the upstream
+> nanochat toy and are unused here. Everything below this note is upstream README.
+
 ![teaser](progress.png)
 
 *One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.

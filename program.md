@@ -1,114 +1,185 @@
-# autoresearch
+# autoresearch — RF-DETR VDA combined detection
 
-This is an experiment to have the LLM do its own research.
+This is an autonomous-research loop for the **RF-DETR VDA combined-detection** model.
+You (the agent) iterate on the *real* training code in the `videa-ml` repo, run
+fixed-wall-clock experiments, and keep changes that raise `val_mAP50`.
+
+> This fork does **not** train the upstream nanochat GPT. The `train.py` / `prepare.py`
+> files in this repo are the upstream toy and are **ignored**. The training code you edit
+> lives in `~/Repositories/videa-ml` (see paths below).
+
+## Topology (read this first)
+
+- **Instructions + results live here**: `~/Repositories/autoresearch/` holds this
+  `program.md` and `results.tsv`.
+- **Code you edit + git history live in `videa-ml`**: all edits, commits, branch, and
+  keep/discard `git reset` operations happen in `~/Repositories/videa-ml`. The branch,
+  not this repo, is what advances.
+- All paths below are **absolute** so commands work regardless of your current directory.
 
 ## Setup
 
 To set up a new experiment, work with the user to:
 
-1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar5`). The branch `autoresearch/<tag>` must not already exist — this is a fresh run.
-2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
-3. **Read the in-scope files**: The repo is small. Read these files for full context:
-   - `README.md` — repository context.
-   - `prepare.py` — fixed constants, data prep, tokenizer, dataloader, evaluation. Do not modify.
-   - `train.py` — the file you modify. Model architecture, optimizer, training loop.
-4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
-5. **Initialize results.tsv**: Create `results.tsv` with just the header row. The baseline will be recorded after the first run.
-6. **Confirm and go**: Confirm setup looks good.
+1. **Agree on a run tag**: propose a tag based on today's date (e.g. `jun26`). Per-GPU
+   variant if running several at once: `jun26-gpu7`. The branch `autoresearch/<tag>` must
+   not already exist in `videa-ml`.
+2. **Create the branch in videa-ml** (off the current RF-DETR branch `suraj/rf-detr-vda2`):
+   ```bash
+   cd ~/Repositories/videa-ml && git checkout -b autoresearch/<tag>
+   ```
+3. **Read the in-scope files** for full context (the repo is large; read only these):
+   - `~/Repositories/videa-ml/libs/VDA2/RF_DETR_VDA_GUIDE.md` — **canonical** gotchas,
+     parity methodology, next-run recommendations. Read this fully.
+   - `~/Repositories/videa-ml/libs/VDA2/VDA2/training_configs/rfdetr_vda1_combined_fda60.yaml`
+     — the config you tune.
+   - `~/Repositories/videa-ml/libs/vh_nnet/vh_nnet/networks/detection/rf_detr/{model,boxes,collate,optimization}.py`
+     — the model/optimizer code you may tune.
+4. **Verify data + weights exist** (do not modify these):
+   - Parquets: `/data/projects/vda/2026_retraining/data/vda1_detection/processed/annotations/fda60/{combined_train,combined_val}.parquet`
+   - COCO warm-start: `/data/projects/vda/2026_retraining/pretrained/rf-detr-base.pth`
+   If missing, stop and tell the user.
+5. **Cap `steps_per_epoch` so val runs inside the budget**: a full combined epoch (~59k
+   images) takes far longer than the 30-minute budget, so with the default `null` you'd
+   get **zero** `val_mAP50` points. Set `train_params_config.steps_per_epoch` to a small
+   value (start ~150–300) and a large `n_epochs` (e.g. 50) so several `val_mAP50`
+   evaluations land inside the window. `steps_per_epoch` also rescales the cosine schedule
+   (`total_steps = n_epochs * steps_per_epoch`), so keep it fixed across experiments for
+   comparability — treat it as part of the fixed budget, not a tuning knob.
+6. **Initialize `results.tsv`**: create `~/Repositories/autoresearch/results.tsv` with just
+   the header row (it is gitignored — leave it untracked). The baseline is recorded after
+   the first run.
+7. **Confirm and go.**
 
 Once you get confirmation, kick off the experimentation.
 
 ## Experimentation
 
-Each experiment runs on a single GPU. The training script runs for a **fixed time budget of 5 minutes** (wall clock training time, excluding startup/compilation). You launch it simply as: `uv run train.py`.
+Each experiment runs on a single GPU for a **fixed wall-clock budget of 30 minutes**
+(plus torch.compile/startup overhead). The metric is **`val_mAP50`** (COCO IoU-0.5
+progress signal logged by `GroupedClassReportCallback`) — **higher is better**.
 
-**What you CAN do:**
-- Modify `train.py` — this is the only file you edit. Everything is fair game: model architecture, optimizer, hyperparameters, training loop, batch size, model size, etc.
+> Note: `val_mAP50` is a progress signal, NOT the official VDA1.0 parity gate (that is the
+> `ml_base` centroid-IoU best-F1/FROC/AP harness in the guide). It is the right *fast*
+> signal for autonomous keep/discard; periodic true-parity checks are the user's call.
 
-**What you CANNOT do:**
-- Modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, tokenizer, and training constants (time budget, sequence length, etc).
-- Install new packages or add dependencies. You can only use what's already in `pyproject.toml`.
-- Modify the evaluation harness. The `evaluate_bpb` function in `prepare.py` is the ground truth metric.
+**What you CAN edit** (in the config yaml, or the `rf_detr/*.py` model code):
+- Optimizer + LR recipe: `lr`, `lr_encoder`, `lr_vit_layer_decay`, `lr_component_decay`,
+  `weight_decay`, `warmup_epochs`, `lr_scheduler`, `ema_decay`, `use_ema`.
+- Augmentation: the entire `bw_pa_aug` block (and `train` preprocessor kwargs).
+- Compute: `batch_size`, `grad_accum_steps`, `use_amp`, `amp_dtype`, `compile_model`.
+- Architecture: `resolution` (**MUST be a multiple of 56** — 560, 616, …, 1008, 1064),
+  `projector_scale` (e.g. `[P4]`, `[P3, P4]`), and decoder/backbone knobs in `rf_detr/*.py`.
 
-**The goal is simple: get the lowest val_bpb.** Since the time budget is fixed, you don't need to worry about training time — it's always 5 minutes. Everything is fair game: change the architecture, the optimizer, the hyperparameters, the batch size, the model size. The only constraint is that the code runs without crashing and finishes within the time budget.
+**What you CANNOT change** (these define the comparable metric and data integrity — they
+are this loop's equivalent of upstream's read-only `prepare.py`):
+- `val_dataset_config` (the val set) and the `GroupedClassReportCallback` config
+  (`iou_thresholds`, `num_classes`, score/detection thresholds) — this is the `val_mAP50`
+  ground truth.
+- The data parquet paths, `sources`, `num_classes`, the class map, and `mask_partial_labels`.
+- The fixed RF-DETR invariants from the guide — violating these silently corrupts training:
+  `positional_encoding_size=37` (fixed by the COCO checkpoint); the head must be reinit to
+  `N+1` after warm-start; loss is computed in `train()` mode for BOTH train and val
+  (group-DETR); padding-mask convention is `True = padding`; always train on RAW images
+  (the preprocessor does 12-bit→8-bit windowing).
 
-**VRAM** is a soft constraint. Some increase is acceptable for meaningful val_bpb gains, but it should not blow up dramatically.
+**Simplicity criterion**: all else equal, simpler is better. A tiny `val_mAP50` gain that
+adds ugly complexity isn't worth it; a gain (or wash) from *removing* code is a clear win.
 
-**Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome — that's a simplification win. When evaluating whether to keep a change, weigh the complexity cost against the improvement magnitude. A 0.001 val_bpb improvement that adds 20 lines of hacky code? Probably not worth it. A 0.001 val_bpb improvement from deleting code? Definitely keep. An improvement of ~0 but much simpler code? Keep.
+**The first run**: your very first run establishes the baseline — run the config as-is
+(after only the `steps_per_epoch` cap from setup step 5), no other changes.
 
-**The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
+## Running an experiment
 
-## Output format
-
-Once the script finishes it prints a summary like this:
-
+```bash
+cd ~/Repositories/videa-ml
+timeout 1800 uv run --package VDA2 python libs/VDA2/scripts/train_vda2_model.py \
+  --fpath-config libs/VDA2/VDA2/training_configs/rfdetr_vda1_combined_fda60.yaml \
+  --gpu 7 > ~/Repositories/autoresearch/run.log 2>&1
 ```
----
-val_bpb:          0.997900
-training_seconds: 300.1
-total_seconds:    325.9
-peak_vram_mb:     45060.2
-mfu_percent:      39.80
-total_tokens_M:   499.6
-num_steps:        953
-num_params_M:     50.3
-depth:            8
-```
+- `timeout 1800` enforces the 30-minute budget (the trainer has no built-in time stop).
+  torch.compile startup is *extra* on top of this; for very short experiments you may set
+  `compile_model: false` to spend the window on training instead of compilation.
+- `--gpu N`: pick an idle GPU (omit to auto-select the lowest-memory GPU). Use distinct
+  GPUs for parallel `-gpuN` branches.
+- Redirect to `run.log` — do NOT `tee` or let training output flood your context.
 
-Note that the script is configured to always stop after 5 minutes, so depending on the computing platform of this computer the numbers might look different. You can extract the key metric from the log file:
+## Reading the result
 
+Find the newest run dir for this config and read the best `val_mAP50` from its `history.csv`:
+```bash
+RUN_DIR=$(ls -dt /data/projects/vda/2026_retraining/model_runs/vda1_combined_fda60/rfdetr_vda1_combined_fda60_*/ \
+  2>/dev/null | head -1)
+python - "$RUN_DIR/history.csv" <<'PY'
+import sys, pandas as pd
+df = pd.read_csv(sys.argv[1])
+print(f"best_val_mAP50={df['val_mAP50'].max():.6f} epochs={len(df)}")
+PY
 ```
-grep "^val_bpb:" run.log
-```
+If `history.csv` is missing or has no `val_mAP50` row, the run crashed (or no epoch
+finished in the window) → `tail -n 50 ~/Repositories/autoresearch/run.log` to diagnose.
+Peak VRAM: `grep -iE "peak.*mem|reserved" ~/Repositories/autoresearch/run.log` or `nvidia-smi`.
 
 ## Logging results
 
-When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated — commas break in descriptions).
-
-The TSV has a header row and 5 columns:
+When an experiment is done, append a row to `~/Repositories/autoresearch/results.tsv`
+(tab-separated, NOT comma — commas break descriptions). Header + 6 columns:
 
 ```
-commit	val_bpb	memory_gb	status	description
+commit	val_mAP50	mem_gb	epochs	status	description
 ```
 
-1. git commit hash (short, 7 chars)
-2. val_bpb achieved (e.g. 1.234567) — use 0.000000 for crashes
-3. peak memory in GB, round to .1f (e.g. 12.3 — divide peak_vram_mb by 1024) — use 0.0 for crashes
-4. status: `keep`, `discard`, or `crash`
-5. short text description of what this experiment tried
+1. videa-ml git commit hash (short, 7 chars)
+2. best `val_mAP50` (e.g. `0.474000`) — use `0.000000` for crashes
+3. peak GPU memory in GB, `.1f` — use `0.0` if unknown/crash
+4. epochs (val points) completed in the window — use `0` for crash
+5. status: `keep`, `discard`, or `crash`
+6. short description of what the experiment tried
 
 Example:
-
 ```
-commit	val_bpb	memory_gb	status	description
-a1b2c3d	0.997900	44.0	keep	baseline
-b2c3d4e	0.993200	44.2	keep	increase LR to 0.04
-c3d4e5f	1.005000	44.0	discard	switch to GeLU activation
-d4e5f6g	0.000000	0.0	crash	double model width (OOM)
+commit	val_mAP50	mem_gb	epochs	status	description
+a1b2c3d	0.421000	15.2	6	keep	baseline (steps_per_epoch=200)
+b2c3d4e	0.447000	15.4	6	keep	lr_encoder 1.5e-4 -> 2.5e-4
+c3d4e5f	0.410000	15.2	6	discard	projector_scale [P4] only
+d4e5f6g	0.000000	0.0	0	crash	resolution 600 (not a multiple of 56)
 ```
 
 ## The experiment loop
 
-The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
+The experiment runs on a dedicated branch in `videa-ml` (e.g. `autoresearch/jun26` or
+`autoresearch/jun26-gpu7`).
 
 LOOP FOREVER:
 
-1. Look at the git state: the current branch/commit we're on
-2. Tune `train.py` with an experimental idea by directly hacking the code.
-3. git commit
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
-8. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
-9. If val_bpb is equal or worse, you git reset back to where you started
+1. Check git state in `~/Repositories/videa-ml`: current branch/commit.
+2. Tune the config yaml (or `rf_detr/*.py`) with one experimental idea.
+3. `git commit` in videa-ml.
+4. Run the experiment (the `timeout … train_vda2_model.py` command above).
+5. Read the best `val_mAP50` (the snippet above).
+6. If there's no `val_mAP50`, the run crashed → read the tail of `run.log` and attempt a
+   fix. Give up after a few attempts.
+7. Record the row in `results.tsv` (leave `results.tsv` untracked — do NOT commit it).
+8. **Disk hygiene**: on `discard` or `crash`, delete that experiment's run dir under
+   `/data/projects/vda/2026_retraining/model_runs/vda1_combined_fda60/` — RF-DETR
+   checkpoints are large and ~100 overnight runs will fill `/data`. Keep only `keep` runs.
+9. If `val_mAP50` improved (higher), **advance** the branch (keep the commit). If it's
+   equal or worse, `git reset --hard` the videa-ml branch back to where you started.
 
-The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
+You are a fully autonomous researcher: try an idea, keep if it helps, discard if it
+doesn't, advance the branch, iterate. Rewind only very sparingly, if ever.
 
-**Timeout**: Each experiment should take ~5 minutes total (+ a few seconds for startup and eval overhead). If a run exceeds 10 minutes, kill it and treat it as a failure (discard and revert).
+**Timeout**: each experiment should take ~30 min + startup. If a run exceeds ~45 min of
+wall clock (e.g. the `timeout` didn't fire), kill it and treat it as a failed run.
 
-**Crashes**: If a run crashes (OOM, or a bug, or etc.), use your judgment: If it's something dumb and easy to fix (e.g. a typo, a missing import), fix it and re-run. If the idea itself is fundamentally broken, just skip it, log "crash" as the status in the tsv, and move on.
+**Crashes**: if a run crashes (OOM, bug, etc.), use judgment. Something dumb (typo, bad
+value, OOM you can shrink batch for) → fix and re-run. Fundamentally broken idea → log
+`crash` and move on.
 
-**NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
-
-As an example use case, a user might leave you running while they sleep. If each experiment takes you ~5 minutes then you can run approx 12/hour, for a total of about 100 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
+**NEVER STOP**: once the loop has begun (after setup), do NOT pause to ask the human
+whether to continue. Do NOT ask "should I keep going?" or "is this a good stopping point?".
+The human may be asleep and expects you to work *indefinitely* until manually stopped. If
+you run out of ideas, think harder: re-read `RF_DETR_VDA_GUIDE.md` §9 (next-run
+recommendations), re-read the `rf_detr/*.py` code for new angles, combine previous
+near-misses, or try more radical architecture/optimizer changes. The loop runs until the
+human interrupts you, period.
