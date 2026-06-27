@@ -4,6 +4,13 @@ This is an autonomous-research loop for the **RF-DETR VDA combined-detection** m
 You (the agent) iterate on the *real* training code in the `videa-ml` repo, run
 fixed-wall-clock experiments, and keep changes that raise `val_mAP50`.
 
+> **Warm-start mode (important).** From the COCO checkpoint, a 30-min budget only covers
+> ~0.3 of one data pass, so `val_mAP50` sits at ~0 the whole time and gives no signal.
+> Instead, each experiment **fine-tunes from the best existing checkpoint**
+> (`initial_model_weights: …/r560_final/r560_model_best.keras`, ~0.47 val_mAP50, exact-match
+> load + fresh optimizer) at a **gentle LR (2e-5)** and we measure the *delta*. The goal is
+> to push past the current best, not retrain from scratch.
+
 > This fork does **not** train the upstream nanochat GPT. The `train.py` / `prepare.py`
 > files in this repo are the upstream toy and are **ignored**. The training code you edit
 > lives in `~/Repositories/videa-ml` (see paths below).
@@ -113,8 +120,16 @@ are this loop's equivalent of upstream's read-only `prepare.py`; see "Fixed eval
 **Simplicity criterion**: all else equal, simpler is better. A tiny `val_mAP50` gain that
 adds ugly complexity isn't worth it; a gain (or wash) from *removing* code is a clear win.
 
+**Warm-start is fixed infrastructure, but the fine-tune recipe is fair game.** Keep
+`initial_model_weights` pointing at the best checkpoint (don't train from COCO — that gives
+~0 signal in the budget), but the LR / schedule / aug / etc. *on top of* the warm-start are
+exactly what you tune. As the loop finds better checkpoints, the user may repoint
+`initial_model_weights` at the new best.
+
 **The first run**: your very first run establishes the baseline — run the config as-is
-(after only the `steps_per_epoch` cap from setup step 5), no other changes.
+(warm-start from the best checkpoint at lr 2e-5, `steps_per_epoch` cap from setup step 5),
+no other changes. Confirm epoch-0 `val_mAP50` ≈ the checkpoint's known score (~0.43 on the
+400-img subsample) — if it comes back ~0 the warm-start didn't load.
 
 ## Running an experiment
 
