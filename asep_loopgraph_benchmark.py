@@ -74,7 +74,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--api-provider",
-        choices=["openai", "openrouter"],
+        choices=["openai", "openrouter", "venice"],
         default="openai",
         help="LLM API provider",
     )

@@ -148,6 +148,15 @@ def call_llm(provider, model, messages):
             "HTTP-Referer": "https://github.com/google/loopgraph",
             "X-Title": "LoopGraph Agent"
         }
+    elif provider == "venice":
+        api_key = os.environ.get("VENICE_API_KEY")
+        if not api_key:
+            raise ValueError("VENICE_API_KEY environment variable is not set")
+        url = "https://api.venice.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
     else:
         raise ValueError(f"Unknown API provider: {provider}")
 
@@ -178,7 +187,7 @@ def main():
     parser.add_argument("--max-experiments", type=int, default=5, help="Number of loop iterations")
     parser.add_argument("--time-budget", type=int, default=300, help="Training budget per experiment in seconds")
     parser.add_argument("--steps-budget", type=int, default=0, help="Training budget per experiment in steps (overrides time-budget if > 0)")
-    parser.add_argument("--api-provider", choices=["openai", "openrouter", "codex"], default="codex", help="API provider to use")
+    parser.add_argument("--api-provider", choices=["openai", "openrouter", "venice", "codex"], default="codex", help="API provider to use")
     parser.add_argument("--search", action="store_true", help="Enable live web search tool for the agent")
     
     args = parser.parse_args()

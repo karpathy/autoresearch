@@ -18,8 +18,8 @@ experiment:
     --max-experiments 1
     --steps-budget 0
     --time-budget 30
-    --api-provider openai
-    --model gpt-4o-mini
+    --api-provider venice
+    --model zai-org-glm-5-2
     --device mps
   timeout_seconds: 600
 strategy:
