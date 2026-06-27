@@ -357,6 +357,141 @@ def test_ingest_paper_with_stub_llm():
     assert "Stub Test Method" in pack
 
 
+
+def test_ingest_deduplication_exact_name():
+    conn = _in_memory_db()
+    
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM methods")
+    initial_methods_count = cur.fetchone()[0]
+    
+    cur.execute("SELECT method_id FROM methods WHERE LOWER(name) = LOWER('SwiGLU MLP')")
+    existing_method_id = cur.fetchone()[0]
+    
+    stub_response = '{"methods":[{"name":"swiglu mlp","description":"A case-insensitive duplicate SwiGLU","implementation_hint":"use silu","risks":"none","category":"mlp","source_chunk_indices":[0]}]}'
+    
+    def stub_llm(_prompt):
+        return f"```json\n{stub_response}\n```"
+
+    meta = {
+        "title": "Exact Name Duplicate Paper",
+        "authors": "Duplicate Author",
+        "abstract": "Testing exact name duplicate resolution.",
+        "url": "https://example.com/exact_name_dup",
+        "publish_date": "2026-06-27",
+        "content": "This is content about swiglu mlp.",
+    }
+    
+    result = ingest_paper(meta, llm_fn=stub_llm, conn=conn)
+    
+    assert result["paper_id"] is not None
+    assert len(result["chunk_ids"]) > 0
+    assert result["method_ids"] == [existing_method_id]
+    
+    # Verify no new method was inserted
+    cur.execute("SELECT COUNT(*) FROM methods")
+    new_methods_count = cur.fetchone()[0]
+    assert new_methods_count == initial_methods_count
+    
+    # Verify method_sources receives the new chunk ID mapping for the resolved method
+    new_chunk_id = result["chunk_ids"][0]
+    cur.execute("SELECT 1 FROM method_sources WHERE method_id = ? AND chunk_id = ?", (existing_method_id, new_chunk_id))
+    assert cur.fetchone() is not None, "Expected method_sources to link the existing method to the new chunk"
+    
+    # Verify search_methods lists the new paper source
+    pack = rfs.search_methods("swiglu", conn=conn)
+    assert "Exact Name Duplicate Paper" in pack
+    assert "https://example.com/exact_name_dup" in pack
+
+
+def test_ingest_deduplication_llm():
+    conn = _in_memory_db()
+    
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM methods")
+    initial_methods_count = cur.fetchone()[0]
+    
+    cur.execute("SELECT method_id FROM methods WHERE LOWER(name) = LOWER('SwiGLU MLP')")
+    existing_method_id = cur.fetchone()[0]
+    
+    # 1. Test case: similar name but not exact, LLM returns YES -> should deduplicate / merge
+    stub_response = '{"methods":[{"name":"SwiGLU Activation Function","description":"SwiGLU activation.","implementation_hint":"use silu","risks":"none","category":"mlp","source_chunk_indices":[0]}]}'
+    
+    def stub_llm_yes(prompt):
+        if "exact same optimization method" in prompt:
+            if "SwiGLU MLP" in prompt:
+                return "YES"
+            return "NO"
+        return f"```json\n{stub_response}\n```"
+
+    meta_yes = {
+        "title": "LLM Merge SwiGLU Paper",
+        "authors": "Merge Author",
+        "abstract": "Testing LLM merge behavior.",
+        "url": "https://example.com/llm_merge",
+        "publish_date": "2026-06-27",
+        "content": "This is content describing SwiGLU Activation Function.",
+    }
+    
+    result_yes = ingest_paper(meta_yes, llm_fn=stub_llm_yes, conn=conn)
+    
+    assert result_yes["paper_id"] is not None
+    assert len(result_yes["chunk_ids"]) > 0
+    assert result_yes["method_ids"] == [existing_method_id]
+    
+    # Verify no new method was inserted
+    cur.execute("SELECT COUNT(*) FROM methods")
+    assert cur.fetchone()[0] == initial_methods_count
+    
+    # Verify method_sources receives the new chunk ID mapping
+    new_chunk_id_yes = result_yes["chunk_ids"][0]
+    cur.execute("SELECT 1 FROM method_sources WHERE method_id = ? AND chunk_id = ?", (existing_method_id, new_chunk_id_yes))
+    assert cur.fetchone() is not None
+    
+    # Verify search_methods lists the new paper source
+    pack_yes = rfs.search_methods("swiglu", conn=conn)
+    assert "LLM Merge SwiGLU Paper" in pack_yes
+    assert "https://example.com/llm_merge" in pack_yes
+
+    # 2. Test case: similar name but not exact, LLM returns NO -> should NOT deduplicate (should insert new method)
+    stub_response_no = '{"methods":[{"name":"SwiGLU Attention Layer","description":"A completely different SwiGLU based attention.","implementation_hint":"none","risks":"none","category":"attention","source_chunk_indices":[0]}]}'
+    
+    def stub_llm_no(prompt):
+        if "exact same optimization method" in prompt:
+            return "NO"
+        return f"```json\n{stub_response_no}\n```"
+
+    meta_no = {
+        "title": "LLM No-Merge SwiGLU Paper",
+        "authors": "No-Merge Author",
+        "abstract": "Testing LLM no-merge behavior.",
+        "url": "https://example.com/llm_nomerge",
+        "publish_date": "2026-06-27",
+        "content": "This is content describing SwiGLU Attention Layer.",
+    }
+    
+    result_no = ingest_paper(meta_no, llm_fn=stub_llm_no, conn=conn)
+    
+    assert result_no["paper_id"] is not None
+    assert len(result_no["chunk_ids"]) > 0
+    new_method_id = result_no["method_ids"][0]
+    assert new_method_id != existing_method_id
+    
+    # Verify a new method WAS inserted
+    cur.execute("SELECT COUNT(*) FROM methods")
+    assert cur.fetchone()[0] == initial_methods_count + 1
+    
+    # Verify method_sources receives the new chunk ID mapping for the NEW method
+    new_chunk_id_no = result_no["chunk_ids"][0]
+    cur.execute("SELECT 1 FROM method_sources WHERE method_id = ? AND chunk_id = ?", (new_method_id, new_chunk_id_no))
+    assert cur.fetchone() is not None
+    
+    # Verify search_methods lists the new paper source under the NEW method
+    pack_no = rfs.search_methods("Attention Layer", conn=conn)
+    assert "SwiGLU Attention Layer" in pack_no
+    assert "LLM No-Merge SwiGLU Paper" in pack_no
+    assert "https://example.com/llm_nomerge" in pack_no
+
 def test_get_experiment_brief():
     conn = _in_memory_db()
     brief = rfs.get_experiment_brief("nanochat_autoresearch", conn)

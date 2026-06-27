@@ -638,6 +638,83 @@ def _build_llm_fn() -> Optional[Callable[[str], str]]:
     return _llm
 
 
+def _check_duplicate_method(
+    method: dict,
+    llm_fn: Optional[Callable[[str], str]] = None,
+    conn=None,
+) -> Optional[int]:
+    """Check if the extracted method is a duplicate of an existing method.
+
+    Checks:
+    1. Case-insensitive name match.
+    2. FTS5 query on method name keywords for similar candidates.
+    3. LLM decision on the candidates if llm_fn is provided.
+    """
+    name = method.get("name")
+    if not name:
+        return None
+
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+
+    try:
+        cur = conn.cursor()
+        # 1. Exact case-insensitive name match
+        cur.execute(
+            "SELECT method_id FROM methods WHERE LOWER(name) = LOWER(?)",
+            (name,),
+        )
+        row = cur.fetchone()
+        if row:
+            return row[0]
+
+        # 2. FTS5 search using keywords from the method's name
+        import re
+        keywords = [k.strip() for k in re.split(r"[^a-zA-Z0-9]+", name) if k.strip()]
+        if not keywords:
+            return None
+
+        fts_query = " OR ".join(keywords)
+        try:
+            cur.execute(
+                "SELECT rowid, name, description FROM methods_fts WHERE methods_fts MATCH ? ORDER BY rank LIMIT 3",
+                (fts_query,),
+            )
+            candidates = cur.fetchall()
+        except sqlite3.OperationalError:
+            candidates = []
+
+        # 3. LLM comparison
+        if candidates and llm_fn is not None:
+            extracted_name = name
+            extracted_desc = method.get("description", "")
+            for cand in candidates:
+                existing_name = cand["name"]
+                existing_desc = cand["description"] or ""
+                
+                prompt = (
+                    f"You are an expert machine learning database curator.\n"
+                    f"We are ingesting a new method:\n"
+                    f"Name: {extracted_name}\n"
+                    f"Description: {extracted_desc}\n\n"
+                    f"We found an existing method in the database:\n"
+                    f"Name: {existing_name}\n"
+                    f"Description: {existing_desc}\n\n"
+                    f"Are these the exact same optimization method?\n"
+                    f"Reply ONLY with 'YES' or 'NO'. Do not include explanation or markdown."
+                )
+                response = llm_fn(prompt)
+                if response and response.strip().upper() == "YES":
+                    return cand["rowid"]
+
+        return None
+    finally:
+        if close:
+            conn.close()
+
+
 def ingest_paper(
     meta: dict,
     llm_fn: Optional[Callable[[str], str]] = None,
@@ -668,46 +745,65 @@ def ingest_paper(
         ``{planned: {...}}`` on a dry run.
     """
     if dry_run:
-        content = meta.get("content", meta.get("abstract", ""))
-        chunks = extractor.chunk_text(content)
-        planned = {
-            "paper": {
-                "title": meta.get("title"),
-                "authors": meta.get("authors"),
-                "abstract": meta.get("abstract"),
-                "url": meta.get("url"),
-                "publish_date": meta.get("publish_date"),
-            },
-            "chunks": [
-                {"section": "extracted", "content": chunk} for chunk in chunks
-            ],
-            "methods": [],
-            "method_sources": [],
-        }
-        if llm_fn is not None:
-            try:
-                result = extractor.extract_methods_from_paper(meta, llm_fn)
-                for method in result.get("methods", []):
-                    planned["methods"].append(
-                        {
-                            "name": method.get("name"),
-                            "description": method.get("description", ""),
-                            "implementation_hint": method.get("implementation_hint", ""),
-                            "risks": method.get("risks", ""),
-                            "category": method.get("category", ""),
-                        }
-                    )
-                    for idx in method.get("source_chunk_indices") or []:
-                        if isinstance(idx, int) and 0 <= idx < len(chunks):
-                            planned["method_sources"].append(
+        close_conn = False
+        if conn is None:
+            initialize_db()
+            conn = get_connection()
+            close_conn = True
+        try:
+            content = meta.get("content", meta.get("abstract", ""))
+            chunks = extractor.chunk_text(content)
+            planned = {
+                "paper": {
+                    "title": meta.get("title"),
+                    "authors": meta.get("authors"),
+                    "abstract": meta.get("abstract"),
+                    "url": meta.get("url"),
+                    "publish_date": meta.get("publish_date"),
+                },
+                "chunks": [
+                    {"section": "extracted", "content": chunk} for chunk in chunks
+                ],
+                "methods": [],
+                "merged_methods": [],
+                "method_sources": [],
+            }
+            if llm_fn is not None:
+                try:
+                    result = extractor.extract_methods_from_paper(meta, llm_fn)
+                    for method in result.get("methods", []):
+                        resolved_id = _check_duplicate_method(method, llm_fn=llm_fn, conn=conn)
+                        if resolved_id is not None:
+                            planned["merged_methods"].append(
                                 {
-                                    "method_name": method.get("name"),
-                                    "chunk_index": idx,
+                                    "name": method.get("name"),
+                                    "merged_into_id": resolved_id,
                                 }
                             )
-            except Exception as exc:  # pragma: no cover
-                planned["extraction_error"] = str(exc)
-        return {"planned": planned}
+                        else:
+                            planned["methods"].append(
+                                {
+                                    "name": method.get("name"),
+                                    "description": method.get("description", ""),
+                                    "implementation_hint": method.get("implementation_hint", ""),
+                                    "risks": method.get("risks", ""),
+                                    "category": method.get("category", ""),
+                                }
+                            )
+                        for idx in method.get("source_chunk_indices") or []:
+                            if isinstance(idx, int) and 0 <= idx < len(chunks):
+                                planned["method_sources"].append(
+                                    {
+                                        "method_name": method.get("name"),
+                                        "chunk_index": idx,
+                                    }
+                                )
+                except Exception as exc:  # pragma: no cover
+                    planned["extraction_error"] = str(exc)
+            return {"planned": planned}
+        finally:
+            if close_conn:
+                conn.close()
 
     close = False
     if conn is None:
@@ -754,25 +850,30 @@ def ingest_paper(
         if llm_fn is not None:
             result = extractor.extract_methods_from_paper(meta, llm_fn)
             for method in result.get("methods", []):
-                cur.execute(
-                    """
-                    INSERT OR IGNORE INTO methods
-                    (name, description, implementation_hint, risks, category)
-                    VALUES (:name, :description, :implementation_hint, :risks, :category)
-                    """,
-                    {
-                        "name": method.get("name"),
-                        "description": method.get("description", ""),
-                        "implementation_hint": method.get("implementation_hint", ""),
-                        "risks": method.get("risks", ""),
-                        "category": method.get("category", ""),
-                    },
-                )
-                cur.execute(
-                    "SELECT method_id FROM methods WHERE name = ?",
-                    (method["name"],),
-                )
-                method_id = cur.fetchone()["method_id"]
+                resolved_id = _check_duplicate_method(method, llm_fn=llm_fn, conn=conn)
+                if resolved_id is not None:
+                    method_id = resolved_id
+                else:
+                    cur.execute(
+                        """
+                        INSERT OR IGNORE INTO methods
+                        (name, description, implementation_hint, risks, category)
+                        VALUES (:name, :description, :implementation_hint, :risks, :category)
+                        """,
+                        {
+                            "name": method.get("name"),
+                            "description": method.get("description", ""),
+                            "implementation_hint": method.get("implementation_hint", ""),
+                            "risks": method.get("risks", ""),
+                            "category": method.get("category", ""),
+                        },
+                    )
+                    cur.execute(
+                        "SELECT method_id FROM methods WHERE name = ?",
+                        (method["name"],),
+                    )
+                    method_id = cur.fetchone()["method_id"]
+                
                 method_ids.append(method_id)
 
                 for idx in method.get("source_chunk_indices") or []:
@@ -781,7 +882,6 @@ def ingest_paper(
                             "INSERT OR IGNORE INTO method_sources (method_id, chunk_id) VALUES (?, ?)",
                             (method_id, chunk_ids[idx]),
                         )
-
         conn.commit()
         return {"paper_id": paper_id, "chunk_ids": chunk_ids, "method_ids": method_ids}
     finally:
@@ -852,9 +952,12 @@ def main() -> None:
         print(f"Publish date: {paper.get('publish_date')}")
         print(f"Chunks      : {len(planned.get('chunks', []))}")
         methods = planned.get("methods", [])
-        print(f"Methods     : {len(methods)}")
+        merged_methods = planned.get("merged_methods", [])
+        print(f"Methods     : {len(methods) + len(merged_methods)}")
         for method in methods:
             print(f"  - {method.get('name')} ({method.get('category')})")
+        for method in merged_methods:
+            print(f"  - {method.get('name')} (merged into existing)")
         if planned.get("extraction_error"):
             print(f"Extraction error: {planned['extraction_error']}")
     else:
