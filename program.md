@@ -7,11 +7,13 @@ fixed-wall-clock experiments, and keep changes that raise `val_mAP50`.
 > **From-scratch (subset) mode — CURRENT.** Each experiment trains the VDA detector
 > **from scratch** — i.e. from the COCO RF-DETR base (`pretrain_weights`, with the 60-class
 > head reinitialized), `initial_model_weights: null`, NOT from any of our trained VDA
-> checkpoints. To make from-scratch learnable inside the budget, training and validation
-> run on **fixed deterministic subsets** of the data (`combined_train_sub.parquet` ~5k imgs,
-> `combined_val_sub.parquet` 400 imgs), and the budget is **60 minutes** per experiment.
-> `val_mAP50` climbs from ~0; the goal is to find the recipe/architecture that learns the
-> mini-problem fastest/highest — findings then transfer to full-data training.
+> checkpoints. Training and validation run on **fixed deterministic subsets** of the data
+> (`combined_train_sub.parquet` ~15k imgs, `combined_val_sub.parquet` 400 imgs), and the
+> budget is **2 hours** per experiment.
+> **Goal = peak / long-term performance, NOT fast convergence.** Optimize for the highest
+> `val_mAP50` the recipe reaches within the 2h budget (the model trains well past the
+> cold-start; ~15k imgs over ~2h is enough to generalize, not just overfit). Don't over-index
+> on how fast a run leaves zero — index on where it ends up. Findings transfer to full-data training.
 >
 > _(History: an earlier "warm-start fine-tune" mode fine-tuned from the best checkpoint at
 > lr 2e-5; its log is `results_warmstart.tsv`. Key carry-over learning: eval uses EMA
@@ -50,13 +52,13 @@ To set up a new experiment, work with the user to:
      — the model/optimizer code you may tune.
 4. **Verify data + weights exist** (do not modify these):
    - Full parquets: `…/fda60/{combined_train,combined_val}.parquet`
-   - **Subsets (what we train/eval on):** `…/fda60/combined_train_sub.parquet` (~5k imgs)
+   - **Subsets (what we train/eval on):** `…/fda60/combined_train_sub.parquet` (~15k imgs)
      and `…/fda60/combined_val_sub.parquet` (400 imgs) — see "Fixed data + eval harness".
      Regenerate with `make_val_subsample.py --split train/--split val` if missing or `sources` change.
    - COCO base: `/data/projects/vda/2026_retraining/pretrained/rf-detr-base.pth`
    If missing, stop and tell the user.
-5. **Budget knobs (fixed across experiments for comparability):** `steps_per_epoch: 250`
-   (~1 pass over the 5k train subset/epoch), `n_epochs: 50` (the 60-min `timeout` ends the
+5. **Budget knobs (fixed across experiments for comparability):** `steps_per_epoch: 750`
+   (~0.8 pass over the 15k train subset/epoch), `n_epochs: 50` (the 2-hour `timeout` ends the
    run first). `steps_per_epoch` also rescales the cosine schedule
    (`total_steps = n_epochs * steps_per_epoch`) — treat it as part of the fixed budget, not
    a tuning knob.
@@ -71,9 +73,9 @@ Train data, val data, and the metric must stay identical across experiments or `
 is not comparable. Treat all of these like upstream's read-only `prepare.py`:
 
 0. **Fixed train subset.** Training runs on `combined_train_sub.parquet` — a deterministic
-   (seed=42), stratified **~5,000-image** subsample of the train split (rarest-class-first,
-   all 57 classes covered), built by `make_val_subsample.py --split train --target 5000`.
-   Small enough that 60 min does many passes (so from-scratch can actually learn), fixed so
+   (seed=42), stratified **~15,000-image** subsample of the train split (rarest-class-first,
+   all 57 classes covered), built by `make_val_subsample.py --split train --target 15000`.
+   Sized so ~2h trains well past cold-start and generalizes (not just overfits), fixed so
    every experiment trains on the same images. Don't change it mid-mode.
 
 1. **Simple val mAP@0.5 only.** The val callback is the base
@@ -98,7 +100,7 @@ Once you get confirmation, kick off the experimentation.
 
 ## Experimentation
 
-Each experiment runs on a single GPU for a **fixed wall-clock budget of 60 minutes**
+Each experiment runs on a single GPU for a **fixed wall-clock budget of 2 hours**
 (plus torch.compile/startup overhead). The metric is **`val_mAP50`** (COCO IoU-0.5
 progress signal logged by the base `MAPCallback`) — **higher is better**.
 
@@ -145,7 +147,7 @@ of 56 and `positional_encoding_size` is set consistently.
 
 **The first run**: your very first run establishes the baseline — run the config as-is
 (from COCO, lr 1e-4, `steps_per_epoch 250`), no other changes. `val_mAP50` starts at ~0 and
-climbs over the 60-min budget as the model fits the 5k train subset.
+climbs over the 2-hour budget; optimize for its PEAK, not how fast it leaves zero.
 
 ## Running an experiment
 
@@ -155,12 +157,12 @@ group down with it:
 
 ```bash
 cd ~/Repositories/videa-ml
-setsid bash -c 'timeout 3600 uv run --package VDA2 python libs/VDA2/scripts/train_vda2_model.py \
+setsid bash -c 'timeout 7200 uv run --package VDA2 python libs/VDA2/scripts/train_vda2_model.py \
   --fpath-config libs/VDA2/VDA2/training_configs/rfdetr_vda1_combined_fda60.yaml \
   --gpu 5 > ~/Repositories/autoresearch/run.log 2>&1' >/dev/null 2>&1 < /dev/null &
 disown
 ```
-- `timeout 3600` enforces the 60-minute budget (the trainer has no built-in time stop).
+- `timeout 7200` enforces the 2-hour budget (the trainer has no built-in time stop).
   torch.compile startup is *extra* on top of this; for very short experiments you may set
   `compile_model: false` to spend the window on training instead of compilation.
 - `--gpu N`: pick an idle GPU (omit to auto-select the lowest-memory GPU). Use distinct
@@ -239,7 +241,7 @@ LOOP FOREVER:
 You are a fully autonomous researcher: try an idea, keep if it helps, discard if it
 doesn't, advance the branch, iterate. Rewind only very sparingly, if ever.
 
-**Timeout**: each experiment should take ~60 min + startup. If a run exceeds ~75 min of
+**Timeout**: each experiment should take ~2 h + startup. If a run exceeds ~2h20m of
 wall clock (e.g. the `timeout` didn't fire), kill it and treat it as a failed run.
 
 **Crashes**: if a run crashes (OOM, bug, etc.), use judgment. Something dumb (typo, bad
