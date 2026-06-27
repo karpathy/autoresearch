@@ -31,6 +31,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO_ROOT))
 
+import requests
+
 from agents.harness_agent import run_agent_mode
 from evals.nanochat_bpb.metrics import load_run
 from run_agent import call_llm
@@ -139,12 +141,24 @@ def cleanup_git_state(original_branch: str | None) -> None:
 
 def build_llm_fn(provider: str, model: str) -> Any:
     def _llm(prompt: str) -> str:
-        response = call_llm(
-            provider,
-            model,
-            [{"role": "user", "content": prompt}],
-        )
-        return response["content"]
+        max_retries = 5
+        base_delay = 2.0
+        for attempt in range(max_retries):
+            try:
+                response = call_llm(
+                    provider,
+                    model,
+                    [{"role": "user", "content": prompt}],
+                )
+                return response["content"]
+            except requests.exceptions.HTTPError as exc:
+                status = exc.response.status_code if exc.response else None
+                if status == 429 and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    print(f"Rate limited (429); retrying in {delay:.1f}s...")
+                    time.sleep(delay)
+                    continue
+                raise
 
     return _llm
 
