@@ -37,6 +37,9 @@ To set up a new experiment, work with the user to:
      — the model/optimizer code you may tune.
 4. **Verify data + weights exist** (do not modify these):
    - Parquets: `/data/projects/vda/2026_retraining/data/vda1_detection/processed/annotations/fda60/{combined_train,combined_val}.parquet`
+   - Val subsample: `…/fda60/combined_val_sub.parquet` (the fast eval set — see "Fixed
+     eval harness" below). Regenerate with `make_val_subsample.py` if it's missing or
+     the training `sources` changed.
    - COCO warm-start: `/data/projects/vda/2026_retraining/pretrained/rf-detr-base.pth`
    If missing, stop and tell the user.
 5. **Cap `steps_per_epoch` so val runs inside the budget**: a full combined epoch (~59k
@@ -51,13 +54,35 @@ To set up a new experiment, work with the user to:
    the first run.
 7. **Confirm and go.**
 
+### Fixed eval harness (the comparable-metric contract — do NOT change)
+
+Validation must stay identical across experiments or `val_mAP50` is not comparable. Two
+deliberate choices make the val pass fast *and* fixed; treat both like upstream's
+read-only `prepare.py`:
+
+1. **Simple val mAP@0.5 only.** The val callback is the base
+   `vh_nnet.networks.mask2former.callbacks.map_metrics.MAPCallback` with
+   `iou_thresholds: [0.5]`, `compute_mask_metrics: false`. We removed
+   `GroupedClassReportCallback` (it piled per-class/per-group FROC + F1 + HTML scoring on
+   top of the bs=1 inference, taking >10 min/epoch) and the per-epoch
+   `EpochHTMLReportCallback`. The base callback logs `val_mAP50` (+ a cheap `val_f1`);
+   `EarlyStopping` still monitors `val_mAP50`.
+2. **Subsampled val set.** `MAPCallback` runs inference one image at a time
+   (`batch_size=1`) over the *entire* val set, which dominates the budget. So
+   `val_dataset_config` points at `combined_val_sub.parquet` — a **deterministic
+   (seed=42), stratified 1000-image subsample** of the 3209-image val set, built by
+   `libs/VDA2/scripts/make_val_subsample.py`: proportional by `source`, rarest-class-first
+   so all 57 val classes are covered, then random fill. This is a *progress signal*, not
+   the parity gate — regenerate it (same script/seed) if `sources` change, and never edit
+   it ad hoc mid-run.
+
 Once you get confirmation, kick off the experimentation.
 
 ## Experimentation
 
 Each experiment runs on a single GPU for a **fixed wall-clock budget of 30 minutes**
 (plus torch.compile/startup overhead). The metric is **`val_mAP50`** (COCO IoU-0.5
-progress signal logged by `GroupedClassReportCallback`) — **higher is better**.
+progress signal logged by the base `MAPCallback`) — **higher is better**.
 
 > Note: `val_mAP50` is a progress signal, NOT the official VDA1.0 parity gate (that is the
 > `ml_base` centroid-IoU best-F1/FROC/AP harness in the guide). It is the right *fast*
@@ -72,10 +97,10 @@ progress signal logged by `GroupedClassReportCallback`) — **higher is better**
   `projector_scale` (e.g. `[P4]`, `[P3, P4]`), and decoder/backbone knobs in `rf_detr/*.py`.
 
 **What you CANNOT change** (these define the comparable metric and data integrity — they
-are this loop's equivalent of upstream's read-only `prepare.py`):
-- `val_dataset_config` (the val set) and the `GroupedClassReportCallback` config
-  (`iou_thresholds`, `num_classes`, score/detection thresholds) — this is the `val_mAP50`
-  ground truth.
+are this loop's equivalent of upstream's read-only `prepare.py`; see "Fixed eval harness"):
+- `val_dataset_config` (the subsampled val set, `combined_val_sub.parquet`) and the
+  `MAPCallback` config (`iou_thresholds: [0.5]`, `num_classes`, score/detection thresholds,
+  `compute_mask_metrics`) — this is the `val_mAP50` ground truth.
 - The data parquet paths, `sources`, `num_classes`, the class map, and `mask_partial_labels`.
 - The fixed RF-DETR invariants from the guide — violating these silently corrupts training:
   `positional_encoding_size=37` (fixed by the COCO checkpoint); the head must be reinit to
@@ -91,24 +116,36 @@ adds ugly complexity isn't worth it; a gain (or wash) from *removing* code is a 
 
 ## Running an experiment
 
+Launch **detached** with `setsid` so the run survives even if your shell/monitor process
+is reaped — a long-lived foreground/background task that dies takes the training process
+group down with it:
+
 ```bash
 cd ~/Repositories/videa-ml
-timeout 1800 uv run --package VDA2 python libs/VDA2/scripts/train_vda2_model.py \
+setsid bash -c 'timeout 1800 uv run --package VDA2 python libs/VDA2/scripts/train_vda2_model.py \
   --fpath-config libs/VDA2/VDA2/training_configs/rfdetr_vda1_combined_fda60.yaml \
-  --gpu 7 > ~/Repositories/autoresearch/run.log 2>&1
+  --gpu 5 > ~/Repositories/autoresearch/run.log 2>&1' >/dev/null 2>&1 < /dev/null &
+disown
 ```
 - `timeout 1800` enforces the 30-minute budget (the trainer has no built-in time stop).
   torch.compile startup is *extra* on top of this; for very short experiments you may set
   `compile_model: false` to spend the window on training instead of compilation.
 - `--gpu N`: pick an idle GPU (omit to auto-select the lowest-memory GPU). Use distinct
-  GPUs for parallel `-gpuN` branches.
-- Redirect to `run.log` — do NOT `tee` or let training output flood your context.
+  GPUs for parallel `-gpuN` branches. One run per 20 GB card (~17 GB at 560 res, batch 16)
+  — confirm the target GPU is free first (`nvidia-smi`).
+- Redirect to `run.log` — do NOT `tee` or let training output flood your context. Poll
+  progress with short reads of `run.log` / `history.csv`, not a long-lived watcher.
+- To stop a run, `kill <pid>` the specific GPU PID
+  (`nvidia-smi --query-compute-apps=pid --format=csv,noheader -i <gpu>`); free the GPU
+  before relaunching so two runs don't OOM the card.
 
 ## Reading the result
 
-Find the newest run dir for this config and read the best `val_mAP50` from its `history.csv`:
+Find the newest run dir for **this config's `dirname_prefix`** and read the best
+`val_mAP50` from its `history.csv`. Match the prefix (not a bare `*`) so a concurrent run
+sharing the model-runs dir (e.g. a parallel `strongaug` experiment) isn't picked up:
 ```bash
-RUN_DIR=$(ls -dt /data/projects/vda/2026_retraining/model_runs/vda1_combined_fda60/rfdetr_vda1_combined_fda60_*/ \
+RUN_DIR=$(ls -dt /data/projects/vda/2026_retraining/model_runs/vda1_combined_fda60/rfdetr_vda1_combined_fda60_r560_*/ \
   2>/dev/null | head -1)
 python - "$RUN_DIR/history.csv" <<'PY'
 import sys, pandas as pd
