@@ -4,12 +4,18 @@ This is an autonomous-research loop for the **RF-DETR VDA combined-detection** m
 You (the agent) iterate on the *real* training code in the `videa-ml` repo, run
 fixed-wall-clock experiments, and keep changes that raise `val_mAP50`.
 
-> **Warm-start mode (important).** From the COCO checkpoint, a 30-min budget only covers
-> ~0.3 of one data pass, so `val_mAP50` sits at ~0 the whole time and gives no signal.
-> Instead, each experiment **fine-tunes from the best existing checkpoint**
-> (`initial_model_weights: …/r560_final/r560_model_best.keras`, ~0.47 val_mAP50, exact-match
-> load + fresh optimizer) at a **gentle LR (2e-5)** and we measure the *delta*. The goal is
-> to push past the current best, not retrain from scratch.
+> **From-scratch (subset) mode — CURRENT.** Each experiment trains the VDA detector
+> **from scratch** — i.e. from the COCO RF-DETR base (`pretrain_weights`, with the 60-class
+> head reinitialized), `initial_model_weights: null`, NOT from any of our trained VDA
+> checkpoints. To make from-scratch learnable inside the budget, training and validation
+> run on **fixed deterministic subsets** of the data (`combined_train_sub.parquet` ~5k imgs,
+> `combined_val_sub.parquet` 400 imgs), and the budget is **60 minutes** per experiment.
+> `val_mAP50` climbs from ~0; the goal is to find the recipe/architecture that learns the
+> mini-problem fastest/highest — findings then transfer to full-data training.
+>
+> _(History: an earlier "warm-start fine-tune" mode fine-tuned from the best checkpoint at
+> lr 2e-5; its log is `results_warmstart.tsv`. Key carry-over learning: eval uses EMA
+> weights, so EMA decay must match the step budget — see that log.)_
 
 > This fork does **not** train the upstream nanochat GPT. The `train.py` / `prepare.py`
 > files in this repo are the upstream toy and are **ignored**. The training code you edit
@@ -43,29 +49,32 @@ To set up a new experiment, work with the user to:
    - `~/Repositories/videa-ml/libs/vh_nnet/vh_nnet/networks/detection/rf_detr/{model,boxes,collate,optimization}.py`
      — the model/optimizer code you may tune.
 4. **Verify data + weights exist** (do not modify these):
-   - Parquets: `/data/projects/vda/2026_retraining/data/vda1_detection/processed/annotations/fda60/{combined_train,combined_val}.parquet`
-   - Val subsample: `…/fda60/combined_val_sub.parquet` (the fast eval set — see "Fixed
-     eval harness" below). Regenerate with `make_val_subsample.py` if it's missing or
-     the training `sources` changed.
-   - COCO warm-start: `/data/projects/vda/2026_retraining/pretrained/rf-detr-base.pth`
+   - Full parquets: `…/fda60/{combined_train,combined_val}.parquet`
+   - **Subsets (what we train/eval on):** `…/fda60/combined_train_sub.parquet` (~5k imgs)
+     and `…/fda60/combined_val_sub.parquet` (400 imgs) — see "Fixed data + eval harness".
+     Regenerate with `make_val_subsample.py --split train/--split val` if missing or `sources` change.
+   - COCO base: `/data/projects/vda/2026_retraining/pretrained/rf-detr-base.pth`
    If missing, stop and tell the user.
-5. **Cap `steps_per_epoch` so val runs inside the budget**: a full combined epoch (~59k
-   images) takes far longer than the 30-minute budget, so with the default `null` you'd
-   get **zero** `val_mAP50` points. Set `train_params_config.steps_per_epoch` to a small
-   value (start ~150–300) and a large `n_epochs` (e.g. 50) so several `val_mAP50`
-   evaluations land inside the window. `steps_per_epoch` also rescales the cosine schedule
-   (`total_steps = n_epochs * steps_per_epoch`), so keep it fixed across experiments for
-   comparability — treat it as part of the fixed budget, not a tuning knob.
+5. **Budget knobs (fixed across experiments for comparability):** `steps_per_epoch: 250`
+   (~1 pass over the 5k train subset/epoch), `n_epochs: 50` (the 60-min `timeout` ends the
+   run first). `steps_per_epoch` also rescales the cosine schedule
+   (`total_steps = n_epochs * steps_per_epoch`) — treat it as part of the fixed budget, not
+   a tuning knob.
 6. **Initialize `results.tsv`**: create `~/Repositories/autoresearch/results.tsv` with just
    the header row (it is gitignored — leave it untracked). The baseline is recorded after
    the first run.
 7. **Confirm and go.**
 
-### Fixed eval harness (the comparable-metric contract — do NOT change)
+### Fixed data + eval harness (the comparable-metric contract — do NOT change)
 
-Validation must stay identical across experiments or `val_mAP50` is not comparable. Two
-deliberate choices make the val pass fast *and* fixed; treat both like upstream's
-read-only `prepare.py`:
+Train data, val data, and the metric must stay identical across experiments or `val_mAP50`
+is not comparable. Treat all of these like upstream's read-only `prepare.py`:
+
+0. **Fixed train subset.** Training runs on `combined_train_sub.parquet` — a deterministic
+   (seed=42), stratified **~5,000-image** subsample of the train split (rarest-class-first,
+   all 57 classes covered), built by `make_val_subsample.py --split train --target 5000`.
+   Small enough that 60 min does many passes (so from-scratch can actually learn), fixed so
+   every experiment trains on the same images. Don't change it mid-mode.
 
 1. **Simple val mAP@0.5 only.** The val callback is the base
    `vh_nnet.networks.mask2former.callbacks.map_metrics.MAPCallback` with
@@ -89,7 +98,7 @@ Once you get confirmation, kick off the experimentation.
 
 ## Experimentation
 
-Each experiment runs on a single GPU for a **fixed wall-clock budget of 30 minutes**
+Each experiment runs on a single GPU for a **fixed wall-clock budget of 60 minutes**
 (plus torch.compile/startup overhead). The metric is **`val_mAP50`** (COCO IoU-0.5
 progress signal logged by the base `MAPCallback`) — **higher is better**.
 
@@ -120,16 +129,23 @@ are this loop's equivalent of upstream's read-only `prepare.py`; see "Fixed eval
 **Simplicity criterion**: all else equal, simpler is better. A tiny `val_mAP50` gain that
 adds ugly complexity isn't worth it; a gain (or wash) from *removing* code is a clear win.
 
-**Warm-start is fixed infrastructure, but the fine-tune recipe is fair game.** Keep
-`initial_model_weights` pointing at the best checkpoint (don't train from COCO — that gives
-~0 signal in the budget), but the LR / schedule / aug / etc. *on top of* the warm-start are
-exactly what you tune. As the loop finds better checkpoints, the user may repoint
-`initial_model_weights` at the new best.
+**From-scratch is fixed; the training recipe and architecture are fair game.** Keep
+`initial_model_weights: null` (train from the COCO base — do NOT warm-start from a trained
+VDA checkpoint), keep the fixed train/val subsets and the metric, but everything that
+shapes *how the model learns* is what you tune: LR/schedule/optimizer, augmentation,
+EMA, and — since this is from scratch — **architecture** (`projector_scale`, decoder
+depth/points, queries, two-stage, backbone knobs in `rf_detr/*.py`). Resolution may now be
+changed too (no warm-start to stay pos-enc-compatible with) as long as it stays a multiple
+of 56 and `positional_encoding_size` is set consistently.
+
+> `num_classes` stays **60** (the fda60 head). Only **57** of the 60 carry GT in the BW/PA
+> data — ids 5 `mandibularCondyle`, 42 `plate`, 43 `screw` are pano-only and absent here —
+> so `val_mAP50` averages over those 57. "57/57" from the subsample script = full class
+> coverage of the data, NOT a class-count change. Never edit `num_classes`.
 
 **The first run**: your very first run establishes the baseline — run the config as-is
-(warm-start from the best checkpoint at lr 2e-5, `steps_per_epoch` cap from setup step 5),
-no other changes. Confirm epoch-0 `val_mAP50` ≈ the checkpoint's known score (~0.43 on the
-400-img subsample) — if it comes back ~0 the warm-start didn't load.
+(from COCO, lr 1e-4, `steps_per_epoch 250`), no other changes. `val_mAP50` starts at ~0 and
+climbs over the 60-min budget as the model fits the 5k train subset.
 
 ## Running an experiment
 
@@ -139,12 +155,12 @@ group down with it:
 
 ```bash
 cd ~/Repositories/videa-ml
-setsid bash -c 'timeout 1800 uv run --package VDA2 python libs/VDA2/scripts/train_vda2_model.py \
+setsid bash -c 'timeout 3600 uv run --package VDA2 python libs/VDA2/scripts/train_vda2_model.py \
   --fpath-config libs/VDA2/VDA2/training_configs/rfdetr_vda1_combined_fda60.yaml \
   --gpu 5 > ~/Repositories/autoresearch/run.log 2>&1' >/dev/null 2>&1 < /dev/null &
 disown
 ```
-- `timeout 1800` enforces the 30-minute budget (the trainer has no built-in time stop).
+- `timeout 3600` enforces the 60-minute budget (the trainer has no built-in time stop).
   torch.compile startup is *extra* on top of this; for very short experiments you may set
   `compile_model: false` to spend the window on training instead of compilation.
 - `--gpu N`: pick an idle GPU (omit to auto-select the lowest-memory GPU). Use distinct
@@ -223,17 +239,29 @@ LOOP FOREVER:
 You are a fully autonomous researcher: try an idea, keep if it helps, discard if it
 doesn't, advance the branch, iterate. Rewind only very sparingly, if ever.
 
-**Timeout**: each experiment should take ~30 min + startup. If a run exceeds ~45 min of
+**Timeout**: each experiment should take ~60 min + startup. If a run exceeds ~75 min of
 wall clock (e.g. the `timeout` didn't fire), kill it and treat it as a failed run.
 
 **Crashes**: if a run crashes (OOM, bug, etc.), use judgment. Something dumb (typo, bad
 value, OOM you can shrink batch for) → fix and re-run. Fundamentally broken idea → log
 `crash` and move on.
 
-**NEVER STOP**: once the loop has begun (after setup), do NOT pause to ask the human
-whether to continue. Do NOT ask "should I keep going?" or "is this a good stopping point?".
-The human may be asleep and expects you to work *indefinitely* until manually stopped. If
-you run out of ideas, think harder: re-read `RF_DETR_VDA_GUIDE.md` §9 (next-run
-recommendations), re-read the `rf_detr/*.py` code for new angles, combine previous
-near-misses, or try more radical architecture/optimizer changes. The loop runs until the
-human interrupts you, period.
+**NEVER STOP — RESEARCH NEVER STOPS.** Once the loop has begun (after setup), do NOT pause
+to ask the human whether to continue. Do NOT ask "should I keep going?" or "is this a good
+stopping point?". The human may be asleep and expects you to work *indefinitely* until
+manually stopped. The loop runs until the human interrupts you, period.
+
+**Always be hunting for a better method — not just sweeping the same knobs.** When the
+obvious recipe knobs are explored:
+1. **Re-read the local sources** for new angles: `RF_DETR_VDA_GUIDE.md` §9 (next-run
+   recommendations) and the `rf_detr/*.py` model/optimizer code.
+2. **Combine near-misses** and try more radical architecture/optimizer changes (now allowed,
+   since we train from scratch): projector scales, decoder depth/points, query count,
+   two-stage, loss weights, schedule shape, stronger/different augmentation.
+3. **Deep research when you run dry.** Use the `deep-research` skill (or `WebSearch` /
+   `WebFetch`) to find current literature and techniques — RF-DETR / DETR / DINOv2
+   detection-training improvements, small-object detection, label-efficient training,
+   augmentation and optimizer advances — then **implement the most promising idea and test
+   it** in the loop. Log what you tried and what the source was in the `description`.
+4. Treat every plateau as a prompt to search wider, not to stop. Record dead-ends so you
+   don't repeat them. Research never stops.

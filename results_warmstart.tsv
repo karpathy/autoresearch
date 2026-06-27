@@ -1,0 +1,12 @@
+commit	val_mAP50	mem_gb	epochs	status	description
+3c80167	0.440358	18.1	5	keep	warm-start r560_model_best + lr 2e-5 (BASELINE; 400-img val, simple MAPCallback)
+87b97c5	0.437564	18.1	5	discard	lr 2e-5 -> 5e-5 (noisier, lower peak than baseline 0.4404)
+9eaead0	0.461006	18.1	5	keep	ema_decay 0.9997 -> 0.999 (EMA tracks fine-tune; +0.021 over baseline, still climbing)
+528483b	0.461004	18.1	4	discard	ema_decay 0.999 -> 0.99 (tied ~0.461, noisier, fewer epochs; 0.999 is the sweet spot)
+29c31cf	0.444996	18.1	3	discard	warmup 1.0 -> 0.25 (~neutral at equal epochs; only 3 epochs in budget, GPU contention)
+a0368df	0.449863	18.1	4	discard	lr 2e-5 -> 3e-5 (below 2e-5 at every epoch; 2e-5 is the LR sweet spot)
+28ddd15	0.452516	18.1	5	discard	train aug OFF (0.4525 < 0.4610; aug helps even in short fine-tune)
+65b4822	0.456978	18.1	5	discard	weight_decay 1e-4 -> 1e-3 (0.4570, ~neutral/slightly below 0.4610)
+aedf8d5	0.454405	18.1	4	discard	lr_vit_layer_decay 0.8 -> 0.7 (~neutral; 4 epochs, ep3 0.4544 ~ exp2)
+234bf1e	0.458997	18.1	4	discard	chain from exp2 best: ep0 0.459 then DECLINES -> model at ceiling ~0.46, more training does not help
+5f8dbf2	0.444997	18.1	4	discard	n_epochs 50->6 (LR anneals over budget): worse, declines by ep3 -> wants sustained full LR
