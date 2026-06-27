@@ -18,8 +18,8 @@ experiment:
     --max-experiments 1
     --steps-budget 0
     --time-budget 30
-    --api-provider openrouter
-    --model z-ai/glm-4.5-air:free
+    --api-provider openai
+    --model gpt-4o-mini
     --device mps
   timeout_seconds: 600
 strategy:

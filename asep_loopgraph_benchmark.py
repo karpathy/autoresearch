@@ -73,12 +73,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--api-provider",
         choices=["openai", "openrouter"],
-        default="openrouter",
+        default="openai",
         help="LLM API provider",
     )
     parser.add_argument(
         "--model",
-        default="z-ai/glm-4.5-air:free",
+        default="gpt-4o-mini",
         help="LLM model name",
     )
     parser.add_argument(
