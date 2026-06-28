@@ -15,11 +15,11 @@ experiment:
     {python_bin} asep_loopgraph_benchmark.py
     --mode {mode}
     --metric val_bpb
-    --max-experiments 1
+    --max-experiments 3
     --steps-budget 0
     --time-budget 30
     --api-provider venice
-    --model zai-org-glm-5-2
+    --model openai-gpt-4o-mini-2024-07-18
     --device mps
     --max-method-chars 4000
   timeout_seconds: 600
@@ -40,9 +40,10 @@ Measure whether LoopGraph's ResearchFS retrieval mode reduces the validation
 bits-per-byte (val_bpb) compared to the baseline agent mode.
 
 ## Constraints
-Each experiment is a full LoopGraph agent run with 2 proposals, ~50 training
-steps per experiment, and a 60-second training time budget. Runs execute on
-`mps` for fast local execution.
+Each experiment is a full LoopGraph agent run with 3 proposals, ~50 training
+steps per experiment, and a 30-second training time budget, using the fast
+`openai-gpt-4o-mini-2024-07-18` model via Venice. Runs execute on `mps` for
+fast local execution.
 
 ## Use Hybrid Memory
 Use hybrid-local memory:
