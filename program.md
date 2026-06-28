@@ -85,6 +85,9 @@ is not comparable. Treat all of these like upstream's read-only `prepare.py`:
    top of the bs=1 inference, taking >10 min/epoch) and the per-epoch
    `EpochHTMLReportCallback`. The base callback logs `val_mAP50` (+ a cheap `val_f1`);
    `EarlyStopping` still monitors `val_mAP50`.
+   > GOTCHA: keep `eval_every_n_epochs: 1`. With it >1, epoch 0 skips mAP, so Keras
+   > CSVLogger freezes the `history.csv` header as `epoch,loss,val_loss` (no `val_mAP50`)
+   > and the metric is lost to the CSV (still printed to run.log). Don't change it.
 2. **Subsampled val set.** `MAPCallback` runs inference one image at a time
    (`batch_size=1`) over the *entire* val set, which dominates the budget. So
    `val_dataset_config` points at `combined_val_sub.parquet` — a **deterministic
