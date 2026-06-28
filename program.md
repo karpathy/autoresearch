@@ -104,12 +104,42 @@ Once you get confirmation, kick off the experimentation.
 ## Experimentation
 
 Each experiment runs on a single GPU for a **fixed wall-clock budget of 2 hours**
-(plus torch.compile/startup overhead). The metric is **`val_mAP50`** (COCO IoU-0.5
-progress signal logged by the base `MAPCallback`) — **higher is better**.
+(plus torch.compile/startup overhead). Goal = **highest AND most robust full performance.**
 
-> Note: `val_mAP50` is a progress signal, NOT the official VDA1.0 parity gate (that is the
-> `ml_base` centroid-IoU best-F1/FROC/AP harness in the guide). It is the right *fast*
-> signal for autonomous keep/discard; periodic true-parity checks are the user's call.
+**Objective metric: `val_robust_score`** (higher is better), logged by
+`VDA2.callbacks.VDARichEvalCallback` and monitored by EarlyStopping:
+`0.40*ap_pathology + 0.25*mAP50 + 0.20*mAP50_small + 0.15*min(caries,prl,ral,calculus)`.
+It rewards overall strength, the clinical pathology target, the small-object weak spot,
+and the weakest critical pathology class — so a "win" must be strong *and* balanced.
+
+**Always read the full breakdown** the callback logs to `history.csv` (compare every run on it):
+- overall `val_mAP50`; size-stratified `val_mAP50_small/_medium/_large`
+- per-class `val_ap_caries / _calculus / _prl / _ral`
+- grouped `val_ap_pathology / _anatomy / _historical_treatment`
+
+> These are progress signals on the 400-img val subset, NOT the official VDA1.0 parity gate
+> (the `ml_base` centroid-IoU harness). Do periodic **full-val** checks of the leading
+> checkpoint to confirm the subset tracks full performance.
+
+### Decision protocol (noise-aware + robust — this is the core of the strategy)
+
+Run-to-run variance is **σ ≈ 0.015**, so a single better number is often noise. Therefore:
+1. A change is **provisionally kept** only if `val_robust_score` beats the current best by
+   **> 0.02** AND it does **not regress any tracked slice** (S/M/L, the 4 classes, the 3
+   groups) by more than ~0.02.
+2. **Promote** to the new baseline only after a **confirmation re-run with a different
+   `seed`** also clears the bar. Unconfirmed single wins are NOT promoted.
+3. When epoch counts differ between runs (contention/truncation), compare at a **common
+   epoch**, not just best-over-budget.
+Record `seed` and the breakdown for every run in `results.tsv`.
+
+### Diagnose-then-target (don't blind-sweep — most knobs are within noise)
+Each run, read the breakdown and attack the **weakest clinically-important slice**:
+- low `mAP50_small` → higher-res feature level (`projector_scale` add `P2`), small-object/
+  copy-paste aug, or higher input resolution (mind memory/step-cost).
+- a weak pathology class (caries/prl/ral/calculus) → class-balanced sampling / loss weighting.
+- still-climbing-at-2h (step-limited) → schedule shape, or accept budget is the limiter.
+Start from the confirmed best (lr 2e-4). Combine confirmed wins; revert anything unconfirmed.
 
 **What you CAN edit** (in the config yaml, or the `rf_detr/*.py` model code):
 - Optimizer + LR recipe: `lr`, `lr_encoder`, `lr_vit_layer_decay`, `lr_component_decay`,
@@ -179,45 +209,46 @@ disown
 
 ## Reading the result
 
-Find the newest run dir for **this config's `dirname_prefix`** and read the best
-`val_mAP50` from its `history.csv`. Match the prefix (not a bare `*`) so a concurrent run
-sharing the model-runs dir (e.g. a parallel `strongaug` experiment) isn't picked up:
+Find the newest run dir for **this config's `dirname_prefix`** and read the breakdown at the
+best-`val_robust_score` epoch from its `history.csv` (match the prefix, not a bare `*`, so a
+concurrent run isn't picked up):
 ```bash
 RUN_DIR=$(ls -dt /data/projects/vda/2026_retraining/model_runs/vda1_combined_fda60/rfdetr_vda1_combined_fda60_r560_*/ \
   2>/dev/null | head -1)
 python - "$RUN_DIR/history.csv" <<'PY'
 import sys, pandas as pd
 df = pd.read_csv(sys.argv[1])
-print(f"best_val_mAP50={df['val_mAP50'].max():.6f} epochs={len(df)}")
+i = df['val_robust_score'].idxmax()
+r = df.loc[i]
+cols = ['val_robust_score','val_mAP50','val_mAP50_small','val_mAP50_medium','val_mAP50_large',
+        'val_ap_caries','val_ap_calculus','val_ap_prl','val_ap_ral',
+        'val_ap_pathology','val_ap_anatomy','val_ap_historical_treatment']
+print(f"epochs={len(df)} best_epoch={int(r['epoch'])}")
+print({c: round(float(r[c]),4) for c in cols if c in df.columns})
 PY
 ```
-If `history.csv` is missing or has no `val_mAP50` row, the run crashed (or no epoch
+If `history.csv` is missing or has no `val_robust_score` row, the run crashed (or no epoch
 finished in the window) → `tail -n 50 ~/Repositories/autoresearch/run.log` to diagnose.
 Peak VRAM: `grep -iE "peak.*mem|reserved" ~/Repositories/autoresearch/run.log` or `nvidia-smi`.
 
 ## Logging results
 
 When an experiment is done, append a row to `~/Repositories/autoresearch/results.tsv`
-(tab-separated, NOT comma — commas break descriptions). Header + 6 columns:
+(tab-separated). Columns are the full breakdown at the best `robust` epoch:
 
 ```
-commit	val_mAP50	mem_gb	epochs	status	description
+commit	seed	robust	mAP50	S	M	L	caries	calc	prl	ral	path	anat	histtx	epochs	status	description
 ```
 
-1. videa-ml git commit hash (short, 7 chars)
-2. best `val_mAP50` (e.g. `0.474000`) — use `0.000000` for crashes
-3. peak GPU memory in GB, `.1f` — use `0.0` if unknown/crash
-4. epochs (val points) completed in the window — use `0` for crash
-5. status: `keep`, `discard`, or `crash`
-6. short description of what the experiment tried
+- `robust` = best `val_robust_score`; the rest are that epoch's slices (overall mAP50,
+  size S/M/L, the 4 classes, group pathology/anatomy/historical-treatment).
+- `status`: `keep` (confirmed), `prov` (provisional, awaiting confirm re-run), `discard`, `crash`.
+- All metrics `0.000000` for crashes. `seed` is the run's seed (vary it for confirmations).
 
 Example:
 ```
-commit	val_mAP50	mem_gb	epochs	status	description
-a1b2c3d	0.421000	15.2	6	keep	baseline (steps_per_epoch=200)
-b2c3d4e	0.447000	15.4	6	keep	lr_encoder 1.5e-4 -> 2.5e-4
-c3d4e5f	0.410000	15.2	6	discard	projector_scale [P4] only
-d4e5f6g	0.000000	0.0	0	crash	resolution 600 (not a multiple of 56)
+commit	seed	robust	mAP50	S	M	L	caries	calc	prl	ral	path	anat	histtx	epochs	status	description
+3284216	42	0.2010	0.3230	0.150	0.290	0.410	0.330	0.280	0.090	0.120	0.190	0.520	0.300	14	keep	baseline lr 2e-4 (rich-eval)
 ```
 
 ## The experiment loop
@@ -228,21 +259,23 @@ The experiment runs on a dedicated branch in `videa-ml` (e.g. `autoresearch/jun2
 LOOP FOREVER:
 
 1. Check git state in `~/Repositories/videa-ml`: current branch/commit.
-2. Tune the config yaml (or `rf_detr/*.py`) with one experimental idea.
+2. Tune the config yaml (or `rf_detr/*.py`) with one diagnose-then-target idea.
 3. `git commit` in videa-ml.
 4. Run the experiment (the `timeout … train_vda2_model.py` command above).
-5. Read the best `val_mAP50` (the snippet above).
-6. If there's no `val_mAP50`, the run crashed → read the tail of `run.log` and attempt a
-   fix. Give up after a few attempts.
-7. Record the row in `results.tsv` (leave `results.tsv` untracked — do NOT commit it).
+5. Read the breakdown from the run's `history.csv` — `val_robust_score` + the slices
+   (S/M/L, the 4 classes, the 3 groups). (Also printed per epoch in run.log as `[rich] …`.)
+6. If there's no `val_robust_score`, the run crashed → read the tail of `run.log` and
+   attempt a fix. Give up after a few attempts.
+7. Record the breakdown row in `results.tsv` (untracked — do NOT commit it), including `seed`.
 8. **Disk hygiene**: on `discard` or `crash`, delete that experiment's run dir under
    `/data/projects/vda/2026_retraining/model_runs/vda1_combined_fda60/` — RF-DETR
    checkpoints are large and ~100 overnight runs will fill `/data`. Keep only `keep` runs.
-9. If `val_mAP50` improved (higher), **advance** the branch (keep the commit). If it's
-   equal or worse, `git reset --hard` the videa-ml branch back to where you started.
+9. Apply the **Decision protocol**: provisionally keep only if `val_robust_score` beats the
+   best by >0.02 with no slice regressing; **confirm with a different-seed re-run** before
+   promoting (advance the branch). Otherwise `git reset --hard` back to the current best.
 
-You are a fully autonomous researcher: try an idea, keep if it helps, discard if it
-doesn't, advance the branch, iterate. Rewind only very sparingly, if ever.
+You are a fully autonomous researcher: diagnose the weak slice, target it, keep only
+confirmed robust wins, advance the branch, iterate. Rewind only very sparingly, if ever.
 
 **Timeout**: each experiment should take ~2 h + startup. If a run exceeds ~2h20m of
 wall clock (e.g. the `timeout` didn't fire), kill it and treat it as a failed run.
@@ -251,10 +284,12 @@ wall clock (e.g. the `timeout` didn't fire), kill it and treat it as a failed ru
 value, OOM you can shrink batch for) → fix and re-run. Fundamentally broken idea → log
 `crash` and move on.
 
-**NEVER STOP — RESEARCH NEVER STOPS.** Once the loop has begun (after setup), do NOT pause
-to ask the human whether to continue. Do NOT ask "should I keep going?" or "is this a good
-stopping point?". The human may be asleep and expects you to work *indefinitely* until
-manually stopped. The loop runs until the human interrupts you, period.
+**NEVER STOP — RESEARCH NEVER STOPS. NEVER ASK THE HUMAN ANYTHING.** Once the loop has
+begun, do NOT pause to ask the human whether to continue, which option to pick, or whether
+a plan looks good. You are the decision-maker: choose the best course and proceed. Do NOT
+ask "should I keep going?" / "is this a good stopping point?" / "which lever?". The human
+may be asleep and expects you to work *indefinitely* until manually stopped. Decide, act,
+log, iterate — the loop runs until the human interrupts you, period.
 
 **Always be hunting for a better method — not just sweeping the same knobs.** When the
 obvious recipe knobs are explored:
