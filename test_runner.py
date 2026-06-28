@@ -842,6 +842,95 @@ def test_run_agent_mode_reuses_query():
             os.chdir(old_cwd)
 
 
+def test_run_agent_mode_reuses_query_saves_tokens_across_experiments():
+    import os
+    import sqlite3
+    import tempfile
+    import unittest.mock
+    from agents import harness_agent
+    from researchfs.db import initialize_db
+    from researchfs.ingest import ensure_seed
+    from researchfs import retrieve as rfs
+
+    db_uri = "file:reuse_test_mem2?mode=memory&cache=shared"
+    conn = sqlite3.connect(db_uri, uri=True)
+    conn.row_factory = sqlite3.Row
+
+    def patched_get_connection():
+        c = sqlite3.connect(db_uri, uri=True)
+        c.row_factory = sqlite3.Row
+        return c
+
+    with tempfile.TemporaryDirectory() as tmpdir, \
+         unittest.mock.patch("researchfs.db.get_connection", patched_get_connection), \
+         unittest.mock.patch("researchfs.retrieve.get_connection", patched_get_connection):
+        old_cwd = os.getcwd()
+        os.chdir(tmpdir)
+        try:
+            initialize_db()
+            ensure_seed()
+
+            with open("train.py", "w", encoding="utf-8") as f:
+                f.write("x = 1\n")
+
+            prior_run_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini")
+            rfs.log_experiment("baseline", 2.500, 0.5, "keep", "baseline", prior_run_id)
+
+            search_calls = []
+            retrieval_llm_calls = []
+
+            def mock_search_methods_and_ids(query, conn=None, max_chars=None):
+                search_calls.append(query)
+                return f"pack for {query}", [1]
+
+            train_calls = [0]
+
+            def mock_run_train(time_budget, steps_budget, env, log_path):
+                val = [2.500, 2.400, 2.300][train_calls[0]]
+                train_calls[0] += 1
+                return (val, 1024.0, "success", "")
+
+            def mock_subprocess_run(args, **kwargs):
+                class Result:
+                    returncode = 0
+                    stdout = "abc123"
+                    stderr = ""
+                res = Result()
+                if len(args) >= 3 and args[:3] == ["git", "diff", "--quiet"]:
+                    res.returncode = 1
+                return res
+
+            def mock_llm(prompt):
+                # Distinguish retrieval-query prompts from code-proposal prompts.
+                if "search query" in prompt.lower():
+                    retrieval_llm_calls.append("query")
+                    return "Muon LR"
+                return "Description: test\n<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>>"
+
+            with unittest.mock.patch("researchfs.retrieve.search_methods_and_ids", mock_search_methods_and_ids), \
+                 unittest.mock.patch("agents.harness_agent._run_train", mock_run_train), \
+                 unittest.mock.patch("subprocess.run", mock_subprocess_run), \
+                 unittest.mock.patch("agents.harness_agent._current_branch", return_value="main"), \
+                 unittest.mock.patch("agents.harness_agent._checkout"), \
+                 unittest.mock.patch("agents.harness_agent.rfs.start_agent_run", return_value=prior_run_id):
+                harness_agent.run_agent_mode(
+                    mode="loopgraph",
+                    model="gpt-4o-mini",
+                    max_experiments=2,
+                    time_budget=60,
+                    llm_fn=mock_llm,
+                    steps_budget=100,
+                )
+
+            # Experiment 1 performs an agent_search; experiment 2 reuses the query.
+            assert len(search_calls) == 1, f"Expected 1 search call, got {search_calls}"
+            assert len(retrieval_llm_calls) == 1, (
+                f"Expected 1 retrieval LLM call, got {len(retrieval_llm_calls)}"
+            )
+        finally:
+            os.chdir(old_cwd)
+
+
 def test_search_methods_max_chars():
     conn = _in_memory_db()
 
