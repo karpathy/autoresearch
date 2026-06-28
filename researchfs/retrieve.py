@@ -301,27 +301,59 @@ def search_methods_and_ids(
         methods, _, method_ranks = _search_methods_hybrid(query, conn)
 
         if not methods:
-            return f"# Method Pack Search Results\n\nNo methods found matching query: '{query}'", []
-
-        if not method_ranks:
+            main_pack_str = f"# Method Pack Search Results\n\nNo methods found matching query: '{query}'"
+            main_ids = []
+        elif not method_ranks:
             # Empty query fallback: preserve default success-rate ordering.
-            pack_str, ids = _build_method_pack(
+            main_pack_str, main_ids = _build_method_pack(
                 methods,
                 conn,
                 "# Method Pack: Autoresearch Optimization Catalog\n",
                 max_chars=max_chars,
             )
-            return pack_str, ids
+        else:
+            ordered_methods, main_ids = _score_methods(methods, conn, method_ranks)
+            main_pack_str, main_ids = _build_method_pack(
+                ordered_methods,
+                conn,
+                f"# Method Pack Search Results for: '{query}'\n",
+                sort_key=lambda m: (-m["_score"], m["category"] or "", m["name"] or ""),
+                max_chars=max_chars,
+            )
 
-        ordered_methods, ids = _score_methods(methods, conn, method_ranks)
-        pack_str, _ = _build_method_pack(
-            ordered_methods,
-            conn,
-            f"# Method Pack Search Results for: '{query}'\n",
-            sort_key=lambda m: (-m["_score"], m["category"] or "", m["name"] or ""),
-            max_chars=max_chars,
-        )
-        return pack_str, ids
+        if query:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT m.method_id, m.name, m.description, m.implementation_hint, m.risks, m.category
+                FROM methods m
+                WHERE m.category IN ('optimizer', 'regularization')
+                """
+            )
+            general_methods = [dict(row) for row in cur.fetchall()]
+
+            # Remove any general methods that are already present in the search results
+            search_result_ids = {m["method_id"] for m in methods}
+            general_methods = [m for m in general_methods if m["method_id"] not in search_result_ids]
+
+            if general_methods:
+                remaining_max_chars = None
+                if max_chars is not None:
+                    remaining_max_chars = max(0, max_chars - len(main_pack_str))
+
+                if remaining_max_chars is None or remaining_max_chars > 0:
+                    gen_pack_str, gen_ids = _build_method_pack(
+                        general_methods,
+                        conn,
+                        "\n# General Optimization & Hyperparameter Tuning Methods\n",
+                        max_chars=remaining_max_chars,
+                    )
+                    main_pack_str += gen_pack_str
+                    for gid in gen_ids:
+                        if gid not in main_ids:
+                            main_ids.append(gid)
+
+        return main_pack_str, main_ids
     finally:
         if close:
             conn.close()

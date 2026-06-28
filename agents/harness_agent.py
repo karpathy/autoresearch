@@ -7,6 +7,7 @@ an LLM function taking a prompt string and returning a response string.
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -64,6 +65,60 @@ def _get_reusable_query(agent_run_id: int, baseline_val_bpb: float, conn=None) -
         if close:
             conn.close()
 
+
+
+def _get_query_history_str(agent_run_id: int, conn=None) -> str:
+    """Format history of prior queries and their outcomes."""
+    from researchfs.db import get_connection
+
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT re.query, e.status, e.val_bpb, e.description
+            FROM retrieval_events re
+            LEFT JOIN experiments e ON re.experiment_id = e.experiment_id
+            WHERE re.agent_run_id = ?
+              AND re.event_type IN ('agent_search', 'agent_search_reuse')
+            ORDER BY re.event_id ASC
+            """,
+            (agent_run_id,),
+        )
+        rows = cur.fetchall()
+        history_lines = []
+        for row in rows:
+            query_val = row["query"]
+            status_val = row["status"]
+            val_bpb_val = row["val_bpb"]
+
+            if status_val == "keep":
+                if val_bpb_val is not None:
+                    outcome = f"Kept (improved BPB to {val_bpb_val:.6f})"
+                else:
+                    outcome = "Kept"
+            elif status_val == "discard":
+                if val_bpb_val is not None:
+                    outcome = f"Discarded (BPB: {val_bpb_val:.6f})"
+                else:
+                    outcome = "Discarded"
+            elif status_val == "crash":
+                outcome = "Crashed"
+            elif status_val == "pending":
+                outcome = "Pending"
+            elif status_val is None:
+                outcome = "Unknown"
+            else:
+                outcome = status_val.capitalize()
+
+            history_lines.append(f"Query: '{query_val}' -> Outcome: {outcome}")
+        return "\n".join(history_lines)
+    finally:
+        if close:
+            conn.close()
 
 def _git_env() -> dict:
     env = os.environ.copy()
@@ -149,16 +204,32 @@ def assemble_harness_prompt(
 
 
 
-def assemble_retrieval_prompt(results_content: str, experiment_brief: str) -> str:
+def assemble_retrieval_prompt(
+    results_content: str, experiment_brief: str, query_history: Optional[str] = None
+) -> str:
     """Assemble prompt to ask the agent for a search query to query ResearchFS."""
     prompt = (
         "You are an expert machine learning researcher agent.\n"
         "Your goal is to optimize the training script `train.py` to minimize the validation bits per byte (val_bpb) on a pretraining task.\n\n"
         f"Experiment Brief:\n{experiment_brief}\n\n"
         f"Here is the history of previous experiments:\n{results_content}\n\n"
+    )
+    if query_history:
+        prompt += f"Here is the history of prior search queries and their experiment outcomes:\n{query_history}\n\n"
+
+    prompt += (
         "Based on the results, decide what optimization area you want to explore next (e.g. attention, MLP, optimizer learning rate, precision, regularization).\n"
-        "Output a single search query (1-2 keywords, e.g. 'MLP SwiGLU', 'GQA attention', or 'Muon LR') to search our literature database for relevant methods and code implementations.\n"
-        "Reply ONLY with the search query text, nothing else. Do not include markdown blocks or explanation."
+        "You must decide whether you want to search the methods database or skip searching.\n\n"
+        "Please respond with a structured JSON object containing the following keys:\n"
+        "  - \"search\": a boolean indicating whether you want to search (true) or skip search (false).\n"
+        "  - \"query\": a string specifying the search query (1-2 keywords, e.g. 'MLP SwiGLU', 'GQA attention', or 'Muon LR') if you want to search, or empty string \"\" if you want to skip search.\n"
+        "  - \"reason\": a string explaining your decision.\n\n"
+        "Response format:\n"
+        "{\n"
+        "  \"search\": true,\n"
+        "  \"query\": \"MLP SwiGLU\",\n"
+        "  \"reason\": \"We want to try SwiGLU activation for the feedforward network.\"\n"
+        "}\n"
     )
     return prompt
 
@@ -258,23 +329,62 @@ def run_agent_mode(
             if reused_query:
                 query = reused_query
                 query_reused = True
+                search_decision = True
                 print(f"Reusing prior query '{query}' (kept, improved BPB)")
             else:
-                retrieval_prompt = assemble_retrieval_prompt(results_content, experiment_brief)
+                query_history = _get_query_history_str(agent_run_id)
+                retrieval_prompt = assemble_retrieval_prompt(results_content, experiment_brief, query_history)
                 prompt_tokens_accum += _estimate_tokens(retrieval_prompt)
                 print("Calling harness LLM for retrieval query...")
                 query_res = llm_fn(retrieval_prompt)
                 completion_tokens_accum += _estimate_tokens(query_res)
-                query = query_res.strip().strip('"').strip("'")
-                print(f"Agent chose search query: '{query}'")
 
-            cache_key = _clean_query(query)
-            if cache_key in search_cache:
-                current_method_pack, method_ids = search_cache[cache_key]
-                print(f"Using cached method pack for query '{query}'")
+                raw_response = query_res.strip()
+                parsed = None
+
+                # Clean up markdown code blocks if present
+                if raw_response.startswith("```"):
+                    lines = raw_response.splitlines()
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines and lines[-1].startswith("```"):
+                        lines = lines[:-1]
+                    raw_response = "\n".join(lines).strip()
+
+                try:
+                    parsed = json.loads(raw_response)
+                except Exception:
+                    # Maybe it has some text around JSON? Let's try finding the first { and last }
+                    start_idx = raw_response.find("{")
+                    end_idx = raw_response.rfind("}")
+                    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                        try:
+                            parsed = json.loads(raw_response[start_idx:end_idx+1])
+                        except Exception:
+                            pass
+
+                if parsed is not None and isinstance(parsed, dict):
+                    search_decision = parsed.get("search", True)
+                    query = parsed.get("query", "").strip()
+                    reason = parsed.get("reason", "")
+                    print(f"Agent structured decision: search={search_decision}, query='{query}', reason='{reason}'")
+                else:
+                    search_decision = True
+                    query = query_res.strip().strip('"').strip("'")
+                    print(f"JSON parsing failed. Falling back: search_decision=True, query='{query}'")
+
+            if search_decision and query:
+                cache_key = _clean_query(query)
+                if cache_key in search_cache:
+                    current_method_pack, method_ids = search_cache[cache_key]
+                    print(f"Using cached method pack for query '{query}'")
+                else:
+                    current_method_pack, method_ids = rfs.search_methods_and_ids(query, max_chars=max_method_chars)
+                    search_cache[cache_key] = (current_method_pack, method_ids)
             else:
-                current_method_pack, method_ids = rfs.search_methods_and_ids(query, max_chars=max_method_chars)
-                search_cache[cache_key] = (current_method_pack, method_ids)
+                print(f"Skipping search. search_decision={search_decision}, query='{query}'")
+                current_method_pack = ""
+                method_ids = None
 
         for attempt in range(max_retries):
             if attempt > 0:

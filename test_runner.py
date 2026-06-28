@@ -953,6 +953,145 @@ def test_search_methods_max_chars():
     assert len(ids) == small_method_count
 
 
+
+def test_get_query_history_str():
+    from agents.harness_agent import _get_query_history_str
+    conn = _in_memory_db()
+    cur = conn.cursor()
+
+    # 1. Create an agent run
+    cur.execute("INSERT INTO agent_runs (mode, model) VALUES ('loopgraph', 'test-model')")
+    agent_run_id = cur.lastrowid
+
+    # 2. Insert some experiments
+    cur.execute(
+        """
+        INSERT INTO experiments (agent_run_id, commit_hash, val_bpb, status, description)
+        VALUES (?, 'hash1', 2.153019, 'keep', 'experiment_1')
+        """,
+        (agent_run_id,)
+    )
+    exp_id1 = cur.lastrowid
+
+    cur.execute(
+        """
+        INSERT INTO experiments (agent_run_id, commit_hash, val_bpb, status, description)
+        VALUES (?, 'hash2', 2.164321, 'discard', 'experiment_2')
+        """,
+        (agent_run_id,)
+    )
+    exp_id2 = cur.lastrowid
+
+    cur.execute(
+        """
+        INSERT INTO experiments (agent_run_id, commit_hash, val_bpb, status, description)
+        VALUES (?, 'hash3', NULL, 'crash', 'experiment_3')
+        """,
+        (agent_run_id,)
+    )
+    exp_id3 = cur.lastrowid
+
+    # 3. Insert matching retrieval events
+    cur.execute(
+        """
+        INSERT INTO retrieval_events (agent_run_id, experiment_id, event_type, query, retrieved_content)
+        VALUES (?, ?, 'agent_search', 'SwiGLU', 'content1')
+        """,
+        (agent_run_id, exp_id1)
+    )
+
+    cur.execute(
+        """
+        INSERT INTO retrieval_events (agent_run_id, experiment_id, event_type, query, retrieved_content)
+        VALUES (?, ?, 'agent_search_reuse', 'Muon', 'content2')
+        """,
+        (agent_run_id, exp_id2)
+    )
+
+    cur.execute(
+        """
+        INSERT INTO retrieval_events (agent_run_id, experiment_id, event_type, query, retrieved_content)
+        VALUES (?, ?, 'agent_search', 'Attention', 'content3')
+        """,
+        (agent_run_id, exp_id3)
+    )
+
+    # Also log a retrieval event of a different type to ensure it is filtered out
+    cur.execute(
+        """
+        INSERT INTO retrieval_events (agent_run_id, experiment_id, event_type, query, retrieved_content)
+        VALUES (?, ?, 'method_pack', 'all', 'content4')
+        """,
+        (agent_run_id, exp_id1)
+    )
+
+    # 4. Call _get_query_history_str
+    history_str = _get_query_history_str(agent_run_id, conn=conn)
+
+    # 5. Assert expectations
+    expected_lines = [
+        "Query: 'SwiGLU' -> Outcome: Kept (improved BPB to 2.153019)",
+        "Query: 'Muon' -> Outcome: Discarded (BPB: 2.164321)",
+        "Query: 'Attention' -> Outcome: Crashed"
+    ]
+    for line in expected_lines:
+        assert line in history_str
+
+    # Ensure method_pack is NOT in history
+    assert "Query: 'all'" not in history_str
+
+
+def test_search_methods_hybrid_general_appends():
+    conn = _in_memory_db()
+
+    # 1. Test search with non-empty query.
+    # When query is "SwiGLU", the main search results should contain SwiGLU MLP.
+    # The general optimization methods (like Muon, Dropout, Warmup, Clipping) should be appended.
+    pack, ids = rfs.search_methods_and_ids("SwiGLU", conn)
+
+    # Check that SwiGLU MLP is present
+    assert "SwiGLU MLP" in pack
+
+    # Check that General Methods header is present
+    assert "# General Optimization & Hyperparameter Tuning Methods" in pack
+
+    # Check that Muon LR Tuning (optimizer) is appended
+    assert "Muon LR Tuning" in pack
+
+    # Check that Dropout Regularization (regularization) is appended
+    assert "Dropout Regularization" in pack
+
+    # Check that general method IDs are merged in `ids`
+    cur = conn.cursor()
+    cur.execute("SELECT method_id FROM methods WHERE name = 'SwiGLU MLP'")
+    swiglu_id = cur.fetchone()["method_id"]
+    cur.execute("SELECT method_id FROM methods WHERE name = 'Muon LR Tuning'")
+    muon_id = cur.fetchone()["method_id"]
+    cur.execute("SELECT method_id FROM methods WHERE name = 'Dropout Regularization'")
+    dropout_id = cur.fetchone()["method_id"]
+
+    assert swiglu_id in ids
+    assert muon_id in ids
+    assert dropout_id in ids
+
+    # 2. Test search with non-empty query that matches a general method directly.
+    # When query is "Muon", the main search results will already contain "Muon LR Tuning".
+    # General methods should still be appended, but "Muon LR Tuning" should NOT be duplicated in the pack
+    # or the IDs.
+    pack2, ids2 = rfs.search_methods_and_ids("Muon", conn)
+
+    # "Muon LR Tuning" should appear only once.
+    assert pack2.count("Muon LR Tuning") == 1
+    assert ids2.count(muon_id) == 1
+
+    # Other general methods (like Dropout Regularization) should still be appended.
+    assert "Dropout Regularization" in pack2
+    assert dropout_id in ids2
+
+    # 3. Test budget constraint
+    pack_budget, ids_budget = rfs.search_methods_and_ids("SwiGLU", conn, max_chars=len(pack) - 100)
+    assert len(ids_budget) < len(ids)
+
 if __name__ == "__main__":
     import sys
     try:
