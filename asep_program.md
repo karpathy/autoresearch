@@ -15,7 +15,7 @@ experiment:
     {python_bin} asep_loopgraph_benchmark.py
     --mode {mode}
     --metric val_bpb
-    --max-experiments 1
+    --max-experiments 2
     --steps-budget 0
     --time-budget 30
     --api-provider venice
