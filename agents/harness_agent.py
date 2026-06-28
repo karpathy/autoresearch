@@ -170,6 +170,7 @@ def run_agent_mode(
     llm_fn: Callable[[str], str],
     experiments: Optional[list[dict]] = None,
     steps_budget: int = 0,
+    max_method_chars: int | None = None,
 ) -> int:
     """Run the propose-train-evaluate loop using the supplied LLM callable."""
     initialize_db()
@@ -272,7 +273,7 @@ def run_agent_mode(
                 current_method_pack, method_ids = search_cache[cache_key]
                 print(f"Using cached method pack for query '{query}'")
             else:
-                current_method_pack, method_ids = rfs.search_methods_and_ids(query)
+                current_method_pack, method_ids = rfs.search_methods_and_ids(query, max_chars=max_method_chars)
                 search_cache[cache_key] = (current_method_pack, method_ids)
 
         for attempt in range(max_retries):

@@ -88,6 +88,12 @@ def parse_args() -> argparse.Namespace:
         default="mps",
         help="PyTorch device passed to train.py",
     )
+    parser.add_argument(
+        "--max-method-chars",
+        type=int,
+        default=None,
+        help="Maximum characters for the retrieved method pack (default: no limit)",
+    )
     return parser.parse_args()
 
 
@@ -179,6 +185,7 @@ def main() -> int:
             time_budget=args.time_budget,
             llm_fn=llm_fn,
             steps_budget=args.steps_budget,
+            max_method_chars=args.max_method_chars,
         )
         summary = load_run(agent_run_id)
     finally:

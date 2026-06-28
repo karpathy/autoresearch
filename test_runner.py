@@ -797,7 +797,7 @@ def test_run_agent_mode_reuses_query():
 
             search_calls = []
 
-            def mock_search_methods_and_ids(query, conn=None):
+            def mock_search_methods_and_ids(query, conn=None, max_chars=None):
                 search_calls.append(query)
                 return f"pack for {query}", [1]
 

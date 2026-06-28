@@ -21,6 +21,7 @@ experiment:
     --api-provider venice
     --model zai-org-glm-5-2
     --device mps
+    --max-method-chars 4000
   timeout_seconds: 600
 strategy:
   type: planner
