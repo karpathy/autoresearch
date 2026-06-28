@@ -19,7 +19,7 @@ experiment:
     --steps-budget 0
     --time-budget 30
     --api-provider venice
-    --model openai-gpt-4o-mini-2024-07-18
+    --model zai-org-glm-5-2
     --device mps
     --max-method-chars 4000
   timeout_seconds: 600
@@ -41,8 +41,7 @@ bits-per-byte (val_bpb) compared to the baseline agent mode.
 
 ## Constraints
 Each experiment is a full LoopGraph agent run with 3 proposals, ~50 training
-steps per experiment, and a 30-second training time budget, using the fast
-`openai-gpt-4o-mini-2024-07-18` model via Venice. Runs execute on `mps` for
+steps per experiment, and a 30-second training time budget, using the `zai-org-glm-5-2` model via Venice. Runs execute on `mps` for
 fast local execution.
 
 ## Use Hybrid Memory
