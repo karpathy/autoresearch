@@ -29,6 +29,42 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+def _clean_query(query: str) -> str:
+    """Normalize a query string for cache lookup."""
+    return " ".join(query.lower().split())
+
+
+def _get_reusable_query(agent_run_id: int, baseline_val_bpb: float, conn=None) -> Optional[str]:
+    """Return the query from the most recent kept experiment that improved over baseline."""
+    from researchfs.db import get_connection
+
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT re.query
+            FROM experiments e
+            JOIN retrieval_events re ON e.experiment_id = re.experiment_id
+            WHERE e.agent_run_id = ?
+              AND e.status = 'keep'
+              AND e.val_bpb < ?
+              AND re.event_type IN ('agent_search', 'agent_search_reuse')
+            ORDER BY e.experiment_id DESC
+            LIMIT 1
+            """,
+            (agent_run_id, baseline_val_bpb),
+        )
+        row = cur.fetchone()
+        return row["query"] if row else None
+    finally:
+        if close:
+            conn.close()
+
+
 def _git_env() -> dict:
     env = os.environ.copy()
     for key, value in {
@@ -194,6 +230,7 @@ def run_agent_mode(
     )
 
     best_val_bpb = baseline_val_bpb
+    search_cache: dict[str, tuple[str, list[int]]] = {}
 
     # Iterative loop
     for exp_num in range(1, max_experiments + 1):
@@ -214,15 +251,29 @@ def run_agent_mode(
         query = ""
         current_method_pack = ""
         method_ids = None
+        query_reused = False
         if mode == "loopgraph":
-            retrieval_prompt = assemble_retrieval_prompt(results_content, experiment_brief)
-            prompt_tokens_accum += _estimate_tokens(retrieval_prompt)
-            print("Calling harness LLM for retrieval query...")
-            query_res = llm_fn(retrieval_prompt)
-            completion_tokens_accum += _estimate_tokens(query_res)
-            query = query_res.strip().strip('"').strip("'")
-            print(f"Agent chose search query: '{query}'")
-            current_method_pack, method_ids = rfs.search_methods_and_ids(query)
+            reused_query = _get_reusable_query(agent_run_id, baseline_val_bpb)
+            if reused_query:
+                query = reused_query
+                query_reused = True
+                print(f"Reusing prior query '{query}' (kept, improved BPB)")
+            else:
+                retrieval_prompt = assemble_retrieval_prompt(results_content, experiment_brief)
+                prompt_tokens_accum += _estimate_tokens(retrieval_prompt)
+                print("Calling harness LLM for retrieval query...")
+                query_res = llm_fn(retrieval_prompt)
+                completion_tokens_accum += _estimate_tokens(query_res)
+                query = query_res.strip().strip('"').strip("'")
+                print(f"Agent chose search query: '{query}'")
+
+            cache_key = _clean_query(query)
+            if cache_key in search_cache:
+                current_method_pack, method_ids = search_cache[cache_key]
+                print(f"Using cached method pack for query '{query}'")
+            else:
+                current_method_pack, method_ids = rfs.search_methods_and_ids(query)
+                search_cache[cache_key] = (current_method_pack, method_ids)
 
         for attempt in range(max_retries):
             if attempt > 0:
@@ -295,7 +346,7 @@ def run_agent_mode(
                 )
             if mode == "loopgraph":
                 rfs.log_retrieval_event(
-                    event_type="agent_search",
+                    event_type="agent_search_reuse" if query_reused else "agent_search",
                     query=query,
                     retrieved_content=current_method_pack[:2000],
                     agent_run_id=agent_run_id,

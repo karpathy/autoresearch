@@ -750,6 +750,120 @@ def test_method_pack_stats_formatting():
     
     pack_search_muon = rfs.search_methods("Muon", conn)
     assert "No runs yet" in pack_search_muon
+
+
+def test_run_agent_mode_reuses_query():
+    import os
+    import sqlite3
+    import tempfile
+    import unittest.mock
+    from agents import harness_agent
+    from researchfs.db import initialize_db
+    from researchfs.ingest import ensure_seed
+    from researchfs import retrieve as rfs
+
+    # Use a named shared in-memory database so functions that close their
+    # connection do not destroy the database.
+    db_uri = "file:reuse_test_mem?mode=memory&cache=shared"
+    conn = sqlite3.connect(db_uri, uri=True)
+    conn.row_factory = sqlite3.Row
+
+    def patched_get_connection():
+        c = sqlite3.connect(db_uri, uri=True)
+        c.row_factory = sqlite3.Row
+        return c
+
+    with tempfile.TemporaryDirectory() as tmpdir, \
+         unittest.mock.patch("researchfs.db.get_connection", patched_get_connection), \
+         unittest.mock.patch("researchfs.retrieve.get_connection", patched_get_connection):
+        old_cwd = os.getcwd()
+        os.chdir(tmpdir)
+        try:
+            initialize_db()
+            ensure_seed()
+
+            # Create a simple train.py for the agent to edit.
+            with open("train.py", "w", encoding="utf-8") as f:
+                f.write("x = 1\n")
+
+            # Set up a prior agent run with a baseline and a kept, improved experiment
+            # that has an associated agent_search retrieval event.
+            prior_run_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini")
+            rfs.log_experiment("baseline", 2.500, 0.5, "keep", "baseline", prior_run_id)
+            prior_exp_id = rfs.log_experiment("abc123", 2.400, 0.5, "keep", "better", prior_run_id)
+            rfs.log_retrieval_event(
+                "agent_search", "prior query", "content", prior_run_id, prior_exp_id, method_ids=[1]
+            )
+
+            search_calls = []
+
+            def mock_search_methods_and_ids(query, conn=None):
+                search_calls.append(query)
+                return f"pack for {query}", [1]
+
+            train_calls = [0]
+
+            def mock_run_train(time_budget, steps_budget, env, log_path):
+                if train_calls[0] == 0:
+                    train_calls[0] += 1
+                    return (2.500, 1024.0, "success", "")
+                return (2.350, 1024.0, "success", "")
+
+            def mock_subprocess_run(args, **kwargs):
+                class Result:
+                    returncode = 0
+                    stdout = "abc123"
+                    stderr = ""
+                res = Result()
+                if len(args) >= 3 and args[:3] == ["git", "diff", "--quiet"]:
+                    res.returncode = 1
+                return res
+
+            def mock_llm(prompt):
+                return "Description: test\n<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>>"
+
+            with unittest.mock.patch("researchfs.retrieve.search_methods_and_ids", mock_search_methods_and_ids), \
+                 unittest.mock.patch("agents.harness_agent._run_train", mock_run_train), \
+                 unittest.mock.patch("subprocess.run", mock_subprocess_run), \
+                 unittest.mock.patch("agents.harness_agent._current_branch", return_value="main"), \
+                 unittest.mock.patch("agents.harness_agent._checkout"), \
+                 unittest.mock.patch("agents.harness_agent.rfs.start_agent_run", return_value=prior_run_id):
+                harness_agent.run_agent_mode(
+                    mode="loopgraph",
+                    model="gpt-4o-mini",
+                    max_experiments=1,
+                    time_budget=60,
+                    llm_fn=mock_llm,
+                    steps_budget=100,
+                )
+
+            assert "prior query" in search_calls, f"Expected 'prior query' in search calls, got {search_calls}"
+        finally:
+            os.chdir(old_cwd)
+
+
+def test_search_methods_max_chars():
+    conn = _in_memory_db()
+
+    # Empty query returns the full catalog; use budgets that truncate at method boundaries.
+    small_pack = rfs.search_methods("", conn, max_chars=600)
+    large_pack = rfs.search_methods("", conn, max_chars=2000)
+
+    small_method_count = small_pack.count("## ")
+    large_method_count = large_pack.count("## ")
+
+    assert small_method_count > 0, "Small budget should still include at least one whole method"
+    assert small_method_count < large_method_count, "Larger budget should include more methods"
+    assert "... and " in small_pack and "more methods omitted" in small_pack, (
+        "Truncated pack should report the omitted method count"
+    )
+
+    # search_methods_and_ids should honor the same budget and return matching ids.
+    pack_and_ids, ids = rfs.search_methods_and_ids("", conn, max_chars=600)
+    assert pack_and_ids == small_pack
+    assert len(ids) == small_method_count
+
+
 if __name__ == "__main__":
     import sys
     try:

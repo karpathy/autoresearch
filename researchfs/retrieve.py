@@ -67,7 +67,7 @@ def _get_empirical_stats(method_id: int, conn, baselines: dict) -> dict:
 
 
 def _build_method_pack(
-    methods: list, conn, header: str, sort_key=None
+    methods: list, conn, header: str, sort_key=None, max_chars: int | None = None
 ) -> tuple[str, list[int]]:
     """Helper to calculate stats, sort methods, format them, and return (pack_str, method_ids)."""
     baselines = {}
@@ -91,27 +91,27 @@ def _build_method_pack(
 
     methods_with_stats.sort(key=sort_key)
 
-    lines = [header]
-    sorted_ids = []
+    # Pre-render each method's contribution so we can enforce a character budget.
+    rendered_methods: list[tuple[int, list[str]]] = []
     for m in methods_with_stats:
-        sorted_ids.append(m["method_id"])
-        lines.append(f"## {m['name']} ({m['category']})")
-        lines.append(f"**Description:** {m['description']}")
-        lines.append(f"**Implementation hint:** {m['implementation_hint']}")
+        method_lines: list[str] = []
+        method_lines.append(f"## {m['name']} ({m['category']})")
+        method_lines.append(f"**Description:** {m['description']}")
+        method_lines.append(f"**Implementation hint:** {m['implementation_hint']}")
         if m["risks"]:
-            lines.append(f"**Risks:** {m['risks']}")
+            method_lines.append(f"**Risks:** {m['risks']}")
 
         # Empirical Swarm Stats
         stats = m["stats"]
         if stats["total_runs"] > 0:
-            lines.append(
+            method_lines.append(
                 f"**Empirical Swarm Stats:** {stats['total_runs']} runs, "
                 f"{stats['success_rate']:.0%} success ({stats['keeps']} keeps, "
                 f"{stats['discards']} discards, {stats['crashes']} crashes), "
                 f"avg {stats['avg_bpb_delta']:+.6f} BPB."
             )
         else:
-            lines.append("**Empirical Swarm Stats:** No runs yet.")
+            method_lines.append("**Empirical Swarm Stats:** No runs yet.")
 
         # Source provenance
         cur = conn.cursor()
@@ -127,10 +127,33 @@ def _build_method_pack(
         )
         sources = cur.fetchall()
         if sources:
-            lines.append("**Sources:**")
+            method_lines.append("**Sources:**")
             for src in sources:
-                lines.append(f"- {src['title']} ({src['url']}) [{src['section']}]")
-        lines.append("")
+                method_lines.append(f"- {src['title']} ({src['url']}) [{src['section']}]")
+        method_lines.append("")
+
+        rendered = "\n".join(method_lines)
+        rendered_methods.append((m["method_id"], rendered))
+
+    lines = [header]
+    sorted_ids = []
+    current_len = len(header)
+    omitted = 0
+    sep_len = len("\n")
+    budget = max_chars
+
+    for method_id, rendered in rendered_methods:
+        if budget is not None:
+            add_len = sep_len + len(rendered)
+            if current_len + add_len > budget:
+                omitted += 1
+                continue
+            current_len += add_len
+        sorted_ids.append(method_id)
+        lines.append(rendered)
+
+    if omitted:
+        lines.append(f"... and {omitted} more methods omitted")
 
     return "\n".join(lines), sorted_ids
 
@@ -265,7 +288,9 @@ def _score_methods(
     return scored, ids
 
 
-def search_methods_and_ids(query: str, conn=None) -> tuple[str, list[int]]:
+def search_methods_and_ids(
+    query: str, conn=None, max_chars: int | None = None
+) -> tuple[str, list[int]]:
     """Search for methods matching the query keywords and return a tuple of (formatted_method_pack, list_of_method_ids)."""
     close = False
     if conn is None:
@@ -284,6 +309,7 @@ def search_methods_and_ids(query: str, conn=None) -> tuple[str, list[int]]:
                 methods,
                 conn,
                 "# Method Pack: Autoresearch Optimization Catalog\n",
+                max_chars=max_chars,
             )
             return pack_str, ids
 
@@ -293,6 +319,7 @@ def search_methods_and_ids(query: str, conn=None) -> tuple[str, list[int]]:
             conn,
             f"# Method Pack Search Results for: '{query}'\n",
             sort_key=lambda m: (-m["_score"], m["category"] or "", m["name"] or ""),
+            max_chars=max_chars,
         )
         return pack_str, ids
     finally:
@@ -300,9 +327,9 @@ def search_methods_and_ids(query: str, conn=None) -> tuple[str, list[int]]:
             conn.close()
 
 
-def search_methods(query: str, conn=None) -> str:
+def search_methods(query: str, conn=None, max_chars: int | None = None) -> str:
     """Search for methods matching the query keywords and return a formatted method pack."""
-    pack, _ = search_methods_and_ids(query, conn)
+    pack, _ = search_methods_and_ids(query, conn, max_chars=max_chars)
     return pack
 def get_experiment_brief(name: str = "nanochat_autoresearch", conn=None) -> str:
     """Return the named experiment brief content."""
