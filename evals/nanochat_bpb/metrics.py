@@ -2,10 +2,32 @@
 
 from __future__ import annotations
 
-from statistics import mean
+from statistics import mean, stdev
 from typing import Optional
 
 from researchfs.db import get_connection
+
+
+NANOCHAT_BENCHMARKS = {
+    "autoresearch_at_home": {
+        "bpb": 0.9372,
+        "source": "https://www.recursive.com/articles/first-steps-toward-automated-ai-research",
+        "description": "Previous public best from autoresearch@home, reward hacks removed, mean over 10 random seeds, evaluated on B200.",
+        "device": "NVIDIA B200",
+    },
+    "recursive_best": {
+        "bpb": 0.9109,
+        "source": "https://www.recursive.com/articles/first-steps-toward-automated-ai-research",
+        "description": "Recursive automated research system starting from the Autoresearch seed, evaluated on B200.",
+        "device": "NVIDIA B200",
+    },
+    "recursive_vanilla_transformer": {
+        "bpb": 0.9344,
+        "source": "https://www.recursive.com/articles/first-steps-toward-automated-ai-research",
+        "description": "Recursive automated research system starting from a vanilla Transformer with AdamW, evaluated on B200.",
+        "device": "NVIDIA B200",
+    },
+}
 
 
 COST_PER_1K_TOKENS = {
@@ -245,6 +267,284 @@ def format_comparison(comparison: dict) -> str:
         pct = comparison["retrieval_reduction_ratio"] * 100
         lines.append(
             f"ResearchFS used **{pct:.1f}% fewer retrieval calls** than baseline."
+        )
+
+    return "\n".join(lines)
+
+
+def compare_run_to_benchmarks(
+    agent_run_id: int, benchmarks: Optional[dict] = None, conn=None
+) -> dict:
+    """Compare a single run's best BPB against published external benchmarks."""
+    if benchmarks is None:
+        benchmarks = NANOCHAT_BENCHMARKS
+
+    run = load_run(agent_run_id, conn)
+    run_best = run.get("best_bpb")
+
+    per_benchmark = {}
+    for name, meta in benchmarks.items():
+        benchmark_bpb = meta.get("bpb")
+        delta = (
+            run_best - benchmark_bpb
+            if run_best is not None and benchmark_bpb is not None
+            else None
+        )
+        per_benchmark[name] = {
+            "bpb": benchmark_bpb,
+            "delta": delta,
+            "source": meta.get("source"),
+            "description": meta.get("description"),
+            "device": meta.get("device"),
+        }
+
+    strongest_name = None
+    gap_to_strongest = None
+    valid_benchmarks = [
+        (name, meta["bpb"])
+        for name, meta in per_benchmark.items()
+        if meta["bpb"] is not None
+    ]
+    if valid_benchmarks:
+        strongest_name, strongest_bpb = min(valid_benchmarks, key=lambda item: item[1])
+        gap_to_strongest = (
+            run_best - strongest_bpb if run_best is not None else None
+        )
+
+    return {
+        "agent_run_id": agent_run_id,
+        "model": run.get("model"),
+        "mode": run.get("mode"),
+        "best_bpb": run_best,
+        "baseline_bpb": run.get("baseline_bpb"),
+        "benchmarks": per_benchmark,
+        "gap_to_sota": gap_to_strongest,
+        "strongest_benchmark": strongest_name,
+    }
+
+
+def format_benchmark_comparison(comparison: dict) -> str:
+    """Render a benchmark comparison dict as Markdown."""
+
+    def fmt(val, fmt_spec: str = ".6f"):
+        if val is None:
+            return "N/A"
+        if isinstance(val, (int, float)):
+            if fmt_spec == ".0f":
+                return f"{int(val):,}"
+            return f"{val:{fmt_spec}}"
+        return str(val)
+
+    lines = [
+        "# Benchmark Comparison: Local Run vs Published Results",
+        "",
+        f"Run ID: {comparison['agent_run_id']}",
+        f"Mode: {comparison['mode']}",
+        f"Model: {comparison['model'] or 'N/A'}",
+        "",
+        "| Benchmark | BPB | Local Best BPB | Delta | Notes |",
+        "|---|---:|---:|---:|---|",
+    ]
+
+    for name, meta in comparison["benchmarks"].items():
+        delta = meta["delta"]
+        delta_str = fmt(delta)
+        if delta is not None:
+            direction = "better" if delta < 0 else "worse"
+            delta_str = f"{fmt(delta)} ({direction})"
+        note_parts = []
+        if meta.get("device"):
+            note_parts.append(meta["device"])
+        if meta.get("description"):
+            note_parts.append(meta["description"])
+        note = ", ".join(note_parts)
+        lines.append(
+            f"| {name} | {fmt(meta['bpb'])} | {fmt(comparison['best_bpb'])} | "
+            f"{delta_str} | {note or 'N/A'} |"
+        )
+
+    lines.append("")
+    strongest_name = comparison.get("strongest_benchmark")
+    if strongest_name and comparison.get("gap_to_sota") is not None:
+        gap = comparison["gap_to_sota"]
+        direction = "better" if gap < 0 else "worse"
+        lines.append(
+            f"Local best BPB is **{fmt(abs(gap))} {direction}** than the strongest "
+            f"published benchmark ({strongest_name})."
+        )
+    elif comparison.get("best_bpb") is None:
+        lines.append(
+            "Local run has no measurable best BPB, so benchmark comparison is unavailable."
+        )
+
+    return "\n".join(lines)
+
+
+def aggregate_seeded_runs(run_ids: list[int], conn=None) -> dict:
+    """Aggregate best BPB across multiple seeded runs of the same recipe."""
+    if not run_ids:
+        raise ValueError("run_ids must not be empty")
+
+    runs = [load_run(run_id, conn) for run_id in run_ids]
+    run_bests = [
+        (run["agent_run_id"], run["best_bpb"])
+        for run in runs
+        if run.get("best_bpb") is not None
+    ]
+    if len(run_bests) < 2:
+        raise ValueError("Need at least two runs with valid best_bpb to aggregate")
+
+    best_bpbs = [best_bpb for _, best_bpb in run_bests]
+    mean_bpb = mean(best_bpbs)
+    std_bpb = stdev(best_bpbs)
+    min_bpb = min(best_bpbs)
+    max_bpb = max(best_bpbs)
+
+    benchmark_comparison = compare_run_to_benchmarks(run_bests[0][0], conn=conn)
+    strongest_name = benchmark_comparison.get("strongest_benchmark")
+    strongest_bpb = (
+        benchmark_comparison["benchmarks"][strongest_name]["bpb"]
+        if strongest_name and strongest_name in benchmark_comparison["benchmarks"]
+        else None
+    )
+    gap_to_strongest = mean_bpb - strongest_bpb if strongest_bpb is not None else None
+
+    return {
+        "run_ids": run_ids,
+        "valid_run_ids": [run_id for run_id, _ in run_bests],
+        "n_seeds": len(run_ids),
+        "valid_seeds": len(run_bests),
+        "mean_bpb": mean_bpb,
+        "std_bpb": std_bpb,
+        "min_bpb": min_bpb,
+        "max_bpb": max_bpb,
+        "best_bpbs": best_bpbs,
+        "mode": runs[0].get("mode"),
+        "model": runs[0].get("model"),
+        "gap_to_sota": gap_to_strongest,
+        "strongest_benchmark": strongest_name,
+    }
+
+
+def detect_reward_hacks(run: dict, z_threshold: float = 3.0) -> list[dict]:
+    """Flag suspicious run patterns that need extra validation."""
+    flags = []
+    kept = [e for e in run.get("experiments", []) if e["status"] == "keep"]
+    valid = [e for e in kept if e.get("val_bpb") is not None]
+
+    if len(valid) >= 2:
+        values = [e["val_bpb"] for e in valid]
+        avg = mean(values)
+        spread = stdev(values)
+        if spread > 0:
+            for experiment in valid:
+                z_score = (experiment["val_bpb"] - avg) / spread
+                if abs(z_score) > z_threshold:
+                    flags.append(
+                        {
+                            "experiment_id": experiment["experiment_id"],
+                            "val_bpb": experiment["val_bpb"],
+                            "reason": (
+                                f"BPB z-score {z_score:.2f} exceeds threshold "
+                                f"{z_threshold} (mean={avg:.4f}, std={spread:.4f})"
+                            ),
+                        }
+                    )
+
+    best_bpb = run.get("best_bpb")
+    strongest_bpb = NANOCHAT_BENCHMARKS.get("recursive_best", {}).get("bpb")
+    if best_bpb is not None and strongest_bpb is not None:
+        if best_bpb < strongest_bpb - 0.02:
+            flags.append(
+                {
+                    "experiment_id": None,
+                    "val_bpb": best_bpb,
+                    "reason": (
+                        f"Single-seed best BPB {best_bpb:.4f} beats Recursive "
+                        f"multi-seed mean {strongest_bpb:.4f} by more than 0.02; "
+                        "requires multi-seed validation"
+                    ),
+                }
+            )
+
+    for experiment in kept:
+        if experiment.get("val_bpb") is None:
+            flags.append(
+                {
+                    "experiment_id": experiment["experiment_id"],
+                    "val_bpb": None,
+                    "reason": "Kept experiment has no val_bpb; cannot verify it is real",
+                }
+            )
+
+    return flags
+
+
+def format_reward_hack_report(run: dict, flags: list[dict]) -> str:
+    """Render reward-hack flags as Markdown."""
+    lines = [
+        "## Reward-hack screening",
+        "",
+    ]
+    if not flags:
+        lines.append("No suspicious patterns detected.")
+        return "\n".join(lines)
+
+    lines.append(
+        f"Detected **{len(flags)}** suspicious pattern(s) in run {run['agent_run_id']}:"
+    )
+    lines.append("")
+    for index, flag in enumerate(flags, 1):
+        experiment = (
+            f"(experiment {flag['experiment_id']})"
+            if flag["experiment_id"]
+            else "(run-level)"
+        )
+        bpb = f"BPB {flag['val_bpb']:.4f}" if flag["val_bpb"] is not None else "no BPB"
+        lines.append(f"{index}. {experiment} {bpb}: {flag['reason']}")
+    return "\n".join(lines)
+
+
+def format_seeded_aggregate(aggregate: dict) -> str:
+    """Render a multi-seed aggregate dict as Markdown."""
+
+    def fmt(val, fmt_spec: str = ".6f"):
+        if val is None:
+            return "N/A"
+        if isinstance(val, (int, float)):
+            if fmt_spec == ".0f":
+                return f"{int(val):,}"
+            return f"{val:{fmt_spec}}"
+        return str(val)
+
+    lines = [
+        "# Multi-Seed Aggregate Results",
+        "",
+        f"Mode: {aggregate.get('mode')}",
+        f"Model: {aggregate.get('model') or 'N/A'}",
+        f"Seeds evaluated: {aggregate['valid_seeds']} / {aggregate['n_seeds']}",
+        "",
+        "| Metric | Value |",
+        "|---|---:|",
+        f"| Mean BPB | {fmt(aggregate['mean_bpb'])} |",
+        f"| StdDev BPB | {fmt(aggregate['std_bpb'])} |",
+        f"| Min BPB | {fmt(aggregate['min_bpb'])} |",
+        f"| Max BPB | {fmt(aggregate['max_bpb'])} |",
+        "",
+        "| Run ID | Best BPB |",
+        "|---|---:|",
+    ]
+    for run_id, best_bpb in zip(aggregate["valid_run_ids"], aggregate["best_bpbs"]):
+        lines.append(f"| {run_id} | {fmt(best_bpb)} |")
+
+    strongest_name = aggregate.get("strongest_benchmark")
+    if strongest_name and aggregate.get("gap_to_sota") is not None:
+        gap = aggregate["gap_to_sota"]
+        direction = "better" if gap < 0 else "worse"
+        lines.append("")
+        lines.append(
+            f"Mean BPB across seeds is **{fmt(abs(gap))} {direction}** than the "
+            f"strongest published benchmark ({strongest_name})."
         )
 
     return "\n".join(lines)
