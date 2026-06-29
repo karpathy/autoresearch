@@ -119,30 +119,43 @@ def current_git_branch() -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def cleanup_git_state(original_branch: str | None) -> None:
-    """Return to the original branch and remove any autoresearch branch."""
-    subprocess.run(["git", "reset", "--hard"], check=False, capture_output=True)
-    if original_branch and original_branch != "HEAD":
-        subprocess.run(
-            ["git", "checkout", original_branch],
-            check=False,
-            capture_output=True,
-        )
-    # Delete local autoresearch branches created by run_agent_mode.
+def autoresearch_branches() -> set[str]:
+    """Return local autoresearch experiment branch names."""
     result = subprocess.run(
         ["git", "branch", "--list", "autoresearch/exp_*"],
         capture_output=True,
         text=True,
         check=False,
     )
+    branches = set()
     for branch in result.stdout.splitlines():
-        branch = branch.strip().lstrip("* ").strip()
-        if branch:
-            subprocess.run(
-                ["git", "branch", "-D", branch],
-                check=False,
-                capture_output=True,
-            )
+        clean = branch.strip().lstrip("* ").strip()
+        if clean:
+            branches.add(clean)
+    return branches
+
+
+def cleanup_git_state(original_branch: str | None, branches_before: set[str]) -> None:
+    """Return to the original branch and remove branches created by this run."""
+    current_branch = current_git_branch()
+    generated_branches = autoresearch_branches() - branches_before
+
+    if current_branch in generated_branches:
+        subprocess.run(["git", "reset", "--hard"], check=False, capture_output=True)
+
+    if original_branch and original_branch != "HEAD":
+        subprocess.run(
+            ["git", "checkout", original_branch],
+            check=False,
+            capture_output=True,
+        )
+
+    for branch in sorted(generated_branches):
+        subprocess.run(
+            ["git", "branch", "-D", branch],
+            check=False,
+            capture_output=True,
+        )
 
 
 def build_llm_fn(provider: str, model: str) -> Any:
@@ -174,6 +187,7 @@ def main() -> int:
     set_fast_train_env(args.steps_budget, args.time_budget, args.device)
 
     original_branch = current_git_branch()
+    branches_before = autoresearch_branches()
     start_time = time.monotonic()
 
     try:
@@ -189,7 +203,7 @@ def main() -> int:
         )
         summary = load_run(agent_run_id)
     finally:
-        cleanup_git_state(original_branch)
+        cleanup_git_state(original_branch, branches_before)
 
     elapsed = time.monotonic() - start_time
 

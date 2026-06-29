@@ -182,6 +182,7 @@ def main():
     from io import StringIO
 
     old_stdout = sys.stdout
+    old_argv = sys.argv[:]
     report_buffer = StringIO()
     sys.stdout = report_buffer
     try:
@@ -189,6 +190,7 @@ def main():
         compare_main()
     finally:
         sys.stdout = old_stdout
+        sys.argv = old_argv
 
     report = report_buffer.getvalue()
 

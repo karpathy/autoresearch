@@ -218,9 +218,6 @@ def main():
         with open(results_path, "w") as f:
             f.write("commit\tval_bpb\tmemory_gb\tstatus\tdescription\n")
             
-    # Load reference files if mode is loopgraph
-    method_pack = ""
-    experiment_brief = ""
     # Load reference context from ResearchFS if mode is loopgraph.
     method_pack = ""
     experiment_brief = ""
@@ -279,7 +276,6 @@ def main():
     
     # Step 2: Iterative Propose-Train-Evaluate Loop
     for exp_num in range(1, args.max_experiments + 1):
-        print(f"\n=== Starting Experiment {exp_num}/{args.max_experiments} ===")
         prompt_tokens = 0
         completion_tokens = 0
         print(f"\n=== Starting Experiment {exp_num}/{args.max_experiments} ===")
@@ -331,12 +327,6 @@ def main():
 
             print(f"Proposed change description: {description}")
 
-            # Apply changes temporarily to check for diff
-            with open("train.py", "w") as f:
-                f.write(proposed_code)
-            
-            print(f"Proposed change description: {description}")
-            
             # Apply changes temporarily to check for diff
             with open("train.py", "w") as f:
                 f.write(proposed_code)

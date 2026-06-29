@@ -170,6 +170,14 @@ def test_chunk_text_overlap_and_boundaries():
     assert chunk_text(short, chunk_size=1000, overlap=100) == ["Tiny."]
 
 
+def test_chunk_text_rejects_invalid_overlap():
+    try:
+        chunk_text("long enough text", chunk_size=10, overlap=10)
+        assert False, "Expected invalid overlap to raise ValueError"
+    except ValueError as exc:
+        assert "overlap" in str(exc)
+
+
 def test_extract_json_block_variants():
     block = '```json\n{"methods": [{"name": "x"}]}\n```'
     assert extract_json_block(block) == '{"methods": [{"name": "x"}]}'
@@ -711,10 +719,86 @@ def test_format_comparison_includes_key_metrics():
     assert "fewer tokens" in text
 
 
+def test_benchmark_comparison_and_reward_hack_screening():
+    conn = _in_memory_db()
+    run_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    rfs.log_experiment("baseline", 1.000, 0.5, "keep", "baseline", run_id, conn)
+    rfs.log_experiment("abc", 0.880, 0.5, "keep", "suspicious", run_id, conn)
+    rfs.log_experiment("missing", None, 0.5, "keep", "missing metric", run_id, conn)
+
+    comparison = metrics.compare_run_to_benchmarks(run_id, conn=conn)
+    assert comparison["agent_run_id"] == run_id
+    assert comparison["strongest_benchmark"] == "recursive_best"
+    assert comparison["gap_to_sota"] < 0
+
+    text = metrics.format_benchmark_comparison(comparison)
+    assert "Benchmark Comparison" in text
+    assert "recursive_best" in text
+    assert "0.880000" in text
+
+    run = metrics.load_run(run_id, conn)
+    flags = metrics.detect_reward_hacks(run)
+    assert any("multi-seed validation" in flag["reason"] for flag in flags)
+    assert any("no val_bpb" in flag["reason"] for flag in flags)
+    report = metrics.format_reward_hack_report(run, flags)
+    assert "suspicious pattern" in report
+
+
+def test_aggregate_seeded_runs_tracks_valid_run_ids():
+    conn = _in_memory_db()
+    run_ids = []
+    for idx, best_bpb in enumerate([0.950, 0.940, None]):
+        run_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+        run_ids.append(run_id)
+        rfs.log_experiment("baseline", 1.000, 0.5, "keep", "baseline", run_id, conn)
+        if best_bpb is not None:
+            rfs.log_experiment(f"seed{idx}", best_bpb, 0.5, "keep", "seed", run_id, conn)
+        else:
+            rfs.log_experiment(f"seed{idx}", None, 0.5, "crash", "seed", run_id, conn)
+
+    aggregate = metrics.aggregate_seeded_runs(run_ids, conn=conn)
+    assert aggregate["n_seeds"] == 3
+    assert aggregate["valid_seeds"] == 3
+    assert aggregate["valid_run_ids"] == run_ids
+    assert abs(aggregate["mean_bpb"] - 0.9633333333333333) < 1e-9
+
+    text = metrics.format_seeded_aggregate(aggregate)
+    assert "Multi-Seed Aggregate Results" in text
+    for run_id in run_ids:
+        assert str(run_id) in text
+
+
 def test_cost_estimate_uses_model_rates():
     cost = metrics.estimate_cost(1_000_000, 200_000, "gpt-4o-mini")
     assert cost > 0
     assert cost == (1_000_000 * 0.00015 + 200_000 * 0.0006) / 1000
+
+
+def test_asep_cleanup_deletes_only_generated_branches():
+    import unittest.mock
+    import asep_loopgraph_benchmark as asep
+
+    calls = []
+
+    def record_run(args, **kwargs):
+        calls.append(args)
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return Result()
+
+    branches_before = {"autoresearch/exp_existing"}
+    branches_after = {"autoresearch/exp_existing", "autoresearch/exp_generated"}
+    with unittest.mock.patch("asep_loopgraph_benchmark.current_git_branch", return_value="autoresearch/exp_generated"), \
+         unittest.mock.patch("asep_loopgraph_benchmark.autoresearch_branches", return_value=branches_after), \
+         unittest.mock.patch("asep_loopgraph_benchmark.subprocess.run", record_run):
+        asep.cleanup_git_state("main", branches_before)
+
+    assert ["git", "reset", "--hard"] in calls
+    assert ["git", "checkout", "main"] in calls
+    assert ["git", "branch", "-D", "autoresearch/exp_generated"] in calls
+    assert ["git", "branch", "-D", "autoresearch/exp_existing"] not in calls
 
 
 def test_apply_hunks_success():
