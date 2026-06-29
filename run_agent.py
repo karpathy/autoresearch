@@ -13,21 +13,11 @@ from researchfs.ingest import ensure_seed
 from evals.nanochat_bpb.metrics import estimate_cost, load_run
 
 def extract_code_block(response_text):
-    """Extract code from LLM response markdown block.
-    
-    Looks for ```python ... ```, ```py ... ```, or ``` ... ```.
-    Falls back to the raw response if no block markers are found.
-    """
-    match = re.search(r"```python\s*(.*?)\s*```", response_text, re.DOTALL | re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    match = re.search(r"```py\s*(.*?)\s*```", response_text, re.DOTALL | re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    match = re.search(r"```\s*(.*?)\s*```", response_text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return response_text.strip()
+    """Extract code from the single Python markdown block in an LLM response."""
+    match = re.search(r"```(?:python|py)?\s*\n(.*?)```", response_text, re.DOTALL | re.IGNORECASE)
+    if not match:
+        raise ValueError("LLM response did not contain a Python markdown code block.")
+    return match.group(1).strip()
 
 def extract_description(llm_response, default_desc):
     """Extract a one-line description from the LLM response.
@@ -117,6 +107,7 @@ def assemble_codex_prompt(mode, results_tsv_content, method_pack="", experiment_
         prompt += f"Use the method pack and experiment brief to guide your changes. Here is the method pack:\n{method_pack}\n\nHere is the experiment brief:\n{experiment_brief}\n\n"
     prompt += f"Here is the history of previous experiments:\n{results_tsv_content}\n\n"
     prompt += "Please choose a new hypothesis/optimization to test, modify `train.py` accordingly, and ensure the code compiles and runs correctly.\n"
+    prompt += "Do not modify any file other than `train.py`; leave existing uncommitted work in the repository untouched.\n"
     prompt += "CRITICAL: At the very end of your response, write exactly: DESCRIPTION: <a concise one-line description of your change>."
     return prompt
 def extract_codex_description(stdout, default_desc):
@@ -180,6 +171,55 @@ def read_results_tsv(filepath):
     with open(filepath, "r") as f:
         return f.read()
 
+
+def _run_git_checked(args, env, action):
+    """Run a git command and raise an actionable error if it fails."""
+    res = subprocess.run(
+        ["git", *args],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if res.returncode != 0:
+        detail = (res.stderr or res.stdout).strip()
+        if detail:
+            raise RuntimeError(f"Git {action} failed (exit {res.returncode}): {detail}")
+        raise RuntimeError(f"Git {action} failed with exit code {res.returncode}")
+    return res
+
+
+def _ensure_clean_train_py(env):
+    """Refuse to run if train.py already has user work that could be overwritten."""
+    checks = [
+        (["diff", "--quiet", "--", "train.py"], "unstaged"),
+        (["diff", "--cached", "--quiet", "--", "train.py"], "staged"),
+    ]
+    for args, label in checks:
+        res = subprocess.run(["git", *args], env=env)
+        if res.returncode == 1:
+            raise RuntimeError(
+                f"Refusing to run with {label} changes in train.py; commit or stash them first."
+            )
+        if res.returncode != 0:
+            raise RuntimeError(f"Could not check {label} train.py changes (git exited {res.returncode}).")
+
+
+def _commit_train_py(commit_msg, env, amend=False):
+    """Commit only train.py so unrelated user edits are never swept into agent commits."""
+    args = ["commit"]
+    if amend:
+        args.append("--amend")
+    args.extend(["--only", "-m", commit_msg, "--", "train.py"])
+    _run_git_checked(args, env, "commit train.py")
+
+
+def _drop_last_commit_and_restore_train(original_train_code, env):
+    """Drop the last train.py experiment commit without resetting unrelated work."""
+    _run_git_checked(["reset", "--soft", "HEAD~1"], env, "drop experiment commit")
+    with open("train.py", "w") as f:
+        f.write(original_train_code)
+    _run_git_checked(["reset", "--", "train.py"], env, "unstage restored train.py")
+
 def main():
     parser = argparse.ArgumentParser(description="Autonomous Autoresearch Agent Loop")
     parser.add_argument("--mode", choices=["baseline", "loopgraph"], required=True, help="Agent search mode")
@@ -192,10 +232,9 @@ def main():
     
     args = parser.parse_args()
 
-    # Initialize ResearchFS database and start this agent run.
+    # Initialize ResearchFS database.
     initialize_db()
     ensure_seed()
-    agent_run_id = rfs.start_agent_run(args.mode, args.model)
     # Configure git author env vars if not set
     env = os.environ.copy()
     if "GIT_AUTHOR_NAME" not in env:
@@ -207,11 +246,14 @@ def main():
     if "GIT_COMMITTER_EMAIL" not in env:
         env["GIT_COMMITTER_EMAIL"] = "agent@autoresearch.local"
         
+    _ensure_clean_train_py(env)
+
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     branch_name = f"autoresearch/exp_{args.mode}_{timestamp}"
-    
+
     print(f"Creating and checking out branch: {branch_name}")
     subprocess.run(["git", "checkout", "-b", branch_name], check=True, env=env)
+    agent_run_id = rfs.start_agent_run(args.mode, args.model)
     
     results_path = "results.tsv"
     if not os.path.exists(results_path):
@@ -244,7 +286,7 @@ def main():
     run_env["STEPS_BUDGET"] = str(args.steps_budget)
     
     with open(baseline_log, "w") as log_f:
-        res_run = subprocess.run(["python", "train.py"], env=run_env, stdout=log_f, stderr=subprocess.STDOUT)
+        res_run = subprocess.run([sys.executable, "train.py"], env=run_env, stdout=log_f, stderr=subprocess.STDOUT)
         
     with open(baseline_log, "r") as log_f:
         baseline_log_text = log_f.read()
@@ -281,6 +323,8 @@ def main():
         print(f"\n=== Starting Experiment {exp_num}/{args.max_experiments} ===")
         
         results_content = read_results_tsv(results_path)
+        with open("train.py", "r") as f:
+            original_train_code = f.read()
         if args.api_provider == "codex":
             prompt = assemble_codex_prompt(args.mode, results_content, method_pack, experiment_brief, search_enabled=args.search)
             print("Calling Codex CLI...")
@@ -299,9 +343,8 @@ def main():
             description = extract_codex_description(res_codex.stdout, f"experiment_{exp_num}")
             print(f"Proposed change description: {description}")
         else:
-            with open("train.py", "r") as f:
-                train_py_content = f.read()
-                
+            train_py_content = original_train_code
+
             sys_prompt = assemble_system_prompt(args.mode, method_pack, experiment_brief)
             usr_prompt = assemble_user_prompt(train_py_content, results_content)
             
@@ -322,16 +365,21 @@ def main():
             prompt_tokens = usage.get("prompt_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
 
-            proposed_code = extract_code_block(llm_response["content"])
+            try:
+                proposed_code = extract_code_block(llm_response["content"])
+            except ValueError as e:
+                print(f"LLM response parsing failed: {e}", file=sys.stderr)
+                print("Stopping experiment loop due to malformed LLM response.")
+                break
             description = extract_description(llm_response["content"], f"experiment_{exp_num}")
 
             print(f"Proposed change description: {description}")
 
-            # Apply changes temporarily to check for diff
             with open("train.py", "w") as f:
                 f.write(proposed_code)
-        res_diff = subprocess.run(["git", "diff", "--quiet", "train.py"], env=env)
-        if res_diff.returncode == 0:
+        with open("train.py", "r") as f:
+            current_train_code = f.read()
+        if current_train_code == original_train_code:
             print("No changes detected in train.py. Skipping this iteration.")
             with open(results_path, "a") as f:
                 f.write(f"no_change\tNA\tNA\tdiscard\tNo changes proposed by LLM\n")
@@ -340,7 +388,7 @@ def main():
         # Commit the proposed changes
         commit_msg = f"experiment {exp_num}: {description}"
         print(f"Committing changes: {commit_msg}")
-        subprocess.run(["git", "commit", "-am", commit_msg], check=True, env=env)
+        _commit_train_py(commit_msg, env)
         
         res_hash = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=env)
         commit_hash = res_hash.stdout.strip()
@@ -372,7 +420,7 @@ def main():
             run_env["STEPS_BUDGET"] = str(args.steps_budget)
             
             with open(log_path, "w") as log_f:
-                res_run = subprocess.run(["python", "train.py"], env=run_env, stdout=log_f, stderr=subprocess.STDOUT)
+                res_run = subprocess.run([sys.executable, "train.py"], env=run_env, stdout=log_f, stderr=subprocess.STDOUT)
                 
             # Parse the execution logs
             with open(log_path, "r") as log_f:
@@ -425,7 +473,11 @@ def main():
                 except Exception as e:
                     print(f"LLM API self-correction failed: {e}", file=sys.stderr)
                     break
-                proposed_code = extract_code_block(llm_response["content"])
+                try:
+                    proposed_code = extract_code_block(llm_response["content"])
+                except ValueError as e:
+                    print(f"LLM self-correction parsing failed: {e}", file=sys.stderr)
+                    break
                 description = extract_description(llm_response["content"], description)
                 with open("train.py", "w") as f:
                     f.write(proposed_code)
@@ -433,7 +485,7 @@ def main():
             # Amend the commit with the fix
             commit_msg = f"experiment {exp_num} (fix): {description}"
             print(f"Amending commit: {commit_msg}")
-            subprocess.run(["git", "commit", "--amend", "-am", commit_msg], check=True, env=env)
+            _commit_train_py(commit_msg, env, amend=True)
             
             res_hash = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=env)
             commit_hash = res_hash.stdout.strip()
@@ -456,7 +508,7 @@ def main():
         else:
             status_str = "crash" if status == "crash" else "discard"
             print("Reverting changes...")
-            subprocess.run(["git", "reset", "--hard", "HEAD~1"], check=True, env=env)
+            _drop_last_commit_and_restore_train(original_train_code, env)
             
         # Append experiment result to results.tsv
         with open(results_path, "a") as f:

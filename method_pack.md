@@ -6,16 +6,14 @@ This document is a reference pack of valid optimization techniques, architectura
 
 ## 1. MLP Activation and Gating Patterns
 
-The baseline transformer in `train.py` uses a squared ReLU activation in the MLP block:
-$$MLP_{ReLU^2}(x) = (ReLU(x W_{fc}))^2 W_{proj}$$
-We can replace this with modern gated activation functions (GLUs) such as SwiGLU or GeGLU.
+The current `train.py` baseline uses a parameter-matched SwiGLU MLP. Treat SwiGLU as the active baseline, not as an unimplemented discovery. Recursive's public best NanoChat solution instead uses a simpler shifted squared-ReLU MLP (`relu(x - 0.5)^2`) with a wider hidden layer, so activation work should be framed as a deliberate ablation rather than "add SwiGLU".
 
-### 1.1. SwiGLU MLP
+### 1.1. Current SwiGLU MLP Baseline
 SwiGLU uses the Swish (SiLU) activation function as a gate:
 $$MLP_{SwiGLU}(x) = (SiLU(x W_{gate}) \cdot (x W_{val})) W_{proj}$$
-To maintain a similar parameter count to the baseline ReLU^2 (which has intermediate dimension $4 \times d_{model}$), the intermediate dimension of the GLU projections should be scaled by $\approx 2/3$. The typical hidden dimension is:
+The current implementation parameter-matches the older ReLU² style by using:
 $$d_{ff} = \text{int}\left(\frac{8}{3} \times d_{model}\right)$$
-We round this to the nearest multiple of 128 or 64 to ensure optimal matrix multiplication layout alignment.
+rounded to a multiple of 64 for matrix layout alignment.
 
 ```python
 class MLP(nn.Module):
@@ -37,7 +35,11 @@ class MLP(nn.Module):
         return x
 ```
 
-### 1.2. GeGLU MLP
+### 1.2. Recursive-style shifted squared ReLU
+Recursive's published `optimized_from_karpathy` solution reports strong results with a plain MLP using `F.relu(h - 0.5).square()` and a `4 * d_model` hidden dimension. This may improve speed and optimization stability relative to SwiGLU, but it should be tested as a real ablation because local historical runs may differ by device, tokenizer, and budget.
+
+
+### 1.3. GeGLU MLP
 GeGLU replaces SiLU with GELU in the gating path:
 $$MLP_{GeGLU}(x) = (GELU(x W_{gate}) \cdot (x W_{val})) W_{proj}$$
 
@@ -59,7 +61,7 @@ class MLP(nn.Module):
         return x
 ```
 
-### 1.3. MLP Bounds and Invariants
+### 1.4. MLP Bounds and Invariants
 * **Hidden Dimension ($d_{ff}$)**: $2 \times d_{model} \le d_{ff} \le 6 \times d_{model}$. If using GLUs, the input projection creates $2 \times d_{ff}$ channels.
 * **Initialization**: The input linear layer `c_fc` should be initialized with uniform bounds $s = \sqrt{3 / d_{model}}$, and `c_proj` should be initialized to zero to allow residual identity startup.
 
@@ -128,31 +130,29 @@ WINDOW_PATTERN = "SSSS" # Mostly short context (last layer is always L)
 
 ## 4. Normalization and Regularization
 
-### 4.1. Functional LayerNorm vs RMSNorm
-The baseline uses functional parameter-free RMSNorm:
+### 4.1. Current Learnable RMSNorm Baseline
+The current `train.py` uses learnable `RMSNorm` modules with trainable scale parameters. Do not propose "add learnable RMSNorm" as a novel change unless the experiment changes placement, grouping, initialization, or parameter treatment.
+
+```python
+class RMSNorm(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.scale = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        return F.rms_norm(x, (x.size(-1),), weight=self.scale)
+```
+
+Parameter-free RMSNorm or LayerNorm can still be tested as ablations, but they are removals/replacements of the current baseline:
+
 ```python
 def norm(x):
     return F.rms_norm(x, (x.size(-1),))
 ```
-This can be swapped with functional parameter-free LayerNorm:
+
 ```python
 def norm(x):
     return F.layer_norm(x, (x.size(-1),))
-```
-
-### 4.2. Learnable RMSNorm (with scale parameter)
-If learnable scale parameters are desired, they must be registered as modules in the architecture (to ensure correct parameter grouping and state dict checkpointing):
-
-```python
-class LearnableRMSNorm(nn.Module):
-    def __init__(self, dim, eps=1e-6):
-        super().__init__()
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim))
-
-    def forward(self, x):
-        variance = x.pow(2).mean(-1, keepdim=True)
-        return x * torch.rsqrt(variance + self.eps) * self.weight
 ```
 
 ### 4.3. Dropout Regularization

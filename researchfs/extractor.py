@@ -38,12 +38,15 @@ def assemble_extractor_prompt(meta: Dict[str, Any], chunks: List[str]) -> str:
     for i, chunk in enumerate(chunks):
         chunks_str += f"=== CHUNK {i} ===\n{chunk}\n\n"
 
+    title = meta.get("title") or "Untitled"
+    authors = meta.get("authors") or "unknown"
+    abstract = meta.get("abstract") or ""
     prompt = (
         "You are an expert machine learning researcher and database engineer.\n"
         "Your task is to analyze the following deep learning paper and extract specific, actionable optimization methods/architectures.\n\n"
-        f"Title: {meta['title']}\n"
-        f"Authors: {meta['authors']}\n"
-        f"Abstract: {meta['abstract']}\n\n"
+        f"Title: {title}\n"
+        f"Authors: {authors}\n"
+        f"Abstract: {abstract}\n\n"
         "Here are the numbered text chunks from the paper:\n"
         f"{chunks_str}\n"
         "Analyze the chunks and extract all distinct optimization methods, architectures, or hyperparameter tricks described in the paper.\n"
@@ -73,10 +76,17 @@ def extract_json_block(text: str) -> str:
     match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
+    match = re.search(r"```\s*(.*?)\s*```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
     # Fallback if raw JSON without block markers
     match_raw = re.search(r"^\s*(\{.*?\})\s*$", text, re.DOTALL)
     if match_raw:
         return match_raw.group(1).strip()
+    start_idx = text.find("{")
+    end_idx = text.rfind("}")
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        return text[start_idx : end_idx + 1].strip()
     return text.strip()
 
 
@@ -91,20 +101,24 @@ def extract_methods_from_paper(meta: Dict[str, Any], llm_fn: Callable[[str], str
 
     prompt = assemble_extractor_prompt(meta, chunks[:30])  # Cap at 30 chunks to prevent context overflow
 
-    print("Calling LLM to extract methods...")
-    response = llm_fn(prompt)
+    response = llm_fn(prompt) or ""
     json_str = extract_json_block(response)
 
     try:
         data = json.loads(json_str)
     except json.JSONDecodeError as e:
-        print("Failed to parse LLM JSON response:", e)
-        print("Raw JSON string attempted:", json_str)
-        # Attempt minimal fallback parsing or raise
-        raise ValueError("LLM response did not contain valid JSON schema.")
+        raise ValueError("LLM response did not contain valid JSON schema.") from e
+
+    if not isinstance(data, dict):
+        raise ValueError("LLM response JSON must be an object with a 'methods' list.")
+    methods = data.get("methods", [])
+    if methods is None:
+        methods = []
+    if not isinstance(methods, list):
+        raise ValueError("LLM response JSON field 'methods' must be a list.")
 
     return {
         "paper": meta,
         "chunks": chunks,
-        "methods": data.get("methods", []),
+        "methods": methods,
     }

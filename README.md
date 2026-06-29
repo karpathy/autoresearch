@@ -52,17 +52,42 @@ The `program.md` file is essentially a super lightweight "skill".
 ## Project structure
 
 ```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
+prepare.py                 — data prep, tokenizer training, dataloader, fixed BPB eval
+train.py                   — model, optimizer, training loop (agent modifies this)
+program.md                 — baseline agent instructions
+run_agent.py               — CLI agent loop over train.py experiments
+agents/harness_agent.py    — in-process agent loop used by tests/ASEP wrappers
+researchfs/                — ResearchFS retrieval, ingestion, ranking, and DB helpers
+evals/nanochat_bpb/        — run metrics, published benchmark comparison, safety screens
+compare_runs.py            — compare local runs against each other and published baselines
+pyproject.toml             — dependencies
 ```
+
+The original autoresearch workflow only needs `prepare.py`, `train.py`, and
+`program.md`. This fork also includes LoopGraph/ResearchFS tooling for retrieval
+augmented agent runs and benchmark reporting.
 
 ## Design choices
 
 - **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
 - **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
 - **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+
+## LoopGraph / ResearchFS comparison tooling
+
+List and compare recorded agent runs:
+
+```bash
+python compare_runs.py --list
+python compare_runs.py <baseline_run_id> <loopgraph_run_id>
+python compare_runs.py --benchmarks <baseline_run_id> <loopgraph_run_id>
+python compare_runs.py --benchmark-only <run_id>
+python compare_runs.py --aggregate-seeds <run_id_1> <run_id_2> [run_id_3 ...]
+```
+
+The benchmark reports include published NanoChat Autoresearch reference points
+from Recursive/autoresearch@home and flag suspicious single-seed claims that need
+multi-seed validation.
 
 ## Platform support
 

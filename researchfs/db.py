@@ -6,6 +6,31 @@ from pathlib import Path
 
 DB_NAME = "researchfs.db"
 
+DB_PATH_ENV = "RESEARCHFS_DB_PATH"
+
+
+def _resolve_db_path(db_path: str | Path | None) -> str | Path:
+    """Resolve an explicit, configured, or project-root ResearchFS DB path."""
+    if db_path is not None:
+        return db_path
+    configured = os.environ.get(DB_PATH_ENV)
+    if configured:
+        return configured
+    repo_root = Path(__file__).resolve().parent.parent
+    return repo_root / DB_NAME
+
+
+def _open_sqlite_connection(db_path: str | Path) -> sqlite3.Connection:
+    """Open SQLite, creating parent directories for regular filesystem paths."""
+    db_path_str = str(db_path)
+    uri = db_path_str.startswith("file:")
+    if not uri and db_path_str not in ("", ":memory:"):
+        expanded = Path(db_path_str).expanduser()
+        expanded.parent.mkdir(parents=True, exist_ok=True)
+        db_path_str = str(expanded)
+    return sqlite3.connect(db_path_str, uri=uri)
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS papers (
     paper_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -147,6 +172,15 @@ CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
     INSERT INTO chunks_fts(rowid, chunk_id, section, content)
     VALUES (new.chunk_id, new.chunk_id, new.section, new.content);
 END;
+
+CREATE INDEX IF NOT EXISTS idx_chunks_paper_id ON chunks(paper_id);
+CREATE INDEX IF NOT EXISTS idx_method_sources_method_id ON method_sources(method_id);
+CREATE INDEX IF NOT EXISTS idx_method_sources_chunk_id ON method_sources(chunk_id);
+CREATE INDEX IF NOT EXISTS idx_experiments_agent_run_id ON experiments(agent_run_id);
+CREATE INDEX IF NOT EXISTS idx_retrieval_events_agent_run_id ON retrieval_events(agent_run_id);
+CREATE INDEX IF NOT EXISTS idx_retrieval_events_experiment_id ON retrieval_events(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_token_usage_experiment_id ON token_usage(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_retrieved_methods_method_id ON retrieved_methods(method_id);
 """
 
 
@@ -155,39 +189,30 @@ def get_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
 
     Args:
         db_path: Optional path to a specific SQLite database file. If omitted,
-            the project root database (DB_NAME) is used.
+            RESEARCHFS_DB_PATH is honored before falling back to the project
+            root database (DB_NAME). ``file:`` URIs are opened with SQLite URI
+            mode enabled.
     """
-    if db_path is None:
-        repo_root = Path(__file__).resolve().parent.parent
-        db_path = repo_root / DB_NAME
-    conn = sqlite3.connect(str(db_path))
+    conn = _open_sqlite_connection(_resolve_db_path(db_path))
+    conn.execute("PRAGMA foreign_keys = ON")
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def ensure_fts_populated(conn: sqlite3.Connection | None = None) -> None:
-    """Bulk-populate FTS5 tables from existing rows when they are empty."""
+    """Rebuild FTS5 indexes from their content tables.
+
+    FTS5 external-content tables can appear non-empty when scanned without
+    MATCH even if their internal index was created after the content rows.
+    A rebuild is the reliable way to make legacy rows searchable.
+    """
     close = False
     if conn is None:
         conn = get_connection()
         close = True
     try:
-        methods_count = conn.execute("SELECT COUNT(*) FROM methods_fts").fetchone()[0]
-        if methods_count == 0:
-            conn.execute(
-                """
-                INSERT INTO methods_fts(rowid, method_id, name, description, implementation_hint, risks, category)
-                SELECT method_id, method_id, name, description, implementation_hint, risks, category FROM methods
-                """
-            )
-        chunks_count = conn.execute("SELECT COUNT(*) FROM chunks_fts").fetchone()[0]
-        if chunks_count == 0:
-            conn.execute(
-                """
-                INSERT INTO chunks_fts(rowid, chunk_id, section, content)
-                SELECT chunk_id, chunk_id, section, content FROM chunks
-                """
-            )
+        conn.execute("INSERT INTO methods_fts(methods_fts) VALUES('rebuild')")
+        conn.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
         conn.commit()
     finally:
         if close:
@@ -201,6 +226,7 @@ def initialize_db(conn: sqlite3.Connection | None = None) -> None:
         conn = get_connection()
         close = True
     try:
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(SCHEMA)
         ensure_fts_populated(conn)
         conn.commit()

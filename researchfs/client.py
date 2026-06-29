@@ -11,6 +11,7 @@ setups without copying prompt templates or SQL queries.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 import researchfs.db as db_module
@@ -63,6 +64,8 @@ def _extract_json_block(raw: str) -> Optional[dict]:
 
 def _recent_distinct_queries(query_history: str, count: int) -> List[str]:
     """Return the most recent `count` distinct query strings from `query_history`."""
+    if count <= 0:
+        return []
     queries: List[str] = []
     seen: set[str] = set()
     for line in reversed(query_history.splitlines()):
@@ -75,8 +78,9 @@ def _recent_distinct_queries(query_history: str, count: int) -> List[str]:
         raw = parts[0].strip()
         if raw.startswith("'") and raw.endswith("'"):
             raw = raw[1:-1]
-        if raw and raw not in seen:
-            seen.add(raw)
+        cleaned = _clean_query(raw)
+        if raw and cleaned and cleaned not in seen:
+            seen.add(cleaned)
             queries.append(raw)
             if len(queries) == count:
                 break
@@ -159,7 +163,7 @@ class ResearchFSSession:
         self.objective = objective
         self.task_name = task_name
         self.recent_areas_count = recent_areas_count
-        self.search_cache: Dict[str, Tuple[str, List[int]]] = {}
+        self.search_cache: Dict[Tuple[str, Optional[int]], Tuple[str, List[int]]] = {}
         self.prompt_tokens_accum = 0
         self.completion_tokens_accum = 0
 
@@ -188,16 +192,19 @@ class ResearchFSSession:
         by_query: Dict[str, Dict[str, object]] = {}
         event_queries: List[str] = []
         for row in rows:
-            query = row["query"]
+            raw_query = str(row["query"] or "").strip()
+            query_key = _clean_query(raw_query)
+            if not query_key:
+                continue
             status = row["status"]
             val_bpb = row["val_bpb"]
             experiment_id = row["experiment_id"]
 
-            event_queries.append(query)
+            event_queries.append(query_key)
             stats = by_query.setdefault(
-                query,
+                query_key,
                 {
-                    "query": query,
+                    "query": raw_query,
                     "kept_count": 0,
                     "total_count": 0,
                     "best_delta": 0.0,
@@ -207,6 +214,7 @@ class ResearchFSSession:
                     "_deltas": [],
                 },
             )
+            stats["query"] = raw_query or stats["query"]
             stats["total_count"] += 1
             if experiment_id is not None and (
                 stats["last_experiment_id"] is None
@@ -459,7 +467,7 @@ class ResearchFSSession:
         if not query:
             return "", None
 
-        cache_key = _clean_query(query)
+        cache_key = (_clean_query(query), max_method_chars)
         if cache_key in self.search_cache:
             return self.search_cache[cache_key]
 
@@ -519,7 +527,7 @@ class ResearchFSClient:
 
     Example usage:
 
-        client = ResearchFSClient(db_path="researchfs.db")
+        client = ResearchFSClient()
         session = client.start_session(run_id=None, baseline_metric=2.18)
 
         decision = session.suggest_query(history, brief, llm_fn)
@@ -535,22 +543,33 @@ class ResearchFSClient:
         client.close()
     """
 
-    def __init__(self, db_path: str = "researchfs.db") -> None:
+    def __init__(self, db_path: str | Path | None = None) -> None:
         self.db_path = db_path
         self._conn: Optional[object] = None
         self._close_on_done = True
+        self._conn_initialized = False
 
     def get_connection(self):
         """Return a database connection, creating one if necessary."""
         if self._conn is None:
             # Backward compatibility: some test mocks replace get_connection
-            # with a zero-argument function. Try with the path first, then
-            # fall back to the legacy signature.
+            # with a zero-argument function. Try the configured path first,
+            # then fall back to the legacy signature.
             try:
-                self._conn = db_module.get_connection(self.db_path)
+                if self.db_path is None:
+                    self._conn = db_module.get_connection()
+                else:
+                    self._conn = db_module.get_connection(self.db_path)
             except TypeError:
                 self._conn = db_module.get_connection()
-            db_module.initialize_db(self._conn)
+            try:
+                db_module.initialize_db(self._conn)
+            except Exception:
+                if self._close_on_done and self._conn is not None:
+                    self._conn.close()
+                self._conn = None
+                raise
+            self._conn_initialized = True
         return self._conn
 
     def start_session(
@@ -571,8 +590,10 @@ class ResearchFSClient:
     def close(self) -> None:
         """Close any connection held by the client."""
         if self._conn is not None:
-            self._conn.close()
+            if self._close_on_done:
+                self._conn.close()
             self._conn = None
+        self._conn_initialized = False
 
     def __enter__(self) -> "ResearchFSClient":
         return self

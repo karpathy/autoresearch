@@ -16,11 +16,26 @@ The primary objective is to **minimize validation bits per byte (`val_bpb`)** on
 ## 2. Hard Constraints
 
 All experiments conducted by the agent must strictly adhere to the following constraints:
-1. **Single-Device Execution**: The system must run on a single device (typically MPS on macOS or CUDA on Linux).
+1. **Single-Device Execution**: Canonical benchmark runs target a single NVIDIA GPU. Local CPU/MPS fast-mode runs are useful for smoke tests only and are not comparable to published BPB numbers.
 2. **No New Dependencies**: Do not import or add any external libraries to the project. All dependencies must be satisfied by standard PyTorch or existing libraries in `pyproject.toml`.
-3. **Do Not Edit `prepare.py`**: The data prep, tokenization, and validation evaluation logic in `prepare.py` is fixed and must not be altered.
+3. **Do Not Change Evaluation Semantics**: The validation shard, BPB calculation, byte counting, and target/label alignment in `prepare.py` are fixed. Configuration knobs such as `VOCAB_SIZE`, `MAX_SEQ_LEN`, and `EVAL_TOKENS` may be environment-overridden for local smoke tests, but canonical comparisons should use the documented 5-minute setup.
 4. **Time Budget Enforcement**: The training loop must stop immediately when the elapsed training time exceeds the `TIME_BUDGET` (excluding compilation/startup time, i.e., after step 10).
-5. **No Loss of Invariants**: Do not break critical mathematical structures like sequence length (fixed at 2048) or model vocabulary size (8192).
+5. **No Loss of Invariants**: Do not silently compare fast-mode runs against published baselines. Record any non-default budget, sequence length, vocabulary size, device, or step cap before interpreting BPB.
+---
+
+## 2.1 Published Reference Points
+
+Use these as context, not as proof of parity unless the run uses the same canonical evaluation protocol and multi-seed validation:
+
+| Solution | Mean BPB | Notes |
+|---|---:|---|
+| Recursive best (`optimized_from_karpathy`) | 0.9109 | 10 seeds, single B200, 5-minute budget |
+| Recursive from vanilla Transformer | 0.9344 | 10 seeds, single B200, 5-minute budget |
+| autoresearch@home community best | 0.9372 | Reward-hack-removed, 10 seeds, single B200 |
+| Karpathy seed | 0.9751 | Re-run by Recursive for comparability |
+| Vanilla Transformer | 1.0587 | Recursive plain-transformer baseline |
+
+Local single-seed or fast-mode runs around 2.x BPB are useful for agent workflow debugging, but they are not competitive benchmark results.
 
 ---
 
@@ -28,13 +43,13 @@ All experiments conducted by the agent must strictly adhere to the following con
 
 The agent should propose and evaluate experiments testing the following hypotheses:
 
-### Hypothesis A: SwiGLU Gating is Superior to Squared ReLU
-* **Statement**: Replacing the baseline `ReLU^2` activation in the MLP module with `SwiGLU` (while parameter-matching hidden dimension to $d_{ff} \approx \frac{8}{3} d_{model}$) will improve representation capacity and yield a lower `val_bpb` within the same training time budget.
-* **Variables**: Activation function (`F.silu` vs `F.relu().square()`), MLP hidden dimension scaling.
+### Hypothesis A: N-gram Value Embeddings Improve Local Context
+* **Statement**: Recursive's best public solution adds hashed bigram and trigram value-embedding tables mixed into the attention value path through learned gates. Porting a minimal variant may improve short-context modeling at low compute cost.
+* **Variables**: Bigram/trigram table size, active layers, hash functions, gate initialization, optimizer group.
 
-### Hypothesis B: Grouped-Query Attention (GQA) Speeds up Training and Improves BPB
-* **Statement**: Tuning the number of KV heads (`n_kv_head`) to be less than query heads (`n_head`) reduces parameter counts and sequence processing overhead, resulting in more gradient steps per second. This higher step count under the time budget will lead to a better `val_bpb`.
-* **Variables**: `n_kv_head` in `GPTConfig`.
+### Hypothesis B: Current GQA Needs Tuning, Not Re-Discovery
+* **Statement**: The current `train.py` already selects grouped-query attention when the head count permits it. Experiments should tune `n_kv_head` or compare against full MHA deliberately, not propose "add GQA" as a new feature.
+* **Variables**: `n_kv_head` in `GPTConfig`, fallback compatibility, step throughput.
 
 ### Hypothesis C: Muon Matrix Learning Rate Tuning Accelerates Convergence
 * **Statement**: The default Muon learning rate (`MATRIX_LR = 0.04`) is tuned for a specific dimension. Tuning `MATRIX_LR` (e.g. between `0.02` and `0.08`) will yield faster initial convergence and lower final validation loss.
@@ -44,9 +59,9 @@ The agent should propose and evaluate experiments testing the following hypothes
 * **Statement**: Modifying the sliding window pattern `WINDOW_PATTERN` to have more short context layers (e.g. `"SSSS"`) will speed up steps and allow more training updates within the time budget, but might hurt long-range dependency modeling. An optimal trade-off (e.g. `"SLSL"` or `"SSSL"`) minimizes `val_bpb`.
 * **Variables**: `WINDOW_PATTERN` string.
 
-### Hypothesis E: Normalization Variants and Regularization Prevent Overfitting
-* **Statement**: Swapping the default functional `RMSNorm` with functional `LayerNorm` or adding dropout (`nn.Dropout`) to the attention and MLP residuals will improve generalizability and lower `val_bpb`.
-* **Variables**: `norm(x)` function, Dropout rate in blocks.
+### Hypothesis E: Current Normalization and Regularization Need Targeted Ablations
+* **Statement**: The current `train.py` already uses learnable RMSNorm modules. Future normalization work should ablate specific placement or scaling behavior rather than reintroducing a generic "learnable RMSNorm" idea. Dropout remains risky in a 5-minute budget and should be tested only with a clear speed/generalization rationale.
+* **Variables**: RMSNorm placement, q/k normalization order, residual scaling, Dropout rate in blocks.
 
 ---
 

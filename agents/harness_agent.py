@@ -23,6 +23,9 @@ from evals.nanochat_bpb.metrics import estimate_cost
 
 from agents.editor import apply_hunks, check_syntax, HunkError
 from run_agent import (
+    _commit_train_py,
+    _drop_last_commit_and_restore_train,
+    _ensure_clean_train_py,
     parse_log,
     read_results_tsv,
 )
@@ -49,11 +52,32 @@ def _current_branch(env: dict) -> str:
         check=True,
         env=env,
     )
+    branch = res.stdout.strip()
+    if branch != "HEAD":
+        return branch
+    res = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+    )
     return res.stdout.strip()
 
 
 def _checkout(branch: str, env: dict) -> None:
-    subprocess.run(["git", "checkout", branch], env=env, check=False)
+    res = subprocess.run(
+        ["git", "checkout", branch],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res.returncode != 0:
+        detail = (res.stderr or res.stdout).strip()
+        if detail:
+            raise RuntimeError(f"Could not checkout {branch}: {detail}")
+        raise RuntimeError(f"Could not checkout {branch} (git exited {res.returncode})")
 
 
 def _run_train(time_budget: int, steps_budget: int, env: dict, log_path: str) -> tuple[float | None, float | None, str, str]:
@@ -98,7 +122,8 @@ def assemble_harness_prompt(
 
     prompt += (
         "Propose the next experiment. Output your changes using one or more SEARCH/REPLACE blocks.\n"
-        "This is the ONLY way you are allowed to modify the file. Do not output the entire file.\n\n"
+        "This is the ONLY way you are allowed to modify the file. Do not output the entire file.\n"
+        "Do not modify or ask to modify any file other than `train.py`.\n\n"
         "Each block must follow this exact format:\n"
         "<<<<<<< SEARCH\n"
         "[exact lines in train.py to replace]\n"
@@ -129,276 +154,305 @@ def run_agent_mode(
 
     env = _git_env()
     original_branch = _current_branch(env)
-    print(f"Original branch: {original_branch}")
+    print(f"Original checkout target: {original_branch}")
 
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     branch_name = f"autoresearch/exp_{mode}_{timestamp}"
-    subprocess.run(["git", "checkout", "-b", branch_name], check=True, env=env)
 
-    results_path = Path("results.tsv")
-    if not results_path.exists():
-        results_path.write_text("commit\tval_bpb\tmemory_gb\tstatus\tdescription\n")
+    agent_run_id: Optional[int] = None
+    research_client: Optional[ResearchFSClient] = None
+    branch_created = False
 
-    method_pack = ""
-    experiment_brief = ""
-    agent_run_id = rfs.start_agent_run(mode, model)
+    _ensure_clean_train_py(env)
 
-    if mode == "loopgraph":
-        method_pack = rfs.get_method_pack()
-        experiment_brief = rfs.get_experiment_brief("nanochat_autoresearch")
-        print(f"Loaded method pack ({len(method_pack)} chars) and experiment brief ({len(experiment_brief)} chars)")
-        rfs.log_retrieval_event(
-            event_type="method_pack",
-            query="all",
-            retrieved_content=method_pack[:2000],
-            agent_run_id=agent_run_id,
-        )
-        rfs.log_retrieval_event(
-            event_type="experiment_brief",
-            query="nanochat_autoresearch",
-            retrieved_content=experiment_brief[:2000],
-            agent_run_id=agent_run_id,
-        )
+    try:
+        subprocess.run(["git", "checkout", "-b", branch_name], check=True, env=env)
+        branch_created = True
 
-    # Baseline run
-    print("\n=== Running baseline experiment ===")
-    val_bpb, peak_vram_mb, status, error_msg = _run_train(time_budget, steps_budget, env, "run_baseline.log")
-    if status == "crash" or val_bpb is None:
-        raise RuntimeError(f"Baseline run failed: {error_msg}")
+        results_path = Path("results.tsv")
+        if not results_path.exists():
+            results_path.write_text("commit\tval_bpb\tmemory_gb\tstatus\tdescription\n")
 
-    baseline_val_bpb = val_bpb
-    print(f"Baseline val_bpb: {val_bpb:.6f}")
-    with open(results_path, "a") as f:
-        f.write(f"baseline\t{val_bpb:.6f}\t{peak_vram_mb / 1024:.3f}\tkeep\tbaseline\n")
+        method_pack = ""
+        experiment_brief = ""
+        agent_run_id = rfs.start_agent_run(mode, model)
 
-    rfs.log_experiment(
-        commit_hash="baseline",
-        val_bpb=baseline_val_bpb,
-        memory_gb=peak_vram_mb / 1024 if peak_vram_mb is not None else None,
-        status="keep",
-        description="baseline",
-        agent_run_id=agent_run_id,
-    )
-
-    best_val_bpb = baseline_val_bpb
-
-    # Use the ResearchFS SDK for RAG decision, caching, and history feedback.
-    research_client = ResearchFSClient()
-    session: Optional[ResearchFSSession] = None
-    if mode == "loopgraph":
-        session = research_client.start_session(
-            mode=mode,
-            model=model,
-            run_id=agent_run_id,
-            baseline_metric=baseline_val_bpb,
-        )
-
-    # Iterative loop
-    for exp_num in range(1, max_experiments + 1):
-        print(f"\n=== Starting Experiment {exp_num}/{max_experiments} ===")
-        results_content = read_results_tsv(str(results_path))
-
-        # Store the original train.py content to allow stateless retries
-        original_train_code = Path("train.py").read_text(encoding="utf-8")
-
-        max_retries = 3
-        last_error = None
-        success = False
-        description = f"experiment_{exp_num}"
-        commit_hash = "pending"
-        experiment_id = None
-        prompt_tokens_accum = 0
-        completion_tokens_accum = 0
-        query = ""
-        current_method_pack = ""
-        method_ids = None
-        query_reused = False
-        if mode == "loopgraph" and session is not None:
-            decision = session.suggest_query(results_content, experiment_brief, llm_fn)
-            query = decision["query"]
-            query_reused = bool(decision.get("reused", False))
-            reason = str(decision.get("reason", ""))
-            print(f"Agent structured decision: search={decision['search']}, query='{query}', reason='{reason}'")
-            if decision["search"] and query:
-                current_method_pack, method_ids = session.retrieve_context(query, max_method_chars=max_method_chars)
-            else:
-                print(f"Skipping search. search_decision={decision['search']}, query='{query}'")
-                current_method_pack = ""
-                method_ids = None
-            prompt_tokens_accum += session.prompt_tokens_accum
-            completion_tokens_accum += session.completion_tokens_accum
-            # Reset per-step accumulators so each experiment is tracked separately.
-            session.prompt_tokens_accum = 0
-            session.completion_tokens_accum = 0
-
-        for attempt in range(max_retries):
-            if attempt > 0:
-                print(f"Attempt {attempt + 1}/{max_retries} (Self-Correction)...")
-            else:
-                print(f"Attempt 1/{max_retries}...")
-
-            # Restore train.py to original state before applying edits
-            Path("train.py").write_text(original_train_code, encoding="utf-8")
-
-            # Assemble prompt with the error from previous attempt if any
-            prompt = assemble_harness_prompt(
-                mode, results_content, current_method_pack, experiment_brief, original_train_code, last_error
+        if mode == "loopgraph":
+            method_pack = rfs.get_method_pack()
+            experiment_brief = rfs.get_experiment_brief("nanochat_autoresearch")
+            print(f"Loaded method pack ({len(method_pack)} chars) and experiment brief ({len(experiment_brief)} chars)")
+            rfs.log_retrieval_event(
+                event_type="method_pack",
+                query="all",
+                retrieved_content=method_pack[:2000],
+                agent_run_id=agent_run_id,
+            )
+            rfs.log_retrieval_event(
+                event_type="experiment_brief",
+                query="nanochat_autoresearch",
+                retrieved_content=experiment_brief[:2000],
+                agent_run_id=agent_run_id,
             )
 
-            prompt_tokens = _estimate_tokens(prompt)
-            prompt_tokens_accum += prompt_tokens
+        # Baseline run
+        print("\n=== Running baseline experiment ===")
+        val_bpb, peak_vram_mb, status, error_msg = _run_train(time_budget, steps_budget, env, "run_baseline.log")
+        if status == "crash" or val_bpb is None:
+            raise RuntimeError(f"Baseline run failed: {error_msg}")
 
-            print("Calling harness LLM...")
-            response = llm_fn(prompt)
-
-            completion_tokens = _estimate_tokens(response)
-            completion_tokens_accum += completion_tokens
-
-            # Try to extract a description
-            for line in response.splitlines():
-                if line.strip().lower().startswith("description:"):
-                    description = line.strip().split(":", 1)[1].strip()
-                    break
-
-            # 1. Apply hunks
-            try:
-                modified_code = apply_hunks(original_train_code, response)
-                Path("train.py").write_text(modified_code, encoding="utf-8")
-            except HunkError as e:
-                print(f"Hunk parsing failed: {e}")
-                last_error = f"Hunk parsing/application error: {e}"
-                continue
-
-            # 2. Check diff
-            res_diff = subprocess.run(["git", "diff", "--quiet", "train.py"], env=env)
-            if res_diff.returncode == 0:
-                print("No changes detected in train.py.")
-                last_error = "No changes detected. Your SEARCH/REPLACE block did not modify train.py."
-                continue
-
-            # 3. Check syntax (lint gate)
-            is_syntax_ok, syntax_err = check_syntax("train.py")
-            if not is_syntax_ok:
-                print(f"Syntax validation failed: {syntax_err}")
-                last_error = f"Python syntax check error:\n{syntax_err}"
-                continue
-
-            # 4. Commit changes temporarily for the run
-            commit_msg = f"experiment {exp_num} (attempt {attempt}): {description}"
-            print(f"Committing: {commit_msg}")
-            subprocess.run(["git", "commit", "-am", commit_msg], check=True, env=env)
-
-            res_hash = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=env)
-            commit_hash = res_hash.stdout.strip()
-
-            if experiment_id is None:
-                experiment_id = rfs.log_experiment(
-                    commit_hash=commit_hash,
-                    val_bpb=None,
-                    memory_gb=None,
-                    status="pending",
-                    description=description,
-                    agent_run_id=agent_run_id,
-                )
-            if mode == "loopgraph":
-                rfs.log_retrieval_event(
-                    event_type="agent_search_reuse" if query_reused else "agent_search",
-                    query=query,
-                    retrieved_content=current_method_pack[:2000],
-                    agent_run_id=agent_run_id,
-                    experiment_id=experiment_id,
-                    method_ids=method_ids,
-                )
-
-            # 5. Run training
-            log_path = f"run_{exp_num}_attempt_{attempt}.log"
-            val_bpb, peak_vram_mb, status, error_msg = _run_train(time_budget, steps_budget, env, log_path)
-
-            if status == "crash":
-                print(f"Training crashed: {error_msg}")
-                # Revert git commit so we can start clean next attempt
-                subprocess.run(["git", "reset", "--hard", "HEAD~1"], check=True, env=env)
-                # Keep last few lines of log as traceback context
-                lines = error_msg.splitlines()
-                traceback_context = "\n".join(lines[-20:])
-                last_error = f"Training crashed during execution:\n{traceback_context}"
-                continue
-
-            # Success! The run compiled and finished without crashing
-            success = True
-            break
-
-        # Log total accumulated tokens for this experiment step
-        if experiment_id is not None:
-            rfs.log_token_usage(
-                prompt_tokens=prompt_tokens_accum,
-                completion_tokens=completion_tokens_accum,
-                cost=estimate_cost(prompt_tokens_accum, completion_tokens_accum, model),
-                experiment_id=experiment_id,
-            )
-
-        if not success:
-            print(f"Experiment {exp_num} failed after {max_retries} attempts.")
-            # Ensure file is clean and state is reverted
-            Path("train.py").write_text(original_train_code, encoding="utf-8")
-            if experiment_id is not None:
-                rfs.update_experiment(
-                    experiment_id=experiment_id,
-                    val_bpb=None,
-                    memory_gb=None,
-                    status="crash",
-                    description=f"{description} (Failed to compile/run)",
-                )
-            with open(results_path, "a") as f:
-                f.write(f"failed\tNA\tNA\tcrash\t{description} (Failed after retries)\n")
-            continue
-
-        # Decide keep/discard
-        keep_experiment = False
-        if val_bpb is not None:
-            if val_bpb < best_val_bpb:
-                keep_experiment = True
-                best_val_bpb = val_bpb
-                print(f"New best val_bpb! Keeping changes.")
-            else:
-                print(f"val_bpb {val_bpb:.6f} not better than best {best_val_bpb:.6f}. Discarding.")
-        else:
-            print("Run completed but val_bpb was None. Discarding.")
-
-        mem_gb = peak_vram_mb / 1024 if peak_vram_mb is not None else None
-        status_str = "keep" if keep_experiment else "discard"
-
-        if not keep_experiment:
-            print("Reverting changes...")
-            subprocess.run(["git", "reset", "--hard", "HEAD~1"], check=True, env=env)
-            Path("train.py").write_text(original_train_code, encoding="utf-8")
-
+        baseline_val_bpb = val_bpb
+        print(f"Baseline val_bpb: {val_bpb:.6f}")
+        mem_gb_str = f"{peak_vram_mb / 1024:.3f}" if peak_vram_mb is not None else "NA"
         with open(results_path, "a") as f:
-            val_str = f"{val_bpb:.6f}" if val_bpb is not None else "NA"
-            mem_str = f"{mem_gb:.3f}" if mem_gb is not None else "NA"
-            f.write(f"{commit_hash}\t{val_str}\t{mem_str}\t{status_str}\t{description}\n")
+            f.write(f"baseline\t{val_bpb:.6f}\t{mem_gb_str}\tkeep\tbaseline\n")
 
-        rfs.update_experiment(
-            experiment_id=experiment_id,
-            val_bpb=val_bpb,
-            memory_gb=mem_gb,
-            status=status_str,
-            description=description,
+        rfs.log_experiment(
+            commit_hash="baseline",
+            val_bpb=baseline_val_bpb,
+            memory_gb=peak_vram_mb / 1024 if peak_vram_mb is not None else None,
+            status="keep",
+            description="baseline",
+            agent_run_id=agent_run_id,
         )
 
-        if experiments is not None:
-            experiments.append({
-                "exp_num": exp_num,
-                "description": description,
-                "val_bpb": val_bpb,
-                "status": status_str,
-            })
+        best_val_bpb = baseline_val_bpb
 
-    rfs.finish_agent_run(agent_run_id)
-    _checkout(original_branch, env)
+        # Use the ResearchFS SDK for RAG decision, caching, and history feedback.
+        research_client = ResearchFSClient()
+        session: Optional[ResearchFSSession] = None
+        if mode == "loopgraph":
+            session = research_client.start_session(
+                mode=mode,
+                model=model,
+                run_id=agent_run_id,
+                baseline_metric=baseline_val_bpb,
+            )
 
-    if research_client is not None:
-        research_client.close()
+        # Iterative loop
+        for exp_num in range(1, max_experiments + 1):
+            print(f"\n=== Starting Experiment {exp_num}/{max_experiments} ===")
+            results_content = read_results_tsv(str(results_path))
 
-    return agent_run_id
+            # Store the original train.py content to allow stateless retries
+            original_train_code = Path("train.py").read_text(encoding="utf-8")
+
+            max_retries = 3
+            last_error = None
+            success = False
+            description = f"experiment_{exp_num}"
+            commit_hash = "pending"
+            experiment_id = None
+            prompt_tokens_accum = 0
+            completion_tokens_accum = 0
+            query = ""
+            current_method_pack = ""
+            method_ids = None
+            query_reused = False
+            if mode == "loopgraph" and session is not None:
+                decision = session.suggest_query(results_content, experiment_brief, llm_fn)
+                query = decision["query"]
+                query_reused = bool(decision.get("reused", False))
+                reason = str(decision.get("reason", ""))
+                print(f"Agent structured decision: search={decision['search']}, query='{query}', reason='{reason}'")
+                if decision["search"] and query:
+                    current_method_pack, method_ids = session.retrieve_context(query, max_method_chars=max_method_chars)
+                else:
+                    print(f"Skipping search. search_decision={decision['search']}, query='{query}'")
+                    current_method_pack = ""
+                    method_ids = None
+                prompt_tokens_accum += session.prompt_tokens_accum
+                completion_tokens_accum += session.completion_tokens_accum
+                # Reset per-step accumulators so each experiment is tracked separately.
+                session.prompt_tokens_accum = 0
+                session.completion_tokens_accum = 0
+
+            for attempt in range(max_retries):
+                if attempt > 0:
+                    print(f"Attempt {attempt + 1}/{max_retries} (Self-Correction)...")
+                else:
+                    print(f"Attempt 1/{max_retries}...")
+
+                # Restore train.py to original state before applying edits
+                Path("train.py").write_text(original_train_code, encoding="utf-8")
+
+                # Assemble prompt with the error from previous attempt if any
+                prompt = assemble_harness_prompt(
+                    mode, results_content, current_method_pack, experiment_brief, original_train_code, last_error
+                )
+
+                prompt_tokens = _estimate_tokens(prompt)
+                prompt_tokens_accum += prompt_tokens
+
+                print("Calling harness LLM...")
+                response = llm_fn(prompt)
+
+                completion_tokens = _estimate_tokens(response)
+                completion_tokens_accum += completion_tokens
+
+                # Try to extract a description
+                for line in response.splitlines():
+                    if line.strip().lower().startswith("description:"):
+                        description = line.strip().split(":", 1)[1].strip()
+                        break
+
+                # 1. Apply hunks
+                try:
+                    modified_code = apply_hunks(original_train_code, response)
+                except HunkError as e:
+                    print(f"Hunk parsing failed: {e}")
+                    last_error = f"Hunk parsing/application error: {e}"
+                    continue
+
+                if modified_code == original_train_code:
+                    print("No changes detected in train.py.")
+                    last_error = "No changes detected. Your SEARCH/REPLACE block did not modify train.py."
+                    continue
+
+                Path("train.py").write_text(modified_code, encoding="utf-8")
+
+                # 3. Check syntax (lint gate)
+                is_syntax_ok, syntax_err = check_syntax("train.py")
+                if not is_syntax_ok:
+                    print(f"Syntax validation failed: {syntax_err}")
+                    last_error = f"Python syntax check error:\n{syntax_err}"
+                    continue
+
+                # 4. Commit changes temporarily for the run
+                commit_msg = f"experiment {exp_num} (attempt {attempt}): {description}"
+                print(f"Committing: {commit_msg}")
+                _commit_train_py(commit_msg, env)
+
+                res_hash = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=env)
+                commit_hash = res_hash.stdout.strip()
+
+                if experiment_id is None:
+                    experiment_id = rfs.log_experiment(
+                        commit_hash=commit_hash,
+                        val_bpb=None,
+                        memory_gb=None,
+                        status="pending",
+                        description=description,
+                        agent_run_id=agent_run_id,
+                    )
+                if mode == "loopgraph":
+                    rfs.log_retrieval_event(
+                        event_type="agent_search_reuse" if query_reused else "agent_search",
+                        query=query,
+                        retrieved_content=current_method_pack[:2000],
+                        agent_run_id=agent_run_id,
+                        experiment_id=experiment_id,
+                        method_ids=method_ids,
+                    )
+
+                # 5. Run training
+                log_path = f"run_{exp_num}_attempt_{attempt}.log"
+                val_bpb, peak_vram_mb, status, error_msg = _run_train(time_budget, steps_budget, env, log_path)
+
+                if status == "crash":
+                    print(f"Training crashed: {error_msg}")
+                    # Revert only the experiment commit so we can start clean next attempt
+                    _drop_last_commit_and_restore_train(original_train_code, env)
+                    # Keep last few lines of log as traceback context
+                    lines = error_msg.splitlines()
+                    traceback_context = "\n".join(lines[-20:])
+                    last_error = f"Training crashed during execution:\n{traceback_context}"
+                    continue
+
+                # Success! The run compiled and finished without crashing
+                success = True
+                break
+
+            # Log total accumulated tokens for this experiment step
+            if experiment_id is not None:
+                rfs.log_token_usage(
+                    prompt_tokens=prompt_tokens_accum,
+                    completion_tokens=completion_tokens_accum,
+                    cost=estimate_cost(prompt_tokens_accum, completion_tokens_accum, model),
+                    experiment_id=experiment_id,
+                )
+
+            if not success:
+                print(f"Experiment {exp_num} failed after {max_retries} attempts.")
+                # Ensure file is clean and state is reverted
+                Path("train.py").write_text(original_train_code, encoding="utf-8")
+                if experiment_id is not None:
+                    rfs.update_experiment(
+                        experiment_id=experiment_id,
+                        val_bpb=None,
+                        memory_gb=None,
+                        status="crash",
+                        description=f"{description} (Failed to compile/run)",
+                    )
+                with open(results_path, "a") as f:
+                    f.write(f"failed\tNA\tNA\tcrash\t{description} (Failed after retries)\n")
+                continue
+
+            # Decide keep/discard
+            keep_experiment = False
+            if val_bpb is not None:
+                if val_bpb < best_val_bpb:
+                    keep_experiment = True
+                    best_val_bpb = val_bpb
+                    print(f"New best val_bpb! Keeping changes.")
+                else:
+                    print(f"val_bpb {val_bpb:.6f} not better than best {best_val_bpb:.6f}. Discarding.")
+            else:
+                print("Run completed but val_bpb was None. Discarding.")
+
+            mem_gb = peak_vram_mb / 1024 if peak_vram_mb is not None else None
+            status_str = "keep" if keep_experiment else "discard"
+
+            if not keep_experiment:
+                print("Reverting changes...")
+                _drop_last_commit_and_restore_train(original_train_code, env)
+
+            with open(results_path, "a") as f:
+                val_str = f"{val_bpb:.6f}" if val_bpb is not None else "NA"
+                mem_str = f"{mem_gb:.3f}" if mem_gb is not None else "NA"
+                f.write(f"{commit_hash}\t{val_str}\t{mem_str}\t{status_str}\t{description}\n")
+
+            rfs.update_experiment(
+                experiment_id=experiment_id,
+                val_bpb=val_bpb,
+                memory_gb=mem_gb,
+                status=status_str,
+                description=description,
+            )
+
+            if experiments is not None:
+                experiments.append({
+                    "exp_num": exp_num,
+                    "description": description,
+                    "val_bpb": val_bpb,
+                    "status": status_str,
+                })
+
+        return agent_run_id
+    finally:
+        active_exception = sys.exc_info()[1]
+        cleanup_errors: list[BaseException] = []
+
+        if agent_run_id is not None:
+            try:
+                rfs.finish_agent_run(agent_run_id)
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+
+        if branch_created:
+            try:
+                _checkout(original_branch, env)
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+
+        if research_client is not None:
+            try:
+                research_client.close()
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+
+        if cleanup_errors and active_exception is None:
+            raise cleanup_errors[0]
+        if cleanup_errors and hasattr(active_exception, "add_note"):
+            for cleanup_error in cleanup_errors:
+                active_exception.add_note(f"Cleanup failed: {cleanup_error!r}")

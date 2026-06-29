@@ -45,13 +45,17 @@ def _run_agent(
         env=env,
     )
 
-    # Stream stdout so the user can watch progress.
+    # Echo captured output after the child exits; capture is needed to parse agent_run_id.
     print(res.stdout)
     if res.stderr:
         print(res.stderr, file=sys.stderr)
 
     if res.returncode != 0:
-        raise RuntimeError(f"{mode} agent run failed with exit code {res.returncode}")
+        detail = (res.stderr or res.stdout[-4000:]).strip()
+        raise RuntimeError(
+            f"{mode} agent run failed with exit code {res.returncode}"
+            + (f": {detail}" if detail else "")
+        )
 
     # Parse agent_run_id from the summary line.
     match = re.search(r"agent_run_id:\s*(\d+)", res.stdout)
@@ -62,9 +66,19 @@ def _run_agent(
 
 
 def _current_branch(env: dict) -> str:
-    """Return the current git branch name."""
+    """Return a checkout target for the current branch, or commit when detached."""
     res = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+    )
+    branch = res.stdout.strip()
+    if branch != "HEAD":
+        return branch
+    res = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
         capture_output=True,
         text=True,
         check=True,
@@ -74,15 +88,28 @@ def _current_branch(env: dict) -> str:
 
 
 def _checkout(branch: str, env: dict) -> None:
-    """Checkout a git branch, ignoring errors (e.g. branch does not exist)."""
-    subprocess.run(["git", "checkout", branch], env=env)
+    """Checkout a git branch and raise if the checkout cannot be completed."""
+    res = subprocess.run(
+        ["git", "checkout", branch],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res.returncode != 0:
+        detail = (res.stderr or res.stdout).strip()
+        if detail:
+            raise RuntimeError(f"Could not checkout {branch}: {detail}")
+        raise RuntimeError(f"Could not checkout {branch} (git exited {res.returncode})")
 
 
 def _prepare_data(env: dict) -> None:
-    """Run prepare.py if the data directory is missing."""
-    if os.path.exists("data") and os.path.isdir("data"):
+    """Run prepare.py if the cached data directory is missing."""
+    from prepare import DATA_DIR
+
+    if os.path.isdir(DATA_DIR):
         return
-    print("Data directory not found. Running prepare.py...")
+    print(f"Data directory not found at {DATA_DIR}. Running prepare.py...")
     res = subprocess.run(
         ["uv", "run", "python", "prepare.py"],
         env=env,
@@ -157,7 +184,7 @@ def main():
         _prepare_data(env)
 
     original_branch = _current_branch(env)
-    print(f"Original branch: {original_branch}")
+    print(f"Original checkout target: {original_branch}")
 
     baseline_run_id = None
     loopgraph_run_id = None
@@ -171,7 +198,16 @@ def main():
             "loopgraph", model, max_experiments, time_budget, steps_budget, args.api_provider, args.search, env
         )
     finally:
-        _checkout(original_branch, env)
+        active_exception = sys.exc_info()[1]
+        try:
+            _checkout(original_branch, env)
+        except RuntimeError as cleanup_error:
+            if active_exception is None:
+                raise
+            if hasattr(active_exception, "add_note"):
+                active_exception.add_note(f"Cleanup checkout failed: {cleanup_error}")
+            else:
+                print(f"Cleanup checkout failed: {cleanup_error}", file=sys.stderr)
 
     # Generate comparison report.
     print(f"\n{'='*60}")

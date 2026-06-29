@@ -49,7 +49,7 @@ else:
                     if w > 0 and w < T:
                         window_mask = torch.triu(torch.ones(T, T, dtype=torch.bool, device=q.device), diagonal=-w+1)
                         attn_mask = attn_mask & window_mask
-            y_t = F.scaled_dot_product_attention(q_t, k_t, v_t, attn_mask=attn_mask)
+            y_t = F.scaled_dot_product_attention(q_t, k_t, v_t, attn_mask=attn_mask, enable_gqa=(H != k_t.size(1)))
             y = y_t.transpose(1, 2)
             return y
     fa3 = FlashAttnFallback()
@@ -619,10 +619,11 @@ while True:
     elif device.type == "mps":
         torch.mps.synchronize()
     t0 = time.time()
+    train_loss_sum = 0.0
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
             loss = model(x, y)
-        train_loss = loss.detach()
+        train_loss_sum = train_loss_sum + loss.detach()
         loss = loss / grad_accum_steps
         loss.backward()
         x, y, epoch = next(train_loader)
@@ -643,7 +644,7 @@ while True:
     optimizer.step()
     model.zero_grad(set_to_none=True)
 
-    train_loss_f = train_loss.item()
+    train_loss_f = (train_loss_sum / grad_accum_steps).item()
 
     # Fast fail: abort if loss is exploding or NaN
     if math.isnan(train_loss_f) or train_loss_f > 100:

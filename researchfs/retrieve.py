@@ -1,10 +1,26 @@
 """Retrieval and logging API for ResearchFS v0."""
 
-import json
 import re
 from typing import Optional
 
 from researchfs.db import get_connection
+
+
+def _fetch_all_methods(cur) -> list[dict]:
+    """Fetch every method row in the canonical retrieval shape."""
+    cur.execute(
+        """
+        SELECT m.method_id, m.name, m.description, m.implementation_hint, m.risks, m.category
+        FROM methods m
+        """
+    )
+    return [dict(m) for m in cur.fetchall()]
+
+
+def _fts_phrase_query(text: str | None, joiner: str = " ") -> str:
+    """Build an FTS5-safe query from free text terms."""
+    terms = re.findall(r"[A-Za-z0-9]+", text or "")
+    return joiner.join(f'"{term}"' for term in terms)
 
 
 def _get_empirical_stats(method_id: int, conn, baselines: dict) -> dict:
@@ -195,24 +211,11 @@ def _search_methods_hybrid(
     directly in methods_fts or indirectly via chunks_fts + method_sources.
     """
     cur = conn.cursor()
-    keywords = [k.strip() for k in query.split() if k.strip()]
-    if not keywords:
-        cur.execute(
-            """
-            SELECT m.method_id, m.name, m.description, m.implementation_hint, m.risks, m.category
-            FROM methods m
-            """
-        )
-        methods = [dict(m) for m in cur.fetchall()]
+    fts_query = _fts_phrase_query(query)
+    if not fts_query:
+        methods = _fetch_all_methods(cur)
         return methods, [m["method_id"] for m in methods], {}
 
-    # Normalize keywords to avoid FTS5 query-syntax errors (e.g. hyphens become spaces).
-    normalized_keywords = []
-    for kw in keywords:
-        normalized = re.sub(r"[^a-zA-Z0-9]+", " ", kw).strip()
-        if normalized:
-            normalized_keywords.extend(normalized.split())
-    fts_query = " ".join(normalized_keywords)
     method_ranks: dict[int, float] = {}
 
     # Method-direct matches
@@ -400,7 +403,7 @@ def search_methods_and_ids(
                 max_chars=max_chars,
             )
 
-        if query:
+        if query and query.strip():
             cur = conn.cursor()
             cur.execute(
                 """

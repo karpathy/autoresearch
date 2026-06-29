@@ -2,6 +2,7 @@
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -20,11 +21,12 @@ def apply_hunks(file_content: str, response_text: str) -> str:
     [lines to insert]
     >>>>>>>
     """
-    # Regex to capture SEARCH/REPLACE blocks.
-    # Uses re.DOTALL to match multiline blocks.
+    # Capture block contents without stripping indentation from the first line.
+    # The markers themselves must be on their own lines; spaces before markers
+    # are ignored, but spaces inside SEARCH/REPLACE payloads are preserved.
     pattern = re.compile(
-        r"<<<<<<< SEARCH\s*(.*?)\s*=======\s*(.*?)\s*>>>>>>>",
-        re.DOTALL
+        r"^[ \t]*<<<<<<< SEARCH[ \t]*\r?\n(.*?)\r?\n[ \t]*=======[ \t]*\r?\n(.*?)\r?\n[ \t]*>>>>>>>[ \t]*(?=\r?\n|$)",
+        re.DOTALL | re.MULTILINE,
     )
 
     matches = list(pattern.finditer(response_text))
@@ -33,24 +35,23 @@ def apply_hunks(file_content: str, response_text: str) -> str:
 
     modified_content = file_content
     for match in matches:
-        search_block = match.group(1).strip()
-        replace_block = match.group(2).strip()
+        search_block = match.group(1)
+        replace_block = match.group(2)
 
-        # Try exact match first
-        if search_block in modified_content:
-            modified_content = modified_content.replace(search_block, replace_block, 1)
-        else:
-            # Fallback: clean whitespaces and try matching.
-            # Split search block into lines and try to match with loose spacing.
-            search_lines = [line.strip() for line in search_block.splitlines() if line.strip()]
-            if not search_lines:
-                continue
+        if not search_block.strip():
+            raise HunkError("SEARCH block must contain at least one non-whitespace line.")
 
-            # Attempt a looser line-by-line replacement.
-            # To be safe, we fail if we can't find the exact block.
+        occurrences = modified_content.count(search_block)
+        if occurrences == 0:
             raise HunkError(
                 f"Could not find exact SEARCH block in file:\n{search_block[:200]}..."
             )
+        if occurrences > 1:
+            raise HunkError(
+                "SEARCH block matched multiple locations; include more surrounding context."
+            )
+
+        modified_content = modified_content.replace(search_block, replace_block, 1)
 
     return modified_content
 
@@ -61,7 +62,7 @@ def check_syntax(file_path: str | Path) -> tuple[bool, str]:
     Returns (is_ok, error_message).
     """
     res = subprocess.run(
-        ["python3", "-m", "py_compile", str(file_path)],
+        [sys.executable, "-m", "py_compile", str(file_path)],
         capture_output=True,
         text=True,
     )

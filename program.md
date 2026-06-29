@@ -10,8 +10,9 @@ To set up a new experiment, work with the user to:
 2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
 3. **Read the in-scope files**: The repo is small. Read these files for full context:
    - `README.md` — repository context.
-   - `prepare.py` — fixed constants, data prep, tokenizer, dataloader, evaluation. Do not modify.
+   - `prepare.py` — data prep, tokenizer, dataloader, evaluation. Do not modify evaluation logic; note any non-default environment overrides.
    - `train.py` — the file you modify. Model architecture, optimizer, training loop.
+   - `comparison.md` and `evals/nanochat_bpb/metrics.py` — published benchmark context and local comparison tooling.
 4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
 5. **Initialize results.tsv**: Create `results.tsv` with just the header row. The baseline will be recorded after the first run.
 6. **Confirm and go**: Confirm setup looks good.
@@ -26,11 +27,13 @@ Each experiment runs on a single GPU. The training script runs for a **fixed tim
 - Modify `train.py` — this is the only file you edit. Everything is fair game: model architecture, optimizer, hyperparameters, training loop, batch size, model size, etc.
 
 **What you CANNOT do:**
-- Modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, tokenizer, and training constants (time budget, sequence length, etc).
+- Modify the evaluation semantics in `prepare.py`. The validation shard, target construction, byte counting, and `evaluate_bpb` are the ground truth metric.
 - Install new packages or add dependencies. You can only use what's already in `pyproject.toml`.
-- Modify the evaluation harness. The `evaluate_bpb` function in `prepare.py` is the ground truth metric.
+- Modify the evaluation harness to make BPB easier. Fast-mode environment overrides are allowed for smoke tests only and must not be compared to published baselines.
 
 **The goal is simple: get the lowest val_bpb.** Since the time budget is fixed, you don't need to worry about training time — it's always 5 minutes. Everything is fair game: change the architecture, the optimizer, the hyperparameters, the batch size, the model size. The only constraint is that the code runs without crashing and finishes within the time budget.
+
+**Reference points:** Recursive reports 0.9109 BPB for their best NanoChat Autoresearch solution, autoresearch@home reports 0.9372 BPB after reward-hack removal, and Karpathy's seed re-runs around 0.9751 BPB on Recursive's B200 harness. Local single-seed or fast-mode runs are not comparable unless they use the same canonical 5-minute setup and multi-seed validation.
 
 **VRAM** is a soft constraint. Some increase is acceptable for meaningful val_bpb gains, but it should not blow up dramatically.
 

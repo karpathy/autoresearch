@@ -41,10 +41,14 @@ def bar():
     code = extract_code_block(response)
     assert code == "def bar():\n    return 42"
 
-def test_extract_code_block_fallback():
+def test_extract_code_block_requires_python_markdown_block():
     response = "def baz():\n    return 1"
-    code = extract_code_block(response)
-    assert code == "def baz():\n    return 1"
+    try:
+        extract_code_block(response)
+    except ValueError as exc:
+        assert "Python markdown code block" in str(exc)
+    else:
+        raise AssertionError("extract_code_block should reject raw prose/code responses")
 
 def test_extract_description_found():
     response = """
@@ -155,6 +159,31 @@ def _in_memory_db():
     initialize_db(conn)
     seed_initial_data(conn)
     return conn
+
+
+def test_initialize_db_enables_foreign_keys_and_cascades():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    initialize_db(conn)
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+    cur = conn.cursor()
+    cur.execute("INSERT INTO papers (title) VALUES (?)", ("paper",))
+    paper_id = cur.lastrowid
+    cur.execute("INSERT INTO chunks (paper_id, content) VALUES (?, ?)", (paper_id, "chunk"))
+    chunk_id = cur.lastrowid
+    cur.execute("INSERT INTO methods (name) VALUES (?)", ("method",))
+    method_id = cur.lastrowid
+    cur.execute(
+        "INSERT INTO method_sources (method_id, chunk_id) VALUES (?, ?)",
+        (method_id, chunk_id),
+    )
+    conn.commit()
+
+    cur.execute("DELETE FROM methods WHERE method_id = ?", (method_id,))
+    conn.commit()
+    remaining = cur.execute("SELECT COUNT(*) FROM method_sources").fetchone()[0]
+    assert remaining == 0
 
 
 def test_chunk_text_overlap_and_boundaries():
@@ -768,13 +797,105 @@ def test_aggregate_seeded_runs_tracks_valid_run_ids():
         assert str(run_id) in text
 
 
+def test_aggregate_seeded_runs_skips_runs_without_valid_bpb():
+    conn = _in_memory_db()
+    valid_ids = []
+    for best_bpb in [0.950, 0.940]:
+        run_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+        valid_ids.append(run_id)
+        rfs.log_experiment("baseline", 1.000, 0.5, "keep", "baseline", run_id, conn)
+        rfs.log_experiment("seed", best_bpb, 0.5, "keep", "seed", run_id, conn)
+
+    invalid_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    rfs.log_experiment("crashed", None, None, "crash", "no metric", invalid_id, conn)
+
+    aggregate = metrics.aggregate_seeded_runs([valid_ids[0], invalid_id, valid_ids[1]], conn=conn)
+    assert aggregate["n_seeds"] == 3
+    assert aggregate["valid_seeds"] == 2
+    assert aggregate["valid_run_ids"] == valid_ids
+    assert aggregate["invalid_run_ids"] == [invalid_id]
+
+    text = metrics.format_seeded_aggregate(aggregate)
+    assert f"Skipped run IDs without valid best BPB: {invalid_id}" in text
+    assert f"| {invalid_id} |" not in text
+
+
+def test_aggregate_seeded_runs_rejects_mixed_modes_or_models():
+    conn = _in_memory_db()
+    baseline_id = rfs.start_agent_run("baseline", "gpt-4o-mini", conn)
+    loopgraph_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    for run_id in [baseline_id, loopgraph_id]:
+        rfs.log_experiment("baseline", 1.000, 0.5, "keep", "baseline", run_id, conn)
+
+    try:
+        metrics.aggregate_seeded_runs([baseline_id, loopgraph_id], conn=conn)
+    except ValueError as exc:
+        assert "same mode and model" in str(exc)
+    else:
+        assert False, "Expected mixed mode aggregation to fail"
+
+
 def test_cost_estimate_uses_model_rates():
     cost = metrics.estimate_cost(1_000_000, 200_000, "gpt-4o-mini")
     assert cost > 0
     assert cost == (1_000_000 * 0.00015 + 200_000 * 0.0006) / 1000
 
 
-def test_asep_cleanup_deletes_only_generated_branches():
+def test_prepare_data_checks_prepare_cache_dir_before_running():
+    import types
+    import unittest.mock
+    import run_comparison
+
+    fake_prepare = types.ModuleType("prepare")
+    fake_prepare.DATA_DIR = "/tmp/autoresearch-cache/data"
+    checked_paths = []
+
+    def fake_isdir(path):
+        checked_paths.append(path)
+        return path == fake_prepare.DATA_DIR
+
+    def fail_run(*args, **kwargs):
+        assert False, "prepare.py should not run when prepare.DATA_DIR exists"
+
+    with unittest.mock.patch.dict("sys.modules", {"prepare": fake_prepare}), \
+         unittest.mock.patch("run_comparison.os.path.isdir", fake_isdir), \
+         unittest.mock.patch("run_comparison.subprocess.run", fail_run):
+        run_comparison._prepare_data({"TEST": "1"})
+
+    assert checked_paths == [fake_prepare.DATA_DIR]
+
+
+def test_prepare_data_runs_prepare_when_cache_dir_missing():
+    import types
+    import unittest.mock
+    import run_comparison
+
+    fake_prepare = types.ModuleType("prepare")
+    fake_prepare.DATA_DIR = "/tmp/autoresearch-cache/data"
+    checked_paths = []
+    calls = []
+
+    def fake_isdir(path):
+        checked_paths.append(path)
+        return False
+
+    def record_run(args, **kwargs):
+        calls.append((args, kwargs))
+        class Result:
+            returncode = 0
+        return Result()
+
+    env = {"TEST": "1"}
+    with unittest.mock.patch.dict("sys.modules", {"prepare": fake_prepare}), \
+         unittest.mock.patch("run_comparison.os.path.isdir", fake_isdir), \
+         unittest.mock.patch("run_comparison.subprocess.run", record_run):
+        run_comparison._prepare_data(env)
+
+    assert checked_paths == [fake_prepare.DATA_DIR]
+    assert calls == [(["uv", "run", "python", "prepare.py"], {"env": env})]
+
+
+def test_asep_cleanup_deletes_only_current_generated_branch():
     import unittest.mock
     import asep_loopgraph_benchmark as asep
 
@@ -789,16 +910,71 @@ def test_asep_cleanup_deletes_only_generated_branches():
         return Result()
 
     branches_before = {"autoresearch/exp_existing"}
-    branches_after = {"autoresearch/exp_existing", "autoresearch/exp_generated"}
     with unittest.mock.patch("asep_loopgraph_benchmark.current_git_branch", return_value="autoresearch/exp_generated"), \
-         unittest.mock.patch("asep_loopgraph_benchmark.autoresearch_branches", return_value=branches_after), \
+         unittest.mock.patch("asep_loopgraph_benchmark.autoresearch_branches", side_effect=AssertionError("cleanup should not scan branches to delete")), \
          unittest.mock.patch("asep_loopgraph_benchmark.subprocess.run", record_run):
         asep.cleanup_git_state("main", branches_before)
 
-    assert ["git", "reset", "--hard"] in calls
     assert ["git", "checkout", "main"] in calls
     assert ["git", "branch", "-D", "autoresearch/exp_generated"] in calls
     assert ["git", "branch", "-D", "autoresearch/exp_existing"] not in calls
+
+
+def test_asep_cleanup_does_not_delete_unrelated_new_branches():
+    import unittest.mock
+    import asep_loopgraph_benchmark as asep
+
+    calls = []
+
+    def record_run(args, **kwargs):
+        calls.append(args)
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return Result()
+
+    with unittest.mock.patch("asep_loopgraph_benchmark.current_git_branch", return_value="main"), \
+         unittest.mock.patch("asep_loopgraph_benchmark.autoresearch_branches", side_effect=AssertionError("cleanup should not scan branches to delete")), \
+         unittest.mock.patch("asep_loopgraph_benchmark.subprocess.run", record_run):
+        asep.cleanup_git_state("main", {"autoresearch/exp_existing"})
+
+    assert ["git", "reset", "--hard"] not in calls
+    assert not any(call[:3] == ["git", "branch", "-D"] for call in calls)
+
+
+def test_asep_main_emits_numeric_penalty_for_missing_bpb():
+    import io
+    import json
+    import types
+    import unittest.mock
+    import asep_loopgraph_benchmark as asep
+
+    args = types.SimpleNamespace(
+        steps_budget=1,
+        time_budget=1,
+        device="cpu",
+        api_provider="openai",
+        model="model",
+        mode="loopgraph",
+        max_experiments=1,
+        max_method_chars=None,
+        metric="val_bpb",
+    )
+    out = io.StringIO()
+    with unittest.mock.patch("asep_loopgraph_benchmark.parse_args", return_value=args), \
+         unittest.mock.patch("asep_loopgraph_benchmark.set_fast_train_env"), \
+         unittest.mock.patch("asep_loopgraph_benchmark.current_git_branch", return_value="main"), \
+         unittest.mock.patch("asep_loopgraph_benchmark.autoresearch_branches", return_value=set()), \
+         unittest.mock.patch("asep_loopgraph_benchmark.build_llm_fn", return_value=lambda prompt: ""), \
+         unittest.mock.patch("asep_loopgraph_benchmark.run_agent_mode", return_value=123), \
+         unittest.mock.patch("asep_loopgraph_benchmark.load_run", return_value={"best_bpb": None, "total_tokens": 0, "cost": 0.0}), \
+         unittest.mock.patch("asep_loopgraph_benchmark.cleanup_git_state"), \
+         unittest.mock.patch("sys.stdout", out):
+        assert asep.main() == 0
+
+    payload = json.loads(out.getvalue())
+    assert payload["val_bpb"] == 1e9
 
 
 def test_apply_hunks_success():
@@ -806,6 +982,13 @@ def test_apply_hunks_success():
     response = "some text\n<<<<<<< SEARCH\nline 2\n=======\nline 2 modified\n>>>>>>>"
     res = apply_hunks(content, response)
     assert res == "line 1\nline 2 modified\nline 3"
+
+
+def test_apply_hunks_preserves_indentation():
+    content = "def fn():\n    x = 1\n    return x\n"
+    response = "<<<<<<< SEARCH\n    x = 1\n=======\n    x = 2\n>>>>>>>"
+    res = apply_hunks(content, response)
+    assert res == "def fn():\n    x = 2\n    return x\n"
 
 
 def test_apply_hunks_not_found():
@@ -1042,8 +1225,8 @@ def test_run_agent_mode_reuses_query():
                     stdout = "abc123"
                     stderr = ""
                 res = Result()
-                if len(args) >= 3 and args[:3] == ["git", "diff", "--quiet"]:
-                    res.returncode = 1
+                if len(args) >= 5 and args[:3] == ["git", "diff", "--quiet"] and args[-1] == "train.py":
+                    res.returncode = 0
                 return res
 
             def mock_llm(prompt):
@@ -1123,8 +1306,8 @@ def test_run_agent_mode_reuses_query_saves_tokens_across_experiments():
                     stdout = "abc123"
                     stderr = ""
                 res = Result()
-                if len(args) >= 3 and args[:3] == ["git", "diff", "--quiet"]:
-                    res.returncode = 1
+                if len(args) >= 5 and args[:3] == ["git", "diff", "--quiet"] and args[-1] == "train.py":
+                    res.returncode = 0
                 return res
 
             def mock_llm(prompt):
@@ -1154,6 +1337,117 @@ def test_run_agent_mode_reuses_query_saves_tokens_across_experiments():
             assert len(retrieval_llm_calls) == 1, (
                 f"Expected 1 retrieval LLM call, got {len(retrieval_llm_calls)}"
             )
+        finally:
+            os.chdir(old_cwd)
+
+
+def test_run_agent_mode_cleans_up_after_baseline_failure():
+    import os
+    import tempfile
+    import unittest.mock
+    from agents import harness_agent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        old_cwd = os.getcwd()
+        os.chdir(tmpdir)
+        try:
+            with open("train.py", "w", encoding="utf-8") as f:
+                f.write("x = 1\n")
+
+            def mock_subprocess_run(args, **kwargs):
+                class Result:
+                    returncode = 0
+                    stdout = "abc123"
+                    stderr = ""
+                return Result()
+
+            finish_mock = unittest.mock.Mock()
+            checkout_mock = unittest.mock.Mock()
+
+            with unittest.mock.patch("agents.harness_agent.initialize_db"), \
+                 unittest.mock.patch("agents.harness_agent.ensure_seed"), \
+                 unittest.mock.patch("agents.harness_agent.subprocess.run", mock_subprocess_run), \
+                 unittest.mock.patch("agents.harness_agent._current_branch", return_value="main"), \
+                 unittest.mock.patch("agents.harness_agent._run_train", return_value=(None, None, "crash", "boom")), \
+                 unittest.mock.patch("agents.harness_agent.rfs.start_agent_run", return_value=4321), \
+                 unittest.mock.patch("agents.harness_agent.rfs.finish_agent_run", finish_mock), \
+                 unittest.mock.patch("agents.harness_agent._checkout", checkout_mock):
+                try:
+                    harness_agent.run_agent_mode(
+                        mode="baseline",
+                        model="gpt-4o-mini",
+                        max_experiments=1,
+                        time_budget=60,
+                        llm_fn=lambda prompt: "unused",
+                        steps_budget=100,
+                    )
+                except RuntimeError as exc:
+                    assert "Baseline run failed: boom" in str(exc)
+                else:
+                    assert False, "Expected baseline failure to propagate"
+
+            finish_mock.assert_called_once_with(4321)
+            checkout_mock.assert_called_once()
+            assert checkout_mock.call_args[0][0] == "main"
+        finally:
+            os.chdir(old_cwd)
+
+
+def test_run_agent_mode_cleans_up_after_mid_loop_exception():
+    import os
+    import tempfile
+    import unittest.mock
+    from agents import harness_agent
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        old_cwd = os.getcwd()
+        os.chdir(tmpdir)
+        try:
+            with open("train.py", "w", encoding="utf-8") as f:
+                f.write("x = 1\n")
+
+            def mock_subprocess_run(args, **kwargs):
+                class Result:
+                    returncode = 0
+                    stdout = "abc123"
+                    stderr = ""
+                return Result()
+
+            def failing_llm(prompt):
+                raise ValueError("agent exploded")
+
+            client_mock = unittest.mock.Mock()
+            finish_mock = unittest.mock.Mock()
+            checkout_mock = unittest.mock.Mock()
+
+            with unittest.mock.patch("agents.harness_agent.initialize_db"), \
+                 unittest.mock.patch("agents.harness_agent.ensure_seed"), \
+                 unittest.mock.patch("agents.harness_agent.subprocess.run", mock_subprocess_run), \
+                 unittest.mock.patch("agents.harness_agent._current_branch", return_value="main"), \
+                 unittest.mock.patch("agents.harness_agent._run_train", return_value=(2.500, 1024.0, "success", "")), \
+                 unittest.mock.patch("agents.harness_agent.rfs.start_agent_run", return_value=5432), \
+                 unittest.mock.patch("agents.harness_agent.rfs.finish_agent_run", finish_mock), \
+                 unittest.mock.patch("agents.harness_agent.rfs.log_experiment", return_value=6543), \
+                 unittest.mock.patch("agents.harness_agent.ResearchFSClient", return_value=client_mock), \
+                 unittest.mock.patch("agents.harness_agent._checkout", checkout_mock):
+                try:
+                    harness_agent.run_agent_mode(
+                        mode="baseline",
+                        model="gpt-4o-mini",
+                        max_experiments=1,
+                        time_budget=60,
+                        llm_fn=failing_llm,
+                        steps_budget=100,
+                    )
+                except ValueError as exc:
+                    assert "agent exploded" in str(exc)
+                else:
+                    assert False, "Expected mid-loop exception to propagate"
+
+            finish_mock.assert_called_once_with(5432)
+            checkout_mock.assert_called_once()
+            assert checkout_mock.call_args[0][0] == "main"
+            client_mock.close.assert_called_once_with()
         finally:
             os.chdir(old_cwd)
 
@@ -1349,6 +1643,32 @@ def test_researchfs_client_start_session_uses_configured_db_path():
             assert row["model"] == "test-model"
         finally:
             client.close()
+
+
+def test_researchfs_client_initializes_cached_connection_once_and_closes():
+    import unittest.mock
+    from researchfs.client import ResearchFSClient
+
+    class FakeConn:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    fake_conn = FakeConn()
+    client = ResearchFSClient(db_path="custom.db")
+    with unittest.mock.patch("researchfs.client.db_module.get_connection", return_value=fake_conn) as get_conn, \
+         unittest.mock.patch("researchfs.client.db_module.initialize_db") as init_db:
+        assert client.get_connection() is fake_conn
+        assert client.get_connection() is fake_conn
+        get_conn.assert_called_once_with("custom.db")
+        init_db.assert_called_once_with(fake_conn)
+
+    client.close()
+    assert fake_conn.closed is True
+    assert client._conn is None
+    assert client._conn_initialized is False
 
 
 def test_researchfs_session_log_retrieval_records_unique_method_ids():

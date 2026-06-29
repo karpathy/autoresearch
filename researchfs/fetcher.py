@@ -1,12 +1,10 @@
 """Fetchers for downloading arXiv LaTeX source papers and GitHub repository metadata."""
 
 import gzip
+import html
 import io
 import re
 import tarfile
-import tempfile
-from pathlib import Path
-from typing import Optional
 
 import requests
 
@@ -16,52 +14,54 @@ def fetch_arxiv_metadata(arxiv_id: str) -> dict:
     url = f"https://arxiv.org/abs/{arxiv_id}"
     res = requests.get(url, timeout=30)
     res.raise_for_status()
-    html = res.text
+    html_text = res.text
 
     # Extract Title: <h1 class="title mathjax"><span class="descriptor">Title:</span>[...]</h1>
     title_match = re.search(
         r'<h1 class="title mathjax"><span class="descriptor">Title:</span>\s*(.*?)</h1>',
-        html,
+        html_text,
         re.DOTALL,
     )
     title = title_match.group(1).strip() if title_match else f"arXiv:{arxiv_id}"
-    # Remove MathJax wrappers if any
     title = re.sub(r'<span class="mathjax">.*?</span>', "", title)
-    title = re.sub(r"\s+", " ", title)
+    title = re.sub(r"<.*?>", "", title)
+    title = html.unescape(re.sub(r"\s+", " ", title)).strip()
 
     # Extract Authors: <div class="authors"><span class="descriptor">Authors:</span>[...]</div>
     authors_match = re.search(
         r'<div class="authors"><span class="descriptor">Authors:</span>\s*(.*?)</div>',
-        html,
+        html_text,
         re.DOTALL,
     )
     authors = ""
     if authors_match:
-        # Strip anchor tags to get clean author names
         authors_html = authors_match.group(1)
-        authors = ", ".join(re.findall(r'<a href=".*?">(.*?)</a>', authors_html))
+        author_names = [
+            html.unescape(re.sub(r"<.*?>", "", name)).strip()
+            for name in re.findall(r'<a href=".*?">(.*?)</a>', authors_html)
+        ]
+        authors = ", ".join(name for name in author_names if name)
         if not authors:
-            # Fallback if raw text
             authors = re.sub(r"<.*?>", "", authors_html).strip()
-            authors = re.sub(r"\s+", " ", authors)
+            authors = html.unescape(re.sub(r"\s+", " ", authors))
 
     # Extract Abstract: <blockquote class="abstract mathjax"><span class="descriptor">Abstract:</span>[...]</blockquote>
     abstract_match = re.search(
         r'<blockquote class="abstract mathjax"><span class="descriptor">Abstract:</span>\s*(.*?)</blockquote>',
-        html,
+        html_text,
         re.DOTALL,
     )
     abstract = ""
     if abstract_match:
         abstract = abstract_match.group(1).strip()
-        abstract = re.sub(r"<.*?>", "", abstract)  # Strip inline spans
-        abstract = re.sub(r"\s+", " ", abstract)
+        abstract = re.sub(r"<.*?>", "", abstract)
+        abstract = html.unescape(re.sub(r"\s+", " ", abstract)).strip()
 
     # Extract Date: [Submitted on Mon, 22 May 2023 ...]
-    date_match = re.search(r'<div class="dateline">\s*\[Submitted on\s*([^,<>,\]]+)', html, re.DOTALL)
+    date_match = re.search(r'<div class="dateline">\s*\[Submitted on\s*([^,<>,\]]+)', html_text, re.DOTALL)
     publish_date = date_match.group(1).strip() if date_match else "unknown"
     publish_date = re.sub(r"<.*?>", "", publish_date)
-    publish_date = publish_date.split("(")[0].split(",")[0].strip()
+    publish_date = html.unescape(publish_date.split("(")[0].split(",")[0].strip())
 
     return {
         "title": title,
@@ -130,12 +130,16 @@ def fetch_arxiv_source(arxiv_id: str) -> dict:
 
 def fetch_github_readme(repo_path: str) -> dict:
     """Download the README file from a GitHub repository."""
-    # Clean repo path (e.g. karpathy/nanochat)
+    repo_path = repo_path.strip()
     match = re.search(r"github\.com/([^/]+/[^/]+)", repo_path)
-    clean_path = match.group(1) if match else repo_path
-    clean_path = clean_path.strip("/")
-
-    owner, repo = clean_path.split("/", 1)
+    clean_path = (match.group(1) if match else repo_path).strip("/")
+    owner_repo = clean_path.split("/", 1)
+    if len(owner_repo) != 2 or not owner_repo[0] or not owner_repo[1]:
+        raise ValueError("repo_path must be 'owner/repo' or a GitHub repository URL")
+    owner, repo = owner_repo
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    clean_path = f"{owner}/{repo}"
     url = f"https://github.com/{clean_path}"
 
     # Try main branch first, then master
@@ -144,9 +148,11 @@ def fetch_github_readme(repo_path: str) -> dict:
         readme_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/README.md"
         print(f"Checking README at {readme_url}...")
         res = requests.get(readme_url, timeout=30)
-        if res.status_code == 200:
-            readme_text = res.text
-            break
+        if res.status_code == 404:
+            continue
+        res.raise_for_status()
+        readme_text = res.text
+        break
 
     if not readme_text:
         raise RuntimeError(f"Could not find README.md for repo {clean_path} on main or master branch")

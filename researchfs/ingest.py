@@ -2,6 +2,8 @@
 
 import argparse
 import os
+import re
+import sqlite3
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -347,10 +349,23 @@ def seed_initial_data(conn=None) -> None:
     for title, section, content in chunks:
         paper_id = paper_ids[title]
         cur.execute(
-            "INSERT INTO chunks (paper_id, section, content) VALUES (?, ?, ?)",
+            """
+            SELECT chunk_id FROM chunks
+            WHERE paper_id = ? AND section = ? AND content = ?
+            LIMIT 1
+            """,
             (paper_id, section, content),
         )
-        chunk_ids.append(cur.lastrowid)
+        row = cur.fetchone()
+        if row is None:
+            cur.execute(
+                "INSERT INTO chunks (paper_id, section, content) VALUES (?, ?, ?)",
+                (paper_id, section, content),
+            )
+            chunk_id = cur.lastrowid
+        else:
+            chunk_id = row["chunk_id"]
+        chunk_ids.append(chunk_id)
 
     # -----------------------------------------------------------------------
     # Methods
@@ -638,6 +653,41 @@ def _build_llm_fn() -> Optional[Callable[[str], str]]:
     return _llm
 
 
+def _iter_extracted_methods(result: dict) -> list:
+    """Return the extracted methods list only when the LLM schema is usable."""
+    methods = result.get("methods", [])
+    return methods if isinstance(methods, list) else []
+
+
+def _normalize_extracted_method(method: object) -> Optional[dict]:
+    """Validate and normalize one LLM-extracted method before ingestion."""
+    if not isinstance(method, dict):
+        return None
+    name = str(method.get("name") or "").strip()
+    if not name:
+        return None
+    source_indices = method.get("source_chunk_indices") or []
+    if not isinstance(source_indices, (list, tuple)):
+        source_indices = []
+    return {
+        "name": name,
+        "description": str(method.get("description") or "").strip(),
+        "implementation_hint": str(method.get("implementation_hint") or "").strip(),
+        "risks": str(method.get("risks") or "").strip(),
+        "category": str(method.get("category") or "").strip(),
+        "source_chunk_indices": [
+            idx for idx in source_indices
+            if isinstance(idx, int) and not isinstance(idx, bool)
+        ],
+    }
+
+
+def _build_method_fts_query(name: str) -> str:
+    """Build an FTS5-safe OR query from a method name."""
+    terms = re.findall(r"[A-Za-z0-9]+", name)
+    return " OR ".join(f'"{term}"' for term in terms)
+
+
 def _check_duplicate_method(
     method: dict,
     llm_fn: Optional[Callable[[str], str]] = None,
@@ -671,12 +721,9 @@ def _check_duplicate_method(
             return row[0]
 
         # 2. FTS5 search using keywords from the method's name
-        import re
-        keywords = [k.strip() for k in re.split(r"[^a-zA-Z0-9]+", name) if k.strip()]
-        if not keywords:
+        fts_query = _build_method_fts_query(name)
+        if not fts_query:
             return None
-
-        fts_query = " OR ".join(keywords)
         try:
             cur.execute(
                 "SELECT rowid, name, description FROM methods_fts WHERE methods_fts MATCH ? ORDER BY rank LIMIT 3",
@@ -747,8 +794,9 @@ def ingest_paper(
     if dry_run:
         close_conn = False
         if conn is None:
-            initialize_db()
-            conn = get_connection()
+            conn = sqlite3.connect(":memory:")
+            conn.row_factory = sqlite3.Row
+            initialize_db(conn)
             close_conn = True
         try:
             content = meta.get("content", meta.get("abstract", ""))
@@ -771,30 +819,33 @@ def ingest_paper(
             if llm_fn is not None:
                 try:
                     result = extractor.extract_methods_from_paper(meta, llm_fn)
-                    for method in result.get("methods", []):
+                    for raw_method in _iter_extracted_methods(result):
+                        method = _normalize_extracted_method(raw_method)
+                        if method is None:
+                            continue
                         resolved_id = _check_duplicate_method(method, llm_fn=llm_fn, conn=conn)
                         if resolved_id is not None:
                             planned["merged_methods"].append(
                                 {
-                                    "name": method.get("name"),
+                                    "name": method["name"],
                                     "merged_into_id": resolved_id,
                                 }
                             )
                         else:
                             planned["methods"].append(
                                 {
-                                    "name": method.get("name"),
-                                    "description": method.get("description", ""),
-                                    "implementation_hint": method.get("implementation_hint", ""),
-                                    "risks": method.get("risks", ""),
-                                    "category": method.get("category", ""),
+                                    "name": method["name"],
+                                    "description": method["description"],
+                                    "implementation_hint": method["implementation_hint"],
+                                    "risks": method["risks"],
+                                    "category": method["category"],
                                 }
                             )
-                        for idx in method.get("source_chunk_indices") or []:
-                            if isinstance(idx, int) and 0 <= idx < len(chunks):
+                        for idx in method["source_chunk_indices"]:
+                            if 0 <= idx < len(chunks):
                                 planned["method_sources"].append(
                                     {
-                                        "method_name": method.get("name"),
+                                        "method_name": method["name"],
                                         "chunk_index": idx,
                                     }
                                 )
@@ -849,7 +900,10 @@ def ingest_paper(
         method_ids = []
         if llm_fn is not None:
             result = extractor.extract_methods_from_paper(meta, llm_fn)
-            for method in result.get("methods", []):
+            for raw_method in _iter_extracted_methods(result):
+                method = _normalize_extracted_method(raw_method)
+                if method is None:
+                    continue
                 resolved_id = _check_duplicate_method(method, llm_fn=llm_fn, conn=conn)
                 if resolved_id is not None:
                     method_id = resolved_id
@@ -861,11 +915,11 @@ def ingest_paper(
                         VALUES (:name, :description, :implementation_hint, :risks, :category)
                         """,
                         {
-                            "name": method.get("name"),
-                            "description": method.get("description", ""),
-                            "implementation_hint": method.get("implementation_hint", ""),
-                            "risks": method.get("risks", ""),
-                            "category": method.get("category", ""),
+                            "name": method["name"],
+                            "description": method["description"],
+                            "implementation_hint": method["implementation_hint"],
+                            "risks": method["risks"],
+                            "category": method["category"],
                         },
                     )
                     cur.execute(
@@ -873,11 +927,11 @@ def ingest_paper(
                         (method["name"],),
                     )
                     method_id = cur.fetchone()["method_id"]
-                
+
                 method_ids.append(method_id)
 
-                for idx in method.get("source_chunk_indices") or []:
-                    if isinstance(idx, int) and 0 <= idx < len(chunk_ids):
+                for idx in method["source_chunk_indices"]:
+                    if 0 <= idx < len(chunk_ids):
                         cur.execute(
                             "INSERT OR IGNORE INTO method_sources (method_id, chunk_id) VALUES (?, ?)",
                             (method_id, chunk_ids[idx]),

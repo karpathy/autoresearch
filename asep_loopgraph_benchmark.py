@@ -116,6 +116,17 @@ def current_git_branch() -> str | None:
         text=True,
         check=False,
     )
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    if branch != "HEAD":
+        return branch
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     return result.stdout.strip() if result.returncode == 0 else None
 
 
@@ -135,26 +146,67 @@ def autoresearch_branches() -> set[str]:
     return branches
 
 
+def _temporary_branch_from_this_run(
+    current_branch: str | None,
+    original_branch: str | None,
+    branches_before: set[str],
+) -> str | None:
+    if (
+        current_branch
+        and current_branch != original_branch
+        and current_branch.startswith("autoresearch/exp_")
+        and current_branch not in branches_before
+    ):
+        return current_branch
+    return None
+
+
 def cleanup_git_state(original_branch: str | None, branches_before: set[str]) -> None:
-    """Return to the original branch and remove branches created by this run."""
+    """Return to the original checkout target and only delete a known temporary branch."""
     current_branch = current_git_branch()
-    generated_branches = autoresearch_branches() - branches_before
+    temporary_branch = _temporary_branch_from_this_run(
+        current_branch,
+        original_branch,
+        branches_before,
+    )
 
-    if current_branch in generated_branches:
-        subprocess.run(["git", "reset", "--hard"], check=False, capture_output=True)
-
+    checkout_succeeded = False
     if original_branch and original_branch != "HEAD":
-        subprocess.run(
-            ["git", "checkout", original_branch],
-            check=False,
-            capture_output=True,
-        )
+        if current_branch == original_branch:
+            checkout_succeeded = True
+        else:
+            result = subprocess.run(
+                ["git", "checkout", original_branch],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            checkout_succeeded = result.returncode == 0
+            if not checkout_succeeded:
+                detail = (result.stderr or result.stdout).strip()
+                print(
+                    f"Warning: could not checkout original target {original_branch}; "
+                    f"leaving current branch unchanged. {detail}",
+                    file=sys.stderr,
+                )
 
-    for branch in sorted(generated_branches):
-        subprocess.run(
-            ["git", "branch", "-D", branch],
+    if temporary_branch and checkout_succeeded:
+        result = subprocess.run(
+            ["git", "branch", "-D", temporary_branch],
             check=False,
             capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            print(
+                f"Warning: could not delete temporary branch {temporary_branch}. {detail}",
+                file=sys.stderr,
+            )
+    elif temporary_branch:
+        print(
+            f"Warning: leaving temporary branch {temporary_branch} in place because checkout cleanup did not complete.",
+            file=sys.stderr,
         )
 
 
@@ -226,9 +278,10 @@ def main() -> int:
         metric_value = None
 
     # ASEP expects the metric field to be present and numeric. If the run
-    # produced no valid BPB, emit a large penalty so ASEP treats it as a failure.
+    # produced no valid BPB, emit a large finite penalty so JSON consumers do
+    # not receive null/Infinity and ASEP treats the run as a failure.
     if metric_value is None:
-        metric_value = float("inf")
+        metric_value = 1e9
 
     payload = {
         "mode": args.mode,
@@ -237,7 +290,7 @@ def main() -> int:
         "total_tokens": total_tokens,
         "cost": cost,
         "time_seconds": round(elapsed, 3),
-        args.metric: round(metric_value, 6) if metric_value != float("inf") else None,
+        args.metric: round(metric_value, 6),
     }
     print(json.dumps(payload, sort_keys=True))
     return 0

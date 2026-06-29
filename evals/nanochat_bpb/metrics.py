@@ -190,13 +190,15 @@ def compare_runs(baseline_run_id: int, researchfs_run_id: int, conn=None) -> dic
             )
 
         token_reduction = None
-        if baseline["total_tokens"] and researchfs["total_tokens"]:
-            token_reduction = 1 - researchfs["total_tokens"] / baseline["total_tokens"]
+        baseline_tokens = baseline["total_tokens"]
+        if baseline_tokens > 0:
+            token_reduction = 1 - researchfs["total_tokens"] / baseline_tokens
 
         retrieval_reduction = None
-        if baseline["retrieval_count"] and researchfs["retrieval_count"]:
+        baseline_retrievals = baseline["retrieval_count"]
+        if baseline_retrievals > 0:
             retrieval_reduction = (
-                1 - researchfs["retrieval_count"] / baseline["retrieval_count"]
+                1 - researchfs["retrieval_count"] / baseline_retrievals
             )
 
         return {
@@ -236,7 +238,7 @@ def format_comparison(comparison: dict) -> str:
         "",
         f"| Metric | Baseline ({comparison['baseline_run_id']}) | ResearchFS ({comparison['researchfs_run_id']}) |",
         "|---|---|---|",
-        f"| Model | {b['model']} | {r['model']} |",
+        f"| Model | {b['model'] or 'N/A'} | {r['model'] or 'N/A'} |",
         f"| Baseline BPB | {fmt(b['baseline_bpb'])} | {fmt(r['baseline_bpb'])} |",
         f"| Best BPB | {fmt(b['best_bpb'])} | {fmt(r['best_bpb'])} |",
         f"| Mean kept BPB | {fmt(b['mean_bpb'])} | {fmt(r['mean_bpb'])} |",
@@ -246,7 +248,7 @@ def format_comparison(comparison: dict) -> str:
         f"| Prompt tokens | {fmt(b['prompt_tokens'], '.0f')} | {fmt(r['prompt_tokens'], '.0f')} |",
         f"| Completion tokens | {fmt(b['completion_tokens'], '.0f')} | {fmt(r['completion_tokens'], '.0f')} |",
         f"| Total tokens | {fmt(b['total_tokens'], '.0f')} | {fmt(r['total_tokens'], '.0f')} |",
-        f"| Estimated cost | ${fmt(b['cost'], '.4f')} | ${fmt(r['cost'], '.4f')} |",
+        f"| Cost (logged/estimated) | ${fmt(b['cost'], '.4f')} | ${fmt(r['cost'], '.4f')} |",
         f"| Retrieval/context calls | {fmt(b['retrieval_count'], '.0f')} | {fmt(r['retrieval_count'], '.0f')} |",
         f"| Tokens per BPB improvement | {fmt(b['tokens_per_improvement'], '.0f')} | {fmt(r['tokens_per_improvement'], '.0f')} |",
         "",
@@ -254,20 +256,33 @@ def format_comparison(comparison: dict) -> str:
 
     if comparison["best_bpb_delta"] is not None:
         delta = comparison["best_bpb_delta"]
-        direction = "better" if delta < 0 else "worse"
-        lines.append(
-            f"ResearchFS best BPB is **{abs(delta):.6f} {direction}** than baseline."
-        )
-    if comparison["token_reduction_ratio"] is not None:
-        pct = comparison["token_reduction_ratio"] * 100
-        lines.append(
-            f"ResearchFS used **{pct:.1f}% fewer tokens** than baseline."
-        )
-    if comparison["retrieval_reduction_ratio"] is not None:
-        pct = comparison["retrieval_reduction_ratio"] * 100
-        lines.append(
-            f"ResearchFS used **{pct:.1f}% fewer retrieval calls** than baseline."
-        )
+        if delta < 0:
+            lines.append(
+                f"ResearchFS best BPB is **{abs(delta):.6f} better** than baseline."
+            )
+        elif delta > 0:
+            lines.append(
+                f"ResearchFS best BPB is **{abs(delta):.6f} worse** than baseline."
+            )
+        else:
+            lines.append("ResearchFS best BPB is **equal** to baseline.")
+
+    def append_usage_change(ratio, noun: str):
+        if ratio is None:
+            return
+        if ratio > 0:
+            lines.append(
+                f"ResearchFS used **{abs(ratio) * 100:.1f}% fewer {noun}** than baseline."
+            )
+        elif ratio < 0:
+            lines.append(
+                f"ResearchFS used **{abs(ratio) * 100:.1f}% more {noun}** than baseline."
+            )
+        else:
+            lines.append(f"ResearchFS used **the same number of {noun}** as baseline.")
+
+    append_usage_change(comparison["token_reduction_ratio"], "tokens")
+    append_usage_change(comparison["retrieval_reduction_ratio"], "retrieval calls")
 
     return "\n".join(lines)
 
@@ -323,7 +338,11 @@ def compare_run_to_benchmarks(
     }
 
 
-def format_benchmark_comparison(comparison: dict) -> str:
+def format_benchmark_comparison(
+    comparison: dict,
+    title: str = "Benchmark Comparison: Local Run vs Published Results",
+    heading_level: int = 1,
+) -> str:
     """Render a benchmark comparison dict as Markdown."""
 
     def fmt(val, fmt_spec: str = ".6f"):
@@ -335,8 +354,9 @@ def format_benchmark_comparison(comparison: dict) -> str:
             return f"{val:{fmt_spec}}"
         return str(val)
 
+    heading = "#" * max(1, min(6, heading_level))
     lines = [
-        "# Benchmark Comparison: Local Run vs Published Results",
+        f"{heading} {title}",
         "",
         f"Run ID: {comparison['agent_run_id']}",
         f"Mode: {comparison['mode']}",
@@ -350,8 +370,12 @@ def format_benchmark_comparison(comparison: dict) -> str:
         delta = meta["delta"]
         delta_str = fmt(delta)
         if delta is not None:
-            direction = "better" if delta < 0 else "worse"
-            delta_str = f"{fmt(delta)} ({direction})"
+            if delta < 0:
+                delta_str = f"{fmt(delta)} (better)"
+            elif delta > 0:
+                delta_str = f"{fmt(delta)} (worse)"
+            else:
+                delta_str = f"{fmt(delta)} (same)"
         note_parts = []
         if meta.get("device"):
             note_parts.append(meta["device"])
@@ -367,11 +391,21 @@ def format_benchmark_comparison(comparison: dict) -> str:
     strongest_name = comparison.get("strongest_benchmark")
     if strongest_name and comparison.get("gap_to_sota") is not None:
         gap = comparison["gap_to_sota"]
-        direction = "better" if gap < 0 else "worse"
-        lines.append(
-            f"Local best BPB is **{fmt(abs(gap))} {direction}** than the strongest "
-            f"published benchmark ({strongest_name})."
-        )
+        if gap < 0:
+            lines.append(
+                f"Local best BPB is **{fmt(abs(gap))} better** than the strongest "
+                f"published benchmark ({strongest_name})."
+            )
+        elif gap > 0:
+            lines.append(
+                f"Local best BPB is **{fmt(abs(gap))} worse** than the strongest "
+                f"published benchmark ({strongest_name})."
+            )
+        else:
+            lines.append(
+                f"Local best BPB is **equal to** the strongest published benchmark "
+                f"({strongest_name})."
+            )
     elif comparison.get("best_bpb") is None:
         lines.append(
             "Local run has no measurable best BPB, so benchmark comparison is unavailable."
@@ -385,11 +419,34 @@ def aggregate_seeded_runs(run_ids: list[int], conn=None) -> dict:
     if not run_ids:
         raise ValueError("run_ids must not be empty")
 
+    if len(set(run_ids)) != len(run_ids):
+        raise ValueError("run_ids must be distinct for seed aggregation")
+
     runs = [load_run(run_id, conn) for run_id in run_ids]
+
+    def values_for(field: str) -> set:
+        return {run.get(field) for run in runs}
+
+    modes = values_for("mode")
+    models = values_for("model")
+    if len(modes) > 1 or len(models) > 1:
+        def describe(values: set) -> str:
+            return ", ".join(
+                sorted("N/A" if value is None else str(value) for value in values)
+            )
+
+        raise ValueError(
+            "All aggregated seeds must use the same mode and model; "
+            f"got modes [{describe(modes)}] and models [{describe(models)}]"
+        )
+
     run_bests = [
         (run["agent_run_id"], run["best_bpb"])
         for run in runs
         if run.get("best_bpb") is not None
+    ]
+    invalid_run_ids = [
+        run["agent_run_id"] for run in runs if run.get("best_bpb") is None
     ]
     if len(run_bests) < 2:
         raise ValueError("Need at least two runs with valid best_bpb to aggregate")
@@ -400,18 +457,22 @@ def aggregate_seeded_runs(run_ids: list[int], conn=None) -> dict:
     min_bpb = min(best_bpbs)
     max_bpb = max(best_bpbs)
 
-    benchmark_comparison = compare_run_to_benchmarks(run_bests[0][0], conn=conn)
-    strongest_name = benchmark_comparison.get("strongest_benchmark")
-    strongest_bpb = (
-        benchmark_comparison["benchmarks"][strongest_name]["bpb"]
-        if strongest_name and strongest_name in benchmark_comparison["benchmarks"]
-        else None
+    valid_benchmarks = [
+        (name, meta.get("bpb"))
+        for name, meta in NANOCHAT_BENCHMARKS.items()
+        if meta.get("bpb") is not None
+    ]
+    strongest_name, strongest_bpb = (
+        min(valid_benchmarks, key=lambda item: item[1])
+        if valid_benchmarks
+        else (None, None)
     )
     gap_to_strongest = mean_bpb - strongest_bpb if strongest_bpb is not None else None
 
     return {
         "run_ids": run_ids,
         "valid_run_ids": [run_id for run_id, _ in run_bests],
+        "invalid_run_ids": invalid_run_ids,
         "n_seeds": len(run_ids),
         "valid_seeds": len(run_bests),
         "mean_bpb": mean_bpb,
@@ -429,7 +490,7 @@ def aggregate_seeded_runs(run_ids: list[int], conn=None) -> dict:
 def detect_reward_hacks(run: dict, z_threshold: float = 3.0) -> list[dict]:
     """Flag suspicious run patterns that need extra validation."""
     flags = []
-    kept = [e for e in run.get("experiments", []) if e["status"] == "keep"]
+    kept = [e for e in run.get("experiments", []) if e.get("status") == "keep"]
     valid = [e for e in kept if e.get("val_bpb") is not None]
 
     if len(valid) >= 2:
@@ -482,8 +543,12 @@ def detect_reward_hacks(run: dict, z_threshold: float = 3.0) -> list[dict]:
 
 def format_reward_hack_report(run: dict, flags: list[dict]) -> str:
     """Render reward-hack flags as Markdown."""
+    run_id = run.get("agent_run_id", "unknown")
+    run_label = f"run {run_id}"
+    if run.get("mode"):
+        run_label = f"{run_label} ({run['mode']})"
     lines = [
-        "## Reward-hack screening",
+        f"## Reward-hack screening: {run_label}",
         "",
     ]
     if not flags:
@@ -491,16 +556,18 @@ def format_reward_hack_report(run: dict, flags: list[dict]) -> str:
         return "\n".join(lines)
 
     lines.append(
-        f"Detected **{len(flags)}** suspicious pattern(s) in run {run['agent_run_id']}:"
+        f"Detected **{len(flags)}** suspicious pattern(s) in run {run_id}:"
     )
     lines.append("")
     for index, flag in enumerate(flags, 1):
         experiment = (
             f"(experiment {flag['experiment_id']})"
-            if flag["experiment_id"]
+            if flag["experiment_id"] is not None
             else "(run-level)"
         )
-        bpb = f"BPB {flag['val_bpb']:.4f}" if flag["val_bpb"] is not None else "no BPB"
+        bpb = (
+            f"BPB {flag['val_bpb']:.4f}" if flag["val_bpb"] is not None else "no BPB"
+        )
         lines.append(f"{index}. {experiment} {bpb}: {flag['reason']}")
     return "\n".join(lines)
 
@@ -520,32 +587,49 @@ def format_seeded_aggregate(aggregate: dict) -> str:
     lines = [
         "# Multi-Seed Aggregate Results",
         "",
-        f"Mode: {aggregate.get('mode')}",
+        f"Mode: {aggregate.get('mode') or 'N/A'}",
         f"Model: {aggregate.get('model') or 'N/A'}",
         f"Seeds evaluated: {aggregate['valid_seeds']} / {aggregate['n_seeds']}",
-        "",
-        "| Metric | Value |",
-        "|---|---:|",
-        f"| Mean BPB | {fmt(aggregate['mean_bpb'])} |",
-        f"| StdDev BPB | {fmt(aggregate['std_bpb'])} |",
-        f"| Min BPB | {fmt(aggregate['min_bpb'])} |",
-        f"| Max BPB | {fmt(aggregate['max_bpb'])} |",
-        "",
-        "| Run ID | Best BPB |",
-        "|---|---:|",
     ]
+    if aggregate.get("invalid_run_ids"):
+        skipped = ", ".join(str(run_id) for run_id in aggregate["invalid_run_ids"])
+        lines.append(f"Skipped run IDs without valid best BPB: {skipped}")
+    lines.extend(
+        [
+            "",
+            "| Metric | Value |",
+            "|---|---:|",
+            f"| Mean BPB | {fmt(aggregate['mean_bpb'])} |",
+            f"| StdDev BPB | {fmt(aggregate['std_bpb'])} |",
+            f"| Min BPB | {fmt(aggregate['min_bpb'])} |",
+            f"| Max BPB | {fmt(aggregate['max_bpb'])} |",
+            "",
+            "| Run ID | Best BPB |",
+            "|---|---:|",
+        ]
+    )
     for run_id, best_bpb in zip(aggregate["valid_run_ids"], aggregate["best_bpbs"]):
         lines.append(f"| {run_id} | {fmt(best_bpb)} |")
 
     strongest_name = aggregate.get("strongest_benchmark")
     if strongest_name and aggregate.get("gap_to_sota") is not None:
-        gap = aggregate["gap_to_sota"]
-        direction = "better" if gap < 0 else "worse"
         lines.append("")
-        lines.append(
-            f"Mean BPB across seeds is **{fmt(abs(gap))} {direction}** than the "
-            f"strongest published benchmark ({strongest_name})."
-        )
+        gap = aggregate["gap_to_sota"]
+        if gap < 0:
+            lines.append(
+                f"Mean BPB across seeds is **{fmt(abs(gap))} better** than the "
+                f"strongest published benchmark ({strongest_name})."
+            )
+        elif gap > 0:
+            lines.append(
+                f"Mean BPB across seeds is **{fmt(abs(gap))} worse** than the "
+                f"strongest published benchmark ({strongest_name})."
+            )
+        else:
+            lines.append(
+                f"Mean BPB across seeds is **equal to** the strongest published "
+                f"benchmark ({strongest_name})."
+            )
 
     return "\n".join(lines)
 

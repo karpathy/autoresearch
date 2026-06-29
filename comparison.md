@@ -38,3 +38,17 @@ Query reuse fired on experiment 3 (`Reusing prior query 'MLP SwiGLU'`).
 - With GPT-4o-mini, LoopGraph wins on BPB, tokens, and time.
 - With GLM 5.2, baseline wins on BPB, but LoopGraph still uses fewer tokens and less time.
 - GLM 5.2 is a stronger optimizer in absolute terms, but the retrieval context may constrain it to a narrow search direction (e.g. SwiGLU/MLP) while baseline freely explores LR tuning.
+
+## Published NanoChat Baselines
+
+Recursive's public Case Study 1 numbers are a different tier from the quick local LoopGraph comparisons above:
+
+| Benchmark | Mean BPB | Seeds | Device | Notes |
+|---|---:|---:|---|---|
+| Recursive `optimized_from_karpathy` | 0.9109 | 10 | NVIDIA B200 | Best reported Recursive result, starting from Karpathy's autoresearch seed |
+| autoresearch@home community best | 0.9372 | 10 | NVIDIA B200 | Reward-hack-removed previous public best |
+| Recursive `optimized_from_vanilla` | 0.9344 | 10 | NVIDIA B200 | Recursive result starting from a vanilla Transformer |
+| Karpathy seed re-run | 0.9751 ± 0.0112 | 10 | NVIDIA B200 | Recursive comparability re-run |
+| Vanilla Transformer | 1.0587 ± 0.0101 | 10 | NVIDIA B200 | Plain baseline in Recursive artifact |
+
+The local comparison runs in this file report best BPB around 2.13–2.20, so they are roughly 1.19–1.29 BPB worse than autoresearch@home and 1.22–1.29 BPB worse than Recursive's best. That gap reflects different budgets, hardware, search depth, and validation rigor; these local runs are agent-loop smoke tests, not SOTA attempts.

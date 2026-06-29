@@ -62,7 +62,20 @@ def main():
 
     args = parser.parse_args()
 
+    if args.limit < 1:
+        parser.error("--limit must be at least 1")
+
     if args.list:
+        if (
+            args.run_ids
+            or args.output
+            or args.benchmarks
+            or args.benchmark_only
+            or args.aggregate_seeds
+        ):
+            parser.error(
+                "--list cannot be combined with run IDs, output, or comparison modes"
+            )
         runs = list_recent_runs(args.limit)
         print(f"{'ID':<6} {'Mode':<12} {'Model':<25} {'Started'}")
         print("-" * 80)
@@ -75,88 +88,89 @@ def main():
             )
         return
 
-    exclusive_modes = [args.benchmarks, args.benchmark_only, args.aggregate_seeds]
-    if sum(exclusive_modes) > 1:
-        print(
-            "Error: --benchmarks, --benchmark-only, and --aggregate-seeds are mutually exclusive.",
-            file=sys.stderr,
+    if args.benchmarks and (args.benchmark_only or args.aggregate_seeds):
+        parser.error(
+            "--benchmarks can only be used with the normal two-run comparison"
         )
-        parser.print_help()
-        sys.exit(1)
+    if args.benchmark_only and args.aggregate_seeds:
+        parser.error("--benchmark-only and --aggregate-seeds are mutually exclusive")
 
-    if args.aggregate_seeds:
-        if len(args.run_ids) < 2:
-            print(
-                "Error: --aggregate-seeds requires at least two run IDs.",
-                file=sys.stderr,
-            )
-            parser.print_help()
-            sys.exit(1)
-        aggregate = aggregate_seeded_runs(args.run_ids)
-        report = format_seeded_aggregate(aggregate)
-    elif args.benchmark_only:
-        if len(args.run_ids) != 1:
-            print(
-                "Error: --benchmark-only requires exactly one run ID.",
-                file=sys.stderr,
-            )
-            parser.print_help()
-            sys.exit(1)
-        run_id = args.run_ids[0]
-        run = load_run(run_id)
-        report = "\n\n".join(
-            [
-                format_benchmark_comparison(compare_run_to_benchmarks(run_id)),
-                format_reward_hack_report(run, detect_reward_hacks(run)),
-            ]
-        )
-    else:
-        if len(args.run_ids) != 2:
-            print(
-                "Error: exactly two run IDs are required unless --list, --benchmark-only, or --aggregate-seeds is used.",
-                file=sys.stderr,
-            )
-            parser.print_help()
-            sys.exit(1)
-
-        baseline_run_id, researchfs_run_id = args.run_ids
-        baseline = load_run(baseline_run_id)
-        researchfs = load_run(researchfs_run_id)
-        comparison = compare_runs(baseline_run_id, researchfs_run_id)
-        report_parts = [format_comparison(comparison)]
-        if args.benchmarks:
-            report_parts.extend(
+    try:
+        if args.aggregate_seeds:
+            if len(args.run_ids) < 2:
+                parser.error("--aggregate-seeds requires at least two run IDs")
+            aggregate = aggregate_seeded_runs(args.run_ids)
+            report = format_seeded_aggregate(aggregate)
+        elif args.benchmark_only:
+            if len(args.run_ids) != 1:
+                parser.error("--benchmark-only requires exactly one run ID")
+            run_id = args.run_ids[0]
+            run = load_run(run_id)
+            report = "\n\n".join(
                 [
-                    "## Benchmark comparison: Baseline",
-                    format_benchmark_comparison(
-                        compare_run_to_benchmarks(baseline_run_id)
-                    ),
-                    format_reward_hack_report(
-                        baseline, detect_reward_hacks(baseline)
-                    ),
-                    "## Benchmark comparison: ResearchFS",
-                    format_benchmark_comparison(
-                        compare_run_to_benchmarks(researchfs_run_id)
-                    ),
-                    format_reward_hack_report(
-                        researchfs, detect_reward_hacks(researchfs)
-                    ),
+                    format_benchmark_comparison(compare_run_to_benchmarks(run_id)),
+                    format_reward_hack_report(run, detect_reward_hacks(run)),
                 ]
             )
         else:
-            report_parts.extend(
-                [
-                    format_reward_hack_report(baseline, detect_reward_hacks(baseline)),
-                    format_reward_hack_report(
-                        researchfs, detect_reward_hacks(researchfs)
-                    ),
-                ]
-            )
-        report = "\n\n".join(report_parts)
+            if len(args.run_ids) != 2:
+                parser.error(
+                    "exactly two run IDs are required unless --list, "
+                    "--benchmark-only, or --aggregate-seeds is used"
+                )
+
+            baseline_run_id, researchfs_run_id = args.run_ids
+            comparison = compare_runs(baseline_run_id, researchfs_run_id)
+            baseline = comparison["baseline"]
+            researchfs = comparison["researchfs"]
+            report_parts = [format_comparison(comparison)]
+            if args.benchmarks:
+                report_parts.extend(
+                    [
+                        format_benchmark_comparison(
+                            compare_run_to_benchmarks(baseline_run_id),
+                            title="Benchmark comparison: Baseline",
+                            heading_level=2,
+                        ),
+                        format_reward_hack_report(
+                            baseline, detect_reward_hacks(baseline)
+                        ),
+                        format_benchmark_comparison(
+                            compare_run_to_benchmarks(researchfs_run_id),
+                            title="Benchmark comparison: ResearchFS",
+                            heading_level=2,
+                        ),
+                        format_reward_hack_report(
+                            researchfs, detect_reward_hacks(researchfs)
+                        ),
+                    ]
+                )
+            else:
+                report_parts.extend(
+                    [
+                        format_reward_hack_report(
+                            baseline, detect_reward_hacks(baseline)
+                        ),
+                        format_reward_hack_report(
+                            researchfs, detect_reward_hacks(researchfs)
+                        ),
+                    ]
+                )
+            report = "\n\n".join(report_parts)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     if args.output:
-        with open(args.output, "w") as f:
-            f.write(report)
+        try:
+            with open(args.output, "w") as f:
+                f.write(report)
+        except OSError as exc:
+            print(
+                f"Error writing report to {args.output}: {exc}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         print(f"Report written to {args.output}")
     else:
         print(report)
