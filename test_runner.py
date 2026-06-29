@@ -1148,6 +1148,259 @@ def test_search_methods_hybrid_general_appends():
     pack_budget, ids_budget = rfs.search_methods_and_ids("SwiGLU", conn, max_chars=len(pack) - 100)
     assert len(ids_budget) < len(ids)
 
+def test_researchfs_query_reuse_scorer():
+    from researchfs.client import ResearchFSClient, ResearchFSSession
+
+    conn = _in_memory_db()
+    client = ResearchFSClient(db_path=":memory:")
+    client._conn = conn
+    client._close_on_done = False
+
+    cur = conn.cursor()
+    cur.execute("INSERT INTO agent_runs (mode, model) VALUES ('loopgraph', 'test-model')")
+    run_id = cur.lastrowid
+
+    session = ResearchFSSession(client, run_id, baseline_metric=2.18)
+
+    # No history -> nothing reusable.
+    assert session.get_reusable_query() is None
+    assert session._query_outcomes() == []
+
+    # A kept, improved experiment makes its query reusable.
+    cur.execute(
+        """
+        INSERT INTO experiments (agent_run_id, commit_hash, val_bpb, status, description)
+        VALUES (?, 'h1', 2.15, 'keep', 'swiglu')
+        """,
+        (run_id,),
+    )
+    exp1 = cur.lastrowid
+    cur.execute(
+        """
+        INSERT INTO retrieval_events (agent_run_id, experiment_id, event_type, query, retrieved_content)
+        VALUES (?, ?, 'agent_search', 'SwiGLU', 'content')
+        """,
+        (run_id, exp1),
+    )
+
+    assert session.get_reusable_query() == "SwiGLU"
+    outcomes = {o["query"]: o for o in session._query_outcomes()}
+    assert outcomes["SwiGLU"]["kept_count"] == 1
+    assert outcomes["SwiGLU"]["total_count"] == 1
+    assert abs(outcomes["SwiGLU"]["best_delta"] - 0.03) < 1e-6
+    assert abs(outcomes["SwiGLU"]["avg_delta"] - 0.03) < 1e-6
+    assert outcomes["SwiGLU"]["consecutive_uses"] == 1
+
+    # Consecutive reuse of the same query blocks further reuse.
+    cur.execute(
+        """
+        INSERT INTO experiments (agent_run_id, commit_hash, val_bpb, status, description)
+        VALUES (?, 'h2', 2.14, 'keep', 'swiglu again')
+        """,
+        (run_id,),
+    )
+    exp2 = cur.lastrowid
+    cur.execute(
+        """
+        INSERT INTO retrieval_events (agent_run_id, experiment_id, event_type, query, retrieved_content)
+        VALUES (?, ?, 'agent_search_reuse', 'SwiGLU', 'content')
+        """,
+        (run_id, exp2),
+    )
+    assert session.get_reusable_query() is None
+
+    # A newer, different query is penalized for being the most recent experiment,
+    # so the older, still-promising SwiGLU query wins again once the streak is broken.
+    cur.execute(
+        """
+        INSERT INTO experiments (agent_run_id, commit_hash, val_bpb, status, description)
+        VALUES (?, 'h3', 2.17, 'keep', 'muon')
+        """,
+        (run_id,),
+    )
+    exp3 = cur.lastrowid
+    cur.execute(
+        """
+        INSERT INTO retrieval_events (agent_run_id, experiment_id, event_type, query, retrieved_content)
+        VALUES (?, ?, 'agent_search', 'Muon', 'content')
+        """,
+        (run_id, exp3),
+    )
+    reusable = session.get_reusable_query()
+    assert reusable == "SwiGLU"
+
+    # A discarded query is never reused.
+    cur.execute(
+        """
+        INSERT INTO experiments (agent_run_id, commit_hash, val_bpb, status, description)
+        VALUES (?, 'h4', 2.20, 'discard', 'attention')
+        """,
+        (run_id,),
+    )
+    exp4 = cur.lastrowid
+    cur.execute(
+        """
+        INSERT INTO retrieval_events (agent_run_id, experiment_id, event_type, query, retrieved_content)
+        VALUES (?, ?, 'agent_search', 'Attention', 'content')
+        """,
+        (run_id, exp4),
+    )
+    outcomes = {o["query"]: o for o in session._query_outcomes()}
+    assert outcomes["Attention"]["kept_count"] == 0
+    assert session.get_reusable_query() == "SwiGLU"
+
+
+def test_query_scorer_prefers_best_query():
+    from researchfs.client import ResearchFSClient, ResearchFSSession
+
+    conn = _in_memory_db()
+    client = ResearchFSClient(db_path=":memory:")
+    client._conn = conn
+    client._close_on_done = False
+
+    run_id = rfs.start_agent_run("loopgraph", "test-model", conn=conn)
+    baseline = 2.50
+    session = ResearchFSSession(client, run_id, baseline_metric=baseline)
+
+    # Muon LR is the better query (delta 0.10). Insert it first so that the
+    # weaker SwiGLU query (delta 0.05) is the most recent and gets penalised.
+    exp1 = rfs.log_experiment(
+        "h1", 2.40, None, "keep", "muon lr",
+        agent_run_id=run_id, conn=conn,
+    )
+    rfs.log_retrieval_event(
+        "agent_search", "Muon LR", "content",
+        agent_run_id=run_id, experiment_id=exp1, conn=conn,
+    )
+    exp2 = rfs.log_experiment(
+        "h2", 2.45, None, "keep", "swiglu",
+        agent_run_id=run_id, conn=conn,
+    )
+    rfs.log_retrieval_event(
+        "agent_search", "SwiGLU", "content",
+        agent_run_id=run_id, experiment_id=exp2, conn=conn,
+    )
+
+    assert session._pick_reusable_query() == "Muon LR"
+
+
+def test_query_scorer_penalizes_recent_use():
+    from researchfs.client import ResearchFSClient, ResearchFSSession
+
+    conn = _in_memory_db()
+    client = ResearchFSClient(db_path=":memory:")
+    client._conn = conn
+    client._close_on_done = False
+
+    run_id = rfs.start_agent_run("loopgraph", "test-model", conn=conn)
+    baseline = 2.50
+    session = ResearchFSSession(client, run_id, baseline_metric=baseline)
+
+    # SwiGLU has a smaller improvement but is not the most recent experiment.
+    exp1 = rfs.log_experiment(
+        "h1", 2.42, None, "keep", "swiglu",
+        agent_run_id=run_id, conn=conn,
+    )
+    rfs.log_retrieval_event(
+        "agent_search", "SwiGLU", "content",
+        agent_run_id=run_id, experiment_id=exp1, conn=conn,
+    )
+
+    # Muon LR is the most recent and has a larger raw improvement, but its
+    # score is halved by the recency penalty.
+    exp2 = rfs.log_experiment(
+        "h2", 2.40, None, "keep", "muon lr",
+        agent_run_id=run_id, conn=conn,
+    )
+    rfs.log_retrieval_event(
+        "agent_search", "Muon LR", "content",
+        agent_run_id=run_id, experiment_id=exp2, conn=conn,
+    )
+
+    assert session._pick_reusable_query() == "SwiGLU"
+
+
+def test_query_scorer_blocks_overused_query():
+    from researchfs.client import ResearchFSClient, ResearchFSSession
+
+    conn = _in_memory_db()
+    client = ResearchFSClient(db_path=":memory:")
+    client._conn = conn
+    client._close_on_done = False
+
+    run_id = rfs.start_agent_run("loopgraph", "test-model", conn=conn)
+    baseline = 2.50
+    session = ResearchFSSession(client, run_id, baseline_metric=baseline)
+
+    exp1 = rfs.log_experiment(
+        "h1", 2.40, None, "keep", "muon lr",
+        agent_run_id=run_id, conn=conn,
+    )
+    rfs.log_retrieval_event(
+        "agent_search", "Muon LR", "content",
+        agent_run_id=run_id, experiment_id=exp1, conn=conn,
+    )
+
+    exp2 = rfs.log_experiment(
+        "h2", 2.42, None, "keep", "muon lr again",
+        agent_run_id=run_id, conn=conn,
+    )
+    rfs.log_retrieval_event(
+        "agent_search_reuse", "Muon LR", "content",
+        agent_run_id=run_id, experiment_id=exp2, conn=conn,
+    )
+
+    reusable = session._pick_reusable_query()
+    assert reusable != "Muon LR"
+    assert reusable is None
+
+
+def test_suggest_query_reuses_then_explores():
+    from researchfs.client import ResearchFSClient, ResearchFSSession
+
+    conn = _in_memory_db()
+    client = ResearchFSClient(db_path=":memory:")
+    client._conn = conn
+    client._close_on_done = False
+
+    run_id = rfs.start_agent_run("loopgraph", "test-model", conn=conn)
+    baseline = 2.50
+    session = ResearchFSSession(client, run_id, baseline_metric=baseline)
+
+    exp1 = rfs.log_experiment(
+        "h1", 2.45, None, "keep", "swiglu",
+        agent_run_id=run_id, conn=conn,
+    )
+    rfs.log_retrieval_event(
+        "agent_search", "SwiGLU", "content",
+        agent_run_id=run_id, experiment_id=exp1, conn=conn,
+    )
+
+    llm_calls: list[str] = []
+
+    def stub_llm(prompt: str) -> str:
+        llm_calls.append(prompt)
+        return '{"search": true, "query": "NewArea", "reason": "Explore elsewhere"}'
+
+    # After a single kept, improved experiment, the scorer should reuse.
+    decision1 = session.suggest_query("results", "brief", stub_llm)
+    assert decision1["search"] is True
+    assert decision1["query"] == "SwiGLU"
+    assert decision1["reused"] is True
+    assert len(llm_calls) == 0
+
+    # Simulate a second consecutive kept use of the same query.
+    exp2 = session.log_outcome(val_metric=2.44, status="keep", description="swiglu again")
+    session.log_retrieval("agent_search_reuse", "SwiGLU", "content", experiment_id=exp2)
+
+    # Overuse rules should now block reuse and fall back to the LLM.
+    decision2 = session.suggest_query("results", "brief", stub_llm)
+    assert decision2["search"] is True
+    assert decision2["query"] == "NewArea"
+    assert decision2["reused"] is False
+    assert len(llm_calls) == 1
+
+
 if __name__ == "__main__":
     import sys
     try:

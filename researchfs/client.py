@@ -74,6 +74,9 @@ def _assemble_retrieval_prompt(
         )
 
     prompt += (
+        "Avoid repeating queries that were recently used or already reused multiple "
+        "times in a row. Prefer exploring a different optimization area unless a "
+        "prior query has clear, unexplored potential.\n\n"
         "Based on the results, decide what optimization area you want to explore "
         "next (e.g. attention, MLP, optimizer learning rate, precision, regularization).\n"
         "You must decide whether you want to search the methods database or skip searching.\n\n"
@@ -116,31 +119,128 @@ class ResearchFSSession:
     # ------------------------------------------------------------------
     # Query reuse and history helpers
     # ------------------------------------------------------------------
-    def get_reusable_query(self) -> Optional[str]:
-        """Return the query from the most recent kept experiment that improved over baseline."""
+    def _query_outcomes(self) -> List[Dict[str, object]]:
+        """Return per-query empirical outcome statistics for this run."""
         if self.baseline_metric is None:
-            return None
+            return []
         conn = self.client.get_connection()
-        try:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT re.query
-                FROM experiments e
-                JOIN retrieval_events re ON e.experiment_id = re.experiment_id
-                WHERE e.agent_run_id = ?
-                  AND e.status = 'keep'
-                  AND e.val_bpb < ?
-                  AND re.event_type IN ('agent_search', 'agent_search_reuse')
-                ORDER BY e.experiment_id DESC
-                LIMIT 1
-                """,
-                (self.agent_run_id, self.baseline_metric),
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT re.query, e.status, e.val_bpb, e.experiment_id
+            FROM retrieval_events re
+            LEFT JOIN experiments e ON re.experiment_id = e.experiment_id
+            WHERE re.agent_run_id = ?
+              AND re.event_type IN ('agent_search', 'agent_search_reuse')
+            ORDER BY re.event_id ASC
+            """,
+            (self.agent_run_id,),
+        )
+        rows = cur.fetchall()
+
+        by_query: Dict[str, Dict[str, object]] = {}
+        event_queries: List[str] = []
+        for row in rows:
+            query = row["query"]
+            status = row["status"]
+            val_bpb = row["val_bpb"]
+            experiment_id = row["experiment_id"]
+
+            event_queries.append(query)
+            stats = by_query.setdefault(
+                query,
+                {
+                    "query": query,
+                    "kept_count": 0,
+                    "total_count": 0,
+                    "best_delta": 0.0,
+                    "avg_delta": 0.0,
+                    "last_experiment_id": None,
+                    "consecutive_uses": 0,
+                    "_deltas": [],
+                },
             )
-            row = cur.fetchone()
-            return row["query"] if row else None
-        finally:
-            pass
+            stats["total_count"] += 1
+            if experiment_id is not None and (
+                stats["last_experiment_id"] is None
+                or experiment_id > stats["last_experiment_id"]
+            ):
+                stats["last_experiment_id"] = experiment_id
+
+            if status == "keep" and val_bpb is not None:
+                stats["kept_count"] += 1
+                stats["_deltas"].append(self.baseline_metric - val_bpb)
+
+        global_max_exp_id: Optional[int] = None
+        for stats in by_query.values():
+            last_id = stats["last_experiment_id"]
+            if last_id is not None:
+                if global_max_exp_id is None or last_id > global_max_exp_id:
+                    global_max_exp_id = last_id
+            deltas = stats.pop("_deltas", [])
+            if deltas:
+                stats["best_delta"] = max(deltas)
+                stats["avg_delta"] = sum(deltas) / len(deltas)
+
+        if event_queries:
+            for query, stats in by_query.items():
+                consecutive = 0
+                for q in reversed(event_queries):
+                    if q == query:
+                        consecutive += 1
+                    else:
+                        break
+                stats["consecutive_uses"] = consecutive
+
+        return list(by_query.values())
+
+    @staticmethod
+    def _score_outcome(
+        outcome: Dict[str, object], global_max_exp_id: Optional[int]
+    ) -> float:
+        """Compute the empirical reuse score for a single query outcome."""
+        if outcome["kept_count"] <= 0 or outcome["best_delta"] <= 0:
+            return 0.0
+        score = float(outcome["best_delta"]) * (
+            outcome["kept_count"] / max(outcome["total_count"], 1)
+        )
+        if (
+            outcome["last_experiment_id"] is not None
+            and outcome["last_experiment_id"] == global_max_exp_id
+        ):
+            score *= 0.5
+        if outcome["consecutive_uses"] >= 2:
+            score = 0.0
+        return score
+
+    def _pick_reusable_query(self) -> Optional[str]:
+        """Score candidate queries and return the best reusable query, if any."""
+        outcomes = self._query_outcomes()
+        if not outcomes:
+            return None
+
+        global_max_exp_id: Optional[int] = None
+        for outcome in outcomes:
+            last_id = outcome["last_experiment_id"]
+            if last_id is not None:
+                if global_max_exp_id is None or last_id > global_max_exp_id:
+                    global_max_exp_id = last_id
+
+        best_query: Optional[str] = None
+        best_score = 0.0
+        for outcome in outcomes:
+            score = self._score_outcome(outcome, global_max_exp_id)
+            if score > best_score:
+                best_score = score
+                best_query = outcome["query"]
+
+        if best_score > 0.001:
+            return best_query
+        return None
+
+    def get_reusable_query(self) -> Optional[str]:
+        """Return the best reusable query according to the empirical scorer."""
+        return self._pick_reusable_query()
 
     def get_query_history(self) -> str:
         """Format history of prior queries and their outcomes."""
@@ -208,12 +308,24 @@ class ResearchFSSession:
             reason (str): the agent's reasoning
             reused (bool): True if a previous successful query was reused
         """
-        reused_query = self.get_reusable_query()
+        reused_query = self._pick_reusable_query()
         if reused_query:
+            outcomes = self._query_outcomes()
+            global_max_exp_id: Optional[int] = None
+            for outcome in outcomes:
+                last_id = outcome["last_experiment_id"]
+                if last_id is not None:
+                    if global_max_exp_id is None or last_id > global_max_exp_id:
+                        global_max_exp_id = last_id
+            score = 0.0
+            for outcome in outcomes:
+                if outcome["query"] == reused_query:
+                    score = self._score_outcome(outcome, global_max_exp_id)
+                    break
             return {
                 "search": True,
                 "query": reused_query,
-                "reason": "Reusing prior query that improved over baseline.",
+                "reason": f"Reusing prior query '{reused_query}' with empirical score {score:.6f}.",
                 "reused": True,
             }
 
