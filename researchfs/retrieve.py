@@ -257,12 +257,66 @@ def _search_methods_hybrid(
     return methods, ids, method_ranks
 
 
+def _get_method_fatigue_scores(agent_run_id: int | None, conn) -> dict[int, float]:
+    """Return per-method fatigue multipliers for the current agent run.
+
+    - Methods retrieved for experiments that were kept: 1.1
+    - Methods retrieved for experiments that were discarded/crashed: 0.5
+    - Default (no run history): 1.0
+    - Repeated retrieval beyond the first: additional 0.7^(uses-1) decay
+    """
+    if agent_run_id is None:
+        return {}
+
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT
+            rm.method_id,
+            COUNT(*) AS uses,
+            SUM(CASE WHEN e.status = 'keep' THEN 1 ELSE 0 END) AS keeps,
+            SUM(CASE WHEN e.status IN ('discard', 'crash') THEN 1 ELSE 0 END) AS bad
+        FROM retrieval_events re
+        JOIN retrieved_methods rm ON re.event_id = rm.event_id
+        LEFT JOIN experiments e ON re.experiment_id = e.experiment_id
+        WHERE re.agent_run_id = ?
+        GROUP BY rm.method_id
+        """,
+        (agent_run_id,),
+    )
+
+    fatigue: dict[int, float] = {}
+    for row in cur.fetchall():
+        method_id = row["method_id"]
+        uses = row["uses"]
+        keeps = row["keeps"] or 0
+        bad = row["bad"] or 0
+
+        if keeps > 0:
+            multiplier = 1.1
+        elif bad > 0:
+            multiplier = 0.5
+        else:
+            multiplier = 1.0
+
+        if uses > 1:
+            multiplier *= 0.7 ** (uses - 1)
+
+        fatigue[method_id] = multiplier
+
+    return fatigue
+
+
 def _score_methods(
-    methods: list[dict], conn, method_ranks: dict[int, float]
+    methods: list[dict],
+    conn,
+    method_ranks: dict[int, float],
+    agent_run_id: int | None = None,
 ) -> tuple[list[dict], list[int]]:
-    """Combine FTS5 rank with empirical success rate and return ordered rows/ids."""
+    """Combine FTS5 rank, empirical success rate, BPB delta, and fatigue."""
     baselines = {}
     scored = []
+    fatigue = _get_method_fatigue_scores(agent_run_id, conn)
 
     if method_ranks:
         ranks = list(method_ranks.values())
@@ -273,14 +327,34 @@ def _score_methods(
         min_rank = max_rank = 0.0
         rank_range = 1.0
 
+    deltas = []
     for method in methods:
         stats = _get_empirical_stats(method["method_id"], conn, baselines)
         method["stats"] = stats
+        deltas.append(stats["avg_bpb_delta"])
+
+    min_delta = min(deltas) if deltas else 0.0
+    max_delta = max(deltas) if deltas else 0.0
+    delta_range = max_delta - min_delta if max_delta > min_delta else 0.0
+
+    for method in methods:
+        stats = method["stats"]
         rank = method_ranks.get(method["method_id"], max_rank)
         normalized_rank = (rank - min_rank) / rank_range if rank_range else 0.0
         rank_score = 1.0 - normalized_rank
-        # Success rate is weighted more heavily so proven empirical wins over tiny rank differences.
-        method["_score"] = stats["success_rate"] * 0.6 + rank_score * 0.4
+
+        if delta_range:
+            delta_score = (max_delta - stats["avg_bpb_delta"]) / delta_range
+        else:
+            delta_score = 0.5
+
+        composite = (
+            0.35 * stats["success_rate"]
+            + 0.25 * rank_score
+            + 0.4 * delta_score
+        )
+        fatigue_multiplier = fatigue.get(method["method_id"], 1.0)
+        method["_score"] = composite * fatigue_multiplier
         scored.append(method)
 
     scored.sort(key=lambda m: (-m["_score"], m["category"] or "", m["name"] or ""))
@@ -289,7 +363,10 @@ def _score_methods(
 
 
 def search_methods_and_ids(
-    query: str, conn=None, max_chars: int | None = None
+    query: str,
+    conn=None,
+    max_chars: int | None = None,
+    agent_run_id: int | None = None,
 ) -> tuple[str, list[int]]:
     """Search for methods matching the query keywords and return a tuple of (formatted_method_pack, list_of_method_ids)."""
     close = False
@@ -312,7 +389,9 @@ def search_methods_and_ids(
                 max_chars=max_chars,
             )
         else:
-            ordered_methods, main_ids = _score_methods(methods, conn, method_ranks)
+            ordered_methods, main_ids = _score_methods(
+                methods, conn, method_ranks, agent_run_id=agent_run_id
+            )
             main_pack_str, main_ids = _build_method_pack(
                 ordered_methods,
                 conn,

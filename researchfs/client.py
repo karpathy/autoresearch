@@ -27,6 +27,11 @@ def _clean_query(query: str) -> str:
     return " ".join(query.lower().split())
 
 
+def _query_has_content(query: str) -> bool:
+    """Return True if the query contains at least one alphanumeric character."""
+    return any(c.isalnum() for c in query)
+
+
 def _extract_json_block(raw: str) -> Optional[dict]:
     """Best-effort extraction of a JSON object from an LLM response."""
     text = raw.strip()
@@ -340,17 +345,32 @@ class ResearchFSSession:
 
         parsed = _extract_json_block(query_res)
         if parsed is not None and isinstance(parsed, dict):
+            search = bool(parsed.get("search", True))
+            query = str(parsed.get("query", "")).strip()
+            reason = str(parsed.get("reason", ""))
+            if search and not _query_has_content(query):
+                search = False
+                query = ""
+                reason = "LLM returned an empty or punctuation-only query; skipping search."
             return {
-                "search": bool(parsed.get("search", True)),
-                "query": str(parsed.get("query", "")).strip(),
-                "reason": str(parsed.get("reason", "")),
+                "search": search,
+                "query": query,
+                "reason": reason,
                 "reused": False,
             }
 
         # Fallback: treat the raw response as a plain query.
+        query = query_res.strip().strip('"').strip("'")
+        if not _query_has_content(query):
+            return {
+                "search": False,
+                "query": "",
+                "reason": "Fallback query was empty or punctuation-only; skipping search.",
+                "reused": False,
+            }
         return {
             "search": True,
-            "query": query_res.strip().strip('"').strip("'"),
+            "query": query,
             "reason": "JSON parsing failed; treating raw response as query.",
             "reused": False,
         }
@@ -371,7 +391,10 @@ class ResearchFSSession:
             return self.search_cache[cache_key]
 
         pack, ids = rfs.search_methods_and_ids(
-            query, conn=self.client.get_connection(), max_chars=max_method_chars
+            query,
+            conn=self.client.get_connection(),
+            max_chars=max_method_chars,
+            agent_run_id=self.agent_run_id,
         )
         self.search_cache[cache_key] = (pack, ids)
         return pack, ids

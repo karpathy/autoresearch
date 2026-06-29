@@ -303,6 +303,149 @@ def test_fts_ranking_prefers_successful_method():
     assert ids.index(alpha_id) < ids.index(beta_id), "Expected the 100% successful method to rank first"
 
 
+def test_score_methods_prefers_better_bpb_delta():
+    conn = _in_memory_db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT INTO methods (name, description, implementation_hint, risks, category) VALUES (?, ?, ?, ?, ?)",
+        ("Delta Good", "A deltatest optimizer for experiments", "Hint", "Risk", "test"),
+    )
+    good_id = cur.lastrowid
+    cur.execute(
+        "INSERT INTO methods (name, description, implementation_hint, risks, category) VALUES (?, ?, ?, ?, ?)",
+        ("Delta Bad", "Another deltatest optimizer for experiments", "Hint", "Risk", "test"),
+    )
+    bad_id = cur.lastrowid
+
+    def make_keep_run(method_id, val_bpb):
+        run_id = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+        rfs.log_experiment("baseline", 2.0, 0.5, "keep", "baseline", run_id, conn)
+        exp_id = rfs.log_experiment("abc123", val_bpb, 0.5, "pending", "test", run_id, conn)
+        rfs.log_retrieval_event(
+            "search", "deltatest", "content", agent_run_id=run_id, experiment_id=exp_id, conn=conn, method_ids=[method_id]
+        )
+        rfs.update_experiment(exp_id, status="keep", conn=conn)
+        return run_id
+
+    make_keep_run(good_id, 1.8)  # delta -0.2
+    make_keep_run(bad_id, 1.9)   # delta -0.1
+
+    cur.execute(
+        "SELECT method_id, name, description, implementation_hint, risks, category FROM methods WHERE method_id IN (?, ?)",
+        (good_id, bad_id),
+    )
+    methods = [dict(row) for row in cur.fetchall()]
+    scored, ids = rfs._score_methods(
+        methods, conn, {good_id: 1.0, bad_id: 1.0}
+    )
+    assert ids.index(good_id) < ids.index(bad_id), "Expected better BPB delta to rank first"
+
+
+def test_fatigue_penalizes_discarded_method():
+    conn = _in_memory_db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT INTO methods (name, description, implementation_hint, risks, category) VALUES (?, ?, ?, ?, ?)",
+        ("Fatigue Tainted", "A fatiguetest optimizer for experiments", "Hint", "Risk", "test"),
+    )
+    tainted_id = cur.lastrowid
+    cur.execute(
+        "INSERT INTO methods (name, description, implementation_hint, risks, category) VALUES (?, ?, ?, ?, ?)",
+        ("Fatigue Clean", "Another fatiguetest optimizer for experiments", "Hint", "Risk", "test"),
+    )
+    clean_id = cur.lastrowid
+
+    # Align empirical success rates: tainted has one previous keep (delta zero)
+    # plus a current discard; clean has no runs. Both end at 0.5 success rate.
+    prev_run = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    rfs.log_experiment("baseline", 2.0, 0.5, "keep", "baseline", prev_run, conn)
+    exp_prev = rfs.log_experiment("abc123", 2.0, 0.5, "pending", "test", prev_run, conn)
+    rfs.log_retrieval_event(
+        "search", "fatiguetest", "content", agent_run_id=prev_run, experiment_id=exp_prev, conn=conn, method_ids=[tainted_id]
+    )
+    rfs.update_experiment(exp_prev, status="keep", conn=conn)
+
+    # Current run: tainted method is retrieved then discarded.
+    current_run = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    rfs.log_experiment("baseline", 2.0, 0.5, "keep", "baseline", current_run, conn)
+    exp_cur = rfs.log_experiment("abc456", 2.1, 0.5, "pending", "test", current_run, conn)
+    rfs.log_retrieval_event(
+        "search", "fatiguetest", "content", agent_run_id=current_run, experiment_id=exp_cur, conn=conn, method_ids=[tainted_id]
+    )
+    rfs.update_experiment(exp_cur, status="discard", conn=conn)
+
+    cur.execute(
+        "SELECT method_id, name, description, implementation_hint, risks, category FROM methods WHERE method_id IN (?, ?)",
+        (tainted_id, clean_id),
+    )
+    methods = [dict(row) for row in cur.fetchall()]
+    scored, ids = rfs._score_methods(
+        methods, conn, {tainted_id: 1.0, clean_id: 1.0}, agent_run_id=current_run
+    )
+    assert ids.index(clean_id) < ids.index(tainted_id), "Expected clean method to rank above discarded-fatigue method"
+
+
+def test_fatigue_boosts_kept_method():
+    conn = _in_memory_db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT INTO methods (name, description, implementation_hint, risks, category) VALUES (?, ?, ?, ?, ?)",
+        ("Fatigue Boosted", "A fatiguetest optimizer for experiments", "Hint", "Risk", "test"),
+    )
+    boosted_id = cur.lastrowid
+    cur.execute(
+        "INSERT INTO methods (name, description, implementation_hint, risks, category) VALUES (?, ?, ?, ?, ?)",
+        ("Fatigue Neutral", "Another fatiguetest optimizer for experiments", "Hint", "Risk", "test"),
+    )
+    neutral_id = cur.lastrowid
+
+    # Align empirical success rates: neutral has one previous keep and one previous
+    # discard (delta zero), giving 0.5. Boosted has a previous discard and a current
+    # keep, also 0.5, plus the kept-method fatigue boost.
+    prev_run_neutral = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    rfs.log_experiment("baseline", 2.0, 0.5, "keep", "baseline", prev_run_neutral, conn)
+    exp_n_keep = rfs.log_experiment("abc123", 2.0, 0.5, "pending", "test", prev_run_neutral, conn)
+    rfs.log_retrieval_event(
+        "search", "fatiguetest", "content", agent_run_id=prev_run_neutral, experiment_id=exp_n_keep, conn=conn, method_ids=[neutral_id]
+    )
+    rfs.update_experiment(exp_n_keep, status="keep", conn=conn)
+    exp_n_discard = rfs.log_experiment("abc124", 2.1, 0.5, "pending", "test", prev_run_neutral, conn)
+    rfs.log_retrieval_event(
+        "search", "fatiguetest", "content", agent_run_id=prev_run_neutral, experiment_id=exp_n_discard, conn=conn, method_ids=[neutral_id]
+    )
+    rfs.update_experiment(exp_n_discard, status="discard", conn=conn)
+
+    prev_run_boosted = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    rfs.log_experiment("baseline", 2.0, 0.5, "keep", "baseline", prev_run_boosted, conn)
+    exp_b_discard = rfs.log_experiment("abc123", 2.1, 0.5, "pending", "test", prev_run_boosted, conn)
+    rfs.log_retrieval_event(
+        "search", "fatiguetest", "content", agent_run_id=prev_run_boosted, experiment_id=exp_b_discard, conn=conn, method_ids=[boosted_id]
+    )
+    rfs.update_experiment(exp_b_discard, status="discard", conn=conn)
+
+    # Current run: boosted method is retrieved and kept.
+    current_run = rfs.start_agent_run("loopgraph", "gpt-4o-mini", conn)
+    rfs.log_experiment("baseline", 2.0, 0.5, "keep", "baseline", current_run, conn)
+    exp_cur = rfs.log_experiment("abc456", 2.0, 0.5, "pending", "test", current_run, conn)
+    rfs.log_retrieval_event(
+        "search", "fatiguetest", "content", agent_run_id=current_run, experiment_id=exp_cur, conn=conn, method_ids=[boosted_id]
+    )
+    rfs.update_experiment(exp_cur, status="keep", conn=conn)
+
+    cur.execute(
+        "SELECT method_id, name, description, implementation_hint, risks, category FROM methods WHERE method_id IN (?, ?)",
+        (boosted_id, neutral_id),
+    )
+    methods = [dict(row) for row in cur.fetchall()]
+    scored, ids = rfs._score_methods(
+        methods, conn, {boosted_id: 1.0, neutral_id: 1.0}, agent_run_id=current_run
+    )
+    assert ids.index(boosted_id) < ids.index(neutral_id), "Expected kept-fatigue method to rank above neutral method"
+
+
 def test_ingest_paper_without_llm():
     conn = _in_memory_db()
     meta = {
@@ -797,7 +940,7 @@ def test_run_agent_mode_reuses_query():
 
             search_calls = []
 
-            def mock_search_methods_and_ids(query, conn=None, max_chars=None):
+            def mock_search_methods_and_ids(query, conn=None, max_chars=None, agent_run_id=None):
                 search_calls.append(query)
                 return f"pack for {query}", [1]
 
@@ -879,7 +1022,7 @@ def test_run_agent_mode_reuses_query_saves_tokens_across_experiments():
             search_calls = []
             retrieval_llm_calls = []
 
-            def mock_search_methods_and_ids(query, conn=None, max_chars=None):
+            def mock_search_methods_and_ids(query, conn=None, max_chars=None, agent_run_id=None):
                 search_calls.append(query)
                 return f"pack for {query}", [1]
 
@@ -1399,6 +1542,27 @@ def test_suggest_query_reuses_then_explores():
     assert decision2["query"] == "NewArea"
     assert decision2["reused"] is False
     assert len(llm_calls) == 1
+
+
+def test_suggest_query_rejects_empty_json_query():
+    from researchfs.client import ResearchFSClient, ResearchFSSession
+
+    conn = _in_memory_db()
+    client = ResearchFSClient(db_path=":memory:")
+    client._conn = conn
+    client._close_on_done = False
+
+    run_id = rfs.start_agent_run("loopgraph", "test-model", conn=conn)
+    session = ResearchFSSession(client, run_id, baseline_metric=2.50)
+
+    def empty_llm(prompt: str) -> str:
+        return '{"search": true, "query": "", "reason": "No ideas"}'
+
+    decision = session.suggest_query("results", "brief", empty_llm)
+    assert decision["search"] is False
+    assert decision["query"] == ""
+    assert decision["reused"] is False
+    assert "empty" in decision["reason"].lower()
 
 
 if __name__ == "__main__":
