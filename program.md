@@ -121,17 +121,26 @@ and the weakest critical pathology class — so a "win" must be strong *and* bal
 > (the `ml_base` centroid-IoU harness). Do periodic **full-val** checks of the leading
 > checkpoint to confirm the subset tracks full performance.
 
-### Decision protocol (noise-aware + robust — this is the core of the strategy)
+### Decision protocol (FULL-VAL GATED — learned the hard way)
 
-Run-to-run variance is **σ ≈ 0.015**, so a single better number is often noise. Therefore:
-1. A change is **provisionally kept** only if `val_robust_score` beats the current best by
-   **> 0.02** AND it does **not regress any tracked slice** (S/M/L, the 4 classes, the 3
-   groups) by more than ~0.02.
-2. **Promote** to the new baseline only after a **confirmation re-run with a different
-   `seed`** also clears the bar. Unconfirmed single wins are NOT promoted.
-3. When epoch counts differ between runs (contention/truncation), compare at a **common
-   epoch**, not just best-over-budget.
-Record `seed` and the breakdown for every run in `results.tsv`.
+> **CRITICAL (validated 2026-06-29):** the 400-img subset gives **FALSE POSITIVES** for
+> small effects. `cb2` (class-balance) "won" on the subset (+0.004, reproduced over 2 runs)
+> but on the **full** 3209-img val it was *worse* (robust 0.131 vs baseline 0.138) — the
+> subset effect was noise riding favorable sampling, and the oversampled class (RAL) was
+> actually worse on full val. **Do NOT promote on the subset.** Only the large lr 1e-4→2e-4
+> effect (+0.036) was big enough to trust from the subset.
+
+The reliable protocol:
+1. **Inner loop (fast):** train 2 h; the 400-subset `val_robust_score` only drives
+   in-training EarlyStopping checkpoint selection and *screens out clear losers*.
+2. **Decision gate (reliable):** evaluate the saved best checkpoint on the **FULL val set**
+   (warm-start it, `combined_val.parquet`, n_epochs 1 / steps_per_epoch 2 → ~20 min; see the
+   `fullval_check.yaml` recipe). Keep/discard on **full-val `robust_score`**, not the subset.
+3. A change is promoted only if it beats the current best on **full-val** robust by a clear
+   margin (> ~0.01) with no clinically-important slice (small-obj, pathology, the 4 classes)
+   regressing. Tiny subset deltas (<0.02) are presumed noise until full-val says otherwise.
+4. Prefer **large-effect levers** (data scale, LR, optimizer, architecture) — the budget is
+   too noisy to resolve small recipe tweaks. Log the full-val breakdown in `results.tsv`.
 
 ### Diagnose-then-target (don't blind-sweep — most knobs are within noise)
 Each run, read the breakdown and attack the **weakest clinically-important slice**:
