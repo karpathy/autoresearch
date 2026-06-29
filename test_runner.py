@@ -1565,6 +1565,109 @@ def test_suggest_query_rejects_empty_json_query():
     assert "empty" in decision["reason"].lower()
 
 
+def test_frontier_hint_lists_recent_queries():
+    from researchfs.client import ResearchFSClient, ResearchFSSession
+
+    conn = _in_memory_db()
+    client = ResearchFSClient(db_path=":memory:")
+    client._conn = conn
+    client._close_on_done = False
+
+    run_id = rfs.start_agent_run("loopgraph", "test-model", conn=conn)
+    session = ResearchFSSession(client, run_id, baseline_metric=2.50)
+
+    # Log discarded experiments so the queries appear in history but are not reusable.
+    for query, val_bpb in [("Attention", 2.55), ("MLP", 2.56), ("Optimizer", 2.57)]:
+        exp_id = rfs.log_experiment(
+            "h", val_bpb, None, "discard", query,
+            agent_run_id=run_id, conn=conn,
+        )
+        rfs.log_retrieval_event(
+            "agent_search", query, "content",
+            agent_run_id=run_id, experiment_id=exp_id, conn=conn,
+        )
+
+    prompts: list[str] = []
+
+    def capture_llm(prompt: str) -> str:
+        prompts.append(prompt)
+        return '{"search": true, "query": "NewArea", "reason": "Explore elsewhere"}'
+
+    decision = session.suggest_query("results", "brief", capture_llm)
+    assert decision["search"] is True
+    assert decision["query"] == "NewArea"
+    assert decision["reused"] is False
+    assert len(prompts) == 1
+
+    prompt = prompts[0]
+    assert "You have recently explored:" in prompt
+    for query in ["Attention", "MLP", "Optimizer"]:
+        assert query in prompt
+    assert "Prefer a different optimization area" in prompt
+    # The existing anti-overuse paragraph should remain.
+    assert "Avoid repeating queries that were recently used" in prompt
+
+
+def test_custom_task_descriptions_in_prompt():
+    from researchfs.client import ResearchFSClient, ResearchFSSession
+
+    conn = _in_memory_db()
+    client = ResearchFSClient(db_path=":memory:")
+    client._conn = conn
+    client._close_on_done = False
+
+    run_id = rfs.start_agent_run("loopgraph", "test-model", conn=conn)
+    session = ResearchFSSession(
+        client,
+        run_id,
+        baseline_metric=2.50,
+        task_target="the training script `train_custom.py`",
+        objective="maximize validation accuracy (val_acc)",
+        task_name="image classification",
+    )
+
+    prompts: list[str] = []
+
+    def capture_llm(prompt: str) -> str:
+        prompts.append(prompt)
+        return '{"search": true, "query": "Augmentation", "reason": "Custom"}'
+
+    session.suggest_query("results", "brief", capture_llm)
+    assert len(prompts) == 1
+    prompt = prompts[0]
+    assert "train_custom.py" in prompt
+    assert "maximize validation accuracy (val_acc)" in prompt
+    assert "image classification" in prompt
+
+
+def test_suggest_query_async_returns_same_decision():
+    import asyncio
+    from researchfs.client import ResearchFSClient, ResearchFSSession
+
+    conn = _in_memory_db()
+    client = ResearchFSClient(db_path=":memory:")
+    client._conn = conn
+    client._close_on_done = False
+
+    run_id = rfs.start_agent_run("loopgraph", "test-model", conn=conn)
+    session = ResearchFSSession(client, run_id, baseline_metric=2.50)
+
+    async def async_llm(prompt: str) -> str:
+        return '{"search": true, "query": "AsyncArea", "reason": "Async decision"}'
+
+    def sync_llm(prompt: str) -> str:
+        return '{"search": true, "query": "AsyncArea", "reason": "Async decision"}'
+
+    sync_decision = session.suggest_query("results", "brief", sync_llm)
+    async_decision = asyncio.run(
+        session.suggest_query_async("results", "brief", async_llm)
+    )
+    assert async_decision == sync_decision
+    assert async_decision["search"] is True
+    assert async_decision["query"] == "AsyncArea"
+    assert async_decision["reused"] is False
+
+
 if __name__ == "__main__":
     import sys
     try:

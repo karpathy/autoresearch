@@ -11,7 +11,7 @@ setups without copying prompt templates or SQL queries.
 from __future__ import annotations
 
 import json
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 import researchfs.db as db_module
 from researchfs import retrieve as rfs
@@ -61,14 +61,40 @@ def _extract_json_block(raw: str) -> Optional[dict]:
     return None
 
 
+def _recent_distinct_queries(query_history: str, count: int) -> List[str]:
+    """Return the most recent `count` distinct query strings from `query_history`."""
+    queries: List[str] = []
+    seen: set[str] = set()
+    for line in reversed(query_history.splitlines()):
+        if "Query:" not in line:
+            continue
+        prefix = line.split("Query:", 1)[1]
+        parts = prefix.split("-> Outcome:", 1)
+        if not parts:
+            continue
+        raw = parts[0].strip()
+        if raw.startswith("'") and raw.endswith("'"):
+            raw = raw[1:-1]
+        if raw and raw not in seen:
+            seen.add(raw)
+            queries.append(raw)
+            if len(queries) == count:
+                break
+    queries.reverse()
+    return queries
+
+
 def _assemble_retrieval_prompt(
-    results_content: str, experiment_brief: str, query_history: Optional[str] = None
+    session: ResearchFSSession,
+    results_content: str,
+    experiment_brief: str,
+    query_history: Optional[str] = None,
 ) -> str:
     """Assemble prompt to ask the agent for a search query decision."""
     prompt = (
         "You are an expert machine learning researcher agent.\n"
-        "Your goal is to optimize the training script `train.py` to minimize the "
-        "validation bits per byte (val_bpb) on a pretraining task.\n\n"
+        f"Your goal is to optimize {session.task_target} to {session.objective} "
+        f"on {session.task_name}.\n\n"
         f"Experiment Brief:\n{experiment_brief}\n\n"
         f"Here is the history of previous experiments:\n{results_content}\n\n"
     )
@@ -77,6 +103,14 @@ def _assemble_retrieval_prompt(
             "Here is the history of prior search queries and their experiment "
             f"outcomes:\n{query_history}\n\n"
         )
+        recent = _recent_distinct_queries(query_history, session.recent_areas_count)
+        if recent:
+            prompt += (
+                "You have recently explored: "
+                + ", ".join(recent)
+                + ". Prefer a different optimization area unless one of these "
+                "still has clear, unexplored potential.\n\n"
+            )
 
     prompt += (
         "Avoid repeating queries that were recently used or already reused multiple "
@@ -113,10 +147,18 @@ class ResearchFSSession:
         client: "ResearchFSClient",
         agent_run_id: int,
         baseline_metric: Optional[float] = None,
+        task_target: str = "the training script `train.py`",
+        objective: str = "minimize the validation bits per byte (val_bpb)",
+        task_name: str = "pretraining task",
+        recent_areas_count: int = 3,
     ) -> None:
         self.client = client
         self.agent_run_id = agent_run_id
         self.baseline_metric = baseline_metric
+        self.task_target = task_target
+        self.objective = objective
+        self.task_name = task_name
+        self.recent_areas_count = recent_areas_count
         self.search_cache: Dict[str, Tuple[str, List[int]]] = {}
         self.prompt_tokens_accum = 0
         self.completion_tokens_accum = 0
@@ -299,50 +341,29 @@ class ResearchFSSession:
     # ------------------------------------------------------------------
     # Main RAG entry points
     # ------------------------------------------------------------------
-    def suggest_query(
-        self,
-        results_content: str,
-        experiment_brief: str,
-        llm_fn: Callable[[str], str],
-    ) -> Dict[str, object]:
-        """Decide whether to search and, if so, what query to use.
+    def _make_reuse_decision(self, reused_query: str) -> Dict[str, object]:
+        """Build the decision dict when reusing a prior query."""
+        outcomes = self._query_outcomes()
+        global_max_exp_id: Optional[int] = None
+        for outcome in outcomes:
+            last_id = outcome["last_experiment_id"]
+            if last_id is not None:
+                if global_max_exp_id is None or last_id > global_max_exp_id:
+                    global_max_exp_id = last_id
+        score = 0.0
+        for outcome in outcomes:
+            if outcome["query"] == reused_query:
+                score = self._score_outcome(outcome, global_max_exp_id)
+                break
+        return {
+            "search": True,
+            "query": reused_query,
+            "reason": f"Reusing prior query '{reused_query}' with empirical score {score:.6f}.",
+            "reused": True,
+        }
 
-        Returns a dict with keys:
-            search (bool): whether the caller should search ResearchFS
-            query (str): the query string (empty when search is False)
-            reason (str): the agent's reasoning
-            reused (bool): True if a previous successful query was reused
-        """
-        reused_query = self._pick_reusable_query()
-        if reused_query:
-            outcomes = self._query_outcomes()
-            global_max_exp_id: Optional[int] = None
-            for outcome in outcomes:
-                last_id = outcome["last_experiment_id"]
-                if last_id is not None:
-                    if global_max_exp_id is None or last_id > global_max_exp_id:
-                        global_max_exp_id = last_id
-            score = 0.0
-            for outcome in outcomes:
-                if outcome["query"] == reused_query:
-                    score = self._score_outcome(outcome, global_max_exp_id)
-                    break
-            return {
-                "search": True,
-                "query": reused_query,
-                "reason": f"Reusing prior query '{reused_query}' with empirical score {score:.6f}.",
-                "reused": True,
-            }
-
-        query_history = self.get_query_history()
-        retrieval_prompt = _assemble_retrieval_prompt(
-            results_content, experiment_brief, query_history
-        )
-        self.prompt_tokens_accum += _estimate_tokens(retrieval_prompt)
-
-        query_res = llm_fn(retrieval_prompt)
-        self.completion_tokens_accum += _estimate_tokens(query_res)
-
+    def _parse_suggestion_response(self, query_res: str) -> Dict[str, object]:
+        """Parse a raw LLM response into a suggestion decision."""
         parsed = _extract_json_block(query_res)
         if parsed is not None and isinstance(parsed, dict):
             search = bool(parsed.get("search", True))
@@ -374,6 +395,58 @@ class ResearchFSSession:
             "reason": "JSON parsing failed; treating raw response as query.",
             "reused": False,
         }
+
+    def suggest_query(
+        self,
+        results_content: str,
+        experiment_brief: str,
+        llm_fn: Callable[[str], str],
+    ) -> Dict[str, object]:
+        """Decide whether to search and, if so, what query to use.
+
+        Returns a dict with keys:
+            search (bool): whether the caller should search ResearchFS
+            query (str): the query string (empty when search is False)
+            reason (str): the agent's reasoning
+            reused (bool): True if a previous successful query was reused
+        """
+        reused_query = self._pick_reusable_query()
+        if reused_query:
+            return self._make_reuse_decision(reused_query)
+
+        query_history = self.get_query_history()
+        retrieval_prompt = _assemble_retrieval_prompt(
+            self, results_content, experiment_brief, query_history
+        )
+        self.prompt_tokens_accum += _estimate_tokens(retrieval_prompt)
+
+        query_res = llm_fn(retrieval_prompt)
+        self.completion_tokens_accum += _estimate_tokens(query_res)
+        return self._parse_suggestion_response(query_res)
+
+    async def suggest_query_async(
+        self,
+        results_content: str,
+        experiment_brief: str,
+        llm_fn: Callable[[str], Awaitable[str]],
+    ) -> Dict[str, object]:
+        """Async version of `suggest_query`.
+
+        Mirrors the synchronous method exactly; only the LLM call is awaited.
+        """
+        reused_query = self._pick_reusable_query()
+        if reused_query:
+            return self._make_reuse_decision(reused_query)
+
+        query_history = self.get_query_history()
+        retrieval_prompt = _assemble_retrieval_prompt(
+            self, results_content, experiment_brief, query_history
+        )
+        self.prompt_tokens_accum += _estimate_tokens(retrieval_prompt)
+
+        query_res = await llm_fn(retrieval_prompt)
+        self.completion_tokens_accum += _estimate_tokens(query_res)
+        return self._parse_suggestion_response(query_res)
 
     def retrieve_context(
         self, query: str, max_method_chars: Optional[int] = None
