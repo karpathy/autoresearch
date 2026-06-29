@@ -150,10 +150,16 @@ END;
 """
 
 
-def get_connection() -> sqlite3.Connection:
-    """Return a connection to the project SQLite database."""
-    repo_root = Path(__file__).resolve().parent.parent
-    db_path = repo_root / DB_NAME
+def get_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
+    """Return a connection to the project SQLite database.
+
+    Args:
+        db_path: Optional path to a specific SQLite database file. If omitted,
+            the project root database (DB_NAME) is used.
+    """
+    if db_path is None:
+        repo_root = Path(__file__).resolve().parent.parent
+        db_path = repo_root / DB_NAME
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     return conn

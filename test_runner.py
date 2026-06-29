@@ -955,7 +955,7 @@ def test_search_methods_max_chars():
 
 
 def test_get_query_history_str():
-    from agents.harness_agent import _get_query_history_str
+    from researchfs.client import ResearchFSClient, ResearchFSSession
     conn = _in_memory_db()
     cur = conn.cursor()
 
@@ -1025,8 +1025,13 @@ def test_get_query_history_str():
         (agent_run_id, exp_id1)
     )
 
-    # 4. Call _get_query_history_str
-    history_str = _get_query_history_str(agent_run_id, conn=conn)
+    # 4. Use ResearchFSSession directly with the in-memory connection
+    client = ResearchFSClient(db_path=":memory:")
+    client._conn = conn
+    client._close_on_done = False
+    session = ResearchFSSession(client, agent_run_id)
+
+    history_str = session.get_query_history()
 
     # 5. Assert expectations
     expected_lines = [
@@ -1039,6 +1044,57 @@ def test_get_query_history_str():
 
     # Ensure method_pack is NOT in history
     assert "Query: 'all'" not in history_str
+
+
+def test_researchfs_client_session():
+    from researchfs.client import ResearchFSClient, ResearchFSSession
+
+    conn = _in_memory_db()
+
+    client = ResearchFSClient(db_path=":memory:")
+    client._conn = conn
+    client._close_on_done = False
+
+    # Start a session manually using a pre-created run id
+    cur = conn.cursor()
+    cur.execute("INSERT INTO agent_runs (mode, model) VALUES ('loopgraph', 'test-model')")
+    agent_run_id = cur.lastrowid
+
+    session = ResearchFSSession(client, agent_run_id, baseline_metric=2.18)
+    assert isinstance(session, ResearchFSSession)
+
+    # Test query reuse: nothing yet should return None
+    assert session.get_reusable_query() is None
+
+    # Test suggest_query with a stub LLM that returns a JSON decision
+    def fake_llm(prompt: str) -> str:
+        assert "validation bits per byte" in prompt
+        return '{"search": true, "query": "SwiGLU", "reason": "Try SwiGLU"}'
+
+    decision = session.suggest_query("results", "brief", fake_llm)
+    assert decision["search"] is True
+    assert decision["query"] == "SwiGLU"
+    assert decision["reused"] is False
+
+    # Test context retrieval
+    pack, ids = session.retrieve_context("SwiGLU")
+    assert "SwiGLU MLP" in pack
+    assert ids is not None
+
+    # Second retrieval should hit the cache
+    pack2, ids2 = session.retrieve_context("SwiGLU")
+    assert pack2 == pack
+    assert ids2 == ids
+
+    # Test log_outcome and log_retrieval
+    exp_id = session.log_outcome(val_metric=2.15, status="keep", description="SwiGLU experiment")
+    assert exp_id is not None
+    ret_id = session.log_retrieval("agent_search", "SwiGLU", pack[:2000], experiment_id=exp_id)
+    assert ret_id is not None
+
+    # Now the same query should be reusable since it improved over baseline
+    reusable = session.get_reusable_query()
+    assert reusable == "SwiGLU"
 
 
 def test_search_methods_hybrid_general_appends():
