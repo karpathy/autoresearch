@@ -500,6 +500,7 @@ class ResearchFSSession:
         query: str,
         retrieved_content: str,
         experiment_id: Optional[int] = None,
+        method_ids: Optional[List[int]] = None,
     ) -> int:
         """Log a retrieval event associated with this session."""
         return rfs.log_retrieval_event(
@@ -509,6 +510,7 @@ class ResearchFSSession:
             agent_run_id=self.agent_run_id,
             experiment_id=experiment_id,
             conn=self.client.get_connection(),
+            method_ids=method_ids,
         )
 
 
@@ -563,7 +565,7 @@ class ResearchFSClient:
         If `run_id` is None, a new agent_run row is created and its id is used.
         """
         if run_id is None:
-            run_id = rfs.start_agent_run(mode=mode, model=model)
+            run_id = rfs.start_agent_run(mode=mode, model=model, conn=self.get_connection())
         return ResearchFSSession(self, run_id, baseline_metric=baseline_metric)
 
     def close(self) -> None:

@@ -1324,6 +1324,60 @@ def test_researchfs_client_session():
     assert reusable == "SwiGLU"
 
 
+def test_researchfs_client_start_session_uses_configured_db_path():
+    import tempfile
+    import unittest.mock
+    from researchfs.client import ResearchFSClient, ResearchFSSession
+
+    with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+        client = ResearchFSClient(db_path=tmp.name)
+        try:
+            with unittest.mock.patch(
+                "researchfs.retrieve.get_connection",
+                side_effect=AssertionError("default ResearchFS DB should not be opened"),
+            ):
+                session = client.start_session(mode="loopgraph", model="test-model", baseline_metric=2.18)
+
+            assert isinstance(session, ResearchFSSession)
+
+            conn = client.get_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT mode, model FROM agent_runs WHERE agent_run_id = ?", (session.agent_run_id,))
+            row = cur.fetchone()
+            assert row is not None
+            assert row["mode"] == "loopgraph"
+            assert row["model"] == "test-model"
+        finally:
+            client.close()
+
+
+def test_researchfs_session_log_retrieval_records_unique_method_ids():
+    from researchfs.client import ResearchFSClient, ResearchFSSession
+
+    conn = _in_memory_db()
+    cur = conn.cursor()
+    cur.execute("SELECT method_id FROM methods ORDER BY method_id LIMIT 2")
+    method_ids = [row["method_id"] for row in cur.fetchall()]
+    assert len(method_ids) == 2
+
+    client = ResearchFSClient(db_path=":memory:")
+    client._conn = conn
+    client._close_on_done = False
+    run_id = rfs.start_agent_run("loopgraph", "test-model", conn=conn)
+    session = ResearchFSSession(client, run_id, baseline_metric=2.18)
+
+    event_id = session.log_retrieval(
+        "agent_search",
+        "SwiGLU",
+        "content",
+        method_ids=[method_ids[0], method_ids[1], method_ids[0]],
+    )
+
+    cur.execute("SELECT method_id FROM retrieved_methods WHERE event_id = ? ORDER BY method_id", (event_id,))
+    rows = cur.fetchall()
+    assert [row["method_id"] for row in rows] == method_ids
+
+
 def test_search_methods_hybrid_general_appends():
     conn = _in_memory_db()
 
