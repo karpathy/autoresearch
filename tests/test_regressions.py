@@ -1129,6 +1129,131 @@ def test_log_lesson_validates_ids_and_required_text_before_persisting():
     assert conn.execute("SELECT COUNT(*) FROM lessons").fetchone()[0] == 0
 
 
+def test_log_retrieval_event_validates_public_ids_before_persisting():
+    """Retrieval logging rejects invalid public IDs before creating events."""
+    from researchfs.retrieve import log_experiment, log_retrieval_event
+
+    conn = _init_memory_db()
+    agent_run_id = conn.execute(
+        "INSERT INTO agent_runs (mode, model) VALUES (?, ?)",
+        ("loopgraph", "validation-model"),
+    ).lastrowid
+    experiment_id = log_experiment(
+        "valid-retrieval-event-experiment",
+        val_bpb=1.23,
+        memory_gb=4.5,
+        status="keep",
+        description="valid retrieval event target",
+        agent_run_id=agent_run_id,
+        conn=conn,
+    )
+    method_id = _insert_searchable_method(
+        conn,
+        "Valid retrieval event method",
+        "validretrievaleventtoken",
+    )
+
+    invalid_cases = [
+        ({"agent_run_id": True}, "agent_run_id"),
+        ({"agent_run_id": "1"}, "agent_run_id"),
+        ({"agent_run_id": 0}, "agent_run_id"),
+        ({"agent_run_id": -1}, "agent_run_id"),
+        ({"agent_run_id": 999_999}, "agent_run_id"),
+        ({"experiment_id": True}, "experiment_id"),
+        ({"experiment_id": "1"}, "experiment_id"),
+        ({"experiment_id": 0}, "experiment_id"),
+        ({"experiment_id": -1}, "experiment_id"),
+        ({"experiment_id": 999_999}, "experiment_id"),
+        ({"method_ids": [True]}, "method_id"),
+        ({"method_ids": ["1"]}, "method_id"),
+        ({"method_ids": [0]}, "method_id"),
+        ({"method_ids": [-1]}, "method_id"),
+        ({"method_ids": [999_999]}, "method_ids"),
+    ]
+
+    for overrides, expected_message in invalid_cases:
+        kwargs = {
+            "agent_run_id": agent_run_id,
+            "experiment_id": experiment_id,
+            "method_ids": [method_id],
+        }
+        kwargs.update(overrides)
+        with pytest.raises(ValueError, match=expected_message):
+            log_retrieval_event(
+                "agent_search",
+                "validretrievaleventtoken",
+                "retrieved context",
+                conn=conn,
+                **kwargs,
+            )
+        assert conn.execute("SELECT COUNT(*) FROM retrieval_events").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM retrieved_methods").fetchone()[0] == 0
+
+
+def test_log_retrieval_event_persists_no_link_and_valid_method_links():
+    """None/empty method IDs create unlinked events; valid IDs create retrieved-method links."""
+    from researchfs.retrieve import log_retrieval_event
+
+    conn = _init_memory_db()
+    first_method_id = _insert_searchable_method(
+        conn,
+        "First linked retrieval event method",
+        "firstretrievallinktoken",
+    )
+    second_method_id = _insert_searchable_method(
+        conn,
+        "Second linked retrieval event method",
+        "secondretrievallinktoken",
+    )
+
+    none_event_id = log_retrieval_event(
+        "agent_search",
+        "nolink-none",
+        "retrieved context without method IDs",
+        conn=conn,
+        method_ids=None,
+    )
+    empty_event_id = log_retrieval_event(
+        "agent_search_reuse",
+        "nolink-empty",
+        "retrieved context with empty method IDs",
+        conn=conn,
+        method_ids=[],
+    )
+    linked_event_id = log_retrieval_event(
+        "agent_search",
+        "linked-methods",
+        "retrieved context with valid methods",
+        conn=conn,
+        method_ids=[first_method_id, second_method_id],
+    )
+
+    event_rows = conn.execute(
+        """
+        SELECT event_id, query
+        FROM retrieval_events
+        ORDER BY event_id
+        """
+    ).fetchall()
+    assert [dict(row) for row in event_rows] == [
+        {"event_id": none_event_id, "query": "nolink-none"},
+        {"event_id": empty_event_id, "query": "nolink-empty"},
+        {"event_id": linked_event_id, "query": "linked-methods"},
+    ]
+
+    linked_rows = conn.execute(
+        """
+        SELECT event_id, method_id
+        FROM retrieved_methods
+        ORDER BY event_id, method_id
+        """
+    ).fetchall()
+    assert [tuple(row) for row in linked_rows] == [
+        (linked_event_id, first_method_id),
+        (linked_event_id, second_method_id),
+    ]
+
+
 def test_log_method_feedback_validates_public_ids_before_persisting():
     """Feedback logging rejects bool, non-integer, and non-positive IDs before inserts."""
     from researchfs.retrieve import log_method_feedback, log_retrieval_event

@@ -2502,6 +2502,38 @@ def log_retrieval_event(
         close = True
 
     try:
+        valid_agent_run_id = None
+        valid_experiment_id = None
+        if agent_run_id is not None:
+            valid_agent_run_id = _validate_positive_int_id(
+                agent_run_id, "agent_run_id"
+            )
+            _require_existing_id(
+                conn,
+                "agent_runs",
+                "agent_run_id",
+                valid_agent_run_id,
+                "agent_run_id",
+            )
+        if experiment_id is not None:
+            valid_experiment_id = _validate_positive_int_id(
+                experiment_id, "experiment_id"
+            )
+            _require_existing_id(
+                conn,
+                "experiments",
+                "experiment_id",
+                valid_experiment_id,
+                "experiment_id",
+            )
+        if method_ids is None:
+            valid_method_ids = []
+        elif not isinstance(method_ids, list):
+            raise ValueError("method_ids must be a list of positive integers")
+        elif method_ids:
+            valid_method_ids = _validate_method_id_list(method_ids, conn)
+        else:
+            valid_method_ids = []
         cur = conn.cursor()
         cur.execute(
             """
@@ -2509,11 +2541,17 @@ def log_retrieval_event(
             (agent_run_id, experiment_id, event_type, query, retrieved_content)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (agent_run_id, experiment_id, event_type, query, retrieved_content),
+            (
+                valid_agent_run_id,
+                valid_experiment_id,
+                event_type,
+                query,
+                retrieved_content,
+            ),
         )
         event_id = cur.lastrowid
 
-        unique_method_ids = _unique_method_ids(method_ids)
+        unique_method_ids = valid_method_ids
         for method_id in unique_method_ids:
             cur.execute(
                 """
@@ -2522,10 +2560,10 @@ def log_retrieval_event(
                 """,
                 (event_id, method_id),
             )
-        if experiment_id is not None and unique_method_ids:
+        if valid_experiment_id is not None and unique_method_ids:
             _insert_experiment_methods(
                 cur,
-                experiment_id,
+                valid_experiment_id,
                 unique_method_ids,
                 role="retrieved",
                 note=None,
