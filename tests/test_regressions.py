@@ -1127,3 +1127,61 @@ def test_log_lesson_validates_ids_and_required_text_before_persisting():
             log_lesson(outcome="discard", conn=conn, **kwargs)
 
     assert conn.execute("SELECT COUNT(*) FROM lessons").fetchone()[0] == 0
+
+
+def test_log_method_feedback_validates_public_ids_before_persisting():
+    """Feedback logging rejects bool, non-integer, and non-positive IDs before inserts."""
+    from researchfs.retrieve import log_method_feedback, log_retrieval_event
+
+    conn = _init_memory_db()
+    method_id = _insert_searchable_method(conn, "Valid feedback method", "validfeedbacktoken")
+    event_id = log_retrieval_event(
+        "agent_search",
+        "validfeedbacktoken",
+        "retrieved context",
+        conn=conn,
+        method_ids=[method_id],
+    )
+
+    invalid_cases = [
+        ({"method_id": True, "event_id": event_id}, "method_id"),
+        ({"method_id": "1", "event_id": event_id}, "method_id"),
+        ({"method_id": 0, "event_id": event_id}, "method_id"),
+        ({"method_id": -1, "event_id": event_id}, "method_id"),
+        ({"method_id": method_id, "event_id": True}, "event_id"),
+        ({"method_id": method_id, "event_id": "1"}, "event_id"),
+        ({"method_id": method_id, "event_id": 0}, "event_id"),
+        ({"method_id": method_id, "event_id": -1}, "event_id"),
+    ]
+
+    for ids, expected_message in invalid_cases:
+        with pytest.raises(ValueError, match=expected_message):
+            log_method_feedback(
+                rating=0.5,
+                label="invalid-id-regression",
+                conn=conn,
+                **ids,
+            )
+        assert conn.execute("SELECT COUNT(*) FROM method_feedback").fetchone()[0] == 0
+
+    feedback_id = log_method_feedback(
+        method_id=method_id,
+        event_id=event_id,
+        rating=0.5,
+        label="valid-id-control",
+        conn=conn,
+    )
+    stored = conn.execute(
+        """
+        SELECT event_id, method_id, rating, label
+        FROM method_feedback
+        WHERE feedback_id = ?
+        """,
+        (feedback_id,),
+    ).fetchone()
+    assert dict(stored) == {
+        "event_id": event_id,
+        "method_id": method_id,
+        "rating": 0.5,
+        "label": "valid-id-control",
+    }

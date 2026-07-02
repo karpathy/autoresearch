@@ -2533,6 +2533,12 @@ def log_method_feedback(
         raise ValueError("rating must be a number between -1.0 and 1.0") from exc
     if not -1.0 <= numeric_rating <= 1.0:
         raise ValueError("rating must be between -1.0 and 1.0")
+    valid_method_id = _validate_positive_int_id(method_id, "method_id")
+    valid_event_id = (
+        _validate_positive_int_id(event_id, "event_id")
+        if event_id is not None
+        else None
+    )
 
     close = False
     if conn is None:
@@ -2541,20 +2547,20 @@ def log_method_feedback(
 
     try:
         cur = conn.cursor()
-        cur.execute("SELECT 1 FROM methods WHERE method_id = ?", (method_id,))
+        cur.execute("SELECT 1 FROM methods WHERE method_id = ?", (valid_method_id,))
         if cur.fetchone() is None:
-            raise ValueError(f"method_id {method_id} does not exist")
-        if event_id is not None:
-            cur.execute("SELECT 1 FROM retrieval_events WHERE event_id = ?", (event_id,))
+            raise ValueError(f"method_id {valid_method_id} does not exist")
+        if valid_event_id is not None:
+            cur.execute("SELECT 1 FROM retrieval_events WHERE event_id = ?", (valid_event_id,))
             if cur.fetchone() is None:
-                raise ValueError(f"event_id {event_id} does not exist")
+                raise ValueError(f"event_id {valid_event_id} does not exist")
         cur.execute(
             """
             INSERT INTO method_feedback
             (event_id, method_id, rating, label, note, source)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (event_id, method_id, numeric_rating, label, note, source),
+            (valid_event_id, valid_method_id, numeric_rating, label, note, source),
         )
         conn.commit()
         return cur.lastrowid
