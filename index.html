@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ResearchFS — Research Memory for Autonomous AI Labs</title>
+  <meta name="description" content="ResearchFS turns research papers, repos, and experiment history into tested, agent-retrievable optimization memory for AI research teams.">
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --surface-2: #1a1a25;
+      --surface-3: #20202c;
+      --text: #f2f2f5;
+      --text-dim: #9ca3af;
+      --accent: #6366f1;
+      --accent-2: #8b5cf6;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --border: #272735;
+      --radius: 12px;
+      --max: 1120px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; text-decoration: none; }
+    code { color: #c4b5fd; }
+    .container { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+    header { position: sticky; top: 0; z-index: 50; background: rgba(10,10,15,0.86); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+    nav { display: flex; align-items: center; justify-content: space-between; min-height: 68px; gap: 24px; }
+    .logo { font-weight: 850; font-size: 1.2rem; letter-spacing: -0.02em; display: flex; align-items: center; gap: 10px; }
+    .logo-mark { width: 28px; height: 28px; border-radius: 7px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 0 30px rgba(99,102,241,0.45); }
+    .nav-links { display: flex; gap: 24px; font-size: 0.9rem; color: var(--text-dim); }
+    .nav-links a:hover { color: var(--text); }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 18px; border-radius: 8px; font-weight: 650; font-size: 0.95rem; transition: transform 0.15s, opacity 0.15s; border: 1px solid transparent; cursor: pointer; }
+    .btn:hover { transform: translateY(-1px); opacity: 0.92; }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-ghost { background: transparent; border-color: var(--border); color: var(--text); }
+    .hero { padding: 120px 0 86px; text-align: center; background: radial-gradient(circle at 50% 0%, rgba(99,102,241,0.24), transparent 36%); }
+    .badge { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); font-size: 0.85rem; margin-bottom: 24px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); display: inline-block; }
+    h1 { font-size: clamp(2.45rem, 6vw, 4.5rem); line-height: 1.04; letter-spacing: -0.04em; margin-bottom: 24px; }
+    h1 span, .gradient { background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .lead { font-size: 1.22rem; color: var(--text-dim); max-width: 780px; margin: 0 auto 36px; }
+    .hero-cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; max-width: 900px; margin: 64px auto 0; }
+    .stat { background: rgba(18,18,26,0.84); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; text-align: left; }
+    .stat-value { font-size: 1.82rem; font-weight: 850; letter-spacing: -0.03em; color: var(--text); }
+    .stat-label { font-size: 0.85rem; color: var(--text-dim); }
+    section { padding: 82px 0; }
+    section.alt { background: var(--surface); }
+    h2 { font-size: clamp(1.85rem, 3vw, 2.35rem); letter-spacing: -0.03em; line-height: 1.15; margin-bottom: 16px; }
+    .section-sub { color: var(--text-dim); font-size: 1.08rem; max-width: 760px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; margin-top: 42px; }
+    .card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; }
+    .card-kicker { color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.76rem; font-weight: 800; margin-bottom: 10px; }
+    .card h3 { font-size: 1.15rem; margin-bottom: 10px; }
+    .card p, .card li { color: var(--text-dim); font-size: 0.95rem; }
+    .card ul { margin-left: 18px; display: grid; gap: 8px; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+    .code-block { background: #0d0d14; border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.88rem; overflow-x: auto; color: #e2e2ea; }
+    .code-block .comment { color: #6b7280; }
+    .code-block .cmd { color: #a5b4fc; }
+    .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 40px; }
+    .flow-step { background: linear-gradient(180deg, var(--surface-2), #151520); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; text-align: center; min-height: 118px; display: grid; align-content: center; }
+    .flow-step .label { color: var(--text-dim); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; }
+    .flow-step strong { display: block; margin-top: 6px; }
+    .roadmap { display: grid; gap: 18px; margin-top: 42px; }
+    .roadmap-item { display: grid; grid-template-columns: 110px 1fr; gap: 24px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+    .version { color: var(--accent); font-weight: 850; font-size: 1.15rem; }
+    .goal { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: #0d0d14; color: #d8b4fe; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.88rem; }
+    .endpoint-list { display: grid; gap: 10px; margin-top: 32px; }
+    .endpoint { display: flex; gap: 14px; align-items: center; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9rem; }
+    .method { min-width: 52px; color: var(--success); font-weight: 800; }
+    .api-console { margin-top: 28px; background: #0d0d14; border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; }
+    .api-console h3 { font-size: 1.1rem; margin-bottom: 8px; }
+    .api-console p { color: var(--text-dim); font-size: 0.92rem; margin-bottom: 16px; }
+    .console-grid { display: grid; gap: 12px; }
+    .console-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .console-field { flex: 1 1 240px; display: grid; gap: 6px; color: var(--text-dim); font-size: 0.82rem; font-weight: 700; }
+    .console-field input, .console-field textarea, .console-field select { width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); padding: 10px 12px; font: inherit; }
+    .console-field textarea { min-height: 78px; resize: vertical; }
+    .console-field input[type="file"] { padding: 8px 10px; }
+    .console-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .api-output { min-height: 150px; max-height: 280px; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+    .benchmark-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; margin-top: 36px; }
+    .metric-card { background: linear-gradient(180deg, var(--surface-2), #151520); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+    .metric-card .label { color: var(--text-dim); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+    .metric-card .value { font-size: 2rem; font-weight: 850; letter-spacing: -0.03em; }
+    .metric-card .detail { color: var(--text-dim); font-size: 0.9rem; margin-top: 8px; }
+    .win { color: var(--success); font-weight: 750; }
+    .loss { color: var(--warning); font-weight: 750; }
+    .benchmark-note { margin-top: 18px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius); background: rgba(245,158,11,0.07); color: var(--text-dim); font-size: 0.92rem; }
+    .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 36px; }
+    .pricing-item { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; }
+    .pricing-item strong { display: block; margin-bottom: 8px; }
+    .pricing-item p { color: var(--text-dim); font-size: 0.94rem; }
+    .cta-box { background: linear-gradient(135deg, rgba(99,102,241,0.14), rgba(139,92,246,0.09)); border: 1px solid var(--border); border-radius: var(--radius); padding: 64px; text-align: center; }
+    .cta-box h2 { margin-bottom: 12px; }
+    .cta-box p { color: var(--text-dim); margin: 0 auto 28px; max-width: 720px; }
+    footer { padding: 40px 0; border-top: 1px solid var(--border); color: var(--text-dim); font-size: 0.85rem; text-align: center; }
+    @media (max-width: 900px) { .split { grid-template-columns: 1fr; } .flow { grid-template-columns: 1fr; } .roadmap-item { grid-template-columns: 1fr; } .nav-links { display: none; } }
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <a href="#" class="logo"><div class="logo-mark"></div> ResearchFS</a>
+      <div class="nav-links">
+        <a href="#compression">How it works</a>
+        <a href="#roadmap">Product path</a>
+        <a href="#api">Research agent API</a>
+        <a href="#pricing">ROI</a>
+        <a href="#benchmarks">Benchmarks</a>
+      </div>
+      <a href="#start" class="btn btn-primary">Get early access</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="container">
+      <div class="badge"><span class="dot"></span> For AI labs running autonomous research agents</div>
+      <h1>Your research agents should <span>remember what worked</span></h1>
+      <p class="lead">ResearchFS turns papers, repos, lab notes, and experiment results into a memory graph your research agents can use. The next run does not start from a blank prompt. It starts from everything your lab has already learned.</p>
+      <div class="hero-cta">
+        <a href="#compression" class="btn btn-primary">See how it works</a>
+        <a href="#benchmarks" class="btn btn-ghost">View benchmark signal</a>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="stat-value">paper → result</div><div class="stat-label">turn research into reusable agent memory</div></div>
+        <div class="stat"><div class="stat-value">10.5%</div><div class="stat-label">fewer tokens on GLM 5.2 run</div></div>
+        <div class="stat"><div class="stat-value">9.5%</div><div class="stat-label">faster wall-clock on GLM 5.2</div></div>
+        <div class="stat"><div class="stat-value">v0 running</div><div class="stat-label">papers, methods, retrieval, experiments, results</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt" id="compression">
+    <div class="container">
+      <h2>Every useful paper should become a reusable lesson</h2>
+      <p class="section-sub">A paper in a folder is just a file. A useful paper becomes a method, an implementation target, an experiment, and a result your research agents can retrieve later.</p>
+      <div class="flow">
+        <div class="flow-step"><div class="label">read</div><strong>paper</strong></div>
+        <div class="flow-step"><div class="label">extract</div><strong>method</strong></div>
+        <div class="flow-step"><div class="label">map</div><strong>implementation</strong></div>
+        <div class="flow-step"><div class="label">edit</div><strong>code target</strong></div>
+        <div class="flow-step"><div class="label">learn</div><strong>result</strong></div>
+      </div>
+      <div class="cards">
+        <div class="card"><div class="card-kicker">The shift</div><h3>Not a paper library</h3><p>ResearchFS is not just PDF storage. It turns local text, Markdown, TeX, and PDF text extraction into working memory between your papers, codebase, experiments, and agents.</p></div>
+        <div class="card"><div class="card-kicker">The user</div><h3>Researchers and their agents</h3><p>Humans search and inspect the graph. Research agents retrieve the methods, caveats, and prior results before touching code.</p></div>
+        <div class="card"><div class="card-kicker">The compounding loop</div><h3>Every run leaves the lab smarter</h3><p>When an experiment works or fails, the lesson stays behind. Future research agents do not have to rediscover it.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="roadmap">
+    <div class="container">
+      <h2>Start with one repo. Grow into the lab memory layer.</h2>
+      <p class="section-sub">The path is deliberately simple: prove one paper can create one useful code change, then turn that loop into team workflow, agent API, and enterprise research memory.</p>
+      <div class="roadmap">
+        <div class="roadmap-item">
+          <div class="version">v0</div>
+          <div>
+            <h3>One repo, one research loop</h3>
+            <p class="section-sub">Ingest local papers and lab notes, including PDFs via text extraction and optional source labels, extract methods, retrieve methods, run a code-edit research agent, log results, and compare baseline vs. ResearchFS.</p>
+            <div class="goal">prove one paper can become one useful code change</div>
+          </div>
+        </div>
+        <div class="roadmap-item">
+          <div class="version">v1</div>
+          <div>
+            <h3>A workspace for research teams</h3>
+            <p class="section-sub">Upload papers, label lab notes and experiment reports, ingest arXiv and GitHub, search methods, watch experiments, inspect provenance, and review what changed after each run.</p>
+            <div class="goal">a research team can use it manually and through research agents</div>
+          </div>
+        </div>
+        <div class="roadmap-item">
+          <div class="version">v2</div>
+          <div>
+            <h3>A memory API for research agents</h3>
+            <p class="section-sub">Let any coding or research agent ask for relevant methods, prior outcomes, implementation notes, and lessons before it proposes a change.</p>
+            <div class="goal">any AI coding/research agent can use ResearchFS as memory</div>
+          </div>
+        </div>
+        <div class="roadmap-item">
+          <div class="version">v3</div>
+          <div>
+            <h3>Institutional research memory</h3>
+            <p class="section-sub">Bring in private papers, internal repos, Slack, Notion, lab notes, experiment trackers, permissions, audit logs, and hardware-specific lessons.</p>
+            <div class="goal">become the institutional memory layer for AI research orgs</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt" id="api">
+    <div class="container">
+      <div class="split">
+        <div>
+        <h2>Local memory surfaces for research agents and labs</h2>
+        <p class="section-sub">Instead of pasting twenty papers into every prompt, a research agent or lab script can ask local compressed memory for one bounded research brief over what the lab already knows: relevant paper memory cards, methods, source evidence, lessons, extraction metadata, source labels, and optional score diagnostics. The CLI query surface emits the same deterministic JSON shape as <code>POST /brief</code> and <code>ResearchFSLabClient.research_brief</code>: <code>uv run python -m researchfs.memory query --query "optimizer risk" --source-type paper --source-type lab_note --max-chars 3000 --include-scores --log</code>. Labs can audit stored extraction quality against expected methods without starting the API by running <code>uv run python -m researchfs.memory evaluate --paper-id 42 --expected-methods '[{"name":"Clip matrix update norms"}]' --min-recall 1.0</code>; this uses the same deterministic evaluator as <code>POST /evaluate/extraction</code>, not an LLM judge or confidence mutation. Labs can also move compressed memory between local SQLite databases with bundle export/import commands such as <code>uv run python -m researchfs.memory export --paper-id 42 --output paper-42.bundle.json</code> and <code>uv run python -m researchfs.memory import --db-path /tmp/researchfs.db --input paper-42.bundle.json</code>. These are stdlib/SQLite local surfaces, not hosted sync, vector search, OCR, full-paper repaste, or an authentication boundary.</p>
+        <div class="endpoint-list">
+          <div class="endpoint"><span class="method">GET</span><span>/</span></div>
+          <div class="endpoint"><span class="method">GET</span><span>/health</span></div>
+          <div class="endpoint"><span class="method">GET</span><span>/papers</span></div>
+          <div class="endpoint"><span class="method">GET</span><span>/paper/&lt;id&gt;/memory</span></div>
+          <div class="endpoint"><span class="method">GET</span><span>/paper/&lt;id&gt;/memory/export</span></div>
+          <div class="endpoint"><span class="method">GET</span><span>/memory/export</span></div>
+          <div class="endpoint"><span class="method">GET</span><span>/paper/&lt;id&gt;</span></div>
+          <div class="endpoint"><span class="method">GET</span><span>/method/&lt;id&gt;</span></div>
+          <div class="endpoint"><span class="method">GET</span><span>/stats</span></div>
+          <div class="endpoint"><span class="method">POST</span><span>/ingest</span></div>
+          <div class="endpoint"><span class="method">POST</span><span>/ingest/arxiv</span></div>
+          <div class="endpoint"><span class="method">POST</span><span>/ingest/repo</span></div>
+          <div class="endpoint"><span class="method">POST</span><span>/ingest/file</span></div>
+          <div class="endpoint"><span class="method">POST</span><span>/evaluate/extraction</span></div>
+          <div class="endpoint"><span class="method">POST</span><span>/retrieve</span></div>
+          <div class="endpoint"><span class="method">POST</span><span>/brief</span></div>
+          <div class="endpoint"><span class="method">POST</span><span>/memory/import</span></div>
+          <div class="endpoint"><span class="method">POST</span><span>/feedback</span></div>
+          <div class="endpoint"><span class="method">POST</span><span>/experiment</span></div>
+          <div class="endpoint"><span class="method">POST</span><span>/lesson</span></div>
+        </div>
+      </div>
+        <div class="code-block"><div class="comment"># What a research brief should get back</div>
+<span class="cmd">query</span>        = "which MLP change should we try?"
+<span class="cmd">papers</span>       = ["SwiGLU improves transformer MLPs"]
+<span class="cmd">methods</span>      = ["replace GELU MLP with gated SwiGLU"]
+<span class="cmd">lessons</span>      = ["helped on H100, hurt on MPS"]
+<span class="cmd">next_action</span>  = "try a smaller hidden multiplier"
+      </div>
+      </div>
+      <div class="api-console" aria-labelledby="local-api-console-title">
+        <h3 id="local-api-console-title">Local API console</h3>
+        <p>Smoke-test your loopback ResearchFS server from this browser. This page only calls the base URL you enter; it is local-only and not a hosted or authenticated service.</p>
+        <div class="console-grid">
+          <label class="console-field" for="api-base-url">
+            Base URL
+            <input id="api-base-url" type="url" value="http://127.0.0.1:8765" autocomplete="off" spellcheck="false">
+          </label>
+          <div class="console-actions">
+            <button class="btn btn-ghost" type="button" data-api-get="/health">Check /health</button>
+            <button class="btn btn-ghost" type="button" data-api-get="/stats">Check /stats</button>
+          </div>
+          <h3>Try the full local loop</h3>
+          <div class="console-row">
+            <label class="console-field" for="paper-title">
+              Note or paper title
+              <input id="paper-title" type="text" value="Local SwiGLU note" autocomplete="off">
+            </label>
+            <label class="console-field" for="note-file">
+              Optional local text file (unlabeled files default to source_type=file)
+              <input id="note-file" type="file" accept=".txt,.md,text/plain,text/markdown">
+            </label>
+          </div>
+          <label class="console-field" for="paper-content">
+            Note content (API payloads may include source_type labels)
+            <textarea id="paper-content" spellcheck="true">SwiGLU gates the MLP hidden state and can improve transformer feed-forward quality when the hidden multiplier is tuned.</textarea>
+          </label>
+          <div class="console-row">
+            <label class="console-field" for="method-name">
+              Method name
+              <input id="method-name" type="text" value="Replace GELU MLP with SwiGLU" autocomplete="off">
+            </label>
+            <label class="console-field" for="method-hint">
+              Method description or implementation hint
+              <textarea id="method-hint" spellcheck="true">Use a gated feed-forward block and test a smaller hidden multiplier before scaling the run.</textarea>
+            </label>
+          </div>
+          <div class="console-actions">
+            <button class="btn btn-primary" type="button" id="ingest-button">1. Post /ingest</button>
+          </div>
+          <div class="console-row">
+            <label class="console-field" for="retrieve-query">
+              Retrieve query
+              <input id="retrieve-query" type="text" value="MLP SwiGLU" autocomplete="off">
+            </label>
+            <button class="btn btn-primary" type="button" id="retrieve-button">2. Post /retrieve</button>
+          </div>
+          <div class="console-row">
+            <label class="console-field" for="feedback-rating">
+              Feedback rating
+              <select id="feedback-rating">
+                <option value="1">Useful (+1)</option>
+                <option value="0">Neutral (0)</option>
+                <option value="-1">Not useful (-1)</option>
+              </select>
+            </label>
+            <label class="console-field" for="feedback-label">
+              Feedback label
+              <input id="feedback-label" type="text" value="browser-loop" autocomplete="off">
+            </label>
+          </div>
+          <label class="console-field" for="expected-methods">
+            Expected methods JSON
+            <textarea id="expected-methods" spellcheck="false">[{"name":"Replace GELU MLP with SwiGLU","source_chunk_indices":[0]}]</textarea>
+          </label>
+          <div class="console-actions">
+            <button class="btn btn-ghost" type="button" id="inspect-method-button">3. Inspect latest /method/&lt;id&gt;</button>
+            <button class="btn btn-ghost" type="button" id="feedback-button">4. Post /feedback</button>
+            <button class="btn btn-primary" type="button" id="evaluate-extraction-button">5. Post /evaluate/extraction</button>
+          </div>
+          <pre class="code-block api-output" id="api-output">Use the local loop to ingest, retrieve, inspect source labels/provenance, send feedback, and evaluate extraction. JSON or errors appear here.</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="pricing">
+    <div class="container">
+      <h2>The budget comes from wasted research</h2>
+      <p class="section-sub">Teams will not buy “paper storage.” They will buy fewer repeated failures, lower context cost, fewer wasted GPU runs, and research knowledge that survives team churn.</p>
+      <div class="pricing-grid">
+        <div class="pricing-item"><strong>Lower token spend</strong><p>Research agents retrieve the relevant method instead of stuffing entire papers into context.</p></div>
+        <div class="pricing-item"><strong>Less researcher rework</strong><p>People stop re-explaining the same papers, failures, and implementation details.</p></div>
+        <div class="pricing-item"><strong>Fewer wasted GPU runs</strong><p>Bad ideas get filtered against prior results before they hit expensive training jobs.</p></div>
+        <div class="pricing-item"><strong>Memory that survives turnover</strong><p>When a researcher leaves, the method/result graph stays with the lab.</p></div>
+        <div class="pricing-item"><strong>Better research agents</strong><p>Agents propose stronger experiments because they can retrieve tested internal lessons.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt" id="benchmarks">
+    <div class="container">
+      <div class="badge"><span class="dot"></span> Early GLM 5.2 smoke-test signal</div>
+      <h2>Cheaper runs today. Better research memory tomorrow.</h2>
+      <p class="section-sub">In a local nanochat benchmark using <code>zai-org-glm-5-2</code> via Venice, ResearchFS made the research-agent loop cheaper and faster. The baseline still won BPB, which is exactly the kind of lesson the memory graph should keep.</p>
+      <div class="benchmark-grid">
+        <div class="metric-card"><div class="label">BPB quality gap</div><div class="value loss">0.02419</div><div class="detail">Baseline best BPB was 2.128834 vs. ResearchFS 2.153019. Lower BPB is better.</div></div>
+        <div class="metric-card"><div class="label">Token savings</div><div class="value win">10.5%</div><div class="detail">ResearchFS used 28,431 tokens vs. 31,755 for the baseline.</div></div>
+        <div class="metric-card"><div class="label">Wall-clock savings</div><div class="value win">9.5%</div><div class="detail">ResearchFS finished in 284.6 seconds vs. 314.6 seconds for the baseline.</div></div>
+        <div class="metric-card"><div class="label">Query reuse</div><div class="value gradient">Run 3</div><div class="detail">ResearchFS reused the prior query <code>MLP SwiGLU</code> during the GLM run.</div></div>
+      </div>
+      <div class="benchmark-note"><strong>Honest read:</strong> this is an early research-agent loop smoke test, not a SOTA claim. The useful signal is that ResearchFS cut tokens and wall time while preserving the full paper-method-result trail. The next milestone is turning that cheaper exploration into better BPB.</div>
+    </div>
+  </section>
+
+  <section id="start">
+    <div class="container">
+      <div class="cta-box">
+        <h2>Make every research run compound</h2>
+        <p>If your team is experimenting with autonomous research agents, the question is not whether they can read papers. It is whether they remember what those papers did in your codebase.</p>
+        <div class="hero-cta" style="justify-content:center;">
+          <a href="mailto:hello@loopgraph.ai?subject=ResearchFS%20early%20access" class="btn btn-primary">Request early access</a>
+          <a href="https://github.com/yourname/loopgraph" class="btn btn-ghost">Explore the code</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <p>ResearchFS turns papers, repos, and experiment history into memory your research agents can use.</p>
+      <p style="margin-top:6px;">Replace <code>github.com/yourname/loopgraph</code> and <code>hello@loopgraph.ai</code> before sharing.</p>
+    </div>
+  </footer>
+  <script>
+    (() => {
+      const defaultBaseUrl = 'http://127.0.0.1:8765';
+      const storageKey = 'researchfs.localApiBaseUrl';
+      const state = { paperId: null, methodId: null, eventId: null, methodIds: [] };
+      const baseInput = document.getElementById('api-base-url');
+      const titleInput = document.getElementById('paper-title');
+      const contentInput = document.getElementById('paper-content');
+      const fileInput = document.getElementById('note-file');
+      const methodNameInput = document.getElementById('method-name');
+      const methodHintInput = document.getElementById('method-hint');
+      const queryInput = document.getElementById('retrieve-query');
+      const ratingInput = document.getElementById('feedback-rating');
+      const labelInput = document.getElementById('feedback-label');
+      const expectedMethodsInput = document.getElementById('expected-methods');
+      const output = document.getElementById('api-output');
+
+      const savedBaseUrl = localStorage.getItem(storageKey);
+      if (savedBaseUrl) {
+        baseInput.value = savedBaseUrl;
+      }
+
+      const normalizeBaseUrl = () => baseInput.value.trim().replace(/\/+$/, '') || defaultBaseUrl;
+      const show = (value) => {
+        output.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+      };
+      const showError = (path, error) => {
+        show(`Error calling ${path}:
+${error.message}`);
+      };
+      const jsonOptions = (payload) => ({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const fallbackExpectedMethods = () => [{
+        name: methodNameInput.value.trim() || 'Local note method',
+        source_chunk_indices: [0]
+      }];
+      const parseExpectedMethods = () => {
+        const raw = expectedMethodsInput.value.trim();
+        if (!raw) return fallbackExpectedMethods();
+        const parsed = JSON.parse(raw);
+        const expectedMethods = Array.isArray(parsed) ? parsed : [parsed];
+        return expectedMethods.length ? expectedMethods : fallbackExpectedMethods();
+      };
+      const firstNumber = (values) => {
+        if (!Array.isArray(values)) return null;
+        const match = values.find((value) => Number.isInteger(Number(value)) && Number(value) > 0);
+        return match == null ? null : Number(match);
+      };
+      const rememberIds = (body) => {
+        if (!body || typeof body !== 'object') return;
+        if (Number.isInteger(Number(body.paper_id)) && Number(body.paper_id) > 0) {
+          state.paperId = Number(body.paper_id);
+        }
+        if (Array.isArray(body.method_ids)) {
+          state.methodIds = body.method_ids.map(Number).filter((id) => Number.isInteger(id) && id > 0);
+          state.methodId = state.methodIds[0] || state.methodId;
+        }
+        if (Number.isInteger(Number(body.event_id)) && Number(body.event_id) > 0) {
+          state.eventId = Number(body.event_id);
+        }
+        state.methodId = firstNumber(body.method_ids) || state.methodId;
+      };
+
+      baseInput.addEventListener('input', () => {
+        localStorage.setItem(storageKey, normalizeBaseUrl());
+      });
+
+      fileInput.addEventListener('change', async () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        try {
+          contentInput.value = await file.text();
+          if (!titleInput.value.trim()) {
+            titleInput.value = file.name.replace(/\.[^.]+$/, '');
+          }
+        } catch (error) {
+          show(`Error reading local file:
+${error.message}`);
+        }
+      });
+
+      const callLocalApi = async (path, options = {}) => {
+        const baseUrl = normalizeBaseUrl();
+        localStorage.setItem(storageKey, baseUrl);
+        const response = await fetch(`${baseUrl}${path}`, options);
+        const text = await response.text();
+        let body = text;
+        try {
+          body = text ? JSON.parse(text) : null;
+        } catch (_) {
+          body = text;
+        }
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}
+${typeof body === 'string' ? body : JSON.stringify(body, null, 2)}`);
+        }
+        rememberIds(body);
+        return body;
+      };
+
+      document.querySelectorAll('[data-api-get]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          show(`Calling ${button.dataset.apiGet}...`);
+          try {
+            show(await callLocalApi(button.dataset.apiGet));
+          } catch (error) {
+            showError(button.dataset.apiGet, error);
+          }
+        });
+      });
+
+      document.getElementById('ingest-button').addEventListener('click', async () => {
+        const title = titleInput.value.trim() || 'Untitled local note';
+        const content = contentInput.value.trim();
+        const methodName = methodNameInput.value.trim() || 'Local note method';
+        const methodHint = methodHintInput.value.trim() || 'Review this note before the next related experiment.';
+        if (!content) {
+          show('Add note content before calling /ingest.');
+          return;
+        }
+        show('Calling /ingest...');
+        try {
+          const body = await callLocalApi('/ingest', jsonOptions({
+            paper: { title, abstract: content.slice(0, 400), content },
+            methods: [{
+              name: methodName,
+              description: methodHint,
+              implementation_hint: methodHint,
+              source_chunk_indices: [0]
+            }]
+          }));
+          show(body);
+        } catch (error) {
+          showError('/ingest', error);
+        }
+      });
+
+      document.getElementById('retrieve-button').addEventListener('click', async () => {
+        show('Calling /retrieve...');
+        try {
+          show(await callLocalApi('/retrieve', jsonOptions({
+            query: queryInput.value.trim() || 'MLP SwiGLU',
+            log: true,
+            include_scores: true
+          })));
+        } catch (error) {
+          showError('/retrieve', error);
+        }
+      });
+
+      document.getElementById('feedback-button').addEventListener('click', async () => {
+        if (!state.methodId) {
+          show('Retrieve or ingest a method before sending feedback.');
+          return;
+        }
+        show('Calling /feedback...');
+        try {
+          const payload = {
+            method_id: state.methodId,
+            rating: Number(ratingInput.value),
+            label: labelInput.value.trim() || 'browser-loop',
+            source: 'landing-page'
+          };
+          if (state.eventId) {
+            payload.event_id = state.eventId;
+          }
+          show(await callLocalApi('/feedback', jsonOptions(payload)));
+        } catch (error) {
+          showError('/feedback', error);
+        }
+      });
+
+      document.getElementById('evaluate-extraction-button').addEventListener('click', async () => {
+        if (!state.paperId) {
+          show('Ingest a paper before evaluating extraction.');
+          return;
+        }
+        let expectedMethods;
+        try {
+          expectedMethods = parseExpectedMethods();
+        } catch (error) {
+          show(`Expected methods must be valid JSON:
+${error.message}`);
+          return;
+        }
+        show('Calling /evaluate/extraction...');
+        try {
+          show(await callLocalApi('/evaluate/extraction', jsonOptions({
+            paper_id: state.paperId,
+            expected_methods: expectedMethods,
+            min_recall: 1.0,
+            min_evidence_coverage: 0.0,
+            notes: 'landing-page evaluation'
+          })));
+        } catch (error) {
+          showError('/evaluate/extraction', error);
+        }
+      });
+
+      document.getElementById('inspect-method-button').addEventListener('click', async () => {
+        if (!state.methodId) {
+          show('Retrieve or ingest a method before inspecting /method/<id>.');
+          return;
+        }
+        const path = `/method/${state.methodId}`;
+        show(`Calling ${path}...`);
+        try {
+          show(await callLocalApi(path));
+        } catch (error) {
+          showError(path, error);
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
