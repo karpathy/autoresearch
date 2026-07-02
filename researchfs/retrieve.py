@@ -2373,7 +2373,17 @@ def recommend_next_experiments(
         close = True
 
     try:
-        limit = max(0, max_items)
+        limit = _validate_non_negative_int(max_items, "max_items")
+        valid_agent_run_id = None
+        if agent_run_id is not None:
+            valid_agent_run_id = _validate_positive_int_id(agent_run_id, "agent_run_id")
+            _require_existing_id(
+                conn,
+                "agent_runs",
+                "agent_run_id",
+                valid_agent_run_id,
+                "agent_run_id",
+            )
         methods, _, method_ranks = _search_methods_hybrid(query, conn)
         used_fallback_catalog = False
         if limit == 0:
@@ -2388,7 +2398,7 @@ def recommend_next_experiments(
             [dict(method) for method in methods],
             conn,
             method_ranks,
-            agent_run_id=agent_run_id,
+            agent_run_id=valid_agent_run_id,
         )
 
         header = "# Recommended Next Experiments"
@@ -2523,22 +2533,37 @@ def get_graph_context(
         close = True
 
     try:
-        code_budget = None
+        valid_max_chars = None
         if max_chars is not None:
-            code_budget = max(0, max_chars - int(max_chars * 0.7))
+            valid_max_chars = _validate_non_negative_int(max_chars, "max_chars")
+
+        valid_agent_run_id = None
+        if agent_run_id is not None:
+            valid_agent_run_id = _validate_positive_int_id(agent_run_id, "agent_run_id")
+            _require_existing_id(
+                conn,
+                "agent_runs",
+                "agent_run_id",
+                valid_agent_run_id,
+                "agent_run_id",
+            )
+
+        code_budget = None
+        if valid_max_chars is not None:
+            code_budget = max(0, valid_max_chars - int(valid_max_chars * 0.7))
 
         recommendations = recommend_next_experiments(
             query,
             conn=conn,
             max_items=5,
-            agent_run_id=agent_run_id,
+            agent_run_id=valid_agent_run_id,
         )
         code_context = _get_code_context(query, conn, max_chars=code_budget)
 
         sections = ["# ResearchFS Graph Context", recommendations]
         if code_context:
             sections.append(code_context)
-        return _limit_text("\n\n".join(sections), max_chars)
+        return _limit_text("\n\n".join(sections), valid_max_chars)
     finally:
         if close:
             conn.close()

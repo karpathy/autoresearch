@@ -1228,6 +1228,97 @@ def test_get_method_history_zero_max_items_is_valid_history_string():
     assert "Lessons:\n- None recorded." in history
 
 
+
+@pytest.mark.parametrize("bad_max_items", [True, False, "0", -1])
+def test_recommend_next_experiments_rejects_invalid_max_items(bad_max_items):
+    """Recommendation item bounds reject non-integer and negative limits."""
+    from researchfs.retrieve import recommend_next_experiments
+
+    conn = _init_memory_db()
+
+    with pytest.raises(ValueError, match="max_items"):
+        recommend_next_experiments("", conn=conn, max_items=bad_max_items)
+
+
+def test_recommend_next_experiments_zero_max_items_is_valid_empty_recommendation():
+    """A zero item limit is valid and returns the no-methods-requested recommendation."""
+    from researchfs.retrieve import recommend_next_experiments
+
+    conn = _init_memory_db()
+
+    recommendation = recommend_next_experiments("", conn=conn, max_items=0)
+
+    assert recommendation == "# Recommended Next Experiments\n\nNo methods requested for query: ''"
+
+
+@pytest.mark.parametrize(
+    "accessor_name",
+    ["recommend_next_experiments", "get_graph_context"],
+)
+@pytest.mark.parametrize("bad_agent_run_id", [True, False, "1", 0, -1, 999_999])
+def test_graph_accessors_reject_invalid_agent_run_id(accessor_name, bad_agent_run_id):
+    """Graph accessors reject malformed and nonexistent run IDs before composing context."""
+    from researchfs import retrieve
+
+    conn = _init_memory_db()
+    accessor = getattr(retrieve, accessor_name)
+
+    with pytest.raises(ValueError, match="agent_run_id"):
+        accessor("", conn=conn, agent_run_id=bad_agent_run_id)
+
+
+def test_graph_accessors_accept_existing_agent_run_id_and_score_with_it(monkeypatch):
+    """Graph accessors pass an existing run ID through to recommendation scoring."""
+    from researchfs import retrieve
+
+    conn = _init_memory_db()
+    run_id = retrieve.start_agent_run("loopgraph", "graph-bounds-model", conn)
+    _insert_searchable_method(conn, "Scoped Graph Bounds Method", "scopedgraphboundstoken")
+    seen_run_ids = []
+    original_score_methods = retrieve._score_methods
+
+    def capture_score_methods(*args, agent_run_id=None, **kwargs):
+        seen_run_ids.append(agent_run_id)
+        return original_score_methods(*args, agent_run_id=agent_run_id, **kwargs)
+
+    monkeypatch.setattr(retrieve, "_score_methods", capture_score_methods)
+
+    recommendation = retrieve.recommend_next_experiments(
+        "scopedgraphboundstoken",
+        conn=conn,
+        agent_run_id=run_id,
+    )
+    graph_context = retrieve.get_graph_context(
+        "scopedgraphboundstoken",
+        conn=conn,
+        agent_run_id=run_id,
+        max_chars=4000,
+    )
+
+    assert "Scoped Graph Bounds Method" in recommendation
+    assert "Scoped Graph Bounds Method" in graph_context
+    assert seen_run_ids == [run_id, run_id]
+
+
+@pytest.mark.parametrize("bad_max_chars", [True, False, "0", -1])
+def test_get_graph_context_rejects_invalid_max_chars(bad_max_chars):
+    """Graph context bounds reject non-integer and negative budgets."""
+    from researchfs.retrieve import get_graph_context
+
+    conn = _init_memory_db()
+
+    with pytest.raises(ValueError, match="max_chars"):
+        get_graph_context("", conn=conn, max_chars=bad_max_chars)
+
+
+def test_get_graph_context_zero_max_chars_is_valid_empty_context():
+    """A zero character budget is valid and returns an empty graph context."""
+    from researchfs.retrieve import get_graph_context
+
+    conn = _init_memory_db()
+
+    assert get_graph_context("", conn=conn, max_chars=0) == ""
+
 def test_get_method_history_missing_positive_method_id_returns_history_text():
     """Positive but nonexistent method IDs keep the documented not-found text."""
     from researchfs.retrieve import get_method_history
