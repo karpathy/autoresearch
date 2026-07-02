@@ -1408,6 +1408,13 @@ def log_experiment(
     conn=None,
 ) -> int:
     """Log a ratchet-loop experiment outcome and return the experiment_id."""
+    commit_hash = _validate_non_empty_text(commit_hash, "commit_hash")
+    status = _validate_experiment_status(status)
+    description = _validate_non_empty_text(description, "description")
+    val_bpb = _validate_optional_non_negative_metric(val_bpb, "val_bpb")
+    memory_gb = _validate_optional_non_negative_metric(memory_gb, "memory_gb")
+    if agent_run_id is not None:
+        agent_run_id = _validate_positive_int_id(agent_run_id, "agent_run_id")
     close = False
     if conn is None:
         conn = get_connection()
@@ -1415,6 +1422,8 @@ def log_experiment(
 
     try:
         cur = conn.cursor()
+        if agent_run_id is not None:
+            _require_existing_id(conn, "agent_runs", "agent_run_id", agent_run_id, "agent_run_id")
         cur.execute(
             """
             INSERT INTO experiments
@@ -1439,6 +1448,13 @@ def update_experiment(
     conn=None,
 ) -> None:
     """Update an existing experiment record with final metrics."""
+    experiment_id = _validate_positive_int_id(experiment_id, "experiment_id")
+    val_bpb = _validate_optional_non_negative_metric(val_bpb, "val_bpb")
+    memory_gb = _validate_optional_non_negative_metric(memory_gb, "memory_gb")
+    if status is not None:
+        status = _validate_experiment_status(status)
+    if description is not None:
+        description = _validate_non_empty_text(description, "description")
     close = False
     if conn is None:
         conn = get_connection()
@@ -1446,6 +1462,7 @@ def update_experiment(
 
     try:
         cur = conn.cursor()
+        _require_existing_id(conn, "experiments", "experiment_id", experiment_id, "experiment_id")
         fields = []
         params = []
         if val_bpb is not None:
@@ -1480,6 +1497,18 @@ def _unique_method_ids(method_ids: Optional[list[int]]) -> list[int]:
     return list(dict.fromkeys(method_ids))
 
 
+EXPERIMENT_STATUSES = {"pending", "keep", "discard", "crash"}
+
+
+def _validate_experiment_status(value) -> str:
+    """Return a supported experiment status token."""
+    status = _validate_non_empty_text(value, "status")
+    if status not in EXPERIMENT_STATUSES:
+        allowed = ", ".join(sorted(EXPERIMENT_STATUSES))
+        raise ValueError(f"status must be one of: {allowed}")
+    return status
+
+
 def _validate_positive_int_id(value, field_name: str) -> int:
     """Return value as an int ID, rejecting bools and non-positive integers."""
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -1506,6 +1535,21 @@ def _validate_optional_non_negative_cost(value) -> float | None:
         raise ValueError("cost must be a non-negative finite number") from exc
     if not math.isfinite(numeric_value) or numeric_value < 0:
         raise ValueError("cost must be a non-negative finite number")
+    return numeric_value
+
+
+def _validate_optional_non_negative_metric(value, field_name: str) -> float | None:
+    """Return metric as a finite float, allowing None and rejecting bools."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError(f"{field_name} must be a non-negative finite number")
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a non-negative finite number") from exc
+    if not math.isfinite(numeric_value) or numeric_value < 0:
+        raise ValueError(f"{field_name} must be a non-negative finite number")
     return numeric_value
 
 

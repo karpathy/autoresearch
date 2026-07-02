@@ -1072,6 +1072,332 @@ def test_link_experiment_methods_validates_public_ids_before_sqlite_errors():
     assert conn.execute("SELECT COUNT(*) FROM experiment_methods").fetchone()[0] == 0
 
 
+def test_log_experiment_validates_inputs_before_persisting():
+    """Experiment logging rejects invalid public fields before inserting rows."""
+    from researchfs.retrieve import log_experiment
+
+    conn = _init_memory_db()
+    agent_run_id = conn.execute(
+        "INSERT INTO agent_runs (mode, model) VALUES (?, ?)",
+        ("loopgraph", "experiment-validation-model"),
+    ).lastrowid
+    conn.commit()
+
+    invalid_cases = [
+        (
+            {
+                "commit_hash": "",
+                "val_bpb": 1.23,
+                "memory_gb": 4.5,
+                "status": "keep",
+                "description": "valid description",
+            },
+            "commit_hash",
+        ),
+        (
+            {
+                "commit_hash": "   ",
+                "val_bpb": 1.23,
+                "memory_gb": 4.5,
+                "status": "keep",
+                "description": "valid description",
+            },
+            "commit_hash",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": 1.23,
+                "memory_gb": 4.5,
+                "status": "",
+                "description": "valid description",
+            },
+            "status",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": 1.23,
+                "memory_gb": 4.5,
+                "status": "adopt",
+                "description": "valid description",
+            },
+            "status",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": 1.23,
+                "memory_gb": 4.5,
+                "status": "keep",
+                "description": " \t\n ",
+            },
+            "description",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": True,
+                "memory_gb": 4.5,
+                "status": "keep",
+                "description": "valid description",
+            },
+            "val_bpb",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": -0.01,
+                "memory_gb": 4.5,
+                "status": "keep",
+                "description": "valid description",
+            },
+            "val_bpb",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": float("nan"),
+                "memory_gb": 4.5,
+                "status": "keep",
+                "description": "valid description",
+            },
+            "val_bpb",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": float("inf"),
+                "memory_gb": 4.5,
+                "status": "keep",
+                "description": "valid description",
+            },
+            "val_bpb",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": 1.23,
+                "memory_gb": True,
+                "status": "keep",
+                "description": "valid description",
+            },
+            "memory_gb",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": 1.23,
+                "memory_gb": -0.01,
+                "status": "keep",
+                "description": "valid description",
+            },
+            "memory_gb",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": 1.23,
+                "memory_gb": float("nan"),
+                "status": "keep",
+                "description": "valid description",
+            },
+            "memory_gb",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": 1.23,
+                "memory_gb": float("inf"),
+                "status": "keep",
+                "description": "valid description",
+            },
+            "memory_gb",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": 1.23,
+                "memory_gb": 4.5,
+                "status": "keep",
+                "description": "valid description",
+                "agent_run_id": True,
+            },
+            "agent_run_id",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": 1.23,
+                "memory_gb": 4.5,
+                "status": "keep",
+                "description": "valid description",
+                "agent_run_id": "1",
+            },
+            "agent_run_id",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": 1.23,
+                "memory_gb": 4.5,
+                "status": "keep",
+                "description": "valid description",
+                "agent_run_id": 0,
+            },
+            "agent_run_id",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": 1.23,
+                "memory_gb": 4.5,
+                "status": "keep",
+                "description": "valid description",
+                "agent_run_id": -1,
+            },
+            "agent_run_id",
+        ),
+        (
+            {
+                "commit_hash": "valid-commit",
+                "val_bpb": 1.23,
+                "memory_gb": 4.5,
+                "status": "keep",
+                "description": "valid description",
+                "agent_run_id": 999_999,
+            },
+            "agent_run_id",
+        ),
+    ]
+
+    for kwargs, expected_message in invalid_cases:
+        with pytest.raises(ValueError, match=expected_message):
+            log_experiment(conn=conn, **kwargs)
+        assert conn.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] == 0
+
+    experiment_id = log_experiment(
+        "valid-experiment-commit",
+        val_bpb=0.0,
+        memory_gb=0.0,
+        status="keep",
+        description="valid experiment persists after rejected inputs",
+        agent_run_id=agent_run_id,
+        conn=conn,
+    )
+
+    stored = conn.execute(
+        """
+        SELECT agent_run_id, commit_hash, val_bpb, memory_gb, status, description
+        FROM experiments
+        WHERE experiment_id = ?
+        """,
+        (experiment_id,),
+    ).fetchone()
+    assert dict(stored) == {
+        "agent_run_id": agent_run_id,
+        "commit_hash": "valid-experiment-commit",
+        "val_bpb": 0.0,
+        "memory_gb": 0.0,
+        "status": "keep",
+        "description": "valid experiment persists after rejected inputs",
+    }
+
+
+def test_update_experiment_validates_inputs_before_mutating_rows():
+    """Experiment updates reject invalid public fields before changing stored metrics."""
+    from researchfs.retrieve import log_experiment, update_experiment
+
+    conn = _init_memory_db()
+    experiment_id = log_experiment(
+        "update-validation-commit",
+        val_bpb=1.23,
+        memory_gb=4.5,
+        status="keep",
+        description="original update target",
+        conn=conn,
+    )
+    original = dict(
+        conn.execute(
+            """
+            SELECT commit_hash, val_bpb, memory_gb, status, description
+            FROM experiments
+            WHERE experiment_id = ?
+            """,
+            (experiment_id,),
+        ).fetchone()
+    )
+
+    invalid_cases = [
+        ({"experiment_id": True, "val_bpb": 2.0}, "experiment_id"),
+        ({"experiment_id": "1", "val_bpb": 2.0}, "experiment_id"),
+        ({"experiment_id": 0, "val_bpb": 2.0}, "experiment_id"),
+        ({"experiment_id": -1, "val_bpb": 2.0}, "experiment_id"),
+        ({"experiment_id": 999_999, "val_bpb": 2.0}, "experiment_id"),
+        ({"experiment_id": experiment_id, "val_bpb": True}, "val_bpb"),
+        ({"experiment_id": experiment_id, "val_bpb": -0.01}, "val_bpb"),
+        ({"experiment_id": experiment_id, "val_bpb": float("nan")}, "val_bpb"),
+        ({"experiment_id": experiment_id, "val_bpb": float("inf")}, "val_bpb"),
+        ({"experiment_id": experiment_id, "memory_gb": True}, "memory_gb"),
+        ({"experiment_id": experiment_id, "memory_gb": -0.01}, "memory_gb"),
+        ({"experiment_id": experiment_id, "memory_gb": float("nan")}, "memory_gb"),
+        ({"experiment_id": experiment_id, "memory_gb": float("inf")}, "memory_gb"),
+        ({"experiment_id": experiment_id, "val_bpb": 2.0, "status": ""}, "status"),
+        ({"experiment_id": experiment_id, "status": "adopt"}, "status"),
+        (
+            {
+                "experiment_id": experiment_id,
+                "memory_gb": 6.0,
+                "description": " \t\n ",
+            },
+            "description",
+        ),
+    ]
+
+    for kwargs, expected_message in invalid_cases:
+        with pytest.raises(ValueError, match=expected_message):
+            update_experiment(conn=conn, **kwargs)
+        current = dict(
+            conn.execute(
+                """
+                SELECT commit_hash, val_bpb, memory_gb, status, description
+                FROM experiments
+                WHERE experiment_id = ?
+                """,
+                (experiment_id,),
+            ).fetchone()
+        )
+        assert current == original
+        assert conn.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] == 1
+
+    update_experiment(
+        experiment_id,
+        val_bpb=0.98,
+        memory_gb=3.25,
+        status="discard",
+        description="valid update applied after rejected inputs",
+        conn=conn,
+    )
+
+    updated = dict(
+        conn.execute(
+            """
+            SELECT commit_hash, val_bpb, memory_gb, status, description
+            FROM experiments
+            WHERE experiment_id = ?
+            """,
+            (experiment_id,),
+        ).fetchone()
+    )
+    assert updated == {
+        "commit_hash": "update-validation-commit",
+        "val_bpb": 0.98,
+        "memory_gb": 3.25,
+        "status": "discard",
+        "description": "valid update applied after rejected inputs",
+    }
+
+
 def test_log_lesson_validates_ids_and_required_text_before_persisting():
     """Lesson logging rejects invalid IDs and blank label/content before inserting rows."""
     from researchfs.retrieve import log_experiment, log_lesson
