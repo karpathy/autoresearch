@@ -13,15 +13,15 @@ SwiGLU uses the Swish (SiLU) activation function as a gate:
 $$MLP_{SwiGLU}(x) = (SiLU(x W_{gate}) \cdot (x W_{val})) W_{proj}$$
 The current implementation parameter-matches the older ReLU² style by using:
 $$d_{ff} = \text{int}\left(\frac{8}{3} \times d_{model}\right)$$
-rounded to a multiple of 64 for matrix layout alignment.
+rounded up to the next multiple of 64 for matrix layout alignment.
 
 ```python
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        # Parameter-matched hidden dimension (scaled by 2/3 and aligned to 64)
+        # Parameter-matched hidden dimension: 8/3 * n_embd rounded up to a multiple of 64
         hidden_dim = int(8 / 3 * config.n_embd)
-        hidden_dim = 64 * ((hidden_dim + 32) // 64)
+        hidden_dim = ((hidden_dim + 63) // 64) * 64
         
         # Combined projection for gate and value to allow fused operations and Muon optimization
         self.c_fc = nn.Linear(config.n_embd, 2 * hidden_dim, bias=False)
@@ -47,9 +47,9 @@ $$MLP_{GeGLU}(x) = (GELU(x W_{gate}) \cdot (x W_{val})) W_{proj}$$
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        # Parameter-matched hidden dimension
+        # Parameter-matched hidden dimension: 8/3 * n_embd rounded up to a multiple of 64
         hidden_dim = int(8 / 3 * config.n_embd)
-        hidden_dim = 64 * ((hidden_dim + 32) // 64)
+        hidden_dim = ((hidden_dim + 63) // 64) * 64
         
         self.c_fc = nn.Linear(config.n_embd, 2 * hidden_dim, bias=False)
         self.c_proj = nn.Linear(hidden_dim, config.n_embd, bias=False)

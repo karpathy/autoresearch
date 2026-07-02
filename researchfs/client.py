@@ -167,6 +167,11 @@ class ResearchFSSession:
         self.prompt_tokens_accum = 0
         self.completion_tokens_accum = 0
 
+    def _clear_search_cache(self) -> None:
+        """Drop cached method packs whose rankings may now be stale."""
+        self.search_cache.clear()
+
+
     # ------------------------------------------------------------------
     # Query reuse and history helpers
     # ------------------------------------------------------------------
@@ -377,7 +382,9 @@ class ResearchFSSession:
             search = bool(parsed.get("search", True))
             query = str(parsed.get("query", "")).strip()
             reason = str(parsed.get("reason", ""))
-            if search and not _query_has_content(query):
+            if not search:
+                query = ""
+            elif not _query_has_content(query):
                 search = False
                 query = ""
                 reason = "LLM returned an empty or punctuation-only query; skipping search."
@@ -492,7 +499,7 @@ class ResearchFSSession:
         commit_hash: str = "pending",
     ) -> int:
         """Log an experiment outcome and return the experiment_id."""
-        return rfs.log_experiment(
+        experiment_id = rfs.log_experiment(
             commit_hash=commit_hash,
             val_bpb=val_metric,
             memory_gb=memory_gb,
@@ -501,6 +508,8 @@ class ResearchFSSession:
             agent_run_id=self.agent_run_id,
             conn=self.client.get_connection(),
         )
+        self._clear_search_cache()
+        return experiment_id
 
     def log_retrieval(
         self,
@@ -511,7 +520,7 @@ class ResearchFSSession:
         method_ids: Optional[List[int]] = None,
     ) -> int:
         """Log a retrieval event associated with this session."""
-        return rfs.log_retrieval_event(
+        event_id = rfs.log_retrieval_event(
             event_type=event_type,
             query=query,
             retrieved_content=retrieved_content,
@@ -520,6 +529,8 @@ class ResearchFSSession:
             conn=self.client.get_connection(),
             method_ids=method_ids,
         )
+        self._clear_search_cache()
+        return event_id
 
 
 class ResearchFSClient:

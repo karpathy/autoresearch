@@ -1,6 +1,8 @@
 """Retrieval and logging API for ResearchFS v0."""
 
+import math
 import re
+import sqlite3
 from typing import Optional
 
 from researchfs.db import get_connection
@@ -23,17 +25,302 @@ def _fts_phrase_query(text: str | None, joiner: str = " ") -> str:
     return joiner.join(f'"{term}"' for term in terms)
 
 
+LESSON_QUERY_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "in",
+    "into",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "use",
+    "with",
+}
+MAX_LESSON_MATCHES_PER_METHOD = 3
+MAX_LESSON_SEARCH_ROWS = 200
+
+MAX_STANDALONE_LESSONS = 5
+
+def _tokenize_lesson_query(query: str) -> list[str]:
+    """Return stable, meaningful tokens for deterministic lesson LIKE matching."""
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for token in re.findall(r"[A-Za-z0-9]+", query or ""):
+        normalized = token.lower()
+        if (
+            normalized in seen
+            or normalized in LESSON_QUERY_STOPWORDS
+            or (len(normalized) < 3 and not normalized.isdigit())
+        ):
+            continue
+        seen.add(normalized)
+        tokens.append(normalized)
+    return tokens
+
+
+def _lesson_match_score(text: str, tokens: list[str], link_weight: float) -> float:
+    """Return a bounded deterministic score for a matching lesson text."""
+    token_hits = sum(min(text.count(token), 3) for token in tokens)
+    return min(25.0, link_weight + 0.2 * token_hits + 0.1 * len(tokens))
+
+
+def _find_lesson_method_matches(query: str, conn) -> dict[int, dict]:
+    """Find method IDs whose linked lessons match every meaningful query token."""
+    tokens = _tokenize_lesson_query(query)
+    if not tokens:
+        return {}
+
+    lesson_text_sql = """
+        LOWER(
+            COALESCE(l.label, '') || ' ' ||
+            COALESCE(l.content, '') || ' ' ||
+            COALESCE(l.outcome, '')
+        )
+    """
+    where = " AND ".join(f"{lesson_text_sql} LIKE ?" for _ in tokens)
+    params = [f"%{token}%" for token in tokens]
+
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        SELECT
+            l.lesson_id,
+            l.method_id AS direct_method_id,
+            l.experiment_id,
+            l.label,
+            l.content,
+            l.outcome,
+            l.created_at,
+            em.method_id AS experiment_method_id,
+            rm.method_id AS retrieved_method_id
+        FROM lessons l
+        LEFT JOIN experiment_methods em
+          ON l.experiment_id = em.experiment_id
+        LEFT JOIN retrieval_events re
+          ON l.experiment_id = re.experiment_id
+        LEFT JOIN retrieved_methods rm
+          ON re.event_id = rm.event_id
+        WHERE {where}
+          AND (
+              l.method_id IS NOT NULL
+              OR em.method_id IS NOT NULL
+              OR rm.method_id IS NOT NULL
+          )
+        ORDER BY l.created_at DESC, l.lesson_id DESC
+        LIMIT ?
+        """,
+        (*params, MAX_LESSON_SEARCH_ROWS),
+    )
+
+    matches: dict[int, dict] = {}
+    seen_method_lessons: set[tuple[int, int]] = set()
+    for row in cur.fetchall():
+        text = " ".join(
+            str(part or "").lower()
+            for part in (row["label"], row["content"], row["outcome"])
+        )
+        lesson_tokens = set(re.findall(r"[a-z0-9]+", text))
+        if any(token not in lesson_tokens for token in tokens):
+            continue
+        best_candidates: dict[int, tuple[str, float]] = {}
+        if row["direct_method_id"] is not None:
+            best_candidates[row["direct_method_id"]] = ("direct", 2.0)
+        if row["experiment_method_id"] is not None:
+            method_id = row["experiment_method_id"]
+            best_candidates.setdefault(method_id, ("experiment", 1.25))
+        if row["retrieved_method_id"] is not None:
+            method_id = row["retrieved_method_id"]
+            best_candidates.setdefault(method_id, ("retrieved", 1.0))
+
+        for method_id, (link_type, link_weight) in best_candidates.items():
+            method_lesson_key = (method_id, row["lesson_id"])
+            score = _lesson_match_score(text, tokens, link_weight)
+            method_match = matches.setdefault(
+                method_id,
+                {"score": 0.0, "lessons": {}, "lesson_count": 0},
+            )
+            if method_lesson_key not in seen_method_lessons:
+                seen_method_lessons.add(method_lesson_key)
+                method_match["score"] = min(50.0, method_match["score"] + score)
+                method_match["lesson_count"] += 1
+
+            lesson = method_match["lessons"].get(row["lesson_id"])
+            lesson_row = {
+                "lesson_id": row["lesson_id"],
+                "method_id": row["direct_method_id"],
+                "experiment_id": row["experiment_id"],
+                "label": row["label"],
+                "content": row["content"],
+                "outcome": row["outcome"],
+                "created_at": row["created_at"],
+                "match_link": link_type,
+                "match_score": _json_safe_float(score),
+            }
+            if lesson is None or score > lesson["match_score"]:
+                method_match["lessons"][row["lesson_id"]] = lesson_row
+
+    for method_match in matches.values():
+        lessons = sorted(
+            method_match["lessons"].values(),
+            key=lambda lesson: (
+                lesson["created_at"] or "",
+                lesson["lesson_id"] or 0,
+            ),
+            reverse=True,
+        )
+        method_match["lessons"] = lessons[:MAX_LESSON_MATCHES_PER_METHOD]
+        method_match["score"] = _json_safe_float(method_match["score"])
+        method_match["lesson_count"] = int(method_match["lesson_count"])
+
+    return matches
+
+def _standalone_lesson_matches(query: str, conn, limit: int = MAX_STANDALONE_LESSONS) -> list[dict]:
+    """Return bounded lab-level lessons that are not tied to a method or experiment."""
+    tokens = _tokenize_lesson_query(query)
+    if not tokens or limit <= 0:
+        return []
+
+    lesson_text_sql = """
+        LOWER(
+            COALESCE(label, '') || ' ' ||
+            COALESCE(content, '') || ' ' ||
+            COALESCE(outcome, '')
+        )
+    """
+    where = " AND ".join(f"{lesson_text_sql} LIKE ?" for _ in tokens)
+    rows = conn.execute(
+        f"""
+        SELECT lesson_id, label, content, outcome, created_at
+        FROM lessons
+        WHERE method_id IS NULL
+          AND experiment_id IS NULL
+          AND {where}
+        ORDER BY created_at DESC, lesson_id DESC
+        LIMIT ?
+        """,
+        (*(f"%{token}%" for token in tokens), MAX_LESSON_SEARCH_ROWS),
+    ).fetchall()
+
+    matches: list[dict] = []
+    for row in rows:
+        text = " ".join(str(part or "").lower() for part in (row["label"], row["content"], row["outcome"]))
+        lesson_tokens = set(re.findall(r"[a-z0-9]+", text))
+        if any(token not in lesson_tokens for token in tokens):
+            continue
+        matches.append(dict(row))
+        if len(matches) >= limit:
+            break
+    return matches
+
+
+def _format_standalone_lessons(lessons: list[dict]) -> str:
+    """Render lab-level lessons as bounded compressed memory, not raw paper text."""
+    if not lessons:
+        return "## Standalone lab lessons\n- None matched."
+    lines = ["## Standalone lab lessons"]
+    for row in lessons:
+        parts = [f"lesson_id={row['lesson_id']}"]
+        if row.get("outcome"):
+            parts.append(f"outcome={row['outcome']}")
+        lines.append(f"- {row['label']} ({', '.join(parts)}): {_truncate_text(row.get('content'), 300)}")
+    return "\n".join(lines)
+
+
+
+def _lesson_rank(match: dict) -> float:
+    """Convert a lesson match score into a synthetic rank; lower remains better."""
+    score = float(match.get("score") or 0.0)
+    return 1.0 / (1.0 + score)
+
+
+FEEDBACK_SCORE_WEIGHT = 0.12
+MIN_FEEDBACK_MULTIPLIER = 0.88
+MAX_FEEDBACK_MULTIPLIER = 1.12
+
+
+def _feedback_multiplier(feedback_count: int, avg_rating: float | None) -> float:
+    """Return a small bounded scoring multiplier from lab feedback."""
+    if feedback_count <= 0 or avg_rating is None:
+        return 1.0
+    clamped_rating = max(-1.0, min(1.0, float(avg_rating)))
+    multiplier = 1.0 + (FEEDBACK_SCORE_WEIGHT * clamped_rating)
+    return max(MIN_FEEDBACK_MULTIPLIER, min(MAX_FEEDBACK_MULTIPLIER, multiplier))
+
+
+def get_method_feedback_summary(method_id: int, conn=None) -> dict:
+    """Return aggregate lab feedback for one method."""
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) AS feedback_count,
+                AVG(rating) AS feedback_avg_rating,
+                SUM(CASE WHEN rating > 0 THEN 1 ELSE 0 END) AS positive_feedback_count,
+                SUM(CASE WHEN rating < 0 THEN 1 ELSE 0 END) AS negative_feedback_count,
+                SUM(CASE WHEN rating = 0 THEN 1 ELSE 0 END) AS neutral_feedback_count,
+                MAX(timestamp) AS last_feedback_at
+            FROM method_feedback
+            WHERE method_id = ?
+            """,
+            (method_id,),
+        )
+        row = cur.fetchone()
+        count = row["feedback_count"] if row else 0
+        avg_rating = row["feedback_avg_rating"] if count else 0.0
+        return {
+            "method_id": method_id,
+            "feedback_count": count,
+            "feedback_avg_rating": avg_rating,
+            "positive_feedback_count": row["positive_feedback_count"] or 0 if row else 0,
+            "negative_feedback_count": row["negative_feedback_count"] or 0 if row else 0,
+            "neutral_feedback_count": row["neutral_feedback_count"] or 0 if row else 0,
+            "last_feedback_at": row["last_feedback_at"] if row else None,
+        }
+    finally:
+        if close:
+            conn.close()
+
+
 def _get_empirical_stats(method_id: int, conn, baselines: dict) -> dict:
     cur = conn.cursor()
     cur.execute(
         """
         SELECT DISTINCT e.experiment_id, e.status, e.val_bpb, e.agent_run_id
         FROM experiments e
-        JOIN retrieval_events re ON e.experiment_id = re.experiment_id
-        JOIN retrieved_methods rm ON re.event_id = rm.event_id
-        WHERE rm.method_id = ? AND e.status IN ('keep', 'discard', 'crash')
+        JOIN (
+            SELECT re.experiment_id
+            FROM retrieval_events re
+            JOIN retrieved_methods rm ON re.event_id = rm.event_id
+            WHERE rm.method_id = ? AND re.experiment_id IS NOT NULL
+            UNION
+            SELECT em.experiment_id
+            FROM experiment_methods em
+            WHERE em.method_id = ?
+        ) linked ON e.experiment_id = linked.experiment_id
+        WHERE e.status IN ('keep', 'discard', 'crash')
         """,
-        (method_id,),
+        (method_id, method_id),
     )
     exps = cur.fetchall()
 
@@ -71,6 +358,7 @@ def _get_empirical_stats(method_id: int, conn, baselines: dict) -> dict:
     total_runs = keeps + discards + crashes
     success_rate = keeps / total_runs if total_runs > 0 else 0.5
     avg_bpb_delta = sum(deltas) / len(deltas) if deltas else 0.0
+    feedback_summary = get_method_feedback_summary(method_id, conn)
 
     return {
         "total_runs": total_runs,
@@ -79,11 +367,18 @@ def _get_empirical_stats(method_id: int, conn, baselines: dict) -> dict:
         "crashes": crashes,
         "success_rate": success_rate,
         "avg_bpb_delta": avg_bpb_delta,
+        "feedback_count": feedback_summary["feedback_count"],
+        "feedback_avg_rating": feedback_summary["feedback_avg_rating"],
     }
 
 
 def _build_method_pack(
-    methods: list, conn, header: str, sort_key=None, max_chars: int | None = None
+    methods: list,
+    conn,
+    header: str,
+    sort_key=None,
+    max_chars: int | None = None,
+    source_types: list[str] | None = None,
 ) -> tuple[str, list[int]]:
     """Helper to calculate stats, sort methods, format them, and return (pack_str, method_ids)."""
     baselines = {}
@@ -128,18 +423,39 @@ def _build_method_pack(
             )
         else:
             method_lines.append("**Empirical Swarm Stats:** No runs yet.")
+        if stats["feedback_count"] > 0:
+            method_lines.append(
+                f"**Lab Feedback:** {stats['feedback_count']} ratings, "
+                f"avg {stats['feedback_avg_rating']:+.2f}."
+            )
+
+        matched_lessons = m.get("_lesson_matches") or []
+        if matched_lessons:
+            method_lines.append("**Matched lessons:**")
+            for lesson in matched_lessons[:MAX_LESSON_MATCHES_PER_METHOD]:
+                method_lines.append(_format_lesson_summary(lesson))
 
         # Source provenance
         cur = conn.cursor()
+        source_join_sql = ""
+        source_filter_sql, source_filter_params = _source_type_filter_sql(
+            source_types, "pes.source_type"
+        )
+        if source_types:
+            source_join_sql = (
+                "JOIN paper_extraction_status pes ON pes.paper_id = c.paper_id"
+            )
         cur.execute(
-            """
+            f"""
             SELECT p.title, p.url, c.section, c.content
             FROM method_sources ms
             JOIN chunks c ON ms.chunk_id = c.chunk_id
             JOIN papers p ON c.paper_id = p.paper_id
+            {source_join_sql}
             WHERE ms.method_id = ?
+            {source_filter_sql}
             """,
-            (m["method_id"],),
+            (m["method_id"], *source_filter_params),
         )
         sources = cur.fetchall()
         if sources:
@@ -207,8 +523,9 @@ def _search_methods_hybrid(
 ) -> tuple[list[dict], list[int], dict[int, float]]:
     """Run FTS5 hybrid search and return (method_rows, ordered_ids, method_ranks).
 
-    method_ranks maps method_id to the best (lowest) FTS5 rank found either
-    directly in methods_fts or indirectly via chunks_fts + method_sources.
+    method_ranks maps method_id to the best (lowest) rank found directly in
+    methods_fts, indirectly via chunks_fts + method_sources, or through
+    deterministic lesson text matches linked to methods.
     """
     cur = conn.cursor()
     fts_query = _fts_phrase_query(query)
@@ -217,6 +534,7 @@ def _search_methods_hybrid(
         return methods, [m["method_id"] for m in methods], {}
 
     method_ranks: dict[int, float] = {}
+    lesson_matches: dict[int, dict] = {}
 
     # Method-direct matches
     cur.execute(
@@ -243,6 +561,11 @@ def _search_methods_hybrid(
         rank = row["rank"]
         method_ranks[method_id] = min(method_ranks.get(method_id, float("inf")), rank)
 
+    lesson_matches = _find_lesson_method_matches(query, conn)
+    for method_id, match in lesson_matches.items():
+        rank = _lesson_rank(match)
+        method_ranks[method_id] = min(method_ranks.get(method_id, float("inf")), rank)
+
     if not method_ranks:
         return [], [], {}
 
@@ -257,12 +580,20 @@ def _search_methods_hybrid(
         ids,
     )
     methods = [dict(m) for m in cur.fetchall()]
+    for method in methods:
+        match = lesson_matches.get(method["method_id"])
+        if not match:
+            continue
+        method["_lesson_matches"] = match["lessons"]
+        method["_lesson_match_count"] = min(999, match["lesson_count"])
+        method["_lesson_match_score"] = _json_safe_float(match["score"])
     return methods, ids, method_ranks
 
 
 def _get_method_fatigue_scores(agent_run_id: int | None, conn) -> dict[int, float]:
     """Return per-method fatigue multipliers for the current agent run.
 
+    Only agent_search and agent_search_reuse events affect fatigue:
     - Methods retrieved for experiments that were kept: 1.1
     - Methods retrieved for experiments that were discarded/crashed: 0.5
     - Default (no run history): 1.0
@@ -283,6 +614,7 @@ def _get_method_fatigue_scores(agent_run_id: int | None, conn) -> dict[int, floa
         JOIN retrieved_methods rm ON re.event_id = rm.event_id
         LEFT JOIN experiments e ON re.experiment_id = e.experiment_id
         WHERE re.agent_run_id = ?
+          AND re.event_type IN ('agent_search', 'agent_search_reuse')
         GROUP BY rm.method_id
         """,
         (agent_run_id,),
@@ -309,6 +641,78 @@ def _get_method_fatigue_scores(agent_run_id: int | None, conn) -> dict[int, floa
 
     return fatigue
 
+def _json_safe_float(value, default: float | None = 0.0) -> float | None:
+    """Return a finite float for JSON encoding, or a default for missing/non-finite values."""
+    if value is None:
+        return default
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        return default
+    return numeric
+
+
+def _json_safe_stats(stats: dict) -> dict:
+    """Copy empirical stats into a JSON-safe, stable shape for score explanations."""
+    return {
+        "total_runs": int(stats["total_runs"]),
+        "keeps": int(stats["keeps"]),
+        "discards": int(stats["discards"]),
+        "crashes": int(stats["crashes"]),
+        "success_rate": _json_safe_float(stats["success_rate"]),
+        "avg_bpb_delta": _json_safe_float(stats["avg_bpb_delta"]),
+        "feedback_count": int(stats["feedback_count"]),
+        "feedback_avg_rating": _json_safe_float(stats["feedback_avg_rating"]),
+    }
+
+
+def _attach_score_details(
+    method: dict,
+    stats: dict,
+    *,
+    base_score: float,
+    final_score: float,
+    rank_score: float,
+    delta_score: float,
+    fatigue_multiplier: float,
+    feedback_multiplier: float,
+    method_rank: float | None,
+    normalized_rank: float | None,
+) -> None:
+    """Attach bounded, JSON-safe retrieval score details to one method row."""
+    safe_stats = _json_safe_stats(stats)
+    lesson_match_count = min(999, int(method.get("_lesson_match_count") or 0))
+    lesson_match_score = min(50.0, float(method.get("_lesson_match_score") or 0.0))
+    method["score_details"] = {
+        "method_id": int(method["method_id"]),
+        "name": method["name"],
+        "category": method["category"],
+        "final_score": _json_safe_float(final_score),
+        "base_score": _json_safe_float(base_score),
+        "composite_score": _json_safe_float(base_score),
+        "rank_score": _json_safe_float(rank_score),
+        "delta_score": _json_safe_float(delta_score),
+        "success_rate_contribution": _json_safe_float(0.35 * stats["success_rate"]),
+        "fatigue_multiplier": _json_safe_float(fatigue_multiplier),
+        "feedback_multiplier": _json_safe_float(feedback_multiplier),
+        "method_rank": _json_safe_float(method_rank, None),
+        "normalized_rank": _json_safe_float(normalized_rank, None),
+        "lesson_match_count": lesson_match_count,
+        "lesson_match_score": _json_safe_float(lesson_match_score),
+        "feedback_count": int(stats["feedback_count"]),
+        "feedback_avg_rating": _json_safe_float(stats["feedback_avg_rating"]),
+        "stats": safe_stats,
+    }
+
+
+def _score_rows_for_ids(methods: list[dict], method_ids: list[int]) -> list[dict]:
+    """Return score details for method_ids in exact order, skipping omitted methods."""
+    methods_by_id = {method["method_id"]: method for method in methods}
+    return [
+        dict(methods_by_id[method_id]["score_details"])
+        for method_id in method_ids
+        if method_id in methods_by_id and "score_details" in methods_by_id[method_id]
+    ]
+
 
 def _score_methods(
     methods: list[dict],
@@ -316,7 +720,7 @@ def _score_methods(
     method_ranks: dict[int, float],
     agent_run_id: int | None = None,
 ) -> tuple[list[dict], list[int]]:
-    """Combine FTS5 rank, empirical success rate, BPB delta, and fatigue."""
+    """Combine FTS5 rank, empirical outcomes, fatigue, and bounded feedback."""
     baselines = {}
     scored = []
     fatigue = _get_method_fatigue_scores(agent_run_id, conn)
@@ -351,13 +755,30 @@ def _score_methods(
         else:
             delta_score = 0.5
 
-        composite = (
+        base_score = (
             0.35 * stats["success_rate"]
             + 0.25 * rank_score
             + 0.4 * delta_score
         )
         fatigue_multiplier = fatigue.get(method["method_id"], 1.0)
-        method["_score"] = composite * fatigue_multiplier
+        feedback_multiplier = _feedback_multiplier(
+            stats["feedback_count"], stats["feedback_avg_rating"]
+        )
+        final_score = base_score * fatigue_multiplier * feedback_multiplier
+        method["_feedback_multiplier"] = feedback_multiplier
+        method["_score"] = final_score
+        _attach_score_details(
+            method,
+            stats,
+            base_score=base_score,
+            final_score=final_score,
+            rank_score=rank_score,
+            delta_score=delta_score,
+            fatigue_multiplier=fatigue_multiplier,
+            feedback_multiplier=feedback_multiplier,
+            method_rank=method_ranks.get(method["method_id"]),
+            normalized_rank=normalized_rank if method["method_id"] in method_ranks else None,
+        )
         scored.append(method)
 
     scored.sort(key=lambda m: (-m["_score"], m["category"] or "", m["name"] or ""))
@@ -403,7 +824,7 @@ def search_methods_and_ids(
                 max_chars=max_chars,
             )
 
-        if query and query.strip():
+        if methods and query and query.strip():
             cur = conn.cursor()
             cur.execute(
                 """
@@ -441,10 +862,415 @@ def search_methods_and_ids(
             conn.close()
 
 
+def search_methods_with_scores(
+    query: str,
+    conn=None,
+    max_chars: int | None = None,
+    agent_run_id: int | None = None,
+) -> tuple[str, list[int], list[dict]]:
+    """Search methods and return (formatted_method_pack, method_ids, score_details)."""
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+
+    try:
+        methods, _, method_ranks = _search_methods_hybrid(query, conn)
+        score_rows: list[dict] = []
+
+        if not methods:
+            main_pack_str = f"# Method Pack Search Results\n\nNo methods found matching query: '{query}'"
+            main_ids = []
+        elif not method_ranks:
+            # Empty query fallback: preserve default success-rate ordering while still exposing scores.
+            _score_methods(methods, conn, {}, agent_run_id=agent_run_id)
+            main_pack_str, main_ids = _build_method_pack(
+                methods,
+                conn,
+                "# Method Pack: Autoresearch Optimization Catalog\n",
+                max_chars=max_chars,
+            )
+            score_rows.extend(_score_rows_for_ids(methods, main_ids))
+        else:
+            ordered_methods, main_ids = _score_methods(
+                methods, conn, method_ranks, agent_run_id=agent_run_id
+            )
+            main_pack_str, main_ids = _build_method_pack(
+                ordered_methods,
+                conn,
+                f"# Method Pack Search Results for: '{query}'\n",
+                sort_key=lambda m: (-m["_score"], m["category"] or "", m["name"] or ""),
+                max_chars=max_chars,
+            )
+            score_rows.extend(_score_rows_for_ids(ordered_methods, main_ids))
+
+        if methods and query and query.strip():
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT m.method_id, m.name, m.description, m.implementation_hint, m.risks, m.category
+                FROM methods m
+                WHERE m.category IN ('optimizer', 'regularization')
+                """
+            )
+            general_methods = [dict(row) for row in cur.fetchall()]
+
+            search_result_ids = {m["method_id"] for m in methods}
+            general_methods = [m for m in general_methods if m["method_id"] not in search_result_ids]
+
+            if general_methods:
+                remaining_max_chars = None
+                if max_chars is not None:
+                    remaining_max_chars = max(0, max_chars - len(main_pack_str))
+
+                if remaining_max_chars is None or remaining_max_chars > 0:
+                    _score_methods(general_methods, conn, {}, agent_run_id=agent_run_id)
+                    gen_pack_str, gen_ids = _build_method_pack(
+                        general_methods,
+                        conn,
+                        "\n# General Optimization & Hyperparameter Tuning Methods\n",
+                        max_chars=remaining_max_chars,
+                    )
+                    main_pack_str += gen_pack_str
+                    for gid in gen_ids:
+                        if gid not in main_ids:
+                            main_ids.append(gid)
+                            score_rows.extend(_score_rows_for_ids(general_methods, [gid]))
+
+        return main_pack_str, main_ids, score_rows
+    finally:
+        if close:
+            conn.close()
+
+
 def search_methods(query: str, conn=None, max_chars: int | None = None) -> str:
     """Search for methods matching the query keywords and return a formatted method pack."""
     pack, _ = search_methods_and_ids(query, conn, max_chars=max_chars)
     return pack
+
+
+def _normalize_source_types(source_types) -> list[str] | None:
+    """Return a deduplicated source-type filter or None for unfiltered retrieval."""
+    if source_types is None:
+        return None
+    if isinstance(source_types, str):
+        values = [source_types]
+    elif isinstance(source_types, (list, tuple)):
+        values = list(source_types)
+    else:
+        raise ValueError("source_types must be a string or list of strings")
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            raise ValueError("source_types must contain only strings")
+        label = value.strip()
+        if not label:
+            raise ValueError("source_types must contain non-empty strings")
+        if label in seen:
+            continue
+        seen.add(label)
+        normalized.append(label)
+    if not normalized:
+        raise ValueError("source_types must contain at least one source type")
+    return normalized
+
+
+def _source_type_filter_sql(source_types: list[str] | None, column: str) -> tuple[str, tuple[str, ...]]:
+    if not source_types:
+        return "", ()
+    placeholders = ",".join("?" for _ in source_types)
+    return f" AND {column} IN ({placeholders})", tuple(source_types)
+
+def _filter_method_ids_by_source_types(
+    conn,
+    method_ids: list[int],
+    source_types: list[str] | None,
+) -> list[int]:
+    """Return method IDs that have at least one source chunk with an allowed source type."""
+    if not source_types or not method_ids:
+        return list(method_ids)
+
+    method_placeholders = ",".join("?" for _ in method_ids)
+    source_placeholders = ",".join("?" for _ in source_types)
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT ms.method_id
+        FROM method_sources ms
+        JOIN chunks c ON c.chunk_id = ms.chunk_id
+        JOIN paper_extraction_status pes ON pes.paper_id = c.paper_id
+        WHERE ms.method_id IN ({method_placeholders})
+          AND pes.source_type IN ({source_placeholders})
+        """,
+        (*method_ids, *source_types),
+    ).fetchall()
+    allowed = {row["method_id"] for row in rows}
+    return [method_id for method_id in method_ids if method_id in allowed]
+
+
+def _method_rows_for_ids(conn, method_ids: list[int]) -> list[dict]:
+    if not method_ids:
+        return []
+    placeholders = ",".join("?" for _ in method_ids)
+    rows = conn.execute(
+        f"""
+        SELECT method_id, name, description, implementation_hint, risks, category
+        FROM methods
+        WHERE method_id IN ({placeholders})
+        """,
+        tuple(method_ids),
+    ).fetchall()
+    by_id = {row["method_id"]: dict(row) for row in rows}
+    return [by_id[method_id] for method_id in method_ids if method_id in by_id]
+
+
+def _filtered_method_context(
+    query: str,
+    conn,
+    method_ids: list[int],
+    source_types: list[str],
+) -> tuple[str, list[int]]:
+    filtered_ids = _filter_method_ids_by_source_types(conn, method_ids, source_types)
+    method_rows = _method_rows_for_ids(conn, filtered_ids)
+    if not method_rows:
+        labels = ", ".join(source_types)
+        return (
+            "# Method Pack Search Results\n\n"
+            f"No methods found matching query: '{query}' and source_types: {labels}",
+            [],
+        )
+    order = {method_id: index for index, method_id in enumerate(filtered_ids)}
+    return _build_method_pack(
+        method_rows,
+        conn,
+        f"# Method Pack Search Results for: '{query}'\n",
+        sort_key=lambda method: order[method["method_id"]],
+        max_chars=None,
+        source_types=source_types,
+    )
+
+
+
+
+def _chunk_fts_brief_sources(
+    conn,
+    query: str,
+    max_papers: int,
+    source_types: list[str] | None = None,
+) -> tuple[list[int], list[int]]:
+    """Return fallback paper and chunk IDs from chunk FTS rank order."""
+    fts_query = _fts_phrase_query(query)
+    if not fts_query:
+        return [], []
+
+    source_join_sql = ""
+    if source_types:
+        source_join_sql = (
+            "JOIN paper_extraction_status pes ON pes.paper_id = chunks.paper_id"
+        )
+    source_filter_sql, source_filter_params = _source_type_filter_sql(
+        source_types, "pes.source_type"
+    )
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        SELECT chunks_fts.rowid AS chunk_id, chunks.paper_id, chunks_fts.rank
+        FROM chunks_fts
+        JOIN chunks ON chunks.chunk_id = chunks_fts.rowid
+        {source_join_sql}
+        WHERE chunks_fts MATCH ?
+        {source_filter_sql}
+        ORDER BY chunks_fts.rank, chunks_fts.rowid
+        """,
+        (fts_query, *source_filter_params),
+    )
+
+    paper_ids: list[int] = []
+    chunk_ids: list[int] = []
+    selected_papers: set[int] = set()
+    for row in cur.fetchall():
+        paper_id = row["paper_id"]
+        if paper_id not in selected_papers:
+            if len(paper_ids) >= max_papers:
+                continue
+            selected_papers.add(paper_id)
+            paper_ids.append(paper_id)
+        if paper_id in selected_papers:
+            chunk_ids.append(row["chunk_id"])
+    return paper_ids, chunk_ids
+
+
+def get_research_brief(
+    query: str,
+    conn=None,
+    max_chars: int | None = None,
+    max_papers: int = 3,
+    include_scores: bool = False,
+    agent_run_id: int | None = None,
+    source_types=None,
+    source_type=None,
+) -> dict:
+    """Return a deterministic compressed research brief for one query.
+
+    The brief intentionally reuses ResearchFS' bounded method retrieval and paper
+    memory cards. It never calls an LLM and never adds raw chunk text beyond the
+    evidence snippets already bounded by ``get_paper_memory``.
+    """
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string")
+
+    if max_chars is not None and max_chars < 0:
+        raise ValueError("max_chars must be non-negative")
+
+    if max_papers <= 0:
+        raise ValueError("max_papers must be positive")
+
+    if source_types is None and source_type is not None:
+        source_types = source_type
+    normalized_source_types = _normalize_source_types(source_types)
+
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+
+    try:
+        if include_scores:
+            method_context, retrieved_method_ids, scores = search_methods_with_scores(
+                query,
+                conn=conn,
+                max_chars=None,
+                agent_run_id=agent_run_id,
+            )
+        else:
+            method_context, retrieved_method_ids = search_methods_and_ids(
+                query,
+                conn=conn,
+                max_chars=None,
+                agent_run_id=agent_run_id,
+            )
+            scores = None
+
+        if normalized_source_types:
+            method_context, retrieved_method_ids = _filtered_method_context(
+                query,
+                conn,
+                retrieved_method_ids,
+                normalized_source_types,
+            )
+            if scores is not None:
+                allowed_method_ids = set(retrieved_method_ids)
+                scores = [
+                    score
+                    for score in scores
+                    if score.get("method_id") in allowed_method_ids
+                ]
+
+        cur = conn.cursor()
+        paper_ids: list[int] = []
+        traversal_chunk_ids: list[int] = []
+        selected_papers: set[int] = set()
+        source_join_sql = ""
+        source_filter_sql, source_filter_params = _source_type_filter_sql(
+            normalized_source_types, "pes.source_type"
+        )
+        if normalized_source_types:
+            source_join_sql = (
+                "JOIN paper_extraction_status pes ON pes.paper_id = c.paper_id"
+            )
+        for method_id in retrieved_method_ids:
+            cur.execute(
+                f"""
+                SELECT c.paper_id, ms.chunk_id
+                FROM method_sources ms
+                JOIN chunks c ON c.chunk_id = ms.chunk_id
+                {source_join_sql}
+                WHERE ms.method_id = ?
+                {source_filter_sql}
+                ORDER BY c.paper_id, ms.chunk_id
+                """,
+                (method_id, *source_filter_params),
+            )
+            for row in cur.fetchall():
+                paper_id = row["paper_id"]
+                if paper_id not in selected_papers:
+                    if len(paper_ids) >= max_papers:
+                        continue
+                    selected_papers.add(paper_id)
+                    paper_ids.append(paper_id)
+                if paper_id in selected_papers:
+                    traversal_chunk_ids.append(row["chunk_id"])
+        if not paper_ids:
+            paper_ids, traversal_chunk_ids = _chunk_fts_brief_sources(
+                conn, query, max_papers, normalized_source_types
+            )
+
+
+        header_lines = [
+            "# Research Brief",
+            f"Query: {query}",
+            f"Max papers: {max_papers}",
+            f"Selected papers: {len(paper_ids)}",
+            "Source types: " + (", ".join(normalized_source_types) if normalized_source_types else "unfiltered"),
+            "Source: deterministic compressed method retrieval plus bounded paper memory cards; no LLM call.",
+        ]
+        lesson_budget = None
+        method_budget = None
+        if max_chars is not None:
+            lesson_budget = max(0, max_chars // 5)
+            method_budget = max(0, max_chars // 3)
+        standalone_lessons = _standalone_lesson_matches(query, conn)
+        sections = [
+            "\n".join(header_lines),
+            _limit_text(_format_standalone_lessons(standalone_lessons), lesson_budget),
+            "## Method retrieval\n" + _limit_text(method_context, method_budget),
+        ]
+
+        method_ids = list(retrieved_method_ids)
+        chunk_ids = list(traversal_chunk_ids)
+        lesson_ids: list[int] = [row["lesson_id"] for row in standalone_lessons]
+        paper_memory_provenance: list[dict] = []
+        for index, paper_id in enumerate(paper_ids, start=1):
+            card_budget = None
+            if max_chars is not None:
+                remaining_cards = max(1, len(paper_ids) - index + 1)
+                current_len = len("\n\n".join(sections))
+                remaining = max(0, max_chars - current_len)
+                heading_allowance = 80
+                card_budget = max(0, remaining // remaining_cards - heading_allowance)
+            card = get_paper_memory(paper_id, conn=conn, max_chars=card_budget)
+            method_ids.extend(card.get("method_ids") or [])
+            chunk_ids.extend(card.get("chunk_ids") or [])
+            lesson_ids.extend(card.get("lesson_ids") or [])
+            paper_memory_provenance.append(_paper_memory_brief_metadata(card))
+            sections.append(
+                f"## Paper memory card {index}: paper_id={paper_id}\n"
+                + str(card.get("context") or "")
+            )
+
+        context = _limit_text("\n\n".join(sections), max_chars)
+        result = {
+            "ok": True,
+            "query": query,
+            "context": context,
+            "paper_ids": paper_ids,
+            "method_ids": _unique_ordered(method_ids),
+            "chunk_ids": _unique_ordered(chunk_ids),
+            "lesson_ids": _unique_ordered(lesson_ids),
+            "paper_memory_provenance": paper_memory_provenance,
+            "max_chars": max_chars,
+            "max_papers": max_papers,
+            "source_types": normalized_source_types,
+        }
+        if include_scores:
+            result["scores"] = scores
+        return result
+    finally:
+        if close:
+            conn.close()
+
+
 def get_experiment_brief(name: str = "nanochat_autoresearch", conn=None) -> str:
     """Return the named experiment brief content."""
     close = False
@@ -580,6 +1406,919 @@ def update_experiment(
         if close:
             conn.close()
 
+
+def _unique_method_ids(method_ids: Optional[list[int]]) -> list[int]:
+    """Return method IDs once, preserving caller order."""
+    if not method_ids:
+        return []
+    return list(dict.fromkeys(method_ids))
+
+
+def _insert_experiment_methods(
+    cur,
+    experiment_id: int,
+    method_ids: Optional[list[int]],
+    role: str = "retrieved",
+    note: Optional[str] = None,
+) -> None:
+    role = role or "retrieved"
+    for method_id in _unique_method_ids(method_ids):
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO experiment_methods
+            (experiment_id, method_id, role, note)
+            VALUES (?, ?, ?, ?)
+            """,
+            (experiment_id, method_id, role, note),
+        )
+        if note is not None:
+            cur.execute(
+                """
+                UPDATE experiment_methods
+                SET note = ?
+                WHERE experiment_id = ? AND method_id = ? AND role = ?
+                """,
+                (note, experiment_id, method_id, role),
+            )
+
+
+def link_experiment_methods(
+    experiment_id: int,
+    method_ids: list[int],
+    role: str = "retrieved",
+    note: Optional[str] = None,
+    conn=None,
+) -> None:
+    """Connect an experiment to the methods it used or evaluated."""
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+
+    try:
+        cur = conn.cursor()
+        _insert_experiment_methods(cur, experiment_id, method_ids, role, note)
+        conn.commit()
+    finally:
+        if close:
+            conn.close()
+
+
+def log_lesson(
+    label: str,
+    content: str,
+    outcome: Optional[str] = None,
+    method_id: Optional[int] = None,
+    experiment_id: Optional[int] = None,
+    conn=None,
+) -> int:
+    """Record a lesson or failure learned from a method or experiment."""
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO lessons (method_id, experiment_id, label, content, outcome)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (method_id, experiment_id, label, content, outcome),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        if close:
+            conn.close()
+
+
+def _truncate_text(text: Optional[str], limit: int = 220) -> str:
+    if text is None:
+        return ""
+    compact = " ".join(str(text).split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _limit_text(text: str, max_chars: Optional[int]) -> str:
+    if max_chars is None or len(text) <= max_chars:
+        return text
+    if max_chars <= 0:
+        return ""
+    suffix = "\n... truncated"
+    if max_chars <= len(suffix):
+        return text[:max_chars]
+    return text[: max_chars - len(suffix)].rstrip() + suffix
+
+
+def _format_stats_summary(stats: dict) -> str:
+    feedback_suffix = ""
+    if stats.get("feedback_count", 0) > 0:
+        feedback_suffix = (
+            f"; feedback: {stats['feedback_count']} ratings, "
+            f"avg {stats['feedback_avg_rating']:+.2f}"
+        )
+    if stats["total_runs"] == 0:
+        return f"history: no linked experiments{feedback_suffix}"
+    return (
+        f"history: {stats['total_runs']} runs, {stats['success_rate']:.0%} success "
+        f"({stats['keeps']} keep, {stats['discards']} discard, "
+        f"{stats['crashes']} crash), avg {stats['avg_bpb_delta']:+.6f} BPB"
+        f"{feedback_suffix}"
+    )
+
+
+def _get_code_targets(method_id: int, conn, limit: int = 5) -> list[dict]:
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT
+            mct.file_path,
+            mct.symbol_name,
+            mct.symbol_kind,
+            mct.rationale,
+            MIN(cs.start_line) AS start_line,
+            MAX(cs.end_line) AS end_line,
+            MAX(cs.docstring) AS docstring
+        FROM method_code_targets mct
+        LEFT JOIN code_symbols cs
+          ON cs.file_path = mct.file_path
+         AND cs.symbol_name = mct.symbol_name
+         AND cs.symbol_kind = mct.symbol_kind
+        WHERE mct.method_id = ?
+        GROUP BY mct.file_path, mct.symbol_name, mct.symbol_kind, mct.rationale
+        ORDER BY mct.file_path, start_line, mct.symbol_name
+        LIMIT ?
+        """,
+        (method_id, limit),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def _format_code_target(row: dict) -> str:
+    target = f"{row['symbol_kind']} {row['symbol_name']}".strip()
+    location = row["file_path"]
+    if row["start_line"] is not None:
+        location += f":{row['start_line']}"
+        if row["end_line"] and row["end_line"] != row["start_line"]:
+            location += f"-{row['end_line']}"
+    line = f"- `{target}` at {location}"
+    if row["rationale"]:
+        line += f" — {_truncate_text(row['rationale'], 160)}"
+    if row["docstring"]:
+        line += f" ({_truncate_text(row['docstring'], 140)})"
+    return line
+
+
+def _get_history_items(method_id: int, conn, max_items: int) -> tuple[list[dict], list[dict]]:
+    cur = conn.cursor()
+    cur.execute(
+        """
+        WITH linked AS (
+            SELECT em.experiment_id, em.role, em.note
+            FROM experiment_methods em
+            WHERE em.method_id = ?
+            UNION ALL
+            SELECT re.experiment_id, 'retrieved' AS role, re.query AS note
+            FROM retrieval_events re
+            JOIN retrieved_methods rm ON re.event_id = rm.event_id
+            WHERE rm.method_id = ? AND re.experiment_id IS NOT NULL
+        )
+        SELECT
+            e.experiment_id,
+            e.status,
+            e.val_bpb,
+            e.memory_gb,
+            e.description,
+            e.timestamp,
+            GROUP_CONCAT(DISTINCT linked.role) AS roles,
+            MAX(linked.note) AS note
+        FROM linked
+        JOIN experiments e ON e.experiment_id = linked.experiment_id
+        GROUP BY
+            e.experiment_id,
+            e.status,
+            e.val_bpb,
+            e.memory_gb,
+            e.description,
+            e.timestamp
+        ORDER BY e.timestamp DESC, e.experiment_id DESC
+        LIMIT ?
+        """,
+        (method_id, method_id, max_items),
+    )
+    experiments = [dict(row) for row in cur.fetchall()]
+
+    cur.execute(
+        """
+        WITH linked_experiments AS (
+            SELECT em.experiment_id
+            FROM experiment_methods em
+            WHERE em.method_id = ?
+            UNION
+            SELECT re.experiment_id
+            FROM retrieval_events re
+            JOIN retrieved_methods rm ON re.event_id = rm.event_id
+            WHERE rm.method_id = ? AND re.experiment_id IS NOT NULL
+        )
+        SELECT DISTINCT
+            l.lesson_id,
+            l.method_id,
+            l.experiment_id,
+            l.label,
+            l.content,
+            l.outcome,
+            l.created_at
+        FROM lessons l
+        WHERE l.method_id = ?
+           OR (
+               l.experiment_id IS NOT NULL
+               AND l.experiment_id IN (SELECT experiment_id FROM linked_experiments)
+           )
+        ORDER BY l.created_at DESC, l.lesson_id DESC
+        LIMIT ?
+        """,
+        (method_id, method_id, method_id, max_items),
+    )
+    lessons = [dict(row) for row in cur.fetchall()]
+    return experiments, lessons
+
+
+def _format_experiment_summary(row: dict) -> str:
+    parts = [f"status={row['status']}"]
+    if row["val_bpb"] is not None:
+        parts.append(f"val_bpb={row['val_bpb']:.6f}")
+    if row["memory_gb"] is not None:
+        parts.append(f"memory_gb={row['memory_gb']:.2f}")
+    if row["roles"]:
+        parts.append(f"roles={row['roles']}")
+    if row["note"]:
+        parts.append(f"note={_truncate_text(row['note'], 100)}")
+    description = _truncate_text(row["description"], 180)
+    if description:
+        parts.append(description)
+    return f"- Experiment #{row['experiment_id']}: " + "; ".join(parts)
+
+
+def _format_lesson_summary(row: dict) -> str:
+    outcome = f" [{row['outcome']}]" if row["outcome"] else ""
+    scope = []
+    if row["method_id"] is not None:
+        scope.append(f"method #{row['method_id']}")
+    if row["experiment_id"] is not None:
+        scope.append(f"experiment #{row['experiment_id']}")
+    suffix = f" ({', '.join(scope)})" if scope else ""
+    return (
+        f"- {row['label']}{outcome}{suffix}: "
+        f"{_truncate_text(row['content'], 220)}"
+    )
+
+
+def _format_paper_memory_status(status: dict | None) -> list[str]:
+    if not status:
+        return ["Extraction: no stored extraction status."]
+
+    parts = [f"status={status['status']}"]
+    if status.get("source_type"):
+        parts.append(f"source={status['source_type']}")
+    parts.append(f"chunks={status['chunk_count']}")
+    parts.append(f"methods={status['method_count']}")
+    if status.get("source_char_count") is not None:
+        parts.append(f"source_chars={status['source_char_count']}")
+    if status.get("compressed_char_count") is not None:
+        parts.append(f"compressed_chars={status['compressed_char_count']}")
+    if status.get("compression_ratio") is not None:
+        parts.append(f"compression_ratio={status['compression_ratio']:.3f}")
+    if status.get("confidence_score") is not None:
+        parts.append(f"confidence={status['confidence_score']:.2f}")
+    if status.get("confidence_reason"):
+        parts.append(f"confidence_reason={_truncate_text(status['confidence_reason'], 160)}")
+    if status.get("extractor_model"):
+        parts.append(f"extractor_model={_truncate_text(status['extractor_model'], 120)}")
+    if status.get("extractor_prompt_version"):
+        parts.append(
+            f"extractor_prompt_version={_truncate_text(status['extractor_prompt_version'], 120)}"
+        )
+    if status.get("error_text"):
+        parts.append(f"error={_truncate_text(status['error_text'], 160)}")
+    return ["Extraction: " + "; ".join(parts) + "."]
+
+
+def _paper_memory_status_record(row) -> dict | None:
+    if row is None:
+        return None
+    return {
+        "paper_id": row["paper_id"],
+        "status": row["status"],
+        "source_type": row["source_type"],
+        "chunk_count": row["chunk_count"],
+        "method_count": row["method_count"],
+        "source_char_count": row["source_char_count"],
+        "compressed_char_count": row["compressed_char_count"],
+        "compression_ratio": row["compression_ratio"],
+        "confidence_score": row["confidence_score"],
+        "confidence_reason": row["confidence_reason"],
+        "extractor_model": row["extractor_model"],
+        "extractor_prompt_version": row["extractor_prompt_version"],
+        "error_text": row["error_text"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+def _paper_memory_provenance_source(source: dict) -> dict:
+    return {
+        "method_id": source["method_id"],
+        "chunk_id": source["chunk_id"],
+        "section": source["section"],
+        "evidence_text": (
+            _truncate_text(source["evidence_text"], 320)
+            if source.get("evidence_text")
+            else None
+        ),
+        "evidence_start": source["evidence_start"],
+        "evidence_end": source["evidence_end"],
+        "evidence_strategy": source["evidence_strategy"],
+    }
+
+
+def _paper_memory_brief_metadata(card: dict) -> dict:
+    metadata = {
+        "paper_id": card["paper_id"],
+        "provenance_sources": card.get("provenance_sources") or [],
+    }
+    if card.get("extraction_status") is not None:
+        metadata["extraction_status"] = card["extraction_status"]
+    return metadata
+
+
+def _unique_ordered(values: list[int]) -> list[int]:
+    unique: list[int] = []
+    seen: set[int] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return unique
+
+
+def _paper_memory_recent_experiments(conn, method_ids: list[int], limit: int = 5) -> list[dict]:
+    if not method_ids or limit <= 0:
+        return []
+    placeholders = ",".join("?" for _ in method_ids)
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        WITH linked AS (
+            SELECT em.experiment_id, em.role, em.note
+            FROM experiment_methods em
+            WHERE em.method_id IN ({placeholders})
+            UNION ALL
+            SELECT re.experiment_id, 'retrieved' AS role, re.query AS note
+            FROM retrieval_events re
+            JOIN retrieved_methods rm ON rm.event_id = re.event_id
+            WHERE rm.method_id IN ({placeholders})
+              AND re.experiment_id IS NOT NULL
+        )
+        SELECT
+            e.experiment_id,
+            e.status,
+            e.val_bpb,
+            e.memory_gb,
+            e.description,
+            e.timestamp,
+            GROUP_CONCAT(DISTINCT linked.role) AS roles,
+            MAX(linked.note) AS note
+        FROM linked
+        JOIN experiments e ON e.experiment_id = linked.experiment_id
+        GROUP BY
+            e.experiment_id,
+            e.status,
+            e.val_bpb,
+            e.memory_gb,
+            e.description,
+            e.timestamp
+        ORDER BY e.timestamp DESC, e.experiment_id DESC
+        LIMIT ?
+        """,
+        (*method_ids, *method_ids, limit),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def _paper_memory_recent_lessons(
+    conn, method_ids: list[int], experiment_ids: list[int], limit: int = 5
+) -> list[dict]:
+    if limit <= 0:
+        return []
+    clauses: list[str] = []
+    params: list[int] = []
+    if method_ids:
+        clauses.append(f"l.method_id IN ({','.join('?' for _ in method_ids)})")
+        params.extend(method_ids)
+    if experiment_ids:
+        clauses.append(f"l.experiment_id IN ({','.join('?' for _ in experiment_ids)})")
+        params.extend(experiment_ids)
+    if not clauses:
+        return []
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        SELECT
+            l.lesson_id,
+            l.method_id,
+            l.experiment_id,
+            l.label,
+            l.content,
+            l.outcome,
+            l.created_at
+        FROM lessons l
+        WHERE {' OR '.join(clauses)}
+        ORDER BY l.created_at DESC, l.lesson_id DESC
+        LIMIT ?
+        """,
+        (*params, limit),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def _paper_memory_feedback_notes(conn, method_id: int, limit: int = 2) -> list[dict]:
+    if limit <= 0:
+        return []
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT feedback_id, rating, label, note, source, timestamp
+        FROM method_feedback
+        WHERE method_id = ?
+        ORDER BY timestamp DESC, feedback_id DESC
+        LIMIT ?
+        """,
+        (method_id, limit),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def get_paper_memory(
+    paper_id: int, conn=None, max_chars: Optional[int] = None
+) -> dict:
+    """Return one deterministic, bounded paper memory card and referenced IDs."""
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT paper_id, title, authors, abstract, url, publish_date, created_at
+            FROM papers
+            WHERE paper_id = ?
+            """,
+            (paper_id,),
+        )
+        paper = cur.fetchone()
+        if paper is None:
+            raise LookupError(f"No paper found for id {paper_id}")
+
+        cur.execute(
+            """
+            SELECT
+                paper_id,
+                status,
+                source_type,
+                chunk_count,
+                method_count,
+                source_char_count,
+                compressed_char_count,
+                compression_ratio,
+                confidence_score,
+                confidence_reason,
+                extractor_model,
+                extractor_prompt_version,
+                error_text,
+                created_at,
+                updated_at
+            FROM paper_extraction_status
+            WHERE paper_id = ?
+            """,
+            (paper_id,),
+        )
+        extraction_status = _paper_memory_status_record(cur.fetchone())
+
+        cur.execute(
+            """
+            SELECT DISTINCT
+                m.method_id,
+                m.name,
+                m.description,
+                m.implementation_hint,
+                m.risks,
+                m.category
+            FROM method_sources ms
+            JOIN chunks c ON c.chunk_id = ms.chunk_id
+            JOIN methods m ON m.method_id = ms.method_id
+            WHERE c.paper_id = ?
+            ORDER BY m.method_id
+            """,
+            (paper_id,),
+        )
+        methods = [dict(row) for row in cur.fetchall()]
+        method_ids = [row["method_id"] for row in methods]
+
+        cur.execute(
+            """
+            SELECT
+                ms.method_id,
+                ms.chunk_id,
+                c.section,
+                ms.evidence_text,
+                ms.evidence_start,
+                ms.evidence_end,
+                ms.evidence_strategy
+            FROM method_sources ms
+            JOIN chunks c ON c.chunk_id = ms.chunk_id
+            WHERE c.paper_id = ?
+            ORDER BY ms.method_id, ms.chunk_id
+            """,
+            (paper_id,),
+        )
+        sources = [dict(row) for row in cur.fetchall()]
+        provenance_sources = [_paper_memory_provenance_source(source) for source in sources]
+        chunk_ids = _unique_ordered([row["chunk_id"] for row in sources])
+        sources_by_method: dict[int, list[dict]] = {}
+        for source in sources:
+            sources_by_method.setdefault(source["method_id"], []).append(source)
+
+        feedback = {
+            method_id: get_method_feedback_summary(method_id, conn=conn)
+            for method_id in method_ids
+        }
+        feedback_notes = {
+            method_id: _paper_memory_feedback_notes(conn, method_id)
+            for method_id in method_ids
+        }
+        experiments = _paper_memory_recent_experiments(conn, method_ids)
+        experiment_ids = [row["experiment_id"] for row in experiments]
+        lessons = _paper_memory_recent_lessons(conn, method_ids, experiment_ids)
+        lesson_ids = [row["lesson_id"] for row in lessons]
+
+        lines = [
+            f"# Paper Memory: {paper['title']}",
+            f"Paper ID: {paper['paper_id']}",
+        ]
+        if paper["authors"]:
+            lines.append(f"Authors: {_truncate_text(paper['authors'], 220)}")
+        if paper["publish_date"]:
+            lines.append(f"Published: {paper['publish_date']}")
+        if paper["url"]:
+            lines.append(f"URL: {paper['url']}")
+        if paper["abstract"]:
+            lines.append(f"Abstract: {_truncate_text(paper['abstract'], 500)}")
+        lines.extend(_format_paper_memory_status(extraction_status))
+
+        lines.append("")
+        lines.append("## Methods and provenance")
+        if not methods:
+            lines.append("- No linked methods.")
+        for method in methods:
+            method_id = method["method_id"]
+            label = method["category"] or "uncategorized"
+            lines.append(f"### {method['name']} (method_id={method_id}, category={label})")
+            method_sources = sources_by_method.get(method_id, [])
+            if method_sources:
+                lines.append("Evidence:")
+                for source in method_sources:
+                    location = f"chunk_id={source['chunk_id']}"
+                    if source["section"]:
+                        location += f", section={source['section']}"
+                    if source["evidence_start"] is not None and source["evidence_end"] is not None:
+                        location += f", chars={source['evidence_start']}-{source['evidence_end']}"
+                    if source["evidence_strategy"]:
+                        location += f", strategy={source['evidence_strategy']}"
+                    if source["evidence_text"]:
+                        evidence = _truncate_text(source["evidence_text"], 320)
+                        lines.append(f"- {location}: {evidence}")
+                    else:
+                        lines.append(
+                            f"- {location}: evidence_text missing; no compressed excerpt stored."
+                        )
+            else:
+                lines.append("Evidence: none linked.")
+            if method["description"]:
+                lines.append(f"Description: {_truncate_text(method['description'], 260)}")
+            if method["implementation_hint"]:
+                lines.append(
+                    f"Implementation hint: {_truncate_text(method['implementation_hint'], 260)}"
+                )
+            if method["risks"]:
+                lines.append(f"Risks: {_truncate_text(method['risks'], 220)}")
+            summary = feedback[method_id]
+            if summary["feedback_count"] > 0:
+                lines.append(
+                    "Feedback: "
+                    f"{summary['feedback_count']} ratings, "
+                    f"avg {summary['feedback_avg_rating']:+.2f}"
+                )
+                for note in feedback_notes.get(method_id, []):
+                    note_parts = [f"rating={note['rating']:+.2f}"]
+                    if note["label"]:
+                        note_parts.append(f"label={note['label']}")
+                    if note["source"]:
+                        note_parts.append(f"source={note['source']}")
+                    if note["note"]:
+                        note_parts.append(_truncate_text(note["note"], 180))
+                    lines.append("- Feedback note: " + "; ".join(note_parts))
+
+        lines.append("")
+        lines.append("## Recent experiments")
+        if experiments:
+            lines.extend(_format_experiment_summary(row) for row in experiments)
+        else:
+            lines.append("- None linked.")
+
+        lines.append("")
+        lines.append("## Lessons")
+        if lessons:
+            lines.extend(_format_lesson_summary(row) for row in lessons)
+        else:
+            lines.append("- None recorded.")
+
+        context = _limit_text("\n".join(lines), max_chars)
+        result = {
+            "paper_id": paper_id,
+            "max_chars": max_chars,
+            "context": context,
+            "method_ids": method_ids,
+            "chunk_ids": chunk_ids,
+            "lesson_ids": lesson_ids,
+            "experiment_ids": experiment_ids,
+            "provenance_sources": provenance_sources,
+        }
+        if extraction_status is not None:
+            result["extraction_status"] = extraction_status
+            result["extraction"] = extraction_status
+            result["confidence_score"] = extraction_status["confidence_score"]
+            result["confidence_reason"] = extraction_status["confidence_reason"]
+            result["compression_ratio"] = extraction_status["compression_ratio"]
+            result["source_char_count"] = extraction_status["source_char_count"]
+            result["compressed_char_count"] = extraction_status["compressed_char_count"]
+        return result
+    finally:
+        if close:
+            conn.close()
+
+
+def get_method_history(method_id: int, conn=None, max_items: int = 5) -> str:
+    """Return recent experiments and lessons linked to a method."""
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT method_id, name, description, implementation_hint, risks, category
+            FROM methods
+            WHERE method_id = ?
+            """,
+            (method_id,),
+        )
+        method = cur.fetchone()
+        if method is None:
+            return f"# Method History\n\nNo method found for method_id={method_id}."
+
+        limit = max(0, max_items)
+        stats = _get_empirical_stats(method_id, conn, {})
+        targets = _get_code_targets(method_id, conn, limit=max(1, min(5, limit or 1)))
+        experiments, lessons = _get_history_items(method_id, conn, limit)
+
+        lines = [
+            f"# Method History: {method['name']} (method_id={method_id})",
+            f"Score history: {_format_stats_summary(stats)}.",
+        ]
+        if method["description"]:
+            lines.append(f"Description: {_truncate_text(method['description'], 240)}")
+        if method["implementation_hint"]:
+            lines.append(
+                f"Implementation hint: {_truncate_text(method['implementation_hint'], 240)}"
+            )
+        if method["risks"]:
+            lines.append(f"Risks: {_truncate_text(method['risks'], 200)}")
+
+        lines.append("Code targets:")
+        if targets:
+            lines.extend(_format_code_target(target) for target in targets)
+        else:
+            lines.append("- None linked.")
+
+        lines.append("Recent experiments:")
+        if experiments:
+            lines.extend(_format_experiment_summary(row) for row in experiments)
+        else:
+            lines.append("- None linked.")
+
+        lines.append("Lessons:")
+        if lessons:
+            lines.extend(_format_lesson_summary(row) for row in lessons)
+        else:
+            lines.append("- None recorded.")
+
+        return "\n".join(lines)
+    finally:
+        if close:
+            conn.close()
+
+
+def recommend_next_experiments(
+    query: str = "",
+    conn=None,
+    max_items: int = 5,
+    agent_run_id: Optional[int] = None,
+) -> str:
+    """Recommend methods to try next, including graph history and code targets."""
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+
+    try:
+        limit = max(0, max_items)
+        methods, _, method_ranks = _search_methods_hybrid(query, conn)
+        used_fallback_catalog = False
+        if limit == 0:
+            return f"# Recommended Next Experiments\n\nNo methods requested for query: '{query}'"
+        if not methods:
+            methods = _fetch_all_methods(conn.cursor())
+            method_ranks = {}
+            used_fallback_catalog = True
+        if not methods:
+            return "# Recommended Next Experiments\n\nNo methods are available."
+        scored_methods, _ = _score_methods(
+            [dict(method) for method in methods],
+            conn,
+            method_ranks,
+            agent_run_id=agent_run_id,
+        )
+
+        header = "# Recommended Next Experiments"
+        if query and query.strip():
+            header += f" for: '{query}'"
+        lines = [header]
+        if used_fallback_catalog and query and query.strip():
+            lines.append("No direct method matches; showing the ranked method catalog instead.")
+        history_limit = max(1, min(3, limit))
+
+        for index, method in enumerate(scored_methods[:limit], start=1):
+            method_id = method["method_id"]
+            lines.append("")
+            lines.append(f"## {index}. {method['name']} (method_id={method_id})")
+            lines.append(
+                f"Score: {method['_score']:.3f}; "
+                f"{_format_stats_summary(method['stats'])}."
+            )
+            if method["description"]:
+                lines.append(f"Description: {_truncate_text(method['description'], 240)}")
+            if method["implementation_hint"]:
+                lines.append(
+                    "Implementation hint: "
+                    f"{_truncate_text(method['implementation_hint'], 240)}"
+                )
+            if method["risks"]:
+                lines.append(f"Risks: {_truncate_text(method['risks'], 200)}")
+
+            targets = _get_code_targets(method_id, conn, limit=5)
+            lines.append("Code targets:")
+            if targets:
+                lines.extend(_format_code_target(target) for target in targets)
+            else:
+                lines.append("- None linked.")
+
+            experiments, lessons = _get_history_items(method_id, conn, history_limit)
+            lines.append("Prior experiments:")
+            if experiments:
+                lines.extend(_format_experiment_summary(row) for row in experiments)
+            else:
+                lines.append("- None linked.")
+            lines.append("Lessons:")
+            if lessons:
+                lines.extend(_format_lesson_summary(row) for row in lessons)
+            else:
+                lines.append("- None recorded.")
+
+        return "\n".join(lines)
+    finally:
+        if close:
+            conn.close()
+
+
+def _get_code_symbols_fallback(
+    query: str,
+    conn,
+    max_chars: Optional[int] = None,
+) -> str:
+    cur = conn.cursor()
+    fts_query = _fts_phrase_query(query)
+    try:
+        if fts_query:
+            cur.execute(
+                """
+                SELECT
+                    cs.file_path,
+                    cs.symbol_name,
+                    cs.symbol_kind,
+                    cs.start_line,
+                    cs.end_line,
+                    cs.docstring
+                FROM code_symbols_fts
+                JOIN code_symbols cs ON code_symbols_fts.rowid = cs.symbol_id
+                WHERE code_symbols_fts MATCH ?
+                ORDER BY code_symbols_fts.rank
+                LIMIT 20
+                """,
+                (fts_query,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT file_path, symbol_name, symbol_kind, start_line, end_line, docstring
+                FROM code_symbols
+                ORDER BY file_path, start_line, symbol_name
+                LIMIT 20
+                """
+            )
+        rows = [dict(row) for row in cur.fetchall()]
+    except sqlite3.OperationalError:
+        return "No code symbols indexed."
+
+    if not rows:
+        return "No code symbols indexed."
+
+    lines = ["# Code Symbols"]
+    for row in rows:
+        target = f"{row['symbol_kind']} {row['symbol_name']}".strip()
+        location = row["file_path"]
+        if row["start_line"] is not None:
+            location += f":{row['start_line']}"
+            if row["end_line"] and row["end_line"] != row["start_line"]:
+                location += f"-{row['end_line']}"
+        line = f"- `{target}` at {location}"
+        if row["docstring"]:
+            line += f" — {_truncate_text(row['docstring'], 160)}"
+        lines.append(line)
+    return _limit_text("\n".join(lines), max_chars)
+
+
+def _get_code_context(query: str, conn, max_chars: Optional[int] = None) -> str:
+    try:
+        from researchfs.codegraph import get_code_map, search_code_symbols
+    except ImportError:
+        return _get_code_symbols_fallback(query, conn, max_chars=max_chars)
+
+    if query and query.strip():
+        return search_code_symbols(query, conn=conn, max_chars=max_chars)
+    return get_code_map(conn=conn, max_chars=max_chars)
+
+
+def get_graph_context(
+    query: str = "",
+    conn=None,
+    max_chars: Optional[int] = None,
+    agent_run_id: Optional[int] = None,
+) -> str:
+    """Return method, experiment, lesson, and code context for loopgraph prompts."""
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+
+    try:
+        code_budget = None
+        if max_chars is not None:
+            code_budget = max(0, max_chars - int(max_chars * 0.7))
+
+        recommendations = recommend_next_experiments(
+            query,
+            conn=conn,
+            max_items=5,
+            agent_run_id=agent_run_id,
+        )
+        code_context = _get_code_context(query, conn, max_chars=code_budget)
+
+        sections = ["# ResearchFS Graph Context", recommendations]
+        if code_context:
+            sections.append(code_context)
+        return _limit_text("\n\n".join(sections), max_chars)
+    finally:
+        if close:
+            conn.close()
+
 def log_retrieval_event(
     event_type: str,
     query: str,
@@ -607,19 +2346,73 @@ def log_retrieval_event(
         )
         event_id = cur.lastrowid
 
-        if method_ids:
-            unique_method_ids = list(dict.fromkeys(method_ids))
-            for method_id in unique_method_ids:
-                cur.execute(
-                    """
-                    INSERT INTO retrieved_methods (event_id, method_id)
-                    VALUES (?, ?)
-                    """,
-                    (event_id, method_id),
-                )
-
+        unique_method_ids = _unique_method_ids(method_ids)
+        for method_id in unique_method_ids:
+            cur.execute(
+                """
+                INSERT INTO retrieved_methods (event_id, method_id)
+                VALUES (?, ?)
+                """,
+                (event_id, method_id),
+            )
+        if experiment_id is not None and unique_method_ids:
+            _insert_experiment_methods(
+                cur,
+                experiment_id,
+                unique_method_ids,
+                role="retrieved",
+                note=None,
+            )
         conn.commit()
         return event_id
+    finally:
+        if close:
+            conn.close()
+
+
+def log_method_feedback(
+    method_id: int,
+    rating: float,
+    event_id: Optional[int] = None,
+    label: Optional[str] = None,
+    note: Optional[str] = None,
+    source: Optional[str] = None,
+    conn=None,
+) -> int:
+    """Record a human or agent rating for a retrieved method."""
+    if isinstance(rating, bool):
+        raise ValueError("rating must be a number between -1.0 and 1.0")
+    try:
+        numeric_rating = float(rating)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("rating must be a number between -1.0 and 1.0") from exc
+    if not -1.0 <= numeric_rating <= 1.0:
+        raise ValueError("rating must be between -1.0 and 1.0")
+
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM methods WHERE method_id = ?", (method_id,))
+        if cur.fetchone() is None:
+            raise ValueError(f"method_id {method_id} does not exist")
+        if event_id is not None:
+            cur.execute("SELECT 1 FROM retrieval_events WHERE event_id = ?", (event_id,))
+            if cur.fetchone() is None:
+                raise ValueError(f"event_id {event_id} does not exist")
+        cur.execute(
+            """
+            INSERT INTO method_feedback
+            (event_id, method_id, rating, label, note, source)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (event_id, method_id, numeric_rating, label, note, source),
+        )
+        conn.commit()
+        return cur.lastrowid
     finally:
         if close:
             conn.close()

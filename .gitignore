@@ -1,3 +1,8 @@
+# OS/editor cruft
+.DS_Store
+.ipynb_checkpoints/
+.wrangler/
+
 # Python-generated files
 __pycache__/
 *.py[oc]
@@ -11,6 +16,7 @@ wheels/
 worktrees/
 results/
 queue/
+data/
 
 # Agent prompt files (generated per-session by launchers)
 CLAUDE.md

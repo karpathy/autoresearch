@@ -5,6 +5,7 @@ import html
 import io
 import re
 import tarfile
+from urllib.parse import urlparse
 
 import requests
 
@@ -128,17 +129,35 @@ def fetch_arxiv_source(arxiv_id: str) -> dict:
     return meta
 
 
-def fetch_github_readme(repo_path: str) -> dict:
-    """Download the README file from a GitHub repository."""
-    repo_path = repo_path.strip()
-    match = re.search(r"github\.com/([^/]+/[^/]+)", repo_path)
-    clean_path = (match.group(1) if match else repo_path).strip("/")
-    owner_repo = clean_path.split("/", 1)
-    if len(owner_repo) != 2 or not owner_repo[0] or not owner_repo[1]:
+def _parse_github_repo_path(repo_path: str) -> tuple[str, str]:
+    """Return ``(owner, repo)`` for a bare owner/repo path or GitHub repo URL."""
+    value = repo_path.strip()
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc:
+        if parsed.netloc.lower() not in {"github.com", "www.github.com"}:
+            raise ValueError("repo_path must be 'owner/repo' or a GitHub repository URL")
+        if parsed.query or parsed.fragment:
+            raise ValueError("repo_path must be 'owner/repo' or a GitHub repository URL")
+        clean_path = parsed.path.strip("/")
+    else:
+        if "?" in value or "#" in value:
+            raise ValueError("repo_path must be 'owner/repo' or a GitHub repository URL")
+        clean_path = value.strip("/")
+
+    parts = clean_path.split("/")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
         raise ValueError("repo_path must be 'owner/repo' or a GitHub repository URL")
-    owner, repo = owner_repo
+    owner, repo = parts
     if repo.endswith(".git"):
         repo = repo[:-4]
+    if not repo:
+        raise ValueError("repo_path must be 'owner/repo' or a GitHub repository URL")
+    return owner, repo
+
+
+def fetch_github_readme(repo_path: str) -> dict:
+    """Download the README file from a GitHub repository."""
+    owner, repo = _parse_github_repo_path(repo_path)
     clean_path = f"{owner}/{repo}"
     url = f"https://github.com/{clean_path}"
 
