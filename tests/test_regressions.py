@@ -1,4 +1,5 @@
 import ast
+import io
 import json
 import os
 import sqlite3
@@ -27,6 +28,56 @@ def _init_memory_db():
     conn = _memory_conn()
     db.initialize_db(conn)
     return conn
+
+def test_memory_export_rejects_non_positive_paper_ids_before_export(monkeypatch):
+    """CLI parsing rejects invalid paper IDs before any export/DB work runs."""
+    import researchfs.memory as memory
+
+    export_calls = []
+
+    def fail_export(*_args, **_kwargs):
+        export_calls.append((_args, _kwargs))
+        raise AssertionError("export should not run for invalid paper IDs")
+
+    monkeypatch.setattr(memory, "_export", fail_export)
+
+    for argv in (
+        ["export", "--paper-id", "0"],
+        ["export", "--paper-id", "-1"],
+        ["export", "--paper-id", "abc"],
+        ["export", "--paper-ids", "0"],
+        ["export", "--paper-ids", "1,-2"],
+        ["export", "--paper-ids", "1,abc"],
+        ["export", "--paper-ids", "1,,2"],
+    ):
+        stderr = io.StringIO()
+        assert memory.main(argv, stderr=stderr) == 2
+        assert stderr.getvalue()
+
+    assert export_calls == []
+
+
+def test_memory_export_parser_deduplicates_paper_ids_and_accepts_zero_max_chars(monkeypatch):
+    """Valid export arguments preserve ordered paper IDs and allow max_chars=0."""
+    import researchfs.memory as memory
+
+    captured = []
+
+    def capture_export(args, _stdout):
+        captured.append(args)
+        return 0
+
+    monkeypatch.setattr(memory, "_export", capture_export)
+
+    assert memory.main(["export", "--paper-ids", "2,1,2"], stdout=io.StringIO()) == 0
+    assert captured[-1].paper_ids == [2, 1]
+
+    assert (
+        memory.main(["export", "--all", "--max-chars", "0"], stdout=io.StringIO())
+        == 0
+    )
+    assert captured[-1].all is True
+    assert captured[-1].max_chars == 0
 
 
 def _attr_path(node):

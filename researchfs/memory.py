@@ -114,12 +114,12 @@ def _source_type_label(value: str) -> str:
 def _parse_paper_ids(value: str) -> list[int]:
     parts = [part.strip() for part in value.split(",")]
     if not parts or any(part == "" for part in parts):
-        raise argparse.ArgumentTypeError("--paper-ids must be a comma-separated list of integers")
+        raise argparse.ArgumentTypeError("--paper-ids must be a comma-separated list of positive integers")
     parsed: list[int] = []
     for part in parts:
         paper_id = _int_value(part)
-        if paper_id < 0:
-            raise argparse.ArgumentTypeError("--paper-ids must contain non-negative integers")
+        if paper_id <= 0:
+            raise argparse.ArgumentTypeError("--paper-ids must contain positive integers")
         if paper_id not in parsed:
             parsed.append(paper_id)
     return parsed
@@ -257,7 +257,7 @@ def build_parser(stderr: TextIO | None = None) -> argparse.ArgumentParser:
         help="Export a compressed paper or corpus memory bundle.",
     )
     export_choice = export_parser.add_mutually_exclusive_group(required=True)
-    export_choice.add_argument("--paper-id", type=_non_negative_int, help="Export one paper by ID")
+    export_choice.add_argument("--paper-id", type=_positive_int, help="Export one paper by ID")
     export_choice.add_argument(
         "--paper-ids",
         type=_parse_paper_ids,
