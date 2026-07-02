@@ -30,6 +30,90 @@ def _init_memory_db():
     return conn
 
 
+
+@pytest.mark.parametrize("invalid_run_id", [True, "7", 7.5, 0, -1])
+def test_start_session_rejects_invalid_explicit_run_id_before_side_effects(
+    monkeypatch, invalid_run_id
+):
+    """Explicit run IDs must be positive non-bool integers before any session work."""
+    import researchfs.client as client_module
+
+    def fail_start_agent_run(*_args, **_kwargs):
+        raise AssertionError("start_agent_run should not run for explicit run_id")
+
+    class FailSession:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("ResearchFSSession should not be constructed")
+
+    monkeypatch.setattr(client_module.rfs, "start_agent_run", fail_start_agent_run)
+    monkeypatch.setattr(client_module, "ResearchFSSession", FailSession)
+
+    client = client_module.ResearchFSClient()
+
+    with pytest.raises(ValueError, match="run_id"):
+        client.start_session(run_id=invalid_run_id)
+
+
+@pytest.mark.parametrize("invalid_agent_run_id", [True, "7", 7.5, 0, -1])
+def test_researchfs_session_rejects_invalid_agent_run_id_before_assignment(
+    invalid_agent_run_id,
+):
+    """Direct session construction validates agent run IDs before storing them."""
+    from researchfs.client import ResearchFSSession
+
+    session = ResearchFSSession.__new__(ResearchFSSession)
+
+    with pytest.raises(ValueError, match="agent_run_id"):
+        ResearchFSSession.__init__(
+            session,
+            client=object(),
+            agent_run_id=invalid_agent_run_id,
+        )
+
+    assert not hasattr(session, "agent_run_id")
+
+
+def test_start_session_uses_valid_explicit_run_id_without_creating_run(monkeypatch):
+    """A valid explicit run ID attaches the session to that existing agent run."""
+    import researchfs.client as client_module
+
+    start_calls = []
+
+    def fail_start_agent_run(*args, **kwargs):
+        start_calls.append((args, kwargs))
+        raise AssertionError("start_agent_run should not run for explicit run_id")
+
+    monkeypatch.setattr(client_module.rfs, "start_agent_run", fail_start_agent_run)
+
+    session = client_module.ResearchFSClient().start_session(run_id=42)
+
+    assert session.agent_run_id == 42
+    assert start_calls == []
+
+
+def test_start_session_none_run_id_creates_run_and_uses_returned_id(monkeypatch):
+    """Omitting run_id preserves the existing behavior of creating a new run."""
+    import researchfs.client as client_module
+
+    conn = object()
+    calls = []
+    client = client_module.ResearchFSClient()
+
+    def get_connection():
+        return conn
+
+    def start_agent_run(*, mode, model, conn):
+        calls.append({"mode": mode, "model": model, "conn": conn})
+        return 314
+
+    client.get_connection = get_connection
+    monkeypatch.setattr(client_module.rfs, "start_agent_run", start_agent_run)
+
+    session = client.start_session(mode="test-mode", model="test-model", run_id=None)
+
+    assert session.agent_run_id == 314
+    assert calls == [{"mode": "test-mode", "model": "test-model", "conn": conn}]
+
 @pytest.mark.parametrize("field_name", ["chunk_size", "overlap"])
 @pytest.mark.parametrize("invalid_value", [True, "2", 2.5])
 def test_chunk_text_rejects_non_integer_bounds_before_chunking(field_name, invalid_value):

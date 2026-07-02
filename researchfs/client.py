@@ -37,6 +37,14 @@ def _validate_optional_non_negative_int(value: object, name: str) -> Optional[in
         raise ValueError(f"{name} must be None or a non-negative integer")
     return value
 
+def _validate_positive_int(value: object, name: str) -> int:
+    """Validate a required positive integer parameter."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be a positive integer")
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
 
 
 def _query_has_content(query: str) -> bool:
@@ -168,7 +176,7 @@ class ResearchFSSession:
         recent_areas_count: int = 3,
     ) -> None:
         self.client = client
-        self.agent_run_id = agent_run_id
+        self.agent_run_id = _validate_positive_int(agent_run_id, "agent_run_id")
         self.baseline_metric = baseline_metric
         self.task_target = task_target
         self.objective = objective
@@ -609,6 +617,8 @@ class ResearchFSClient:
         """
         if run_id is None:
             run_id = rfs.start_agent_run(mode=mode, model=model, conn=self.get_connection())
+        else:
+            run_id = _validate_positive_int(run_id, "run_id")
         return ResearchFSSession(self, run_id, baseline_metric=baseline_metric)
 
     def close(self) -> None:
