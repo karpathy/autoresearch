@@ -18,7 +18,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb, DEVICE
-TIME_BUDGET = int(os.environ.get("TIME_BUDGET", TIME_BUDGET))
 STEPS_BUDGET = int(os.environ.get("STEPS_BUDGET", 0))
 
 if DEVICE != "cuda":
@@ -110,7 +109,7 @@ class CausalSelfAttention(nn.Module):
         self.q_norm = RMSNorm(self.head_dim)
         self.k_norm = RMSNorm(self.head_dim)
 
-    def forward(self, x, norm_fn, ve, cos_sin, window_size):
+    def forward(self, x, ve, cos_sin, window_size):
         B, T, C = x.size()
         q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
         k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
@@ -135,7 +134,7 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        # Parameter-matched hidden dimension: 8/3 * n_embd rounded to nearest 64
+        # Parameter-matched hidden dimension: 8/3 * n_embd rounded up to a multiple of 64
         self.hidden_dim = int(8 / 3 * config.n_embd)
         self.hidden_dim = ((self.hidden_dim + 63) // 64) * 64
         self.c_fc = nn.Linear(config.n_embd, 2 * self.hidden_dim, bias=False)
@@ -158,7 +157,7 @@ class Block(nn.Module):
         self.norm2 = RMSNorm(config.n_embd)
 
     def forward(self, x, ve, cos_sin, window_size):
-        x = x + self.attn(self.norm1(x), self.norm1, ve, cos_sin, window_size)
+        x = x + self.attn(self.norm1(x), ve, cos_sin, window_size)
         x = x + self.mlp(self.norm2(x))
         return x
 
@@ -204,9 +203,14 @@ class GPT(nn.Module):
             torch.nn.init.zeros_(block.attn.c_proj.weight)
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            block.attn.q_norm.scale.fill_(1.0)
+            block.attn.k_norm.scale.fill_(1.0)
+            block.norm1.scale.fill_(1.0)
+            block.norm2.scale.fill_(1.0)
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
+        self.ln_f.scale.fill_(1.0)
         # Value embeddings
         for ve in self.value_embeds.values():
             torch.nn.init.uniform_(ve.weight, -s, s)
