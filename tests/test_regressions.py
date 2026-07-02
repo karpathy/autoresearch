@@ -1182,6 +1182,62 @@ def test_get_paper_memory_missing_positive_paper_id_still_raises_lookup_error():
         get_paper_memory(999_999, conn=conn)
 
 
+@pytest.mark.parametrize("bad_method_id", [True, False, "1", 1.5, 0, -1])
+def test_get_method_history_rejects_invalid_method_id_before_lookup(bad_method_id):
+    """Public method history accessor accepts only positive integer method IDs."""
+    from researchfs.retrieve import get_method_history
+
+    conn = _init_memory_db()
+
+    with pytest.raises(ValueError, match="method_id"):
+        get_method_history(bad_method_id, conn=conn)
+
+
+@pytest.mark.parametrize("bad_max_items", [True, False, "0", -1])
+def test_get_method_history_rejects_invalid_max_items(bad_max_items):
+    """Method history item bounds reject non-integer and negative limits."""
+    from researchfs.retrieve import get_method_history
+
+    conn = _init_memory_db()
+    method_id = _insert_searchable_method(
+        conn,
+        "Valid History Bounds Method",
+        "validhistoryboundstoken",
+    )
+
+    with pytest.raises(ValueError, match="max_items"):
+        get_method_history(method_id, conn=conn, max_items=bad_max_items)
+
+
+def test_get_method_history_zero_max_items_is_valid_history_string():
+    """A zero item limit still renders the method card without recent items."""
+    from researchfs.retrieve import get_method_history
+
+    conn = _init_memory_db()
+    method_id = _insert_searchable_method(
+        conn,
+        "Zero Item History Method",
+        "zerohistoryitemstoken",
+    )
+
+    history = get_method_history(method_id, conn=conn, max_items=0)
+
+    assert isinstance(history, str)
+    assert f"# Method History: Zero Item History Method (method_id={method_id})" in history
+    assert "Recent experiments:\n- None linked." in history
+    assert "Lessons:\n- None recorded." in history
+
+
+def test_get_method_history_missing_positive_method_id_returns_history_text():
+    """Positive but nonexistent method IDs keep the documented not-found text."""
+    from researchfs.retrieve import get_method_history
+
+    conn = _init_memory_db()
+
+    assert get_method_history(999_999, conn=conn) == (
+        "# Method History\n\nNo method found for method_id=999999."
+    )
+
 def test_link_experiment_methods_validates_public_ids_before_sqlite_errors():
     """Experiment-method logging rejects invalid public IDs with ValueError, not SQLite errors."""
     from researchfs.retrieve import link_experiment_methods, log_experiment

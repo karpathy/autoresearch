@@ -2297,6 +2297,9 @@ def get_paper_memory(
 
 def get_method_history(method_id: int, conn=None, max_items: int = 5) -> str:
     """Return recent experiments and lessons linked to a method."""
+    method_id = _validate_positive_int_id(method_id, "method_id")
+    max_items = _validate_non_negative_int(max_items, "max_items")
+
     close = False
     if conn is None:
         conn = get_connection()
@@ -2316,10 +2319,9 @@ def get_method_history(method_id: int, conn=None, max_items: int = 5) -> str:
         if method is None:
             return f"# Method History\n\nNo method found for method_id={method_id}."
 
-        limit = max(0, max_items)
         stats = _get_empirical_stats(method_id, conn, {})
-        targets = _get_code_targets(method_id, conn, limit=max(1, min(5, limit or 1)))
-        experiments, lessons = _get_history_items(method_id, conn, limit)
+        targets = _get_code_targets(method_id, conn, limit=max(1, min(5, max_items or 1)))
+        experiments, lessons = _get_history_items(method_id, conn, max_items)
 
         lines = [
             f"# Method History: {method['name']} (method_id={method_id})",
