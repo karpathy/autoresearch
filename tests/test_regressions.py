@@ -945,6 +945,163 @@ def test_arxiv_ingest_fetcher_errors_are_structured_non_500_responses(
 
 
 
+@pytest.mark.parametrize(
+    "route,payload,patch_target",
+    [
+        pytest.param(
+            "/retrieve",
+            {"query": "optimizer", "max_chars": True},
+            "search_methods_and_ids",
+            id="retrieve-max-chars-bool",
+        ),
+        pytest.param(
+            "/retrieve",
+            {"query": "optimizer", "max_chars": "120"},
+            "search_methods_and_ids",
+            id="retrieve-max-chars-string",
+        ),
+        pytest.param(
+            "/retrieve",
+            {"query": "optimizer", "max_chars": 12.5},
+            "search_methods_and_ids",
+            id="retrieve-max-chars-float",
+        ),
+        pytest.param(
+            "/retrieve",
+            {"query": "optimizer", "max_chars": -1},
+            "search_methods_and_ids",
+            id="retrieve-max-chars-negative",
+        ),
+        pytest.param(
+            "/retrieve",
+            {"query": "optimizer", "agent_run_id": False},
+            "search_methods_and_ids",
+            id="retrieve-agent-run-id-bool",
+        ),
+        pytest.param(
+            "/retrieve",
+            {"query": "optimizer", "agent_run_id": "7"},
+            "search_methods_and_ids",
+            id="retrieve-agent-run-id-string",
+        ),
+        pytest.param(
+            "/retrieve",
+            {"query": "optimizer", "agent_run_id": 7.5},
+            "search_methods_and_ids",
+            id="retrieve-agent-run-id-float",
+        ),
+        pytest.param(
+            "/retrieve",
+            {"query": "optimizer", "agent_run_id": -7},
+            "search_methods_and_ids",
+            id="retrieve-agent-run-id-negative",
+        ),
+        pytest.param(
+            "/experiment",
+            {"commit_hash": "abc123", "status": "keep", "method_ids": [True]},
+            "log_experiment",
+            id="experiment-method-ids-bool",
+        ),
+        pytest.param(
+            "/experiment",
+            {"commit_hash": "abc123", "status": "keep", "method_ids": ["1"]},
+            "log_experiment",
+            id="experiment-method-ids-string",
+        ),
+        pytest.param(
+            "/experiment",
+            {"commit_hash": "abc123", "status": "keep", "method_ids": [1.5]},
+            "log_experiment",
+            id="experiment-method-ids-float",
+        ),
+        pytest.param(
+            "/experiment",
+            {"commit_hash": "abc123", "status": "keep", "method_ids": [-1]},
+            "log_experiment",
+            id="experiment-method-ids-negative",
+        ),
+        pytest.param(
+            "/feedback",
+            {"method_id": True, "rating": 1.0},
+            "log_method_feedback",
+            id="feedback-method-id-bool",
+        ),
+        pytest.param(
+            "/feedback",
+            {"method_id": "1", "rating": 1.0},
+            "log_method_feedback",
+            id="feedback-method-id-string",
+        ),
+        pytest.param(
+            "/feedback",
+            {"method_id": 1.5, "rating": 1.0},
+            "log_method_feedback",
+            id="feedback-method-id-float",
+        ),
+        pytest.param(
+            "/feedback",
+            {"method_id": -1, "rating": 1.0},
+            "log_method_feedback",
+            id="feedback-method-id-negative",
+        ),
+        pytest.param(
+            "/feedback",
+            {"method_id": 0, "rating": 1.0},
+            "log_method_feedback",
+            id="feedback-method-id-zero",
+        ),
+    ],
+)
+def test_api_json_integer_validation_rejects_invalid_fields_before_deeper_work(
+    monkeypatch, route, payload, patch_target
+):
+    """Invalid JSON integer fields return 400 before dispatch reaches ResearchFS work."""
+    import researchfs.api as api_module
+    from researchfs.api import ResearchFSLabAPI
+
+    def fail_if_dispatched(*_args, **_kwargs):
+        raise AssertionError(f"{patch_target} should not be called for invalid JSON integers")
+
+    monkeypatch.setattr(api_module.rfs, patch_target, fail_if_dispatched)
+
+    response = ResearchFSLabAPI(conn=_init_memory_db()).dispatch("POST", route, payload)
+
+    assert response.status == 400
+    assert response.body["ok"] is False
+    assert response.body["error"]["code"] == "invalid_field"
+
+
+@pytest.mark.parametrize(
+    "paper_id",
+    [
+        pytest.param(True, id="bool"),
+        pytest.param("1", id="string"),
+        pytest.param(1.5, id="float"),
+        pytest.param(-1, id="negative"),
+    ],
+)
+def test_evaluate_extraction_json_paper_id_validation_rejects_invalid_fields_before_deeper_work(
+    monkeypatch, paper_id
+):
+    """Invalid required JSON IDs return 400 before extraction evaluation runs."""
+    import researchfs.api as api_module
+    from researchfs.api import ResearchFSLabAPI
+
+    def fail_if_evaluated(*_args, **_kwargs):
+        raise AssertionError("evaluate_extraction should not be called for invalid paper_id")
+
+    monkeypatch.setattr(api_module, "evaluate_extraction", fail_if_evaluated)
+
+    response = ResearchFSLabAPI(conn=_init_memory_db()).dispatch(
+        "POST",
+        "/evaluate/extraction",
+        {"paper_id": paper_id},
+    )
+
+    assert response.status == 400
+    assert response.body["ok"] is False
+    assert response.body["error"]["code"] == "invalid_field"
+
 def _insert_searchable_method(
     conn,
     name,

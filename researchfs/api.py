@@ -130,12 +130,9 @@ def _optional_int(payload: JSONDict, key: str) -> int | None:
     value = payload.get(key)
     if value is None:
         return None
-    if isinstance(value, bool):
+    if not isinstance(value, int) or isinstance(value, bool):
         raise LabAPIError(400, "invalid_field", f"'{key}' must be an integer")
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise LabAPIError(400, "invalid_field", f"'{key}' must be an integer") from exc
+    parsed = value
     if parsed < 0:
         raise LabAPIError(400, "invalid_field", f"'{key}' must be non-negative")
     return parsed
@@ -222,12 +219,9 @@ def _required_int(payload: JSONDict, key: str) -> int:
     value = payload.get(key)
     if value is None:
         raise LabAPIError(400, "missing_field", f"'{key}' must be an integer")
-    if isinstance(value, bool):
+    if not isinstance(value, int) or isinstance(value, bool):
         raise LabAPIError(400, "invalid_field", f"'{key}' must be an integer")
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise LabAPIError(400, "invalid_field", f"'{key}' must be an integer") from exc
+    parsed = value
     if parsed < 0:
         raise LabAPIError(400, "invalid_field", f"'{key}' must be non-negative")
     return parsed
@@ -265,12 +259,11 @@ def _optional_method_ids(payload: JSONDict) -> list[int]:
         raise LabAPIError(400, "invalid_field", "'method_ids' must be a list of integers")
     ids: list[int] = []
     for raw in method_ids:
-        if isinstance(raw, bool):
+        if not isinstance(raw, int) or isinstance(raw, bool):
             raise LabAPIError(400, "invalid_field", "'method_ids' must contain only integers")
-        try:
-            ids.append(int(raw))
-        except (TypeError, ValueError) as exc:
-            raise LabAPIError(400, "invalid_field", "'method_ids' must contain only integers") from exc
+        if raw < 0:
+            raise LabAPIError(400, "invalid_field", "'method_ids' must be non-negative")
+        ids.append(raw)
     return ids
 
 
