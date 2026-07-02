@@ -842,13 +842,29 @@ def search_methods_and_ids(
         conn = get_connection()
         close = True
 
+    valid_max_chars = None
+    if max_chars is not None:
+        valid_max_chars = _validate_non_negative_int(max_chars, "max_chars")
+
+    valid_agent_run_id = None
+    if agent_run_id is not None:
+        valid_agent_run_id = _validate_positive_int_id(agent_run_id, "agent_run_id")
+
     try:
+        if valid_agent_run_id is not None:
+            _require_existing_id(
+                conn,
+                "agent_runs",
+                "agent_run_id",
+                valid_agent_run_id,
+                "agent_run_id",
+            )
         methods, _, method_ranks = _search_methods_hybrid(query, conn)
 
         if not methods:
             main_pack_str = _limit_text(
                 f"# Method Pack Search Results\n\nNo methods found matching query: '{query}'",
-                max_chars,
+                valid_max_chars,
             )
             main_ids = []
         elif not method_ranks:
@@ -857,18 +873,18 @@ def search_methods_and_ids(
                 methods,
                 conn,
                 "# Method Pack: Autoresearch Optimization Catalog\n",
-                max_chars=max_chars,
+                max_chars=valid_max_chars,
             )
         else:
             ordered_methods, main_ids = _score_methods(
-                methods, conn, method_ranks, agent_run_id=agent_run_id
+                methods, conn, method_ranks, agent_run_id=valid_agent_run_id
             )
             main_pack_str, main_ids = _build_method_pack(
                 ordered_methods,
                 conn,
                 f"# Method Pack Search Results for: '{query}'\n",
                 sort_key=lambda m: (-m["_score"], m["category"] or "", m["name"] or ""),
-                max_chars=max_chars,
+                max_chars=valid_max_chars,
             )
 
         if methods and query and query.strip():
@@ -889,8 +905,8 @@ def search_methods_and_ids(
             if general_methods:
                 general_header = "\n# General Optimization & Hyperparameter Tuning Methods\n"
                 remaining_max_chars = None
-                if max_chars is not None:
-                    remaining_max_chars = max_chars - len(main_pack_str)
+                if valid_max_chars is not None:
+                    remaining_max_chars = valid_max_chars - len(main_pack_str)
 
                 if (
                     remaining_max_chars is None
@@ -904,7 +920,7 @@ def search_methods_and_ids(
                     )
                     if (
                         gen_pack_str
-                        and (max_chars is None or len(main_pack_str) + len(gen_pack_str) <= max_chars)
+                        and (valid_max_chars is None or len(main_pack_str) + len(gen_pack_str) <= valid_max_chars)
                     ):
                         main_pack_str += gen_pack_str
                         for gid in gen_ids:
@@ -929,36 +945,52 @@ def search_methods_with_scores(
         conn = get_connection()
         close = True
 
+    valid_max_chars = None
+    if max_chars is not None:
+        valid_max_chars = _validate_non_negative_int(max_chars, "max_chars")
+
+    valid_agent_run_id = None
+    if agent_run_id is not None:
+        valid_agent_run_id = _validate_positive_int_id(agent_run_id, "agent_run_id")
+
     try:
+        if valid_agent_run_id is not None:
+            _require_existing_id(
+                conn,
+                "agent_runs",
+                "agent_run_id",
+                valid_agent_run_id,
+                "agent_run_id",
+            )
         methods, _, method_ranks = _search_methods_hybrid(query, conn)
         score_rows: list[dict] = []
 
         if not methods:
             main_pack_str = _limit_text(
                 f"# Method Pack Search Results\n\nNo methods found matching query: '{query}'",
-                max_chars,
+                valid_max_chars,
             )
             main_ids = []
         elif not method_ranks:
             # Empty query fallback: preserve default success-rate ordering while still exposing scores.
-            _score_methods(methods, conn, {}, agent_run_id=agent_run_id)
+            _score_methods(methods, conn, {}, agent_run_id=valid_agent_run_id)
             main_pack_str, main_ids = _build_method_pack(
                 methods,
                 conn,
                 "# Method Pack: Autoresearch Optimization Catalog\n",
-                max_chars=max_chars,
+                max_chars=valid_max_chars,
             )
             score_rows.extend(_score_rows_for_ids(methods, main_ids))
         else:
             ordered_methods, main_ids = _score_methods(
-                methods, conn, method_ranks, agent_run_id=agent_run_id
+                methods, conn, method_ranks, agent_run_id=valid_agent_run_id
             )
             main_pack_str, main_ids = _build_method_pack(
                 ordered_methods,
                 conn,
                 f"# Method Pack Search Results for: '{query}'\n",
                 sort_key=lambda m: (-m["_score"], m["category"] or "", m["name"] or ""),
-                max_chars=max_chars,
+                max_chars=valid_max_chars,
             )
             score_rows.extend(_score_rows_for_ids(ordered_methods, main_ids))
 
@@ -979,14 +1011,14 @@ def search_methods_with_scores(
             if general_methods:
                 general_header = "\n# General Optimization & Hyperparameter Tuning Methods\n"
                 remaining_max_chars = None
-                if max_chars is not None:
-                    remaining_max_chars = max_chars - len(main_pack_str)
+                if valid_max_chars is not None:
+                    remaining_max_chars = valid_max_chars - len(main_pack_str)
 
                 if (
                     remaining_max_chars is None
                     or remaining_max_chars >= len(general_header)
                 ):
-                    _score_methods(general_methods, conn, {}, agent_run_id=agent_run_id)
+                    _score_methods(general_methods, conn, {}, agent_run_id=valid_agent_run_id)
                     gen_pack_str, gen_ids = _build_method_pack(
                         general_methods,
                         conn,
@@ -995,7 +1027,7 @@ def search_methods_with_scores(
                     )
                     if (
                         gen_pack_str
-                        and (max_chars is None or len(main_pack_str) + len(gen_pack_str) <= max_chars)
+                        and (valid_max_chars is None or len(main_pack_str) + len(gen_pack_str) <= valid_max_chars)
                     ):
                         main_pack_str += gen_pack_str
                         for gid in gen_ids:

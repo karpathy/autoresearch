@@ -1005,8 +1005,8 @@ def _insert_paper_memory_card(conn):
     return paper_id, method_id, chunk_id
 
 
-def _search_result(search_fn, query, *, conn, max_chars):
-    result = search_fn(query, conn=conn, max_chars=max_chars)
+def _search_result(search_fn, query, *, conn, max_chars, agent_run_id=None):
+    result = search_fn(query, conn=conn, max_chars=max_chars, agent_run_id=agent_run_id)
     if len(result) == 2:
         context, method_ids = result
         return context, method_ids, None
@@ -1118,6 +1118,111 @@ def test_method_search_tiny_max_chars_never_returns_unrendered_method_ids():
     assert method_ids == []
     assert omitted_id not in method_ids
     assert "Tiny budget omitted method" not in context
+
+
+@pytest.mark.parametrize(
+    "search_fn_name",
+    ["search_methods", "search_methods_and_ids", "search_methods_with_scores"],
+)
+@pytest.mark.parametrize("bad_max_chars", [True, False, "0", -1])
+def test_method_search_accessors_reject_invalid_max_chars(search_fn_name, bad_max_chars):
+    """Public method search accessors reject non-integer and negative budgets."""
+    from researchfs import retrieve
+
+    conn = _init_memory_db()
+    _insert_searchable_method(conn, "Invalid max chars search method", "invalidmaxcharstoken")
+    search_fn = getattr(retrieve, search_fn_name)
+
+    with pytest.raises(ValueError, match="max_chars"):
+        search_fn("invalidmaxcharstoken", conn=conn, max_chars=bad_max_chars)
+
+
+@pytest.mark.parametrize(
+    "search_fn_name",
+    ["search_methods", "search_methods_and_ids", "search_methods_with_scores"],
+)
+def test_method_search_accessors_accept_zero_max_chars(search_fn_name):
+    """A zero budget remains valid and returns only budget-compliant output."""
+    from researchfs import retrieve
+
+    conn = _init_memory_db()
+    _insert_searchable_method(conn, "Zero max chars search method", "zeromaxcharstoken")
+    search_fn = getattr(retrieve, search_fn_name)
+
+    result = search_fn("zeromaxcharstoken", conn=conn, max_chars=0)
+
+    if search_fn_name == "search_methods":
+        assert result == ""
+    elif search_fn_name == "search_methods_and_ids":
+        context, method_ids = result
+        assert context == ""
+        assert method_ids == []
+    else:
+        context, method_ids, score_rows = result
+        assert context == ""
+        assert method_ids == []
+        assert score_rows == []
+
+
+@pytest.mark.parametrize(
+    "search_fn_name",
+    ["search_methods_and_ids", "search_methods_with_scores"],
+)
+@pytest.mark.parametrize("bad_agent_run_id", [True, False, "1", 0, -1, 999_999])
+def test_method_search_id_helpers_reject_invalid_agent_run_id(
+    search_fn_name, bad_agent_run_id
+):
+    """ID-returning search helpers reject malformed and nonexistent run IDs before scoring."""
+    from researchfs import retrieve
+
+    conn = _init_memory_db()
+    _insert_searchable_method(conn, "Invalid run scoped search method", "invalidrunsearchtoken")
+    search_fn = getattr(retrieve, search_fn_name)
+
+    with pytest.raises(ValueError, match="agent_run_id"):
+        search_fn("invalidrunsearchtoken", conn=conn, agent_run_id=bad_agent_run_id)
+
+
+@pytest.mark.parametrize(
+    "search_fn_name",
+    ["search_methods_and_ids", "search_methods_with_scores"],
+)
+def test_method_search_id_helpers_accept_existing_agent_run_id_and_score_with_it(
+    search_fn_name, monkeypatch
+):
+    """Existing run IDs are accepted and passed through to method scoring."""
+    from researchfs import retrieve
+
+    conn = _init_memory_db()
+    run_id = retrieve.start_agent_run("loopgraph", "search-bounds-model", conn)
+    method_id = _insert_searchable_method(
+        conn,
+        "Scoped Search Bounds Method",
+        "scopedsearchboundstoken",
+    )
+    search_fn = getattr(retrieve, search_fn_name)
+    seen_run_ids = []
+    original_score_methods = retrieve._score_methods
+
+    def capture_score_methods(*args, agent_run_id=None, **kwargs):
+        seen_run_ids.append(agent_run_id)
+        return original_score_methods(*args, agent_run_id=agent_run_id, **kwargs)
+
+    monkeypatch.setattr(retrieve, "_score_methods", capture_score_methods)
+
+    context, method_ids, score_rows = _search_result(
+        search_fn,
+        "scopedsearchboundstoken",
+        conn=conn,
+        max_chars=None,
+        agent_run_id=run_id,
+    )
+
+    assert "Scoped Search Bounds Method" in context
+    assert method_ids == [method_id]
+    assert seen_run_ids == [run_id]
+    if score_rows is not None:
+        assert [row["method_id"] for row in score_rows] == method_ids
 
 
 @pytest.mark.parametrize("bad_paper_id", [True, False, "1", 1.5, 0, -1])
