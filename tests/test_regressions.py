@@ -1124,6 +1124,105 @@ def test_api_json_integer_validation_rejects_invalid_fields_before_deeper_work(
 
 
 @pytest.mark.parametrize(
+    "route,handler_name",
+    [
+        pytest.param("/paper/0", "_handle_paper_detail", id="paper-detail-zero"),
+        pytest.param("/paper/0/memory", "_handle_paper_memory", id="paper-memory-zero"),
+        pytest.param(
+            "/paper/0/memory/export",
+            "_handle_paper_memory_export",
+            id="paper-memory-export-zero",
+        ),
+        pytest.param("/method/0", "_handle_method_detail", id="method-detail-zero"),
+        pytest.param(
+            "/memory/export?paper_ids=0",
+            "_handle_corpus_memory_export",
+            id="corpus-export-zero-paper-id",
+        ),
+    ],
+)
+def test_api_url_ids_reject_zero_before_handlers(monkeypatch, route, handler_name):
+    """URL paper/method identifiers must be positive before DB or export handlers run."""
+    from researchfs.api import ResearchFSLabAPI
+
+    handler_calls = []
+
+    def fail_if_dispatched(self, *_args, **_kwargs):
+        handler_calls.append((_args, _kwargs))
+        raise AssertionError(f"{handler_name} should not run for zero URL identifiers")
+
+    monkeypatch.setattr(ResearchFSLabAPI, handler_name, fail_if_dispatched)
+
+    response = ResearchFSLabAPI(conn=_init_memory_db()).dispatch("GET", route)
+
+    assert response.status == 400
+    assert response.body["ok"] is False
+    assert handler_calls == []
+
+
+def test_api_url_positive_ids_and_zero_max_chars_still_dispatch(monkeypatch):
+    """Positive decimal URL/query IDs parse normally, and max_chars=0 remains valid."""
+    from researchfs.api import LabAPIResponse, ResearchFSLabAPI
+
+    calls = []
+
+    def capture_paper_detail(self, paper_id):
+        calls.append(("paper", paper_id))
+        return LabAPIResponse(200, {"ok": True, "paper_id": paper_id})
+
+    def capture_paper_memory(self, paper_id, max_chars):
+        calls.append(("paper_memory", paper_id, max_chars))
+        return LabAPIResponse(
+            200, {"ok": True, "paper_id": paper_id, "max_chars": max_chars}
+        )
+
+    def capture_paper_memory_export(self, paper_id, max_chars):
+        calls.append(("paper_memory_export", paper_id, max_chars))
+        return LabAPIResponse(
+            200, {"ok": True, "bundle": {"paper_id": paper_id, "max_chars": max_chars}}
+        )
+
+    def capture_method_detail(self, method_id):
+        calls.append(("method", method_id))
+        return LabAPIResponse(200, {"ok": True, "method_id": method_id})
+
+    def capture_corpus_memory_export(self, paper_ids, max_chars):
+        calls.append(("corpus_memory_export", paper_ids, max_chars))
+        return LabAPIResponse(
+            200, {"ok": True, "bundle": {"paper_ids": paper_ids, "max_chars": max_chars}}
+        )
+
+    monkeypatch.setattr(ResearchFSLabAPI, "_handle_paper_detail", capture_paper_detail)
+    monkeypatch.setattr(ResearchFSLabAPI, "_handle_paper_memory", capture_paper_memory)
+    monkeypatch.setattr(
+        ResearchFSLabAPI, "_handle_paper_memory_export", capture_paper_memory_export
+    )
+    monkeypatch.setattr(ResearchFSLabAPI, "_handle_method_detail", capture_method_detail)
+    monkeypatch.setattr(
+        ResearchFSLabAPI, "_handle_corpus_memory_export", capture_corpus_memory_export
+    )
+
+    api = ResearchFSLabAPI(conn=_init_memory_db())
+
+    assert api.dispatch("GET", "/paper/12").status == 200
+    assert api.dispatch("GET", "/paper/13/memory?max_chars=0").status == 200
+    assert api.dispatch("GET", "/paper/14/memory/export?max_chars=0").status == 200
+    assert api.dispatch("GET", "/method/15").status == 200
+    assert (
+        api.dispatch("GET", "/memory/export?paper_ids=16&paper_ids=17,16&max_chars=0").status
+        == 200
+    )
+
+    assert calls == [
+        ("paper", 12),
+        ("paper_memory", 13, 0),
+        ("paper_memory_export", 14, 0),
+        ("method", 15),
+        ("corpus_memory_export", [16, 17], 0),
+    ]
+
+
+@pytest.mark.parametrize(
     "route,payload,patch_target",
     [
         pytest.param(

@@ -154,6 +154,15 @@ def _query_optional_int(query: str, key: str) -> int | None:
         raise LabAPIError(400, "invalid_field", f"'{key}' must be non-negative")
     return parsed
 
+def _url_positive_int(value: str, name: str, code: str) -> int:
+    if not value.isdecimal():
+        raise LabAPIError(400, code, f"{name} id must be a positive integer")
+    parsed = int(value)
+    if parsed <= 0:
+        raise LabAPIError(400, code, f"{name} id must be a positive integer")
+    return parsed
+
+
 def _query_optional_int_list(query: str, key: str) -> list[int] | None:
     values = parse_qs(query, keep_blank_values=True).get(key)
     if not values:
@@ -170,8 +179,8 @@ def _query_optional_int_list(query: str, key: str) -> list[int] | None:
                 parsed = int(part)
             except (TypeError, ValueError) as exc:
                 raise LabAPIError(400, "invalid_field", f"'{key}' must contain integers") from exc
-            if parsed < 0:
-                raise LabAPIError(400, "invalid_field", f"'{key}' must be non-negative")
+            if parsed <= 0:
+                raise LabAPIError(400, "invalid_field", f"'{key}' must contain positive integers")
             if parsed not in parsed_values:
                 parsed_values.append(parsed)
     return parsed_values
@@ -554,21 +563,18 @@ class ResearchFSLabAPI:
                 return self._handle_corpus_memory_export(paper_ids, max_chars)
             if method == "GET" and route.startswith("/paper/") and route.endswith("/memory/export"):
                 paper_id_text = route.removeprefix("/paper/").removesuffix("/memory/export")
-                if not paper_id_text.isdigit():
-                    raise LabAPIError(400, "invalid_paper_id", "Paper id must be an integer")
+                paper_id = _url_positive_int(paper_id_text, "Paper", "invalid_paper_id")
                 max_chars = _query_optional_int(parsed.query, "max_chars")
-                return self._handle_paper_memory_export(int(paper_id_text), max_chars)
+                return self._handle_paper_memory_export(paper_id, max_chars)
             if method == "GET" and route.startswith("/paper/") and route.endswith("/memory"):
                 paper_id_text = route.removeprefix("/paper/").removesuffix("/memory")
-                if not paper_id_text.isdigit():
-                    raise LabAPIError(400, "invalid_paper_id", "Paper id must be an integer")
+                paper_id = _url_positive_int(paper_id_text, "Paper", "invalid_paper_id")
                 max_chars = _query_optional_int(parsed.query, "max_chars")
-                return self._handle_paper_memory(int(paper_id_text), max_chars)
+                return self._handle_paper_memory(paper_id, max_chars)
             if method == "GET" and route.startswith("/paper/"):
                 paper_id_text = route.removeprefix("/paper/")
-                if not paper_id_text.isdigit():
-                    raise LabAPIError(400, "invalid_paper_id", "Paper id must be an integer")
-                return self._handle_paper_detail(int(paper_id_text))
+                paper_id = _url_positive_int(paper_id_text, "Paper", "invalid_paper_id")
+                return self._handle_paper_detail(paper_id)
             if method == "POST" and route == "/evaluate/extraction":
                 return self._handle_evaluate_extraction(_parse_body(body))
             if method == "POST" and route == "/memory/import":
@@ -579,9 +585,8 @@ class ResearchFSLabAPI:
                 return self._handle_brief(_parse_body(body))
             if method == "GET" and route.startswith("/method/"):
                 method_id_text = route.removeprefix("/method/")
-                if not method_id_text.isdigit():
-                    raise LabAPIError(400, "invalid_method_id", "Method id must be an integer")
-                return self._handle_method_detail(int(method_id_text))
+                method_id = _url_positive_int(method_id_text, "Method", "invalid_method_id")
+                return self._handle_method_detail(method_id)
             if method == "POST" and route == "/feedback":
                 return self._handle_feedback(_parse_body(body))
             if method == "POST" and route == "/experiment":
