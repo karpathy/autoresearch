@@ -1277,6 +1277,66 @@ def test_get_paper_memory_zero_max_chars_preserves_metadata_with_empty_context()
     assert memory["confidence_score"] == 0.9
 
 
+@pytest.mark.parametrize("bad_max_chars", [True, False, "0", 1.5, -1])
+def test_get_research_brief_rejects_invalid_max_chars(bad_max_chars):
+    """Research briefs reject malformed and negative context budgets before retrieval."""
+    from researchfs.retrieve import get_research_brief
+
+    conn = _init_memory_db()
+
+    with pytest.raises(ValueError, match="max_chars"):
+        get_research_brief("briefboundstoken", conn=conn, max_chars=bad_max_chars)
+
+
+@pytest.mark.parametrize("bad_max_papers", [True, False, "1", 1.5, 0, -1])
+def test_get_research_brief_rejects_invalid_max_papers(bad_max_papers):
+    """Research briefs accept only positive integer paper limits."""
+    from researchfs.retrieve import get_research_brief
+
+    conn = _init_memory_db()
+
+    with pytest.raises(ValueError, match="max_papers"):
+        get_research_brief("briefboundstoken", conn=conn, max_papers=bad_max_papers)
+
+
+def test_get_research_brief_zero_max_chars_is_valid_empty_bounded_context():
+    """A zero budget remains valid while preserving structured brief metadata."""
+    from researchfs.retrieve import get_research_brief
+
+    conn = _init_memory_db()
+    _paper_id, method_id, _chunk_id = _insert_paper_memory_card(conn)
+
+    brief = get_research_brief("papermemoryboundsevidencetoken", conn=conn, max_chars=0)
+
+    assert brief["ok"] is True
+    assert brief["query"] == "papermemoryboundsevidencetoken"
+    assert brief["max_chars"] == 0
+    assert brief["context"] == ""
+    assert method_id in brief["method_ids"]
+
+
+def test_get_research_brief_positive_max_papers_selects_bounded_paper_memory():
+    """A positive paper limit still returns the matching deterministic paper brief."""
+    from researchfs.retrieve import get_research_brief
+
+    conn = _init_memory_db()
+    paper_id, method_id, chunk_id = _insert_paper_memory_card(conn)
+
+    brief = get_research_brief(
+        "papermemoryboundsevidencetoken",
+        conn=conn,
+        max_chars=2000,
+        max_papers=1,
+    )
+
+    assert brief["ok"] is True
+    assert brief["max_papers"] == 1
+    assert brief["paper_ids"] == [paper_id]
+    assert method_id in brief["method_ids"]
+    assert chunk_id in brief["chunk_ids"]
+    assert "Paper memory card 1" in brief["context"]
+
+
 def test_get_paper_memory_missing_positive_paper_id_still_raises_lookup_error():
     """Positive but nonexistent paper IDs keep the documented not-found behavior."""
     from researchfs.retrieve import get_paper_memory

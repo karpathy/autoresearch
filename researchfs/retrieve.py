@@ -1218,11 +1218,11 @@ def get_research_brief(
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must be a non-empty string")
 
-    if max_chars is not None and max_chars < 0:
-        raise ValueError("max_chars must be non-negative")
+    valid_max_chars = None
+    if max_chars is not None:
+        valid_max_chars = _validate_non_negative_int(max_chars, "max_chars")
 
-    if max_papers <= 0:
-        raise ValueError("max_papers must be positive")
+    valid_max_papers = _validate_positive_int_id(max_papers, "max_papers")
 
     if source_types is None and source_type is not None:
         source_types = source_type
@@ -1293,7 +1293,7 @@ def get_research_brief(
             for row in cur.fetchall():
                 paper_id = row["paper_id"]
                 if paper_id not in selected_papers:
-                    if len(paper_ids) >= max_papers:
+                    if len(paper_ids) >= valid_max_papers:
                         continue
                     selected_papers.add(paper_id)
                     paper_ids.append(paper_id)
@@ -1301,23 +1301,23 @@ def get_research_brief(
                     traversal_chunk_ids.append(row["chunk_id"])
         if not paper_ids:
             paper_ids, traversal_chunk_ids = _chunk_fts_brief_sources(
-                conn, query, max_papers, normalized_source_types
+                conn, query, valid_max_papers, normalized_source_types
             )
 
 
         header_lines = [
             "# Research Brief",
             f"Query: {query}",
-            f"Max papers: {max_papers}",
+            f"Max papers: {valid_max_papers}",
             f"Selected papers: {len(paper_ids)}",
             "Source types: " + (", ".join(normalized_source_types) if normalized_source_types else "unfiltered"),
             "Source: deterministic compressed method retrieval plus bounded paper memory cards; no LLM call.",
         ]
         lesson_budget = None
         method_budget = None
-        if max_chars is not None:
-            lesson_budget = max(0, max_chars // 5)
-            method_budget = max(0, max_chars // 3)
+        if valid_max_chars is not None:
+            lesson_budget = max(0, valid_max_chars // 5)
+            method_budget = max(0, valid_max_chars // 3)
         standalone_lessons = _standalone_lesson_matches(query, conn)
         sections = [
             "\n".join(header_lines),
@@ -1331,10 +1331,10 @@ def get_research_brief(
         paper_memory_provenance: list[dict] = []
         for index, paper_id in enumerate(paper_ids, start=1):
             card_budget = None
-            if max_chars is not None:
+            if valid_max_chars is not None:
                 remaining_cards = max(1, len(paper_ids) - index + 1)
                 current_len = len("\n\n".join(sections))
-                remaining = max(0, max_chars - current_len)
+                remaining = max(0, valid_max_chars - current_len)
                 heading_allowance = 80
                 card_budget = max(0, remaining // remaining_cards - heading_allowance)
             card = get_paper_memory(paper_id, conn=conn, max_chars=card_budget)
@@ -1347,7 +1347,7 @@ def get_research_brief(
                 + str(card.get("context") or "")
             )
 
-        context = _limit_text("\n\n".join(sections), max_chars)
+        context = _limit_text("\n\n".join(sections), valid_max_chars)
         result = {
             "ok": True,
             "query": query,
@@ -1357,8 +1357,8 @@ def get_research_brief(
             "chunk_ids": _unique_ordered(chunk_ids),
             "lesson_ids": _unique_ordered(lesson_ids),
             "paper_memory_provenance": paper_memory_provenance,
-            "max_chars": max_chars,
-            "max_papers": max_papers,
+            "max_chars": valid_max_chars,
+            "max_papers": valid_max_papers,
             "source_types": normalized_source_types,
         }
         if include_scores:
