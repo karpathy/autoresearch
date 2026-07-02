@@ -27,6 +27,17 @@ def _clean_query(query: str) -> str:
     """Normalize a query string for cache lookup."""
     return " ".join(query.lower().split())
 
+def _validate_optional_non_negative_int(value: object, name: str) -> Optional[int]:
+    """Validate an optional non-negative integer parameter."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be None or a non-negative integer")
+    if value < 0:
+        raise ValueError(f"{name} must be None or a non-negative integer")
+    return value
+
+
 
 def _query_has_content(query: str) -> bool:
     """Return True if the query contains at least one alphanumeric character."""
@@ -471,9 +482,11 @@ class ResearchFSSession:
         Returns:
             (method_pack, method_ids)
         """
+        max_method_chars = _validate_optional_non_negative_int(
+            max_method_chars, "max_method_chars"
+        )
         if not query:
             return "", None
-
         cache_key = (_clean_query(query), max_method_chars)
         if cache_key in self.search_cache:
             return self.search_cache[cache_key]

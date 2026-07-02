@@ -315,6 +315,79 @@ def test_suggest_query_search_false_discards_stale_query_text():
     assert decision["reason"] == "skip this round"
 
 
+@pytest.mark.parametrize(
+    "invalid_max_method_chars",
+    [
+        pytest.param(True, id="bool"),
+        pytest.param("8", id="string"),
+        pytest.param(8.0, id="float"),
+        pytest.param(-1, id="negative"),
+        pytest.param([8], id="list"),
+    ],
+)
+def test_retrieve_context_rejects_invalid_max_method_chars_before_cache_or_search(
+    monkeypatch, invalid_max_method_chars
+):
+    """Invalid method-pack bounds fail before cache lookup or downstream search."""
+    import researchfs.client as client_module
+    from researchfs.client import ResearchFSSession
+
+    conn = _init_memory_db()
+    session = ResearchFSSession(SimpleNamespace(get_connection=lambda: conn), agent_run_id=7)
+
+    class PoisonCache:
+        def __contains__(self, _key):
+            raise AssertionError("search_cache should not be checked")
+
+        def __getitem__(self, _key):
+            raise AssertionError("search_cache should not be read")
+
+        def __setitem__(self, _key, _value):
+            raise AssertionError("search_cache should not be written")
+
+    search_calls = []
+
+    def fail_search_methods_and_ids(*_args, **_kwargs):
+        search_calls.append((_args, _kwargs))
+        raise AssertionError("search_methods_and_ids should not run")
+
+    session.search_cache = PoisonCache()
+    monkeypatch.setattr(client_module.rfs, "search_methods_and_ids", fail_search_methods_and_ids)
+
+    with pytest.raises(ValueError, match="max_method_chars"):
+        session.retrieve_context("Muon LR", max_method_chars=invalid_max_method_chars)
+
+    assert search_calls == []
+
+
+def test_retrieve_context_accepts_zero_and_positive_max_method_chars_in_cache_and_search(
+    monkeypatch,
+):
+    """Valid method-pack bounds are forwarded to search and partition cache entries."""
+    import researchfs.client as client_module
+    from researchfs.client import ResearchFSSession
+
+    conn = _init_memory_db()
+    session = ResearchFSSession(SimpleNamespace(get_connection=lambda: conn), agent_run_id=7)
+    search_calls = []
+
+    def fake_search_methods_and_ids(query, conn=None, max_chars=None, agent_run_id=None):
+        search_calls.append((query, max_chars, agent_run_id, conn is not None))
+        return f"pack-{max_chars}-{len(search_calls)}", [max_chars]
+
+    monkeypatch.setattr(client_module.rfs, "search_methods_and_ids", fake_search_methods_and_ids)
+
+    assert session.retrieve_context("Muon LR", max_method_chars=0) == ("pack-0-1", [0])
+    assert session.retrieve_context("Muon LR", max_method_chars=0) == ("pack-0-1", [0])
+    assert session.retrieve_context("Muon LR", max_method_chars=12) == ("pack-12-2", [12])
+    assert session.retrieve_context("Muon LR", max_method_chars=12) == ("pack-12-2", [12])
+
+    assert search_calls == [
+        ("Muon LR", 0, 7, True),
+        ("Muon LR", 12, 7, True),
+    ]
+
+
 def test_researchfs_session_retrieval_cache_clears_after_outcome_and_retrieval_logs(monkeypatch):
     """Logged outcomes and retrieval events invalidate cached method packs so reuse sees fresh history."""
     import researchfs.client as client_module
