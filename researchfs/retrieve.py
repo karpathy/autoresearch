@@ -1360,8 +1360,8 @@ def get_experiment_brief(name: str = "nanochat_autoresearch", conn=None) -> str:
 
 
 def start_agent_run(mode: str, model: Optional[str] = None, conn=None) -> int:
-    """Start a new agent run and return its ID."""
-    mode = _validate_agent_run_mode(mode)
+    """Start a new agent run; mode is an agent-defined non-empty label."""
+    mode = _validate_non_empty_text(mode, "mode")
     if model is not None:
         model = _validate_non_empty_text(model, "model")
     close = False
@@ -1503,16 +1503,6 @@ def _unique_method_ids(method_ids: Optional[list[int]]) -> list[int]:
 
 
 EXPERIMENT_STATUSES = {"pending", "keep", "discard", "crash"}
-AGENT_RUN_MODES = {"baseline", "loopgraph"}
-
-
-def _validate_agent_run_mode(value) -> str:
-    """Return a supported agent run mode token."""
-    mode = _validate_non_empty_text(value, "mode")
-    if mode not in AGENT_RUN_MODES:
-        allowed = ", ".join(sorted(AGENT_RUN_MODES))
-        raise ValueError(f"mode must be one of: {allowed}")
-    return mode
 
 
 

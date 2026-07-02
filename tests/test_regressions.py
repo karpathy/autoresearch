@@ -1709,7 +1709,7 @@ def test_log_token_usage_validates_numeric_fields_and_experiment_id_before_persi
 
 
 def test_start_agent_run_validates_mode_and_model_before_insert():
-    """Agent run creation rejects unsupported lifecycle text and stores valid mode/model pairs."""
+    """Agent run creation rejects blank lifecycle text and stores valid mode/model pairs."""
     from researchfs.retrieve import start_agent_run
 
     conn = _init_memory_db()
@@ -1717,7 +1717,6 @@ def test_start_agent_run_validates_mode_and_model_before_insert():
     invalid_cases = [
         ({"mode": ""}, "mode"),
         ({"mode": "   "}, "mode"),
-        ({"mode": "agent"}, "mode"),
         ({"mode": "baseline", "model": ""}, "model"),
         ({"mode": "loopgraph", "model": "   "}, "model"),
     ]
@@ -1732,6 +1731,7 @@ def test_start_agent_run_validates_mode_and_model_before_insert():
         ("baseline", "gpt-4o-mini"),
         ("loopgraph", None),
         ("loopgraph", "gpt-4o-mini"),
+        ("custom-agent", "claude-sonnet"),
     ]
 
     run_ids = [
