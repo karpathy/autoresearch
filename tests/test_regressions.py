@@ -893,3 +893,237 @@ def test_arxiv_ingest_fetcher_errors_are_structured_non_500_responses(
     assert response.body["ok"] is False
     assert response.body["error"]["code"] == expected_code
     assert response.body["error"]["message"] == str(fetch_error)
+
+
+
+def _insert_searchable_method(
+    conn,
+    name,
+    token,
+    *,
+    category="memory",
+    description_prefix="Regression retrieval method",
+):
+    method_id = conn.execute(
+        """
+        INSERT INTO methods (name, description, implementation_hint, risks, category)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            name,
+            f"{description_prefix} keyed by {token}.",
+            f"Use the {token} boundary path.",
+            "Returning a method outside the bounded context misleads callers.",
+            category,
+        ),
+    ).lastrowid
+    conn.commit()
+    return method_id
+
+
+def _search_result(search_fn, query, *, conn, max_chars):
+    result = search_fn(query, conn=conn, max_chars=max_chars)
+    if len(result) == 2:
+        context, method_ids = result
+        return context, method_ids, None
+    context, method_ids, score_rows = result
+    return context, method_ids, score_rows
+
+
+@pytest.mark.parametrize(
+    "search_fn_name",
+    ["search_methods_and_ids", "search_methods_with_scores"],
+)
+def test_method_search_max_chars_bounds_omitted_markers_and_returned_ids(search_fn_name):
+    """Bounded method retrieval cannot leak omitted methods through either text or IDs."""
+    from researchfs import retrieve
+
+    conn = _init_memory_db()
+    token = "boundedomittedmarkertoken"
+    included_id = _insert_searchable_method(
+        conn,
+        "A bounded retrieval method",
+        token,
+        description_prefix="Short enough to fit before the omitted marker",
+    )
+    search_fn = getattr(retrieve, search_fn_name)
+    included_context, included_ids, _scores = _search_result(
+        search_fn, token, conn=conn, max_chars=None
+    )
+    assert included_ids == [included_id]
+
+    omitted_id = _insert_searchable_method(
+        conn,
+        "Z bounded retrieval method omitted",
+        token,
+        description_prefix="This second method should be outside the bounded context",
+    )
+    max_chars = len(included_context) + 5
+
+    context, method_ids, score_rows = _search_result(
+        search_fn, token, conn=conn, max_chars=max_chars
+    )
+
+    assert len(context) <= max_chars
+    assert included_id in method_ids
+    assert "A bounded retrieval method" in context
+    assert omitted_id not in method_ids
+    assert "Z bounded retrieval method omitted" not in context
+    if score_rows is not None:
+        assert [row["method_id"] for row in score_rows] == method_ids
+
+
+@pytest.mark.parametrize(
+    "search_fn_name",
+    ["search_methods_and_ids", "search_methods_with_scores"],
+)
+def test_method_search_max_chars_bounds_optional_general_method_section(search_fn_name):
+    """General-method appendices obey the same strict max_chars and ID inclusion contract."""
+    from researchfs import retrieve
+
+    conn = _init_memory_db()
+    token = "boundedgeneralsectiontoken"
+    direct_id = _insert_searchable_method(
+        conn,
+        "Direct bounded retrieval method",
+        token,
+        category="memory",
+    )
+    search_fn = getattr(retrieve, search_fn_name)
+    direct_context, direct_ids, _scores = _search_result(
+        search_fn, token, conn=conn, max_chars=None
+    )
+    assert direct_ids == [direct_id]
+
+    general_id = _insert_searchable_method(
+        conn,
+        "General optimizer should not leak past budget",
+        "unmatchedgeneralmethodtoken",
+        category="optimizer",
+    )
+    max_chars = len(direct_context) + 8
+
+    context, method_ids, score_rows = _search_result(
+        search_fn, token, conn=conn, max_chars=max_chars
+    )
+
+    assert len(context) <= max_chars
+    assert direct_id in method_ids
+    assert "Direct bounded retrieval method" in context
+    assert general_id not in method_ids
+    assert "General optimizer should not leak past budget" not in context
+    if score_rows is not None:
+        assert [row["method_id"] for row in score_rows] == method_ids
+
+
+def test_method_search_tiny_max_chars_never_returns_unrendered_method_ids():
+    """A budget too small to render any method returns no method IDs."""
+    from researchfs.retrieve import search_methods_and_ids
+
+    conn = _init_memory_db()
+    token = "tinybudgetretrievaltoken"
+    omitted_id = _insert_searchable_method(
+        conn,
+        "Tiny budget omitted method",
+        token,
+    )
+
+    context, method_ids = search_methods_and_ids(token, conn=conn, max_chars=12)
+
+    assert len(context) <= 12
+    assert method_ids == []
+    assert omitted_id not in method_ids
+    assert "Tiny budget omitted method" not in context
+
+
+def test_link_experiment_methods_validates_public_ids_before_sqlite_errors():
+    """Experiment-method logging rejects invalid public IDs with ValueError, not SQLite errors."""
+    from researchfs.retrieve import link_experiment_methods, log_experiment
+
+    conn = _init_memory_db()
+    method_id = _insert_searchable_method(conn, "Valid linked method", "validlinktoken")
+    experiment_id = log_experiment(
+        "valid-link-experiment",
+        val_bpb=1.23,
+        memory_gb=4.5,
+        status="keep",
+        description="valid linkage target",
+        conn=conn,
+    )
+
+    invalid_cases = [
+        (True, [method_id], "experiment_id"),
+        (experiment_id, [True], "method_id"),
+        (999_999, [method_id], "experiment_id"),
+        (experiment_id, [999_999], "method_id"),
+        (experiment_id, [], "method_ids"),
+    ]
+
+    for bad_experiment_id, bad_method_ids, expected_message in invalid_cases:
+        with pytest.raises(ValueError, match=expected_message):
+            link_experiment_methods(
+                bad_experiment_id,
+                bad_method_ids,
+                role="tested",
+                note="invalid cases should not reach SQLite integrity handling",
+                conn=conn,
+            )
+
+    assert conn.execute("SELECT COUNT(*) FROM experiment_methods").fetchone()[0] == 0
+
+
+def test_log_lesson_validates_ids_and_required_text_before_persisting():
+    """Lesson logging rejects invalid IDs and blank label/content before inserting rows."""
+    from researchfs.retrieve import log_experiment, log_lesson
+
+    conn = _init_memory_db()
+    method_id = _insert_searchable_method(conn, "Valid lesson method", "validlessontoken")
+    experiment_id = log_experiment(
+        "valid-lesson-experiment",
+        val_bpb=1.23,
+        memory_gb=4.5,
+        status="keep",
+        description="valid lesson target",
+        conn=conn,
+    )
+
+    invalid_cases = [
+        (
+            {"label": "Valid label", "content": "Valid content", "method_id": True},
+            "method_id",
+        ),
+        (
+            {"label": "Valid label", "content": "Valid content", "experiment_id": True},
+            "experiment_id",
+        ),
+        (
+            {"label": "Valid label", "content": "Valid content", "method_id": 999_999},
+            "method_id",
+        ),
+        (
+            {"label": "Valid label", "content": "Valid content", "experiment_id": 999_999},
+            "experiment_id",
+        ),
+        (
+            {"label": "", "content": "Valid content", "method_id": method_id},
+            "label",
+        ),
+        (
+            {"label": "   ", "content": "Valid content", "method_id": method_id},
+            "label",
+        ),
+        (
+            {"label": "Valid label", "content": "", "experiment_id": experiment_id},
+            "content",
+        ),
+        (
+            {"label": "Valid label", "content": " \t\n ", "experiment_id": experiment_id},
+            "content",
+        ),
+    ]
+
+    for kwargs, expected_message in invalid_cases:
+        with pytest.raises(ValueError, match=expected_message):
+            log_lesson(outcome="discard", conn=conn, **kwargs)
+
+    assert conn.execute("SELECT COUNT(*) FROM lessons").fetchone()[0] == 0

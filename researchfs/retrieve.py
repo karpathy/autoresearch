@@ -372,6 +372,25 @@ def _get_empirical_stats(method_id: int, conn, baselines: dict) -> dict:
     }
 
 
+def _fit_rendered_method_to_budget(rendered: str, max_chars: int) -> str:
+    """Shed optional method details before truncating a rendered method entry."""
+    if len(rendered) <= max_chars:
+        return rendered
+    lines = rendered.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    for marker in ("**Sources:**", "**Matched lessons:**", "**Lab Feedback:**"):
+        if marker in lines:
+            compact = "\n".join(lines[: lines.index(marker)]).rstrip()
+            if compact and len(compact) <= max_chars:
+                return compact
+            lines = lines[: lines.index(marker)]
+    compact = "\n".join(lines).rstrip()
+    if compact and len(compact) <= max_chars:
+        return compact
+    return _limit_text(compact or rendered, max_chars)
+
+
 def _build_method_pack(
     methods: list,
     conn,
@@ -467,25 +486,50 @@ def _build_method_pack(
         rendered = "\n".join(method_lines)
         rendered_methods.append((m["method_id"], rendered))
 
+    if max_chars is not None and max_chars <= 0:
+        return "", []
+
+    if max_chars is not None and len(header) > max_chars:
+        return header[:max_chars], []
+
     lines = [header]
     sorted_ids = []
+    included_add_lens: list[int] = []
     current_len = len(header)
     omitted = 0
     sep_len = len("\n")
     budget = max_chars
 
     for method_id, rendered in rendered_methods:
-        if budget is not None:
-            add_len = sep_len + len(rendered)
-            if current_len + add_len > budget:
-                omitted += 1
-                continue
-            current_len += add_len
+        add_len = sep_len + len(rendered)
+        if budget is not None and current_len + add_len > budget:
+            omitted += 1
+            continue
+        current_len += add_len
         sorted_ids.append(method_id)
+        included_add_lens.append(add_len)
         lines.append(rendered)
 
     if omitted:
-        lines.append(f"... and {omitted} more methods omitted")
+        marker = f"... and {omitted} more methods omitted"
+        marker_len = sep_len + len(marker)
+        while budget is not None and len(lines) > 2 and len("\n".join([*lines, marker])) > budget:
+            lines.pop()
+            sorted_ids.pop()
+            current_len -= included_add_lens.pop()
+            omitted += 1
+            marker = f"... and {omitted} more methods omitted"
+            marker_len = sep_len + len(marker)
+        if budget is not None and len(lines) == 2 and len("\n".join([*lines, marker])) > budget:
+            max_render_len = budget - len(lines[0]) - (2 * sep_len) - len(marker)
+            if max_render_len > 0:
+                lines[1] = _fit_rendered_method_to_budget(lines[1], max_render_len)
+            else:
+                lines.pop()
+                sorted_ids.pop()
+                current_len = len(lines[0])
+        if budget is None or len("\n".join([*lines, marker])) <= budget:
+            lines.append(marker)
 
     return "\n".join(lines), sorted_ids
 
@@ -802,7 +846,10 @@ def search_methods_and_ids(
         methods, _, method_ranks = _search_methods_hybrid(query, conn)
 
         if not methods:
-            main_pack_str = f"# Method Pack Search Results\n\nNo methods found matching query: '{query}'"
+            main_pack_str = _limit_text(
+                f"# Method Pack Search Results\n\nNo methods found matching query: '{query}'",
+                max_chars,
+            )
             main_ids = []
         elif not method_ranks:
             # Empty query fallback: preserve default success-rate ordering.
@@ -840,21 +887,29 @@ def search_methods_and_ids(
             general_methods = [m for m in general_methods if m["method_id"] not in search_result_ids]
 
             if general_methods:
+                general_header = "\n# General Optimization & Hyperparameter Tuning Methods\n"
                 remaining_max_chars = None
                 if max_chars is not None:
-                    remaining_max_chars = max(0, max_chars - len(main_pack_str))
+                    remaining_max_chars = max_chars - len(main_pack_str)
 
-                if remaining_max_chars is None or remaining_max_chars > 0:
+                if (
+                    remaining_max_chars is None
+                    or remaining_max_chars >= len(general_header)
+                ):
                     gen_pack_str, gen_ids = _build_method_pack(
                         general_methods,
                         conn,
-                        "\n# General Optimization & Hyperparameter Tuning Methods\n",
+                        general_header,
                         max_chars=remaining_max_chars,
                     )
-                    main_pack_str += gen_pack_str
-                    for gid in gen_ids:
-                        if gid not in main_ids:
-                            main_ids.append(gid)
+                    if (
+                        gen_pack_str
+                        and (max_chars is None or len(main_pack_str) + len(gen_pack_str) <= max_chars)
+                    ):
+                        main_pack_str += gen_pack_str
+                        for gid in gen_ids:
+                            if gid not in main_ids:
+                                main_ids.append(gid)
 
         return main_pack_str, main_ids
     finally:
@@ -879,7 +934,10 @@ def search_methods_with_scores(
         score_rows: list[dict] = []
 
         if not methods:
-            main_pack_str = f"# Method Pack Search Results\n\nNo methods found matching query: '{query}'"
+            main_pack_str = _limit_text(
+                f"# Method Pack Search Results\n\nNo methods found matching query: '{query}'",
+                max_chars,
+            )
             main_ids = []
         elif not method_ranks:
             # Empty query fallback: preserve default success-rate ordering while still exposing scores.
@@ -919,23 +977,31 @@ def search_methods_with_scores(
             general_methods = [m for m in general_methods if m["method_id"] not in search_result_ids]
 
             if general_methods:
+                general_header = "\n# General Optimization & Hyperparameter Tuning Methods\n"
                 remaining_max_chars = None
                 if max_chars is not None:
-                    remaining_max_chars = max(0, max_chars - len(main_pack_str))
+                    remaining_max_chars = max_chars - len(main_pack_str)
 
-                if remaining_max_chars is None or remaining_max_chars > 0:
+                if (
+                    remaining_max_chars is None
+                    or remaining_max_chars >= len(general_header)
+                ):
                     _score_methods(general_methods, conn, {}, agent_run_id=agent_run_id)
                     gen_pack_str, gen_ids = _build_method_pack(
                         general_methods,
                         conn,
-                        "\n# General Optimization & Hyperparameter Tuning Methods\n",
+                        general_header,
                         max_chars=remaining_max_chars,
                     )
-                    main_pack_str += gen_pack_str
-                    for gid in gen_ids:
-                        if gid not in main_ids:
-                            main_ids.append(gid)
-                            score_rows.extend(_score_rows_for_ids(general_methods, [gid]))
+                    if (
+                        gen_pack_str
+                        and (max_chars is None or len(main_pack_str) + len(gen_pack_str) <= max_chars)
+                    ):
+                        main_pack_str += gen_pack_str
+                        for gid in gen_ids:
+                            if gid not in main_ids:
+                                main_ids.append(gid)
+                                score_rows.extend(_score_rows_for_ids(general_methods, [gid]))
 
         return main_pack_str, main_ids, score_rows
     finally:
@@ -1414,6 +1480,59 @@ def _unique_method_ids(method_ids: Optional[list[int]]) -> list[int]:
     return list(dict.fromkeys(method_ids))
 
 
+def _validate_positive_int_id(value, field_name: str) -> int:
+    """Return value as an int ID, rejecting bools and non-positive integers."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{field_name} must be a positive integer")
+    return value
+
+
+def _validate_non_empty_text(value, field_name: str) -> str:
+    """Return original text after rejecting empty required public string fields."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value
+
+
+def _require_existing_id(conn, table: str, id_column: str, value: int, field_name: str) -> None:
+    """Raise ValueError when a referenced row is absent."""
+    row = conn.execute(
+        f"SELECT 1 FROM {table} WHERE {id_column} = ? LIMIT 1",
+        (value,),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"{field_name} does not exist: {value}")
+
+
+def _validate_method_id_list(method_ids: list[int], conn) -> list[int]:
+    """Validate public method ID lists, preserving order and removing duplicates."""
+    if not isinstance(method_ids, list) or not method_ids:
+        raise ValueError("method_ids must be a non-empty list of positive integers")
+
+    valid_ids: list[int] = []
+    seen: set[int] = set()
+    for method_id in method_ids:
+        valid_id = _validate_positive_int_id(method_id, "method_id")
+        if valid_id in seen:
+            continue
+        seen.add(valid_id)
+        valid_ids.append(valid_id)
+
+    if not valid_ids:
+        raise ValueError("method_ids must contain at least one method ID")
+
+    placeholders = ",".join("?" for _ in valid_ids)
+    rows = conn.execute(
+        f"SELECT method_id FROM methods WHERE method_id IN ({placeholders})",
+        tuple(valid_ids),
+    ).fetchall()
+    existing_ids = {row["method_id"] for row in rows}
+    missing_ids = [method_id for method_id in valid_ids if method_id not in existing_ids]
+    if missing_ids:
+        raise ValueError(f"method_ids do not exist: {missing_ids}")
+    return valid_ids
+
+
 def _insert_experiment_methods(
     cur,
     experiment_id: int,
@@ -1457,7 +1576,15 @@ def link_experiment_methods(
 
     try:
         cur = conn.cursor()
-        _insert_experiment_methods(cur, experiment_id, method_ids, role, note)
+        valid_experiment_id = _validate_positive_int_id(experiment_id, "experiment_id")
+        valid_role = _validate_non_empty_text(role, "role")
+        _require_existing_id(
+            conn, "experiments", "experiment_id", valid_experiment_id, "experiment_id"
+        )
+        valid_method_ids = _validate_method_id_list(method_ids, conn)
+        _insert_experiment_methods(
+            cur, valid_experiment_id, valid_method_ids, valid_role, note
+        )
         conn.commit()
     finally:
         if close:
@@ -1480,12 +1607,30 @@ def log_lesson(
 
     try:
         cur = conn.cursor()
+        valid_label = _validate_non_empty_text(label, "label")
+        valid_content = _validate_non_empty_text(content, "content")
+        valid_method_id = None
+        valid_experiment_id = None
+        if method_id is not None:
+            valid_method_id = _validate_positive_int_id(method_id, "method_id")
+            _require_existing_id(conn, "methods", "method_id", valid_method_id, "method_id")
+        if experiment_id is not None:
+            valid_experiment_id = _validate_positive_int_id(
+                experiment_id, "experiment_id"
+            )
+            _require_existing_id(
+                conn,
+                "experiments",
+                "experiment_id",
+                valid_experiment_id,
+                "experiment_id",
+            )
         cur.execute(
             """
             INSERT INTO lessons (method_id, experiment_id, label, content, outcome)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (method_id, experiment_id, label, content, outcome),
+            (valid_method_id, valid_experiment_id, valid_label, valid_content, outcome),
         )
         conn.commit()
         return cur.lastrowid
