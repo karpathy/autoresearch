@@ -921,6 +921,90 @@ def _insert_searchable_method(
     return method_id
 
 
+def _insert_paper_memory_card(conn):
+    paper_id = conn.execute(
+        """
+        INSERT INTO papers (title, authors, abstract, url, publish_date)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            "Paper Memory Bounds Paper",
+            "Bounds Lab",
+            "A paper with compressed memory for accessor bounds tests.",
+            "https://example.invalid/paper-memory-bounds",
+            "2026-07-02",
+        ),
+    ).lastrowid
+    chunk_id = conn.execute(
+        """
+        INSERT INTO chunks (paper_id, section, content)
+        VALUES (?, ?, ?)
+        """,
+        (
+            paper_id,
+            "abstract",
+            "papermemoryboundsevidencetoken links the method to this paper.",
+        ),
+    ).lastrowid
+    method_id = conn.execute(
+        """
+        INSERT INTO methods (name, description, implementation_hint, risks, category)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            "Paper Memory Bounds Method",
+            "Use papermemoryboundsevidencetoken for bounded paper memory.",
+            "Keep bounded context and provenance metadata aligned.",
+            "Returning hidden IDs would mislead callers.",
+            "memory",
+        ),
+    ).lastrowid
+    conn.execute(
+        """
+        INSERT INTO method_sources (
+            method_id, chunk_id, evidence_text, evidence_start, evidence_end,
+            evidence_strategy
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            method_id,
+            chunk_id,
+            "papermemoryboundsevidencetoken links the method to this paper.",
+            0,
+            61,
+            "exact",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO paper_extraction_status (
+            paper_id, status, source_type, chunk_count, method_count,
+            source_char_count, compressed_char_count, compression_ratio,
+            confidence_score, confidence_reason, extractor_model,
+            extractor_prompt_version
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            paper_id,
+            "extracted",
+            "memory_bundle",
+            1,
+            1,
+            600,
+            120,
+            0.2,
+            0.9,
+            "bounds regression confidence",
+            "bounds-regression-model",
+            "bounds-regression-v1",
+        ),
+    )
+    conn.commit()
+    return paper_id, method_id, chunk_id
+
+
 def _search_result(search_fn, query, *, conn, max_chars):
     result = search_fn(query, conn=conn, max_chars=max_chars)
     if len(result) == 2:
@@ -1034,6 +1118,68 @@ def test_method_search_tiny_max_chars_never_returns_unrendered_method_ids():
     assert method_ids == []
     assert omitted_id not in method_ids
     assert "Tiny budget omitted method" not in context
+
+
+@pytest.mark.parametrize("bad_paper_id", [True, False, "1", 1.5, 0, -1])
+def test_get_paper_memory_rejects_invalid_paper_id_before_lookup(bad_paper_id):
+    """Public paper memory accessor accepts only positive integer paper IDs."""
+    from researchfs.retrieve import get_paper_memory
+
+    conn = _init_memory_db()
+
+    with pytest.raises(ValueError, match="paper_id"):
+        get_paper_memory(bad_paper_id, conn=conn)
+
+
+@pytest.mark.parametrize("bad_max_chars", [True, False, "0", -1])
+def test_get_paper_memory_rejects_invalid_max_chars(bad_max_chars):
+    """Paper memory context bounds reject non-integer and negative budgets."""
+    from researchfs.retrieve import get_paper_memory
+
+    conn = _init_memory_db()
+    paper_id, _method_id, _chunk_id = _insert_paper_memory_card(conn)
+
+    with pytest.raises(ValueError, match="max_chars"):
+        get_paper_memory(paper_id, conn=conn, max_chars=bad_max_chars)
+
+
+def test_get_paper_memory_zero_max_chars_preserves_metadata_with_empty_context():
+    """A zero budget truncates only context, not the paper memory identifiers."""
+    from researchfs.retrieve import get_paper_memory
+
+    conn = _init_memory_db()
+    paper_id, method_id, chunk_id = _insert_paper_memory_card(conn)
+
+    memory = get_paper_memory(paper_id, conn=conn, max_chars=0)
+
+    assert memory["paper_id"] == paper_id
+    assert memory["max_chars"] == 0
+    assert memory["context"] == ""
+    assert memory["method_ids"] == [method_id]
+    assert memory["chunk_ids"] == [chunk_id]
+    assert memory["provenance_sources"] == [
+        {
+            "method_id": method_id,
+            "chunk_id": chunk_id,
+            "section": "abstract",
+            "evidence_text": "papermemoryboundsevidencetoken links the method to this paper.",
+            "evidence_start": 0,
+            "evidence_end": 61,
+            "evidence_strategy": "exact",
+        }
+    ]
+    assert memory["extraction_status"]["paper_id"] == paper_id
+    assert memory["confidence_score"] == 0.9
+
+
+def test_get_paper_memory_missing_positive_paper_id_still_raises_lookup_error():
+    """Positive but nonexistent paper IDs keep the documented not-found behavior."""
+    from researchfs.retrieve import get_paper_memory
+
+    conn = _init_memory_db()
+
+    with pytest.raises(LookupError, match="No paper found"):
+        get_paper_memory(999_999, conn=conn)
 
 
 def test_link_experiment_methods_validates_public_ids_before_sqlite_errors():

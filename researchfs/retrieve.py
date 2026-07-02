@@ -2084,6 +2084,10 @@ def get_paper_memory(
     paper_id: int, conn=None, max_chars: Optional[int] = None
 ) -> dict:
     """Return one deterministic, bounded paper memory card and referenced IDs."""
+    paper_id = _validate_positive_int_id(paper_id, "paper_id")
+    if max_chars is not None:
+        max_chars = _validate_non_negative_int(max_chars, "max_chars")
+
     close = False
     if conn is None:
         conn = get_connection()
