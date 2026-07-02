@@ -378,6 +378,38 @@ def test_initialize_db_skips_existing_fts_rebuild_unless_explicitly_requested(mo
     assert rebuild_calls == [conn, conn]
 
 
+def test_initialize_db_creates_pixelrag_visual_index_table_and_lookup_index():
+    """Visual index status has a durable table keyed for paper lookups."""
+    from researchfs import db
+
+    conn = _memory_conn()
+    db.initialize_db(conn)
+
+    columns = [
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(paper_visual_indexes)").fetchall()
+    ]
+    assert columns == [
+        "visual_index_id",
+        "paper_id",
+        "provider",
+        "status",
+        "source",
+        "tiles_path",
+        "embeddings_path",
+        "index_path",
+        "error_text",
+        "created_at",
+        "updated_at",
+    ]
+
+    indexes = {
+        row["name"]
+        for row in conn.execute("PRAGMA index_list(paper_visual_indexes)").fetchall()
+    }
+    assert "idx_paper_visual_indexes_paper_id" in indexes
+
+
 def test_suggest_query_search_false_discards_stale_query_text():
     """A skip-search decision cannot leak an LLM-provided query into the caller's retrieval path."""
     from researchfs.client import ResearchFSSession
@@ -1298,6 +1330,537 @@ def test_arxiv_ingest_fetcher_errors_are_structured_non_500_responses(
     assert response.body["error"]["message"] == str(fetch_error)
 
 
+@pytest.mark.parametrize(
+    "raw_id,expected",
+    [
+        ("2305.13245", "2305.13245"),
+        ("2305.13245v1", "2305.13245"),
+        ("arXiv:2305.13245", "2305.13245"),
+        ("arxiv:2305.13245v3", "2305.13245"),
+        ("https://arxiv.org/abs/2305.13245", "2305.13245"),
+        ("https://arxiv.org/abs/2305.13245v2", "2305.13245"),
+        ("https://arxiv.org/pdf/2305.13245.pdf", "2305.13245"),
+        ("https://arxiv.org/pdf/2305.13245v1.pdf", "2305.13245"),
+    ],
+)
+def test_normalize_arxiv_id_accepts_common_forms(raw_id, expected):
+    """normalize_arxiv_id returns the canonical bare id for common inputs."""
+    from researchfs.fetcher import normalize_arxiv_id
+
+    assert normalize_arxiv_id(raw_id) == expected
+
+
+@pytest.mark.parametrize(
+    "raw_id",
+    ["", "not-an-id", "https://example.com/abs/2305.13245", "1234.123"],
+)
+def test_normalize_arxiv_id_rejects_invalid_identifiers(raw_id):
+    """normalize_arxiv_id raises ValueError for malformed or unsupported ids."""
+    from researchfs.fetcher import normalize_arxiv_id
+
+    with pytest.raises(ValueError, match="Invalid arXiv identifier"):
+        normalize_arxiv_id(raw_id)
+
+
+_ATOM_ENTRY = """\
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>  GQA: Training Generalized Multi-Query Transformer Models  </title>
+    <author><name>Joshua Ainslie</name></author>
+    <author><name>James Lee-Thorp</name></author>
+    <summary>Multi-query attention speeds up decoder inference.</summary>
+    <published>2023-05-22T00:00:00Z</published>
+    <id>https://arxiv.org/abs/2305.13245</id>
+  </entry>
+</feed>
+"""
+
+
+def test_fetch_arxiv_metadata_api_parses_atom_feed(monkeypatch):
+    """fetch_arxiv_metadata_api extracts title, authors, abstract, date, and url from Atom XML."""
+    import requests
+    from researchfs.fetcher import fetch_arxiv_metadata_api
+
+    class FakeResponse:
+        content = _ATOM_ENTRY.encode()
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(requests, "get", lambda _url, **kwargs: FakeResponse())
+
+    meta = fetch_arxiv_metadata_api("2305.13245")
+    assert meta["title"] == "GQA: Training Generalized Multi-Query Transformer Models"
+    assert meta["authors"] == "Joshua Ainslie, James Lee-Thorp"
+    assert meta["abstract"] == "Multi-query attention speeds up decoder inference."
+    assert meta["publish_date"] == "2023-05-22"
+    assert meta["url"] == "https://arxiv.org/abs/2305.13245"
+
+
+def test_fetch_arxiv_metadata_api_uses_proxy_and_retries_rate_limits(monkeypatch):
+    """arXiv metadata fetches use optional proxy config and retry transient rate limits."""
+    import requests
+    from researchfs.fetcher import fetch_arxiv_metadata_api
+
+    proxy_url = "http://user:pass@proxy.example:823"
+    calls = []
+    statuses = [429, 200]
+
+    class FakeResponse:
+        content = _ATOM_ENTRY.encode()
+
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get(_url, **kwargs):
+        calls.append(kwargs)
+        return FakeResponse(statuses.pop(0))
+
+    monkeypatch.setenv("RESEARCHFS_ARXIV_PROXY_URL", proxy_url)
+    monkeypatch.setenv("RESEARCHFS_ARXIV_RETRY_DELAY_SECONDS", "0")
+    monkeypatch.setattr(requests, "get", fake_get)
+
+    meta = fetch_arxiv_metadata_api("2305.13245")
+
+    assert meta["title"] == "GQA: Training Generalized Multi-Query Transformer Models"
+    assert len(calls) == 2
+    assert all(call["proxies"] == {"http": proxy_url, "https": proxy_url} for call in calls)
+
+
+def test_fetch_arxiv_source_pdf_fallback(monkeypatch, tmp_path):
+    """fetch_arxiv_source falls back to PDF extraction when LaTeX source is unavailable."""
+    import requests
+    from researchfs.fetcher import fetch_arxiv_source
+
+    class FakeResponse:
+        def __init__(self, content, status_code=200):
+            self.content = content
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError("not found")
+
+    def fake_requests_get(url, **_kwargs):
+        if "/src/" in url:
+            return FakeResponse(b"not a tarball", status_code=404)
+        if "/pdf/" in url:
+            return FakeResponse(b"fake pdf bytes")
+        if "/api/query" in url:
+            return FakeResponse(_ATOM_ENTRY.encode())
+        raise ValueError(f"unexpected URL: {url}")
+
+    monkeypatch.setattr(requests, "get", fake_requests_get)
+
+    def fake_extract_pdf_text(path):
+        return "PDF fallback extracted text."
+
+    monkeypatch.setattr("researchfs.fetcher.extract_pdf_text", fake_extract_pdf_text)
+
+    meta = fetch_arxiv_source("2305.13245")
+    assert meta["content"] == "PDF fallback extracted text."
+    assert meta["external_id"] == "2305.13245"
+
+
+_ATOM_FEED = """\
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>https://arxiv.org/abs/2305.13245</id>
+    <title>Paper One</title>
+  </entry>
+  <entry>
+    <id>https://arxiv.org/abs/2002.05202</id>
+    <title>Paper Two</title>
+  </entry>
+</feed>
+"""
+
+
+def test_fetch_arxiv_query_parses_search_results(monkeypatch):
+    """fetch_arxiv_query returns normalized ids from an Atom search feed."""
+    import requests
+    from researchfs.fetcher import fetch_arxiv_query
+
+    class FakeResponse:
+        content = _ATOM_FEED.encode()
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(requests, "get", lambda _url, **kwargs: FakeResponse())
+
+    ids = fetch_arxiv_query("all:transformers", max_results=2)
+    assert ids == ["2305.13245", "2002.05202"]
+
+
+def test_ingest_arxiv_ids_batch_persists_papers_and_external_ids(monkeypatch):
+    """ingest_arxiv_ids stores multiple papers and persists external_id on extraction status."""
+    from researchfs.ingest import ingest_arxiv_ids
+
+    conn = _init_memory_db()
+
+    fetched = {}
+
+    def fake_fetcher(arxiv_id):
+        fetched[arxiv_id] = True
+        return {
+            "title": f"Paper {arxiv_id}",
+            "authors": "Test Author",
+            "abstract": "An abstract.",
+            "url": f"https://arxiv.org/abs/{arxiv_id}",
+            "publish_date": "2023-05-22",
+            "content": f"content for {arxiv_id}",
+            "external_id": arxiv_id,
+        }
+
+    import researchfs.ingest as ingest_module
+
+    monkeypatch.setattr(ingest_module, "fetch_arxiv_source", fake_fetcher)
+    results = ingest_arxiv_ids(["2305.13245", "2002.05202"], conn=conn)
+
+    assert len(results) == 2
+    assert all(r["status"] == "skipped" for r in results)
+    assert all(r["error"] is None for r in results)
+    assert set(fetched) == {"2305.13245", "2002.05202"}
+
+    for arxiv_id, expected_title in [("2305.13245", "Paper 2305.13245"), ("2002.05202", "Paper 2002.05202")]:
+        row = conn.execute(
+            "SELECT p.title, e.external_id FROM papers p JOIN paper_extraction_status e ON p.paper_id = e.paper_id WHERE e.external_id = ?",
+            (arxiv_id,),
+        ).fetchone()
+        assert row is not None
+        assert row["title"] == expected_title
+        assert row["external_id"] == arxiv_id
+
+
+def test_ingest_arxiv_query_uses_search_and_ingests(monkeypatch):
+    """ingest_arxiv_query searches arXiv and ingests the returned ids."""
+    import researchfs.ingest as ingest_module
+    from researchfs.ingest import ingest_arxiv_query
+
+    conn = _init_memory_db()
+
+    monkeypatch.setattr(
+        ingest_module,
+        "fetch_arxiv_query",
+        lambda query, max_results: ["2305.13245"],
+    )
+    monkeypatch.setattr(
+        ingest_module,
+        "fetch_arxiv_source",
+        lambda arxiv_id: {
+            "title": "Search Result Paper",
+            "authors": "Searcher",
+            "abstract": "Found via query.",
+            "url": f"https://arxiv.org/abs/{arxiv_id}",
+            "publish_date": "2023-05-22",
+            "content": "search result content",
+            "external_id": arxiv_id,
+        },
+    )
+    results = ingest_arxiv_query("all:transformers", conn=conn, max_results=1)
+
+    assert len(results) == 1
+    assert results[0]["arxiv_id"] == "2305.13245"
+    assert results[0]["status"] == "skipped"
+    assert results[0]["error"] is None
+
+
+def test_cli_arxiv_list_dry_run_prints_batch_summary(capsys, monkeypatch):
+    """The CLI --arxiv-list --dry-run prints a summary for each planned paper."""
+    import sys
+    import researchfs.ingest as ingest_module
+
+    def fake_fetcher(arxiv_id):
+        return {
+            "title": f"Paper {arxiv_id}",
+            "authors": "CLI Author",
+            "abstract": "Abstract.",
+            "url": f"https://arxiv.org/abs/{arxiv_id}",
+            "publish_date": "2023-05-22",
+            "content": f"content for {arxiv_id}",
+            "external_id": arxiv_id,
+        }
+
+    monkeypatch.setattr(ingest_module, "fetch_arxiv_source", fake_fetcher)
+
+    original_argv = sys.argv
+    try:
+        sys.argv = [
+            "researchfs.ingest",
+            "--arxiv-list",
+            "2305.13245,2002.05202",
+            "--dry-run",
+        ]
+        ingest_module.main()
+    finally:
+        sys.argv = original_argv
+
+    captured = capsys.readouterr()
+    assert "DRY RUN" in captured.out
+    assert "2305.13245" in captured.out
+    assert "2002.05202" in captured.out
+
+
+def test_arxiv_external_id_persisted_on_extraction_status():
+    """arXiv ingestion stores the normalized arXiv id as external_id on extraction_status."""
+    from researchfs.api import ResearchFSLabAPI
+
+    conn = _init_memory_db()
+
+    def fake_fetcher(_arxiv_id):
+        normalized_id = "2305.13245"
+        return {
+            "title": "External ID Paper",
+            "authors": "External",
+            "abstract": "Abstract.",
+            "url": f"https://arxiv.org/abs/{normalized_id}",
+            "publish_date": "2023-05-22",
+            "content": "external id content",
+            "external_id": normalized_id,
+        }
+
+    api = ResearchFSLabAPI(conn=conn, arxiv_fetcher=fake_fetcher)
+    response = api.dispatch("POST", "/ingest/arxiv", {"id": "arXiv:2305.13245v1"})
+
+    assert response.status == 200
+    assert response.body["extraction_status"]["external_id"] == "2305.13245"
+
+    stored = conn.execute(
+        "SELECT external_id FROM paper_extraction_status WHERE paper_id = ?",
+        (response.body["paper_id"],),
+    ).fetchone()
+    assert stored["external_id"] == "2305.13245"
+
+
+
+def test_plan_pixelrag_visual_index_uses_arxiv_pdf_and_separate_artifact_paths(tmp_path):
+    """Planning maps an arXiv id to its PDF and non-colliding per-paper artifact dirs."""
+    from researchfs.visual import plan_pixelrag_visual_index
+
+    plan = plan_pixelrag_visual_index(
+        "planned-2305.13245",
+        {"external_id": "2305.13245"},
+        output_root=tmp_path,
+    )
+
+    expected_paper_dir = tmp_path / "paper-planned-2305.13245"
+    assert plan["status"] == "planned"
+    assert plan["source"] == "https://arxiv.org/pdf/2305.13245.pdf"
+    assert Path(plan["tiles_path"]) == expected_paper_dir / "tiles"
+    assert Path(plan["embeddings_path"]) == expected_paper_dir / "embeddings"
+    assert Path(plan["index_path"]) == expected_paper_dir / "index"
+    assert len({plan["tiles_path"], plan["embeddings_path"], plan["index_path"]}) == 3
+
+
+def test_ingest_pixelrag_visual_index_success_stores_row_and_local_config(tmp_path):
+    """Successful visual indexing stores the row and feeds PixelRAG a local-source config."""
+    from researchfs.ingest import ingest_paper
+
+    conn = _init_memory_db()
+    source_path = tmp_path / "source.pdf"
+    source_path.write_bytes(b"%PDF-1.4 local visual source\n")
+    calls = []
+
+    def stub_runner(command, *, cwd=None):
+        calls.append({"command": list(command), "cwd": Path(cwd)})
+        return SimpleNamespace(returncode=0)
+
+    result = ingest_paper(
+        {
+            "title": "PixelRAG Local Visual Paper",
+            "authors": "Visual Author",
+            "abstract": "Visual indexing should use a local source.",
+            "url": source_path.as_uri(),
+            "publish_date": "2026-07-02",
+            "content": "pixelragvisualsuccess evidence text for chunking.",
+            "visual_source_path": str(source_path),
+        },
+        conn=conn,
+        visual_index=True,
+        visual_index_root=tmp_path,
+        visual_index_runner=stub_runner,
+    )
+
+    paper_id = result["paper_id"]
+    expected_paper_dir = tmp_path / f"paper-{paper_id}"
+    assert conn.execute("SELECT COUNT(*) FROM papers WHERE paper_id = ?", (paper_id,)).fetchone()[0] == 1
+    assert result["visual_index"]["status"] == "indexed"
+    row = conn.execute(
+        """
+        SELECT paper_id, provider, status, source, tiles_path, embeddings_path, index_path, error_text
+        FROM paper_visual_indexes
+        WHERE paper_id = ?
+        """,
+        (paper_id,),
+    ).fetchone()
+    assert dict(row) == {
+        "paper_id": paper_id,
+        "provider": "pixelrag",
+        "status": "indexed",
+        "source": str(source_path),
+        "tiles_path": str(expected_paper_dir / "tiles"),
+        "embeddings_path": str(expected_paper_dir / "embeddings"),
+        "index_path": str(expected_paper_dir / "index"),
+        "error_text": None,
+    }
+    assert calls == [{"command": ["pixelrag", "index", "build"], "cwd": expected_paper_dir}]
+
+    config = (expected_paper_dir / "pixelrag.yaml").read_text(encoding="utf-8")
+    assert "source:\n  type: local\n" in config
+    assert "type: url" not in config
+
+
+def test_ingest_pixelrag_visual_index_failure_still_stores_paper_and_guidance(tmp_path):
+    """Missing PixelRAG is recorded as failed visual indexing without rolling back ingestion."""
+    from researchfs.ingest import ingest_paper
+
+    conn = _init_memory_db()
+    source_path = tmp_path / "source.txt"
+    source_path.write_text("local visual source", encoding="utf-8")
+
+    def missing_pixelrag(_command, *, cwd=None):
+        raise FileNotFoundError("pixelrag")
+
+    result = ingest_paper(
+        {
+            "title": "PixelRAG Missing Tool Paper",
+            "authors": "Visual Author",
+            "abstract": "Ingestion should survive missing optional visual tooling.",
+            "url": source_path.as_uri(),
+            "publish_date": "2026-07-02",
+            "content": "pixelragvisualfailure evidence text for chunking.",
+            "visual_source_path": str(source_path),
+        },
+        conn=conn,
+        visual_index=True,
+        visual_index_root=tmp_path,
+        visual_index_runner=missing_pixelrag,
+    )
+
+    paper_id = result["paper_id"]
+    assert conn.execute("SELECT COUNT(*) FROM papers WHERE paper_id = ?", (paper_id,)).fetchone()[0] == 1
+    assert result["visual_index"]["status"] == "failed"
+    assert "Install PixelRAG separately" in result["visual_index"]["error_text"]
+    assert "pixelrag" in result["visual_index"]["error_text"]
+    stored = conn.execute(
+        "SELECT status, error_text FROM paper_visual_indexes WHERE paper_id = ?",
+        (paper_id,),
+    ).fetchone()
+    assert stored["status"] == "failed"
+    assert "Install PixelRAG separately" in stored["error_text"]
+
+
+def test_cli_arxiv_dry_run_visual_index_plans_without_pixelrag_runner(
+    capsys, monkeypatch, tmp_path
+):
+    """Dry-run arXiv visual indexing reports a plan without invoking PixelRAG."""
+    import sys
+    import researchfs.ingest as ingest_module
+
+    def fake_fetcher(arxiv_id):
+        assert arxiv_id == "2305.13245"
+        return {
+            "title": "Dry Run Visual Paper",
+            "authors": "CLI Author",
+            "abstract": "Abstract.",
+            "url": f"https://arxiv.org/abs/{arxiv_id}",
+            "publish_date": "2023-05-22",
+            "content": "dry run visual planning content",
+            "external_id": arxiv_id,
+        }
+
+    monkeypatch.setattr(ingest_module, "fetch_arxiv_source", fake_fetcher)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "researchfs.ingest",
+            "--arxiv",
+            "2305.13245",
+            "--dry-run",
+            "--visual-index",
+            "--visual-index-root",
+            str(tmp_path),
+        ],
+    )
+
+    ingest_module.main()
+
+    captured = capsys.readouterr()
+    assert "Visual index: planned" in captured.out
+
+
+def test_api_ingest_pixelrag_visual_index_uses_runner_and_returns_indexed(tmp_path):
+    """POST /ingest forwards local visual-source requests into optional PixelRAG indexing."""
+    from researchfs.api import ResearchFSLabAPI
+
+    conn = _init_memory_db()
+    source_path = tmp_path / "api-source.pdf"
+    source_path.write_bytes(b"%PDF-1.4 local api visual source\n")
+    calls = []
+
+    def stub_runner(command, *, cwd=None):
+        calls.append({"command": list(command), "cwd": Path(cwd)})
+        return SimpleNamespace(returncode=0)
+
+    api = ResearchFSLabAPI(conn=conn, visual_index_runner=stub_runner)
+    response = api.dispatch(
+        "POST",
+        "/ingest",
+        {
+            "title": "API PixelRAG Visual Paper",
+            "authors": "API Author",
+            "abstract": "API visual indexing should use the supplied local source.",
+            "publish_date": "2026-07-02",
+            "content": "apipixelragvisualsuccess evidence text for chunking.",
+            "visual_index": True,
+            "visual_index_root": str(tmp_path),
+            "visual_source_path": str(source_path),
+        },
+    )
+
+    assert response.status == 200
+    assert response.body["visual_index"]["status"] == "indexed"
+    assert calls == [
+        {
+            "command": ["pixelrag", "index", "build"],
+            "cwd": tmp_path / f"paper-{response.body['paper_id']}",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({"visual_index": "true"}, id="visual-index-string"),
+        pytest.param({"visual_index": 1}, id="visual-index-integer"),
+        pytest.param({"visual_index_root": 42}, id="visual-index-root-integer"),
+        pytest.param({"visual_index_root": False}, id="visual-index-root-bool"),
+    ],
+)
+def test_api_ingest_rejects_invalid_visual_index_fields(payload):
+    """POST /ingest rejects malformed visual-index controls before ingestion work."""
+    from researchfs.api import ResearchFSLabAPI
+
+    response = ResearchFSLabAPI(conn=_init_memory_db()).dispatch(
+        "POST",
+        "/ingest",
+        {
+            "title": "Invalid Visual Index Request",
+            "authors": "API Author",
+            "abstract": "Invalid visual controls should be rejected.",
+            "content": "invalid visual index request body",
+            **payload,
+        },
+    )
+
+    assert response.status == 400
+    assert response.body["ok"] is False
+    assert response.body["error"]["code"] == "invalid_field"
 
 @pytest.mark.parametrize(
     "route,payload,patch_target",
@@ -3221,3 +3784,169 @@ def test_finish_agent_run_validates_id_without_mutating_other_runs():
         (run_id,),
     ).fetchone()["finished_at"]
     assert finished_at is not None
+
+
+def _paper_code_repo_passed(result):
+    if isinstance(result, bool):
+        return result
+    if isinstance(result, dict):
+        return result.get("passed")
+    return getattr(result, "passed", None)
+
+
+def test_paper_code_repo_prompt_includes_gpc_metadata_without_gold_url():
+    """The agent prompt names the paper but does not leak the answer URL."""
+    from evals.paper_code_repo import (
+        GPC_PAPER_FIXTURE,
+        GOLD_CODE_REPO_URL,
+        build_paper_code_repo_prompt,
+    )
+
+    prompt = build_paper_code_repo_prompt(GPC_PAPER_FIXTURE)
+
+    assert "2606.29148" in prompt
+    assert "GPC" in prompt
+    assert "github.com/NVlabs/ProtoMotions".lower() not in prompt.lower()
+    assert GOLD_CODE_REPO_URL.lower() not in prompt.lower()
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "https://github.com/NVlabs/ProtoMotions",
+        "github.com/NVlabs/ProtoMotions",
+        "http://github.com/NVlabs/ProtoMotions",
+        "https://www.github.com/NVlabs/ProtoMotions",
+        "https://github.com/NVlabs/ProtoMotions/",
+        "https://github.com/NVlabs/ProtoMotions.git",
+        "The official code is HTTPS://GitHub.com/NVLABS/PROTOMOTIONS.git",
+        "https://github.com/NVlabs/ProtoMotions/tree/main",
+        "https://github.com/NVlabs/ProtoMotions/blob/main/README.md#quick-start",
+        "https://github.com/NVlabs/ProtoMotions?tab=readme-ov-file",
+    ],
+)
+def test_paper_code_repo_scorer_accepts_normalized_gold_url_variants(response):
+    """URL normalization accepts harmless spelling variants of the gold repo."""
+    from evals.paper_code_repo import score_paper_code_repo_response
+
+    result = score_paper_code_repo_response(response)
+
+    assert _paper_code_repo_passed(result) is True
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "The project page is https://protomotions.github.io/",
+        "The code is https://github.com/NVlabs/SOMA-X",
+        "See both https://protomotions.github.io/ and https://github.com/NVlabs/SOMA-X",
+    ],
+)
+def test_paper_code_repo_scorer_rejects_docs_only_and_sibling_repos(response):
+    """Nearby paper resources are not accepted as the official GitHub code repo."""
+    from evals.paper_code_repo import score_paper_code_repo_response
+
+    result = score_paper_code_repo_response(response)
+
+    assert _paper_code_repo_passed(result) is False
+
+
+def test_run_paper_code_repo_eval_calls_injected_agent_and_passes_gold_response():
+    """The optional runner delegates to the provided agent callable without network use."""
+    from evals.paper_code_repo import (
+        GOLD_CODE_REPO_URL,
+        run_paper_code_repo_eval,
+    )
+
+    prompts = []
+
+    def agent(prompt):
+        prompts.append(prompt)
+        assert "2606.29148" in prompt
+        assert GOLD_CODE_REPO_URL.lower() not in prompt.lower()
+        return f"The official code repository is {GOLD_CODE_REPO_URL}"
+
+    result = run_paper_code_repo_eval(agent)
+
+    assert len(prompts) == 1
+    assert _paper_code_repo_passed(result) is True
+
+
+def test_offline_paper_code_repo_default_suite_passes_expected_scenarios():
+    """The deterministic offline suite covers the scorer's required pass/fail cases."""
+    from evals.paper_code_repo import (
+        DEFAULT_PAPER_CODE_REPO_OFFLINE_SCENARIOS,
+        run_offline_paper_code_repo_eval_suite,
+    )
+
+    suite = run_offline_paper_code_repo_eval_suite()
+    scenario_names = {scenario.name.replace("_", "-") for scenario in DEFAULT_PAPER_CODE_REPO_OFFLINE_SCENARIOS}
+
+    assert suite["passed"] is True
+    assert suite["counts"] == {
+        "total": len(DEFAULT_PAPER_CODE_REPO_OFFLINE_SCENARIOS),
+        "matched": len(DEFAULT_PAPER_CODE_REPO_OFFLINE_SCENARIOS),
+        "failed": 0,
+    }
+    assert {
+        "correct-root",
+        "correct-subpath",
+        "docs-only",
+        "sibling-repo",
+        "ambiguous-correct-plus-wrong",
+    } <= scenario_names
+    assert {result["name"].replace("_", "-") for result in suite["results"]} == scenario_names
+    assert all(result["matched"] is True for result in suite["results"])
+
+
+def test_offline_paper_code_repo_suite_needs_no_network_or_agent(monkeypatch):
+    """Synthetic offline scenarios run without a paper fetch, GitHub call, or agent callable."""
+    import socket
+
+    import evals.paper_code_repo as paper_code_repo
+
+    def fail_agent_runner(*_args, **_kwargs):
+        raise AssertionError("offline suite should not require an agent callable")
+
+    def fail_network(*_args, **_kwargs):
+        raise AssertionError("offline suite should not open network connections")
+
+    monkeypatch.setattr(paper_code_repo, "run_paper_code_repo_eval", fail_agent_runner)
+    monkeypatch.setattr(socket, "create_connection", fail_network)
+
+    suite = paper_code_repo.run_offline_paper_code_repo_eval_suite()
+
+    assert suite["passed"] is True
+
+
+def test_offline_paper_code_repo_suite_reports_misconfigured_scenario_failure():
+    """A scenario with the wrong expected outcome is reported as a harness failure."""
+    from evals.paper_code_repo import (
+        GOLD_CODE_REPO_URL,
+        PaperCodeRepoOfflineScenario,
+        run_offline_paper_code_repo_eval_suite,
+    )
+
+    suite = run_offline_paper_code_repo_eval_suite(
+        scenarios=(
+            PaperCodeRepoOfflineScenario(
+                name="misconfigured_correct_root",
+                response=f"The official code repository is {GOLD_CODE_REPO_URL}",
+                expected_passed=False,
+                description="Intentionally wrong expected outcome.",
+            ),
+        )
+    )
+
+    assert suite["passed"] is False
+    assert suite["counts"] == {"total": 1, "matched": 0, "failed": 1}
+    assert suite["results"][0]["matched"] is False
+    assert suite["results"][0]["actual_passed"] is True
+    assert suite["failures"] == [
+        {
+            "name": "misconfigured_correct_root",
+            "expected_passed": False,
+            "actual_passed": True,
+            "score": suite["results"][0]["score"],
+        }
+    ]

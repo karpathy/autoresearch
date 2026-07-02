@@ -11,7 +11,7 @@ from typing import Callable, Optional
 from researchfs import db as db_module
 from researchfs import extractor
 from researchfs.db import get_connection, initialize_db, migrate_db
-from researchfs.fetcher import fetch_arxiv_source, fetch_github_readme
+from researchfs.fetcher import fetch_arxiv_source, fetch_arxiv_query, fetch_github_readme
 from researchfs.pdf import extract_pdf_text
 
 
@@ -1205,6 +1205,7 @@ def _build_extraction_status(
         "compression_ratio": compression_ratio,
         "confidence_score": confidence_score,
         "confidence_reason": confidence_reason,
+        "external_id": meta.get("external_id"),
         "extractor_model": extractor_model,
         "extractor_prompt_version": extractor_prompt_version,
         "error_text": error_text,
@@ -1225,6 +1226,7 @@ def _row_to_extraction_status(row) -> Optional[dict]:
         "compression_ratio": row["compression_ratio"],
         "confidence_score": row["confidence_score"],
         "confidence_reason": row["confidence_reason"],
+        "external_id": row["external_id"],
         "extractor_model": row["extractor_model"],
         "extractor_prompt_version": row["extractor_prompt_version"],
         "error_text": row["error_text"],
@@ -1297,6 +1299,7 @@ def _status_payload_from_row(status: dict) -> dict:
         "compression_ratio": status["compression_ratio"],
         "confidence_score": status["confidence_score"],
         "confidence_reason": status["confidence_reason"],
+        "external_id": status["external_id"],
         "extractor_model": status["extractor_model"],
         "extractor_prompt_version": status["extractor_prompt_version"],
         "error_text": status["error_text"],
@@ -1308,13 +1311,13 @@ def _upsert_extraction_status(conn, paper_id: int, status_payload: dict) -> dict
     conn.execute(
         """
         INSERT INTO paper_extraction_status (
-            paper_id, status, source_type, chunk_count, method_count,
+            paper_id, status, source_type, external_id, chunk_count, method_count,
             source_char_count, compressed_char_count, compression_ratio,
             confidence_score, confidence_reason,
             extractor_model, extractor_prompt_version, error_text
         )
         VALUES (
-            :paper_id, :status, :source_type, :chunk_count, :method_count,
+            :paper_id, :status, :source_type, :external_id, :chunk_count, :method_count,
             :source_char_count, :compressed_char_count, :compression_ratio,
             :confidence_score, :confidence_reason,
             :extractor_model, :extractor_prompt_version, :error_text
@@ -1322,6 +1325,7 @@ def _upsert_extraction_status(conn, paper_id: int, status_payload: dict) -> dict
         ON CONFLICT(paper_id) DO UPDATE SET
             status = excluded.status,
             source_type = excluded.source_type,
+            external_id = excluded.external_id,
             chunk_count = excluded.chunk_count,
             method_count = excluded.method_count,
             source_char_count = excluded.source_char_count,
@@ -1526,11 +1530,83 @@ def _reextract_existing_paper(
         "duplicate": True,
     }
 
+def _visual_index_failed_payload(error_text: object) -> dict:
+    """Return a stable failed PixelRAG payload without raising into ingestion."""
+    return {
+        "provider": "pixelrag",
+        "status": "failed",
+        "source": None,
+        "tiles_path": None,
+        "embeddings_path": None,
+        "index_path": None,
+        "error_text": str(error_text),
+    }
+
+
+def _visual_plan_identifier(meta: dict) -> str:
+    """Return a stable dry-run identifier for planned visual-index paths."""
+    raw = meta.get("external_id") or meta.get("title") or meta.get("url") or "planned"
+    label = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(raw)).strip("-")
+    return f"planned-{(label or 'paper')[:80]}"
+
+
+def _plan_visual_index_payload(meta: dict, output_root: str | Path | None) -> dict:
+    """Plan an optional visual index without importing PixelRAG or running commands."""
+    try:
+        from researchfs import visual
+
+        return visual.plan_pixelrag_visual_index(_visual_plan_identifier(meta), meta, output_root=output_root)
+    except Exception as exc:
+        return _visual_index_failed_payload(exc)
+
+
+def _attach_planned_visual_index(
+    result: dict,
+    meta: dict,
+    output_root: str | Path | None,
+) -> dict:
+    visual_index_payload = _plan_visual_index_payload(meta, output_root)
+    result["visual_index"] = visual_index_payload
+    planned = result.get("planned")
+    if isinstance(planned, dict):
+        planned["visual_index"] = visual_index_payload
+    return result
+
+
+def _attach_stored_visual_index(
+    conn,
+    result: dict,
+    meta: dict,
+    output_root: str | Path | None,
+    runner=None,
+) -> dict:
+    paper_id = result.get("paper_id")
+    if paper_id is None:
+        return result
+    try:
+        from researchfs import visual
+
+        result["visual_index"] = visual.build_and_store_pixelrag_visual_index(
+            conn,
+            paper_id,
+            meta,
+            output_root=output_root,
+            runner=runner,
+        )
+        conn.commit()
+    except Exception as exc:
+        result["visual_index"] = _visual_index_failed_payload(exc)
+    return result
+
+
 def ingest_paper(
     meta: dict,
     llm_fn: Optional[Callable[[str], str]] = None,
     conn=None,
     dry_run: bool = False,
+    visual_index: bool = False,
+    visual_index_root: str | Path | None = None,
+    visual_index_runner=None,
 ) -> dict:
     """Insert (or plan) a paper, its chunks, methods, and extraction status."""
     if dry_run:
@@ -1552,6 +1628,7 @@ def ingest_paper(
                     "abstract": meta.get("abstract"),
                     "url": meta.get("url"),
                     "publish_date": meta.get("publish_date"),
+                    "external_id": meta.get("external_id"),
                 },
                 "chunks": [
                     {"section": "extracted", "content": chunk} for chunk in chunks
@@ -1610,7 +1687,10 @@ def ingest_paper(
                         meta, "failed", chunks, llm_fn=llm_fn, error_text=str(exc)
                     )
             planned["extraction_status"] = extraction_status
-            return {"planned": planned, "extraction_status": extraction_status}
+            result = {"planned": planned, "extraction_status": extraction_status}
+            if visual_index:
+                result = _attach_planned_visual_index(result, meta, visual_index_root)
+            return result
         finally:
             if close_conn:
                 conn.close()
@@ -1643,6 +1723,14 @@ def ingest_paper(
             if should_reextract:
                 result = _reextract_existing_paper(conn, paper_id, meta, llm_fn)
                 conn.commit()
+                if visual_index:
+                    result = _attach_stored_visual_index(
+                        conn,
+                        result,
+                        meta,
+                        visual_index_root,
+                        runner=visual_index_runner,
+                    )
                 return result
             if extraction_status is None:
                 extraction_status = _upsert_extraction_status(
@@ -1678,13 +1766,22 @@ def ingest_paper(
             )
             if source_type_changed:
                 conn.commit()
-            return {
+            result = {
                 "paper_id": paper_id,
                 "chunk_ids": [],
                 "method_ids": [],
                 "extraction_status": extraction_status,
                 "duplicate": True,
             }
+            if visual_index:
+                result = _attach_stored_visual_index(
+                    conn,
+                    result,
+                    meta,
+                    visual_index_root,
+                    runner=visual_index_runner,
+                )
+            return result
 
         cur.execute(
             """
@@ -1743,15 +1840,225 @@ def ingest_paper(
                     ),
                 )
         conn.commit()
-        return {
+        result = {
             "paper_id": paper_id,
             "chunk_ids": chunk_ids,
             "method_ids": method_ids,
             "extraction_status": extraction_status,
         }
+        if visual_index:
+            result = _attach_stored_visual_index(
+                conn,
+                result,
+                meta,
+                visual_index_root,
+                runner=visual_index_runner,
+            )
+        return result
     finally:
         if close:
             conn.close()
+
+
+def ingest_arxiv_id(
+    arxiv_id: str,
+    llm_fn=None,
+    conn=None,
+    dry_run: bool = False,
+    source_type: Optional[str] = None,
+    visual_index: bool = False,
+    visual_index_root: str | Path | None = None,
+    visual_index_runner=None,
+) -> dict:
+    """Fetch and ingest a single arXiv paper.
+
+    Wraps :func:`fetch_arxiv_source` and :func:`ingest_paper`, optionally
+    overriding the ``source_type`` metadata label. Returns a dict containing
+    both the fetched metadata and the ingestion result.
+    """
+    meta = fetch_arxiv_source(arxiv_id)
+    _apply_source_type_override(meta, source_type)
+    return {
+        "meta": meta,
+        "result": ingest_paper(
+            meta,
+            llm_fn=llm_fn,
+            conn=conn,
+            dry_run=dry_run,
+            visual_index=visual_index,
+            visual_index_root=visual_index_root,
+            visual_index_runner=visual_index_runner,
+        ),
+    }
+
+
+def ingest_arxiv_ids(
+    arxiv_ids: list[str],
+    llm_fn=None,
+    conn=None,
+    dry_run: bool = False,
+    source_type: Optional[str] = None,
+    visual_index: bool = False,
+    visual_index_root: str | Path | None = None,
+    visual_index_runner=None,
+) -> list[dict]:
+    """Fetch and ingest a list of arXiv papers, continuing past individual errors."""
+    results: list[dict] = []
+    for raw_id in arxiv_ids:
+        arxiv_id = raw_id.strip()
+        if not arxiv_id:
+            continue
+        try:
+            outcome = ingest_arxiv_id(
+                arxiv_id,
+                llm_fn=llm_fn,
+                conn=conn,
+                dry_run=dry_run,
+                source_type=source_type,
+                visual_index=visual_index,
+                visual_index_root=visual_index_root,
+                visual_index_runner=visual_index_runner,
+            )
+            meta = outcome.get("meta", {})
+            result = outcome.get("result", {})
+            title = meta.get("title", "")
+            status = "unknown"
+            paper_id = "planned" if dry_run else None
+            if dry_run:
+                planned = result.get("planned", {})
+                status = (planned.get("extraction_status") or {}).get("status", "unknown")
+            else:
+                paper_id = result.get("paper_id")
+                status = (result.get("extraction_status") or {}).get("status", "unknown")
+            results.append(
+                {
+                    "arxiv_id": arxiv_id,
+                    "title": title,
+                    "paper_id": paper_id,
+                    "status": status,
+                    "error": None,
+                    "result": result,
+                }
+            )
+        except Exception as exc:
+            results.append(
+                {
+                    "arxiv_id": arxiv_id,
+                    "title": "",
+                    "paper_id": None,
+                    "status": "error",
+                    "error": str(exc),
+                    "result": None,
+                }
+            )
+    return results
+
+
+def ingest_arxiv_query(
+    query: str,
+    llm_fn=None,
+    conn=None,
+    dry_run: bool = False,
+    source_type: Optional[str] = None,
+    max_results: int = 10,
+    visual_index: bool = False,
+    visual_index_root: str | Path | None = None,
+    visual_index_runner=None,
+) -> list[dict]:
+    """Search arXiv and ingest the matching papers."""
+    arxiv_ids = fetch_arxiv_query(query, max_results=max_results)
+    return ingest_arxiv_ids(
+        arxiv_ids,
+        llm_fn=llm_fn,
+        conn=conn,
+        dry_run=dry_run,
+        source_type=source_type,
+        visual_index=visual_index,
+        visual_index_root=visual_index_root,
+        visual_index_runner=visual_index_runner,
+    )
+
+
+def _print_arxiv_batch_summary(results: list[dict], dry_run: bool = False) -> None:
+    """Print a concise summary line for each arXiv batch result."""
+    if dry_run:
+        print("DRY RUN - planned batch ingestion")
+    else:
+        print("Ingested batch:")
+    has_visual_status = any((item.get("result") or {}).get("visual_index") for item in results)
+    rule_width = 82 if has_visual_status else 70
+    print("-" * rule_width)
+    if has_visual_status:
+        print(f"{'ID':<20}{'Paper ID':<14}{'Status':<14}{'Visual':<12}Title")
+    else:
+        print(f"{'ID':<20}{'Paper ID':<14}{'Status':<14}Title")
+    print("-" * rule_width)
+    for item in results:
+        arxiv_id = item.get("arxiv_id", "")
+        title = (item.get("title") or "").strip()
+        paper_id = item.get("paper_id")
+        if paper_id is None:
+            paper_id_label = "error"
+        elif paper_id == "planned":
+            paper_id_label = "planned"
+        else:
+            paper_id_label = str(paper_id)
+        status = item.get("status", "unknown")
+        visual_index_payload = (item.get("result") or {}).get("visual_index") or {}
+        visual_status = visual_index_payload.get("status", "")
+        error = item.get("error")
+        if has_visual_status:
+            line = f"{arxiv_id:<20}{paper_id_label:<14}{status:<14}{visual_status:<12}{title}"
+        else:
+            line = f"{arxiv_id:<20}{paper_id_label:<14}{status:<14}{title}"
+        print(line)
+        if error:
+            print(f"  -> error: {error}")
+
+
+def _print_single_ingestion_result(result: dict, dry_run: bool = False) -> None:
+    """Print the single-paper ingestion result, preserving the legacy format."""
+    if dry_run:
+        planned = result.get("planned", {})
+        paper = planned.get("paper", {})
+        print("DRY RUN - planned ingestion")
+        print("=" * 40)
+        print(f"Paper title : {paper.get('title')}")
+        print(f"Authors     : {paper.get('authors')}")
+        print(f"URL         : {paper.get('url')}")
+        print(f"Publish date: {paper.get('publish_date')}")
+        print(f"Chunks      : {len(planned.get('chunks', []))}")
+        methods = planned.get("methods", [])
+        merged_methods = planned.get("merged_methods", [])
+        print(f"Methods     : {len(methods) + len(merged_methods)}")
+        extraction_status = result.get("extraction_status") or planned.get("extraction_status", {})
+        print(f"Extraction : {extraction_status.get('status')}")
+        print(f"External ID : {extraction_status.get('external_id')}")
+        print(f"Compression: {extraction_status.get('compressed_char_count')} / {extraction_status.get('source_char_count')} chars")
+        print(f"Confidence : {extraction_status.get('confidence_score')} ({extraction_status.get('confidence_reason')})")
+        visual_index_payload = result.get("visual_index") or planned.get("visual_index")
+        if visual_index_payload:
+            print(f"Visual index: {visual_index_payload.get('status')}")
+            if visual_index_payload.get("error_text"):
+                print(f"Visual error: {visual_index_payload.get('error_text')}")
+        for method in methods:
+            print(f"  - {method.get('name')} ({method.get('category')})")
+        for method in merged_methods:
+            print(f"  - {method.get('name')} (merged into existing)")
+        if planned.get("extraction_error"):
+            print(f"Extraction error: {planned['extraction_error']}")
+    else:
+        print("Ingested:")
+        print(f"  paper_id : {result['paper_id']}")
+        print(f"  chunk_ids: {result['chunk_ids']}")
+        print(f"  method_ids: {result['method_ids']}")
+        status = result.get("extraction_status", {})
+        print(f"  extraction_status: {status.get('status')}")
+        visual_index_payload = result.get("visual_index")
+        if visual_index_payload:
+            print(f"  visual_index: {visual_index_payload.get('status')}")
+            if visual_index_payload.get("error_text"):
+                print(f"  visual_error: {visual_index_payload.get('error_text')}")
 
 
 def main() -> None:
@@ -1760,9 +2067,20 @@ def main() -> None:
         prog="researchfs.ingest",
         description="Ingest papers and methods into ResearchFS.",
     )
-    parser.add_argument("--arxiv", metavar="ID", help="Ingest an arXiv paper by ID")
-    parser.add_argument("--repo", metavar="PATH", help="Ingest a GitHub README as a paper")
-    parser.add_argument("--file", metavar="PATH", help="Ingest a local text/markdown/TeX/PDF paper note")
+    input_group = parser.add_mutually_exclusive_group()
+    input_group.add_argument("--arxiv", metavar="ID", help="Ingest an arXiv paper by ID")
+    input_group.add_argument(
+        "--arxiv-list",
+        metavar="IDS",
+        help="Ingest a comma-separated list of arXiv paper IDs",
+    )
+    input_group.add_argument(
+        "--arxiv-query", metavar="QUERY", help="Ingest papers matching an arXiv search query"
+    )
+    input_group.add_argument("--repo", metavar="PATH", help="Ingest a GitHub README as a paper")
+    input_group.add_argument(
+        "--file", metavar="PATH", help="Ingest a local text/markdown/TeX/PDF paper note"
+    )
     parser.add_argument(
         "--source-type",
         metavar="LABEL",
@@ -1780,6 +2098,23 @@ def main() -> None:
         help="Show the records that would be created without writing to the DB",
     )
     parser.add_argument(
+        "--visual-index",
+        action="store_true",
+        help="Build a PixelRAG visual index for the ingested paper",
+    )
+    parser.add_argument(
+        "--visual-index-root",
+        metavar="PATH",
+        help="Directory for generated visual index artifacts",
+    )
+    parser.add_argument(
+        "--max-results",
+        metavar="N",
+        type=int,
+        default=10,
+        help="Maximum arXiv results to ingest with --arxiv-query (default: 10)",
+    )
+    parser.add_argument(
         "--seed",
         action="store_true",
         help="Seed the database with the v0 corpus",
@@ -1792,7 +2127,7 @@ def main() -> None:
         print("Seeded researchfs.db")
         return
 
-    if not args.arxiv and not args.repo and not args.file:
+    if not args.arxiv and not args.arxiv_list and not args.arxiv_query and not args.repo and not args.file:
         parser.print_help()
         return
 
@@ -1808,48 +2143,63 @@ def main() -> None:
 
     if args.arxiv:
         meta = fetch_arxiv_source(args.arxiv)
+        _apply_source_type_override(meta, args.source_type)
+        result = ingest_paper(
+            meta,
+            llm_fn=llm_fn,
+            dry_run=args.dry_run,
+            visual_index=args.visual_index,
+            visual_index_root=args.visual_index_root,
+        )
+        _print_single_ingestion_result(result, dry_run=args.dry_run)
+    elif args.arxiv_list:
+        arxiv_ids = [id_.strip() for id_ in args.arxiv_list.split(",")]
+        arxiv_ids = [id_ for id_ in arxiv_ids if id_]
+        results = ingest_arxiv_ids(
+            arxiv_ids,
+            llm_fn=llm_fn,
+            dry_run=args.dry_run,
+            source_type=args.source_type,
+            visual_index=args.visual_index,
+            visual_index_root=args.visual_index_root,
+        )
+        _print_arxiv_batch_summary(results, dry_run=args.dry_run)
+    elif args.arxiv_query:
+        results = ingest_arxiv_query(
+            args.arxiv_query,
+            llm_fn=llm_fn,
+            dry_run=args.dry_run,
+            source_type=args.source_type,
+            max_results=args.max_results,
+            visual_index=args.visual_index,
+            visual_index_root=args.visual_index_root,
+        )
+        _print_arxiv_batch_summary(results, dry_run=args.dry_run)
     elif args.repo:
         meta = fetch_github_readme(args.repo)
+        _apply_source_type_override(meta, args.source_type)
+        result = ingest_paper(
+            meta,
+            llm_fn=llm_fn,
+            dry_run=args.dry_run,
+            visual_index=args.visual_index,
+            visual_index_root=args.visual_index_root,
+        )
+        _print_single_ingestion_result(result, dry_run=args.dry_run)
     else:
         try:
             meta = load_local_file_metadata(args.file)
         except (FileNotFoundError, ValueError) as exc:
             parser.error(str(exc))
-
-    _apply_source_type_override(meta, args.source_type)
-
-    result = ingest_paper(meta, llm_fn=llm_fn, dry_run=args.dry_run)
-
-    if args.dry_run:
-        planned = result.get("planned", {})
-        paper = planned.get("paper", {})
-        print("DRY RUN - planned ingestion")
-        print("=" * 40)
-        print(f"Paper title : {paper.get('title')}")
-        print(f"Authors     : {paper.get('authors')}")
-        print(f"URL         : {paper.get('url')}")
-        print(f"Publish date: {paper.get('publish_date')}")
-        print(f"Chunks      : {len(planned.get('chunks', []))}")
-        methods = planned.get("methods", [])
-        merged_methods = planned.get("merged_methods", [])
-        print(f"Methods     : {len(methods) + len(merged_methods)}")
-        extraction_status = result.get("extraction_status") or planned.get("extraction_status", {})
-        print(f"Extraction : {extraction_status.get('status')}")
-        print(f"Compression: {extraction_status.get('compressed_char_count')} / {extraction_status.get('source_char_count')} chars")
-        print(f"Confidence : {extraction_status.get('confidence_score')} ({extraction_status.get('confidence_reason')})")
-        for method in methods:
-            print(f"  - {method.get('name')} ({method.get('category')})")
-        for method in merged_methods:
-            print(f"  - {method.get('name')} (merged into existing)")
-        if planned.get("extraction_error"):
-            print(f"Extraction error: {planned['extraction_error']}")
-    else:
-        print("Ingested:")
-        print(f"  paper_id : {result['paper_id']}")
-        print(f"  chunk_ids: {result['chunk_ids']}")
-        print(f"  method_ids: {result['method_ids']}")
-        status = result.get("extraction_status", {})
-        print(f"  extraction_status: {status.get('status')}")
+        _apply_source_type_override(meta, args.source_type)
+        result = ingest_paper(
+            meta,
+            llm_fn=llm_fn,
+            dry_run=args.dry_run,
+            visual_index=args.visual_index,
+            visual_index_root=args.visual_index_root,
+        )
+        _print_single_ingestion_result(result, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

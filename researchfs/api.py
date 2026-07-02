@@ -259,6 +259,12 @@ def _optional_str(payload: JSONDict, key: str) -> str | None:
         raise LabAPIError(400, "invalid_field", f"'{key}' must be a string")
     return value
 
+def _visual_index_options(payload: JSONDict) -> tuple[bool, str | None]:
+    return (
+        _optional_bool(payload, "visual_index", False),
+        _optional_str(payload, "visual_index_root"),
+    )
+
 
 def _optional_method_ids(payload: JSONDict) -> list[int]:
     method_ids = payload.get("method_ids")
@@ -322,10 +328,18 @@ def _paper_from_payload(payload: JSONDict) -> JSONDict:
         "abstract": paper.get("abstract"),
         "url": paper.get("url"),
         "publish_date": paper.get("publish_date"),
+        "external_id": paper.get("external_id") if "external_id" in paper else payload.get("external_id"),
         "content": paper.get("content", paper.get("abstract", "")),
     }
     source_type_supplied = False
-    for key in ("source_type", "extractor_model", "extractor_prompt_version"):
+    for key in (
+        "source_type",
+        "extractor_model",
+        "extractor_prompt_version",
+        "visual_source",
+        "visual_source_path",
+        "visual_source_url",
+    ):
         if key in paper:
             meta[key] = paper[key]
             source_type_supplied = source_type_supplied or key == "source_type"
@@ -458,6 +472,7 @@ def _extraction_status_record(row: Any | None) -> JSONDict | None:
         "error_text": row["error_text"],
         "confidence_score": row["confidence_score"],
         "confidence_reason": row["confidence_reason"],
+        "external_id": row["external_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -479,6 +494,7 @@ def _load_extraction_status(conn: Any, paper_id: int) -> JSONDict | None:
             error_text,
             confidence_score,
             confidence_reason,
+            external_id,
             created_at,
             updated_at
         FROM paper_extraction_status
@@ -514,6 +530,7 @@ class ResearchFSLabAPI:
         llm_fn: LLMFn | None = None,
         arxiv_fetcher: ArxivFetcher | None = None,
         repo_fetcher: RepoFetcher | None = None,
+        visual_index_runner=None,
     ) -> None:
         if conn is not None and db_path is not None:
             raise ValueError("Pass either conn or db_path, not both")
@@ -522,6 +539,7 @@ class ResearchFSLabAPI:
         self._llm_fn = llm_fn
         self._arxiv_fetcher = arxiv_fetcher or fetch_arxiv_source
         self._repo_fetcher = repo_fetcher or fetch_github_readme
+        self._visual_index_runner = visual_index_runner
 
     @contextmanager
     def _connection(self) -> Iterator[Any]:
@@ -627,8 +645,16 @@ class ResearchFSLabAPI:
     def _handle_ingest(self, payload: JSONDict) -> LabAPIResponse:
         meta = _paper_from_payload(payload)
         llm_fn = _select_llm(payload, self._llm_fn)
+        visual_index, visual_index_root = _visual_index_options(payload)
         with self._connection() as conn:
-            result = ingest_paper(meta, llm_fn=llm_fn, conn=conn)
+            result = ingest_paper(
+                meta,
+                llm_fn=llm_fn,
+                conn=conn,
+                visual_index=visual_index,
+                visual_index_root=visual_index_root,
+                visual_index_runner=self._visual_index_runner,
+            )
             result = _attach_current_extraction_status(conn, result)
         body = {"ok": True, **result, "ingestion": _ingestion_metadata(result, llm_fn)}
         return LabAPIResponse(200, body)
@@ -653,12 +679,20 @@ class ResearchFSLabAPI:
             except Exception as exc:
                 raise LabAPIError(400, "invalid_field", "'source_type' must be a non-empty string") from exc
             _mark_source_type_explicit(meta)
-        for key in ("extractor_model", "extractor_prompt_version"):
+        for key in ("extractor_model", "extractor_prompt_version", "external_id"):
             if key in payload:
                 meta[key] = payload[key]
         llm_fn = _select_llm(payload, self._llm_fn)
+        visual_index, visual_index_root = _visual_index_options(payload)
         with self._connection() as conn:
-            result = ingest_paper(meta, llm_fn=llm_fn, conn=conn)
+            result = ingest_paper(
+                meta,
+                llm_fn=llm_fn,
+                conn=conn,
+                visual_index=visual_index,
+                visual_index_root=visual_index_root,
+                visual_index_runner=self._visual_index_runner,
+            )
             result = _attach_current_extraction_status(conn, result)
         body = {
             "ok": True,
@@ -687,12 +721,20 @@ class ResearchFSLabAPI:
         except Exception as exc:
             raise LabAPIError(400, "invalid_field", "'source_type' must be a non-empty string") from exc
         _mark_source_type_explicit(meta)
-        for key in ("extractor_model", "extractor_prompt_version"):
+        for key in ("extractor_model", "extractor_prompt_version", "external_id"):
             if key in payload:
                 meta[key] = payload[key]
         llm_fn = _select_llm(payload, self._llm_fn)
+        visual_index, visual_index_root = _visual_index_options(payload)
         with self._connection() as conn:
-            result = ingest_paper(meta, llm_fn=llm_fn, conn=conn)
+            result = ingest_paper(
+                meta,
+                llm_fn=llm_fn,
+                conn=conn,
+                visual_index=visual_index,
+                visual_index_root=visual_index_root,
+                visual_index_runner=self._visual_index_runner,
+            )
             result = _attach_current_extraction_status(conn, result)
         body = {
             "ok": True,
@@ -712,6 +754,7 @@ class ResearchFSLabAPI:
             "source_type",
             "extractor_model",
             "extractor_prompt_version",
+            "external_id",
         )
         overrides = {key: payload[key] for key in override_keys if key in payload}
         try:
@@ -723,8 +766,16 @@ class ResearchFSLabAPI:
         except ValueError as exc:
             raise LabAPIError(400, "unsupported_file_type", str(exc)) from exc
         llm_fn = _select_llm(payload, self._llm_fn)
+        visual_index, visual_index_root = _visual_index_options(payload)
         with self._connection() as conn:
-            result = ingest_paper(meta, llm_fn=llm_fn, conn=conn)
+            result = ingest_paper(
+                meta,
+                llm_fn=llm_fn,
+                conn=conn,
+                visual_index=visual_index,
+                visual_index_root=visual_index_root,
+                visual_index_runner=self._visual_index_runner,
+            )
             result = _attach_current_extraction_status(conn, result)
         body = {
             "ok": True,
@@ -1339,10 +1390,15 @@ def dispatch_request(
     db_path: str | None = None,
     llm_fn: LLMFn | None = None,
     arxiv_fetcher: ArxivFetcher | None = None,
+    visual_index_runner=None,
 ) -> LabAPIResponse:
     """Convenience wrapper for a single in-process ResearchFS lab API request."""
     api = ResearchFSLabAPI(
-        conn=conn, db_path=db_path, llm_fn=llm_fn, arxiv_fetcher=arxiv_fetcher
+        conn=conn,
+        db_path=db_path,
+        llm_fn=llm_fn,
+        arxiv_fetcher=arxiv_fetcher,
+        visual_index_runner=visual_index_runner,
     )
     return api.dispatch(method, path, body)
 

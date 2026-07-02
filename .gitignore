@@ -17,6 +17,7 @@ worktrees/
 results/
 queue/
 data/
+data/visual_indexes/
 
 # Agent prompt files (generated per-session by launchers)
 CLAUDE.md

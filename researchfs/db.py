@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS paper_extraction_status (
     paper_id INTEGER PRIMARY KEY REFERENCES papers(paper_id) ON DELETE CASCADE,
     status TEXT NOT NULL CHECK (status IN ('skipped', 'extracted', 'failed')),
     source_type TEXT,
+    external_id TEXT,
     chunk_count INTEGER NOT NULL DEFAULT 0,
     method_count INTEGER NOT NULL DEFAULT 0,
     source_char_count INTEGER NOT NULL DEFAULT 0,
@@ -70,6 +71,21 @@ CREATE TABLE IF NOT EXISTS paper_extraction_status (
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+
+CREATE TABLE IF NOT EXISTS paper_visual_indexes (
+    visual_index_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    paper_id INTEGER NOT NULL REFERENCES papers(paper_id) ON DELETE CASCADE,
+    provider TEXT NOT NULL DEFAULT 'pixelrag',
+    status TEXT NOT NULL CHECK (status IN ('planned', 'indexed', 'failed')),
+    source TEXT,
+    tiles_path TEXT,
+    embeddings_path TEXT,
+    index_path TEXT,
+    error_text TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(paper_id, provider)
+);
 
 CREATE TABLE IF NOT EXISTS methods (
     method_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -278,6 +294,7 @@ END;
 
 CREATE INDEX IF NOT EXISTS idx_chunks_paper_id ON chunks(paper_id);
 CREATE INDEX IF NOT EXISTS idx_paper_extraction_status_status ON paper_extraction_status(status);
+CREATE INDEX IF NOT EXISTS idx_paper_visual_indexes_paper_id ON paper_visual_indexes(paper_id);
 CREATE INDEX IF NOT EXISTS idx_method_sources_method_id ON method_sources(method_id);
 CREATE INDEX IF NOT EXISTS idx_method_sources_chunk_id ON method_sources(chunk_id);
 CREATE INDEX IF NOT EXISTS idx_experiments_agent_run_id ON experiments(agent_run_id);
@@ -372,6 +389,19 @@ def _ensure_paper_extraction_status_columns(conn: sqlite3.Connection) -> None:
             )
 
 
+def _ensure_paper_extraction_status_external_id(conn: sqlite3.Connection) -> None:
+    """Add a nullable external_id provenance column to legacy paper_extraction_status tables."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'paper_extraction_status'"
+    ).fetchone()
+    if table_exists is None:
+        return
+
+    existing_columns = _table_columns(conn, "paper_extraction_status")
+    if "external_id" not in existing_columns:
+        conn.execute("ALTER TABLE paper_extraction_status ADD COLUMN external_id TEXT")
+
+
 def _ensure_method_source_evidence_columns(conn: sqlite3.Connection) -> None:
     """Add nullable evidence columns to legacy method_sources tables."""
     table_exists = conn.execute(
@@ -458,6 +488,7 @@ def migrate_db(conn: sqlite3.Connection | None = None) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(SCHEMA)
         _ensure_paper_extraction_status_columns(conn)
+        _ensure_paper_extraction_status_external_id(conn)
         _ensure_method_source_evidence_columns(conn)
         _ensure_method_feedback_columns(conn)
         _backfill_method_source_evidence(conn)
