@@ -25,7 +25,7 @@ def apply_hunks(file_content: str, response_text: str) -> str:
     # The markers themselves must be on their own lines; spaces before markers
     # are ignored, but spaces inside SEARCH/REPLACE payloads are preserved.
     pattern = re.compile(
-        r"^[ \t]*<<<<<<< SEARCH[ \t]*\r?\n(.*?)\r?\n[ \t]*=======[ \t]*\r?\n(.*?)\r?\n[ \t]*>>>>>>>[ \t]*(?=\r?\n|$)",
+        r"^[ \t]*<<<<<<< SEARCH[ \t]*\r?\n(.*?)\r?\n[ \t]*=======[ \t]*\r?\n(.*?)(?:\r?\n)?^[ \t]*>>>>>>>[ \t]*(?=\r?\n|$)",
         re.DOTALL | re.MULTILINE,
     )
 

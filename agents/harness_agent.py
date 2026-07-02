@@ -96,6 +96,78 @@ def _run_train(time_budget: int, steps_budget: int, env: dict, log_path: str) ->
         log_text = log_f.read()
     return parse_log(log_text, res.returncode)
 
+def _refresh_loopgraph_code_map() -> None:
+    """Refresh ResearchFS code symbols for the editable training targets."""
+    import importlib
+
+    try:
+        codegraph = importlib.import_module("researchfs.codegraph")
+    except ModuleNotFoundError as exc:
+        if exc.name == "researchfs.codegraph":
+            return
+        raise
+
+    refresh_code_map = getattr(codegraph, "refresh_code_map", None)
+    link_methods_to_code = getattr(codegraph, "link_methods_to_code", None)
+    if callable(refresh_code_map):
+        refresh_code_map(paths=("train.py", "prepare.py"))
+    if callable(link_methods_to_code):
+        link_methods_to_code()
+
+
+def _get_loopgraph_context(query: str, max_chars: int | None, agent_run_id: Optional[int]) -> str:
+    """Return graph context when the ResearchFS graph API is available."""
+    get_graph_context = getattr(rfs, "get_graph_context", None)
+    if not callable(get_graph_context):
+        return ""
+    return get_graph_context(query, max_chars=max_chars, agent_run_id=agent_run_id)
+
+
+def _link_loopgraph_methods(experiment_id: int, method_ids: Optional[list[int]], query: str) -> None:
+    """Explicitly connect retrieved methods to an experiment when supported."""
+    if not method_ids:
+        return
+    link_experiment_methods = getattr(rfs, "link_experiment_methods", None)
+    if callable(link_experiment_methods):
+        link_experiment_methods(experiment_id, method_ids, role="retrieved", note=query or None)
+
+
+def _log_loopgraph_lesson(
+    *,
+    experiment_id: Optional[int],
+    method_ids: Optional[list[int]],
+    query: str,
+    description: str,
+    status: str,
+    val_bpb: Optional[float],
+    memory_gb: Optional[float],
+) -> None:
+    """Record a compact outcome lesson once the experiment status is final."""
+    if experiment_id is None:
+        return
+    log_lesson = getattr(rfs, "log_lesson", None)
+    if not callable(log_lesson):
+        return
+    unique_method_ids = list(dict.fromkeys(method_ids or []))
+    method_id = unique_method_ids[0] if len(unique_method_ids) == 1 else None
+    val_str = f"{val_bpb:.6f}" if val_bpb is not None else "NA"
+    mem_str = f"{memory_gb:.3f} GB" if memory_gb is not None else "NA"
+    method_query = query or "none"
+    content = (
+        f"method_query={method_query}; "
+        f"description={description}; "
+        f"status={status}; "
+        f"val_bpb={val_str}; "
+        f"memory={mem_str}"
+    )
+    log_lesson(
+        label="experiment_outcome",
+        content=content,
+        outcome=status,
+        method_id=method_id,
+        experiment_id=experiment_id,
+    )
+
 
 def assemble_harness_prompt(
     mode: str,
@@ -104,6 +176,7 @@ def assemble_harness_prompt(
     experiment_brief: str,
     train_py_content: str,
     error_msg: Optional[str] = None,
+    graph_context: str = "",
 ) -> str:
     """Assemble a precise prompt asking for search-replace hunk edits."""
     prompt = (
@@ -111,7 +184,11 @@ def assemble_harness_prompt(
         "Your goal is to modify the training script `train.py` to minimize the validation bits per byte (val_bpb) on a pretraining task.\n\n"
     )
     if mode == "loopgraph":
-        prompt += f"Method Pack:\n{method_pack}\n\nExperiment Brief:\n{experiment_brief}\n\n"
+        prompt += (
+            f"Method Pack:\n{method_pack}\n\n"
+            f"Experiment Brief:\n{experiment_brief}\n\n"
+            f"Research Graph Context:\n{graph_context}\n\n"
+        )
 
     prompt += f"Here is the history of previous experiments:\n{results_content}\n\n"
     prompt += f"Here is the current content of `train.py`:\n```python\n{train_py_content}\n```\n\n"
@@ -138,6 +215,8 @@ def assemble_harness_prompt(
 
 
 
+
+
 def run_agent_mode(
     mode: str,
     model: str,
@@ -149,12 +228,16 @@ def run_agent_mode(
     max_method_chars: int | None = None,
 ) -> int:
     """Run the propose-train-evaluate loop using the supplied LLM callable."""
-    initialize_db()
-    ensure_seed()
-
     env = _git_env()
     original_branch = _current_branch(env)
     print(f"Original checkout target: {original_branch}")
+
+    _ensure_clean_train_py(env)
+
+    initialize_db()
+    ensure_seed()
+    if mode == "loopgraph":
+        _refresh_loopgraph_code_map()
 
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -163,8 +246,6 @@ def run_agent_mode(
     agent_run_id: Optional[int] = None
     research_client: Optional[ResearchFSClient] = None
     branch_created = False
-
-    _ensure_clean_train_py(env)
 
     try:
         subprocess.run(["git", "checkout", "-b", branch_name], check=True, env=env)
@@ -247,6 +328,7 @@ def run_agent_mode(
             completion_tokens_accum = 0
             query = ""
             current_method_pack = ""
+            current_graph_context = ""
             method_ids = None
             query_reused = False
             if mode == "loopgraph" and session is not None:
@@ -261,6 +343,11 @@ def run_agent_mode(
                     print(f"Skipping search. search_decision={decision['search']}, query='{query}'")
                     current_method_pack = ""
                     method_ids = None
+                current_graph_context = _get_loopgraph_context(
+                    query,
+                    max_chars=max_method_chars,
+                    agent_run_id=agent_run_id,
+                )
                 prompt_tokens_accum += session.prompt_tokens_accum
                 completion_tokens_accum += session.completion_tokens_accum
                 # Reset per-step accumulators so each experiment is tracked separately.
@@ -278,7 +365,13 @@ def run_agent_mode(
 
                 # Assemble prompt with the error from previous attempt if any
                 prompt = assemble_harness_prompt(
-                    mode, results_content, current_method_pack, experiment_brief, original_train_code, last_error
+                    mode,
+                    results_content,
+                    current_method_pack,
+                    experiment_brief,
+                    original_train_code,
+                    last_error,
+                    current_graph_context,
                 )
 
                 prompt_tokens = _estimate_tokens(prompt)
@@ -344,6 +437,7 @@ def run_agent_mode(
                         experiment_id=experiment_id,
                         method_ids=method_ids,
                     )
+                    _link_loopgraph_methods(experiment_id, method_ids, query)
 
                 # 5. Run training
                 log_path = f"run_{exp_num}_attempt_{attempt}.log"
@@ -384,6 +478,16 @@ def run_agent_mode(
                         status="crash",
                         description=f"{description} (Failed to compile/run)",
                     )
+                    if mode == "loopgraph":
+                        _log_loopgraph_lesson(
+                            experiment_id=experiment_id,
+                            method_ids=method_ids,
+                            query=query,
+                            description=f"{description} (Failed to compile/run)",
+                            status="crash",
+                            val_bpb=None,
+                            memory_gb=None,
+                        )
                 with open(results_path, "a") as f:
                     f.write(f"failed\tNA\tNA\tcrash\t{description} (Failed after retries)\n")
                 continue
@@ -419,6 +523,16 @@ def run_agent_mode(
                 status=status_str,
                 description=description,
             )
+            if mode == "loopgraph":
+                _log_loopgraph_lesson(
+                    experiment_id=experiment_id,
+                    method_ids=method_ids,
+                    query=query,
+                    description=description,
+                    status=status_str,
+                    val_bpb=val_bpb,
+                    memory_gb=mem_gb,
+                )
 
             if experiments is not None:
                 experiments.append({

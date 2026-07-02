@@ -50,9 +50,6 @@ def estimate_cost(prompt_tokens: int, completion_tokens: int, model: Optional[st
     ) / 1000
 
 
-def _get_cost(prompt_tokens: int, completion_tokens: int, model: Optional[str]) -> float:
-    """Deprecated alias for estimate_cost."""
-    return estimate_cost(prompt_tokens, completion_tokens, model)
 
 
 def load_run(agent_run_id: int, conn=None) -> dict:
@@ -98,6 +95,7 @@ def load_run(agent_run_id: int, conn=None) -> dict:
         cur.execute(
             """
             SELECT
+                COUNT(*) AS usage_rows,
                 SUM(prompt_tokens) AS prompt_tokens,
                 SUM(completion_tokens) AS completion_tokens,
                 SUM(cost) AS logged_cost
@@ -109,11 +107,17 @@ def load_run(agent_run_id: int, conn=None) -> dict:
             (agent_run_id,),
         )
         token_row = cur.fetchone()
-        prompt_tokens = token_row["prompt_tokens"] or 0
-        completion_tokens = token_row["completion_tokens"] or 0
-        logged_cost = token_row["logged_cost"] or 0.0
-        estimated_cost = estimate_cost(prompt_tokens, completion_tokens, run_row["model"])
-        cost = logged_cost if logged_cost else estimated_cost
+        has_token_usage = token_row["usage_rows"] > 0
+        if has_token_usage:
+            prompt_tokens = token_row["prompt_tokens"] or 0
+            completion_tokens = token_row["completion_tokens"] or 0
+            logged_cost = token_row["logged_cost"]
+            estimated_cost = estimate_cost(prompt_tokens, completion_tokens, run_row["model"])
+            cost = logged_cost if logged_cost is not None else estimated_cost
+        else:
+            prompt_tokens = None
+            completion_tokens = None
+            cost = None
 
         cur.execute(
             "SELECT COUNT(*) AS count FROM retrieval_events WHERE agent_run_id = ?",
@@ -135,7 +139,9 @@ def load_run(agent_run_id: int, conn=None) -> dict:
             if baseline_bpb is not None and best_bpb is not None
             else None
         )
-        total_tokens = prompt_tokens + completion_tokens
+        total_tokens = (
+            prompt_tokens + completion_tokens if has_token_usage else None
+        )
 
         return {
             "agent_run_id": agent_run_id,
@@ -155,9 +161,12 @@ def load_run(agent_run_id: int, conn=None) -> dict:
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
             "cost": cost,
+            "has_token_usage": has_token_usage,
             "retrieval_count": retrieval_count,
             "tokens_per_improvement": (
-                total_tokens / improvement if improvement and improvement > 0 else None
+                total_tokens / improvement
+                if total_tokens is not None and improvement and improvement > 0
+                else None
             ),
             "experiments_per_improvement": (
                 len(experiments) / improvement if improvement and improvement > 0 else None
@@ -191,8 +200,13 @@ def compare_runs(baseline_run_id: int, researchfs_run_id: int, conn=None) -> dic
 
         token_reduction = None
         baseline_tokens = baseline["total_tokens"]
-        if baseline_tokens > 0:
-            token_reduction = 1 - researchfs["total_tokens"] / baseline_tokens
+        researchfs_tokens = researchfs["total_tokens"]
+        if (
+            baseline_tokens is not None
+            and researchfs_tokens is not None
+            and baseline_tokens > 0
+        ):
+            token_reduction = 1 - researchfs_tokens / baseline_tokens
 
         retrieval_reduction = None
         baseline_retrievals = baseline["retrieval_count"]
@@ -233,6 +247,11 @@ def format_comparison(comparison: dict) -> str:
             return f"{val:{fmt_spec}}"
         return str(val)
 
+    def fmt_cost(val):
+        if val is None:
+            return "N/A"
+        return f"${fmt(val, '.4f')}"
+
     lines = [
         "# Agent Run Comparison: Baseline vs ResearchFS",
         "",
@@ -248,7 +267,7 @@ def format_comparison(comparison: dict) -> str:
         f"| Prompt tokens | {fmt(b['prompt_tokens'], '.0f')} | {fmt(r['prompt_tokens'], '.0f')} |",
         f"| Completion tokens | {fmt(b['completion_tokens'], '.0f')} | {fmt(r['completion_tokens'], '.0f')} |",
         f"| Total tokens | {fmt(b['total_tokens'], '.0f')} | {fmt(r['total_tokens'], '.0f')} |",
-        f"| Cost (logged/estimated) | ${fmt(b['cost'], '.4f')} | ${fmt(r['cost'], '.4f')} |",
+        f"| Cost (logged/estimated) | {fmt_cost(b['cost'])} | {fmt_cost(r['cost'])} |",
         f"| Retrieval/context calls | {fmt(b['retrieval_count'], '.0f')} | {fmt(r['retrieval_count'], '.0f')} |",
         f"| Tokens per BPB improvement | {fmt(b['tokens_per_improvement'], '.0f')} | {fmt(r['tokens_per_improvement'], '.0f')} |",
         "",

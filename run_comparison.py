@@ -7,6 +7,8 @@ import re
 import subprocess
 import sys
 
+from compare_runs import build_comparison_report
+
 from researchfs.db import initialize_db
 from researchfs.ingest import ensure_seed
 
@@ -214,21 +216,7 @@ def main():
     print("Generating comparison report")
     print(f"{'='*60}")
 
-    from compare_runs import main as compare_main
-    from io import StringIO
-
-    old_stdout = sys.stdout
-    old_argv = sys.argv[:]
-    report_buffer = StringIO()
-    sys.stdout = report_buffer
-    try:
-        sys.argv = ["compare_runs.py", str(baseline_run_id), str(loopgraph_run_id)]
-        compare_main()
-    finally:
-        sys.stdout = old_stdout
-        sys.argv = old_argv
-
-    report = report_buffer.getvalue()
+    report = build_comparison_report(baseline_run_id, loopgraph_run_id)
 
     if args.output:
         with open(args.output, "w") as f:

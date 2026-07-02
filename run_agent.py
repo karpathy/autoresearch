@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import glob
+import hashlib
 import os
 import sys
 import argparse
@@ -187,6 +189,93 @@ def _run_git_checked(args, env, action):
         raise RuntimeError(f"Git {action} failed with exit code {res.returncode}")
     return res
 
+# Codex is allowed to edit train.py only. For ignored files, protect a scoped
+# whitelist of reproducibility artifacts that this runner creates or consumes;
+# this is not a complete scanner for every gitignored path in the repo.
+_CODEX_IGNORED_NON_TRAIN_PATTERNS = (
+    "results.tsv",
+    "researchfs.db",
+    ".asep/**",
+    "CLAUDE.md",
+    "results/**",
+    "queue/**",
+    "AGENTS.md",
+    "run_*.log",
+    "run_baseline.log",
+)
+
+
+def _snapshot_file_entries(paths):
+    """Return path, size, and content hash entries for existing files."""
+    entries = []
+    for path in sorted(set(paths)):
+        if path == "train.py" or not os.path.isfile(path):
+            continue
+        try:
+            stat = os.stat(path)
+            digest = hashlib.sha256()
+            with open(path, "rb") as file_obj:
+                for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            entries.append(f"{path}\t{stat.st_size}\t{digest.hexdigest()}")
+        except OSError as exc:
+            entries.append(f"{path}\tERROR\t{type(exc).__name__}:{exc}")
+    return "\n".join(entries)
+
+
+def _snapshot_untracked_non_train_files(env, pathspec):
+    result = _run_git_checked(
+        ["ls-files", "--others", "--exclude-standard", *pathspec],
+        env,
+        "snapshot untracked non-train.py changes",
+    )
+    return _snapshot_file_entries(line for line in result.stdout.splitlines() if line)
+
+
+def _snapshot_ignored_codex_files():
+    """Return a content-sensitive snapshot for ignored files Codex must not touch."""
+    paths = []
+    for pattern in _CODEX_IGNORED_NON_TRAIN_PATTERNS:
+        paths.extend(glob.glob(pattern, recursive=True))
+    return _snapshot_file_entries(paths)
+
+
+def _snapshot_tracked_non_train_diff(env):
+    """Capture non-train changes plus scoped ignored reproducibility artifacts."""
+    pathspec = ["--", ":(top)", ":(exclude,top)train.py"]
+    return {
+        "unstaged": _run_git_checked(
+            ["diff", "--binary", *pathspec],
+            env,
+            "snapshot unstaged non-train.py changes",
+        ).stdout,
+        "staged": _run_git_checked(
+            ["diff", "--cached", "--binary", *pathspec],
+            env,
+            "snapshot staged non-train.py changes",
+        ).stdout,
+        "untracked": _snapshot_untracked_non_train_files(env, pathspec),
+        "ignored": _snapshot_ignored_codex_files(),
+    }
+
+
+def _ensure_codex_only_changed_train_py(before_snapshot, env):
+    """Fail if Codex changed files outside train.py since the snapshot."""
+    after_snapshot = _snapshot_tracked_non_train_diff(env)
+    changed = [
+        label
+        for label in sorted(set(before_snapshot) | set(after_snapshot))
+        if after_snapshot.get(label) != before_snapshot.get(label)
+    ]
+    if changed:
+        changed_kinds = ", ".join(changed)
+        raise RuntimeError(
+            "Codex modified files outside train.py "
+            f"({changed_kinds} snapshot changed); refusing to continue. "
+            "Inspect those changes and restore them to the pre-Codex state before rerunning."
+        )
+    return after_snapshot
+
 
 def _ensure_clean_train_py(env):
     """Refuse to run if train.py already has user work that could be overwritten."""
@@ -332,10 +421,12 @@ def main():
             if args.search:
                 cmd.append("--search")
             cmd.extend(["exec", "--dangerously-bypass-approvals-and-sandbox", prompt])
+            codex_non_train_snapshot = _snapshot_tracked_non_train_diff(env)
             res_codex = subprocess.run(
                 cmd,
                 capture_output=True, text=True, env=env
             )
+            _ensure_codex_only_changed_train_py(codex_non_train_snapshot, env)
             if res_codex.returncode != 0:
                 print(f"Codex run failed (code {res_codex.returncode}): {res_codex.stderr}", file=sys.stderr)
                 print("Stopping experiment loop.")
@@ -447,10 +538,12 @@ def main():
                 if args.search:
                     cmd_fix.append("--search")
                 cmd_fix.extend(["exec", "--dangerously-bypass-approvals-and-sandbox", fix_prompt])
+                codex_non_train_snapshot = _snapshot_tracked_non_train_diff(env)
                 res_codex = subprocess.run(
                     cmd_fix,
                     capture_output=True, text=True, env=env
                 )
+                _ensure_codex_only_changed_train_py(codex_non_train_snapshot, env)
                 if res_codex.returncode != 0:
                     print(f"Codex self-correction failed: {res_codex.stderr}", file=sys.stderr)
                     break
@@ -533,8 +626,14 @@ def main():
     print(f"  best_bpb: {summary['best_bpb']:.6f}" if summary['best_bpb'] is not None else "  best_bpb: N/A")
     print(f"  total_experiments: {summary['total_experiments']}")
     print(f"  kept/crashed/discarded: {summary['kept']}/{summary['crashed']}/{summary['discarded']}")
-    print(f"  total_tokens: {summary['total_tokens']:,}")
-    print(f"  estimated_cost: ${summary['cost']:.4f}")
+    if summary["total_tokens"] is None:
+        print("  total_tokens: N/A")
+    else:
+        print(f"  total_tokens: {summary['total_tokens']:,}")
+    if summary["cost"] is None:
+        print("  estimated_cost: N/A")
+    else:
+        print(f"  estimated_cost: ${summary['cost']:.4f}")
     print(f"  retrieval_events: {summary['retrieval_count']}")
     print(f"\nCompare with: python compare_runs.py --list")
 if __name__ == "__main__":

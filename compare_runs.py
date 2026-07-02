@@ -18,6 +18,46 @@ from evals.nanochat_bpb.metrics import (
 )
 
 
+def build_comparison_report(
+    baseline_run_id: int,
+    researchfs_run_id: int,
+    *,
+    include_benchmarks: bool = False,
+    conn=None,
+) -> str:
+    """Build a two-run comparison report without CLI side effects."""
+    comparison = compare_runs(baseline_run_id, researchfs_run_id, conn=conn)
+    baseline = comparison["baseline"]
+    researchfs = comparison["researchfs"]
+
+    report_parts = [format_comparison(comparison)]
+    if include_benchmarks:
+        report_parts.extend(
+            [
+                format_benchmark_comparison(
+                    compare_run_to_benchmarks(baseline_run_id, conn=conn),
+                    title="Benchmark comparison: Baseline",
+                    heading_level=2,
+                ),
+                format_reward_hack_report(baseline, detect_reward_hacks(baseline)),
+                format_benchmark_comparison(
+                    compare_run_to_benchmarks(researchfs_run_id, conn=conn),
+                    title="Benchmark comparison: ResearchFS",
+                    heading_level=2,
+                ),
+                format_reward_hack_report(researchfs, detect_reward_hacks(researchfs)),
+            ]
+        )
+    else:
+        report_parts.extend(
+            [
+                format_reward_hack_report(baseline, detect_reward_hacks(baseline)),
+                format_reward_hack_report(researchfs, detect_reward_hacks(researchfs)),
+            ]
+        )
+    return "\n\n".join(report_parts)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Compare ResearchFS runs and optionally screen them against published NanoChat benchmarks."
@@ -120,43 +160,11 @@ def main():
                 )
 
             baseline_run_id, researchfs_run_id = args.run_ids
-            comparison = compare_runs(baseline_run_id, researchfs_run_id)
-            baseline = comparison["baseline"]
-            researchfs = comparison["researchfs"]
-            report_parts = [format_comparison(comparison)]
-            if args.benchmarks:
-                report_parts.extend(
-                    [
-                        format_benchmark_comparison(
-                            compare_run_to_benchmarks(baseline_run_id),
-                            title="Benchmark comparison: Baseline",
-                            heading_level=2,
-                        ),
-                        format_reward_hack_report(
-                            baseline, detect_reward_hacks(baseline)
-                        ),
-                        format_benchmark_comparison(
-                            compare_run_to_benchmarks(researchfs_run_id),
-                            title="Benchmark comparison: ResearchFS",
-                            heading_level=2,
-                        ),
-                        format_reward_hack_report(
-                            researchfs, detect_reward_hacks(researchfs)
-                        ),
-                    ]
-                )
-            else:
-                report_parts.extend(
-                    [
-                        format_reward_hack_report(
-                            baseline, detect_reward_hacks(baseline)
-                        ),
-                        format_reward_hack_report(
-                            researchfs, detect_reward_hacks(researchfs)
-                        ),
-                    ]
-                )
-            report = "\n\n".join(report_parts)
+            report = build_comparison_report(
+                baseline_run_id,
+                researchfs_run_id,
+                include_benchmarks=args.benchmarks,
+            )
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)

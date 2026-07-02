@@ -150,7 +150,17 @@ def _temporary_branch_from_this_run(
     current_branch: str | None,
     original_branch: str | None,
     branches_before: set[str],
+    branches_after: set[str] | None = None,
 ) -> str | None:
+    if branches_after is not None:
+        new_candidates = sorted(
+            branch
+            for branch in branches_after - branches_before
+            if branch.startswith("autoresearch/exp_") and branch != original_branch
+        )
+        if len(new_candidates) == 1:
+            return new_candidates[0]
+        return None
     if (
         current_branch
         and current_branch != original_branch
@@ -169,6 +179,14 @@ def cleanup_git_state(original_branch: str | None, branches_before: set[str]) ->
         original_branch,
         branches_before,
     )
+    if temporary_branch is None:
+        branches_after = autoresearch_branches()
+        temporary_branch = _temporary_branch_from_this_run(
+            current_branch,
+            original_branch,
+            branches_before,
+            branches_after,
+        )
 
     checkout_succeeded = False
     if original_branch and original_branch != "HEAD":
@@ -260,8 +278,8 @@ def main() -> int:
     elapsed = time.monotonic() - start_time
 
     best_bpb = summary.get("best_bpb")
-    total_tokens = summary.get("total_tokens", 0)
-    cost = summary.get("cost", 0.0)
+    total_tokens = summary.get("total_tokens")
+    cost = summary.get("cost")
 
     # ASEP minimizes the primary metric. For tokens/time/cost, lower is better.
     # For val_bpb, lower is also better.
@@ -269,7 +287,7 @@ def main() -> int:
     if args.metric == "val_bpb":
         metric_value = best_bpb
     elif args.metric == "tokens":
-        metric_value = float(total_tokens)
+        metric_value = float(total_tokens) if total_tokens is not None else None
     elif args.metric == "time_seconds":
         metric_value = elapsed
     elif args.metric == "cost":
