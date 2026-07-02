@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import json
 import sys
 from contextlib import contextmanager
@@ -92,6 +93,8 @@ def _metric_threshold(value: str) -> float:
         parsed = float(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError("must be a number") from exc
+    if not math.isfinite(parsed):
+        raise argparse.ArgumentTypeError("must be between 0.0 and 1.0")
     if parsed < 0.0 or parsed > 1.0:
         raise argparse.ArgumentTypeError("must be between 0.0 and 1.0")
     return parsed

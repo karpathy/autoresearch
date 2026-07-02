@@ -80,6 +80,89 @@ def test_memory_export_parser_deduplicates_paper_ids_and_accepts_zero_max_chars(
     assert captured[-1].max_chars == 0
 
 
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [
+        ("--min-recall", "nan"),
+        ("--min-recall", "inf"),
+        ("--min-evidence-coverage", "-inf"),
+    ],
+)
+def test_memory_evaluate_rejects_non_finite_thresholds_before_evaluation(
+    monkeypatch, option, value
+):
+    """CLI parsing rejects non-finite metric thresholds before evaluation work."""
+    import researchfs.memory as memory
+
+    evaluate_calls = []
+
+    def fail_evaluate(*_args, **_kwargs):
+        evaluate_calls.append((_args, _kwargs))
+        raise AssertionError("_evaluate should not run for invalid thresholds")
+
+    monkeypatch.setattr(memory, "_evaluate", fail_evaluate)
+
+    stderr = io.StringIO()
+
+    assert (
+        memory.main(
+            [
+                "evaluate",
+                "--paper-id",
+                "1",
+                "--expected-methods",
+                "[]",
+                option,
+                value,
+            ],
+            stderr=stderr,
+        )
+        == 2
+    )
+    assert stderr.getvalue()
+    assert evaluate_calls == []
+
+
+@pytest.mark.parametrize("option", ["--min-recall", "--min-evidence-coverage"])
+@pytest.mark.parametrize("value", ["0", "0.5", "1.0"])
+def test_memory_evaluate_accepts_finite_thresholds_without_db_work(
+    monkeypatch, option, value
+):
+    """Finite CLI metric thresholds in range reach _evaluate as floats."""
+    import researchfs.memory as memory
+
+    captured = []
+
+    def capture_evaluate(args, _stdout):
+        captured.append(args)
+        return 0
+
+    monkeypatch.setattr(memory, "_evaluate", capture_evaluate)
+
+    stderr = io.StringIO()
+
+    assert (
+        memory.main(
+            [
+                "evaluate",
+                "--paper-id",
+                "1",
+                "--expected-methods",
+                "[]",
+                option,
+                value,
+            ],
+            stdout=io.StringIO(),
+            stderr=stderr,
+        )
+        == 0
+    )
+    assert stderr.getvalue() == ""
+    assert len(captured) == 1
+    attr = "min_recall" if option == "--min-recall" else "min_evidence_coverage"
+    assert getattr(captured[0], attr) == pytest.approx(float(value))
+
+
 def _attr_path(node):
     parts = []
     while isinstance(node, ast.Attribute):
