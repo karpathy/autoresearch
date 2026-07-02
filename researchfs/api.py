@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -182,12 +183,12 @@ def _optional_float(payload: JSONDict, key: str) -> float | None:
     value = payload.get(key)
     if value is None:
         return None
-    if isinstance(value, bool):
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise LabAPIError(400, "invalid_field", f"'{key}' must be a number")
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise LabAPIError(400, "invalid_field", f"'{key}' must be a number") from exc
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise LabAPIError(400, "invalid_field", f"'{key}' must be a number")
+    return parsed
 
 def _optional_metric_threshold(payload: JSONDict, key: str) -> float | None:
     value = _optional_float(payload, key)
@@ -231,12 +232,11 @@ def _required_feedback_rating(payload: JSONDict) -> float:
     if "rating" not in payload:
         raise LabAPIError(400, "missing_field", "'rating' must be a number between -1.0 and 1.0")
     value = payload.get("rating")
-    if isinstance(value, bool):
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise LabAPIError(400, "invalid_field", "'rating' must be a number between -1.0 and 1.0")
-    try:
-        rating = float(value)
-    except (TypeError, ValueError) as exc:
-        raise LabAPIError(400, "invalid_field", "'rating' must be a number between -1.0 and 1.0") from exc
+    rating = float(value)
+    if not math.isfinite(rating):
+        raise LabAPIError(400, "invalid_field", "'rating' must be a number between -1.0 and 1.0")
     if rating < -1.0 or rating > 1.0:
         raise LabAPIError(400, "invalid_field", "'rating' must be between -1.0 and 1.0")
     return rating

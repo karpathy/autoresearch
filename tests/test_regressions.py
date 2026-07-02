@@ -1071,6 +1071,164 @@ def test_api_json_integer_validation_rejects_invalid_fields_before_deeper_work(
     assert response.body["error"]["code"] == "invalid_field"
 
 
+
+@pytest.mark.parametrize(
+    "route,payload,patch_target",
+    [
+        pytest.param(
+            "/feedback",
+            {"method_id": 1, "rating": "1.0"},
+            "log_method_feedback",
+            id="feedback-rating-string",
+        ),
+        pytest.param(
+            "/feedback",
+            {"method_id": 1, "rating": float("nan")},
+            "log_method_feedback",
+            id="feedback-rating-nan",
+        ),
+        pytest.param(
+            "/feedback",
+            {"method_id": 1, "rating": float("inf")},
+            "log_method_feedback",
+            id="feedback-rating-inf",
+        ),
+        pytest.param(
+            "/feedback",
+            {"method_id": 1, "rating": float("-inf")},
+            "log_method_feedback",
+            id="feedback-rating-neg-inf",
+        ),
+        pytest.param(
+            "/experiment",
+            {"commit_hash": "abc123", "status": "keep", "val_bpb": "1.23"},
+            "log_experiment",
+            id="experiment-val-bpb-string",
+        ),
+        pytest.param(
+            "/experiment",
+            {"commit_hash": "abc123", "status": "keep", "memory_gb": "4.5"},
+            "log_experiment",
+            id="experiment-memory-gb-string",
+        ),
+        pytest.param(
+            "/experiment",
+            {"commit_hash": "abc123", "status": "keep", "val_bpb": float("nan")},
+            "log_experiment",
+            id="experiment-val-bpb-nan",
+        ),
+        pytest.param(
+            "/experiment",
+            {"commit_hash": "abc123", "status": "keep", "memory_gb": float("inf")},
+            "log_experiment",
+            id="experiment-memory-gb-inf",
+        ),
+    ],
+)
+def test_api_json_float_validation_rejects_invalid_fields_before_deeper_work(
+    monkeypatch, route, payload, patch_target
+):
+    """Invalid JSON number fields return 400 before dispatch reaches ResearchFS work."""
+    import researchfs.api as api_module
+    from researchfs.api import ResearchFSLabAPI
+
+    def fail_if_dispatched(*_args, **_kwargs):
+        raise AssertionError(f"{patch_target} should not be called for invalid JSON numbers")
+
+    monkeypatch.setattr(api_module.rfs, patch_target, fail_if_dispatched)
+
+    response = ResearchFSLabAPI(conn=_init_memory_db()).dispatch(
+        "POST", route, json.dumps(payload)
+    )
+
+    assert response.status == 400
+    assert response.body["ok"] is False
+    assert response.body["error"]["code"] == "invalid_field"
+
+
+@pytest.mark.parametrize(
+    "payload,expected_rating",
+    [
+        pytest.param({"method_id": 1, "rating": 1}, 1.0, id="int"),
+        pytest.param({"method_id": 1, "rating": 0.25}, 0.25, id="float"),
+    ],
+)
+def test_api_feedback_json_number_validation_accepts_numeric_ratings(
+    monkeypatch, payload, expected_rating
+):
+    """Valid JSON int and float ratings dispatch to feedback logging without coercing strings."""
+    import researchfs.api as api_module
+    from researchfs.api import ResearchFSLabAPI
+
+    calls = []
+
+    def log_method_feedback(**kwargs):
+        calls.append(kwargs)
+        return 987
+
+    monkeypatch.setattr(api_module.rfs, "log_method_feedback", log_method_feedback)
+
+    response = ResearchFSLabAPI(conn=_init_memory_db()).dispatch(
+        "POST", "/feedback", json.dumps(payload)
+    )
+
+    assert response.status == 200
+    assert response.body == {"ok": True, "feedback_id": 987}
+    assert len(calls) == 1
+    assert calls[0]["rating"] == expected_rating
+
+
+@pytest.mark.parametrize(
+    "payload,expected_val_bpb,expected_memory_gb",
+    [
+        pytest.param(
+            {"commit_hash": "abc123", "status": "keep", "val_bpb": 1, "memory_gb": 4.5},
+            1.0,
+            4.5,
+            id="int-val-float-memory",
+        ),
+        pytest.param(
+            {"commit_hash": "abc123", "status": "keep", "val_bpb": 1.23, "memory_gb": 4},
+            1.23,
+            4.0,
+            id="float-val-int-memory",
+        ),
+    ],
+)
+def test_api_experiment_json_number_validation_accepts_numeric_metrics(
+    monkeypatch, payload, expected_val_bpb, expected_memory_gb
+):
+    """Valid JSON int and float metrics dispatch to experiment logging without string coercion."""
+    import researchfs.api as api_module
+    from researchfs.api import ResearchFSLabAPI
+
+    calls = []
+
+    def log_experiment(commit_hash, val_bpb, memory_gb, status, description, **kwargs):
+        calls.append(
+            {
+                "commit_hash": commit_hash,
+                "val_bpb": val_bpb,
+                "memory_gb": memory_gb,
+                "status": status,
+                "description": description,
+                **kwargs,
+            }
+        )
+        return 654
+
+    monkeypatch.setattr(api_module.rfs, "log_experiment", log_experiment)
+
+    response = ResearchFSLabAPI(conn=_init_memory_db()).dispatch(
+        "POST", "/experiment", json.dumps(payload)
+    )
+
+    assert response.status == 200
+    assert response.body == {"ok": True, "experiment_id": 654}
+    assert len(calls) == 1
+    assert calls[0]["val_bpb"] == expected_val_bpb
+    assert calls[0]["memory_gb"] == expected_memory_gb
+
 @pytest.mark.parametrize(
     "paper_id",
     [
