@@ -304,13 +304,14 @@ def evaluate_extraction(
     deterministic, uses only SQLite rows already present in ResearchFS, and never
     recomputes or mutates extraction confidence scores.
     """
-    if isinstance(paper_id, bool) or int(paper_id) <= 0:
+    if isinstance(paper_id, bool) or not isinstance(paper_id, int) or paper_id <= 0:
         raise ValueError("paper_id must be a positive integer")
+    validated_paper_id = paper_id
     if not isinstance(expected_methods, list) or not expected_methods:
         raise ValueError("expected_methods must be a non-empty list")
 
     expected = [_as_expected_method(raw, index) for index, raw in enumerate(expected_methods)]
-    methods, sources_by_method = _load_paper_extractions(conn, int(paper_id))
+    methods, sources_by_method = _load_paper_extractions(conn, validated_paper_id)
     matches = _match_methods(expected, methods)
 
     matched_expected_indices = {expected_index for expected_index, _method_index in matches}
@@ -386,7 +387,7 @@ def evaluate_extraction(
         evidence_coverage = explicit_evidence_hits / explicit_evidence_expectations
     else:
         evidence_coverage = _ratio(matched_evidence_count, true_positive, 0.0)
-    confidence_score, confidence_reason = _fetch_confidence(conn, int(paper_id))
+    confidence_score, confidence_reason = _fetch_confidence(conn, validated_paper_id)
 
     threshold_results: JSONDict = {}
     thresholds = {
@@ -408,7 +409,7 @@ def evaluate_extraction(
     passed = all(result["passed"] for result in threshold_results.values())
 
     result: JSONDict = {
-        "paper_id": int(paper_id),
+        "paper_id": validated_paper_id,
         "expected_count": expected_count,
         "extracted_count": extracted_count,
         "matched_count": true_positive,

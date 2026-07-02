@@ -1349,6 +1349,41 @@ def test_get_paper_memory_missing_positive_paper_id_still_raises_lookup_error():
 
 
 @pytest.mark.parametrize("bad_paper_id", [True, False, "1", 1.5, 0, -1])
+def test_evaluate_extraction_rejects_invalid_paper_id_before_loading_rows(
+    monkeypatch, bad_paper_id
+):
+    """Extraction evaluator validates paper_id shape before querying paper rows."""
+    from researchfs import evaluation
+
+    conn = _init_memory_db()
+
+    def fail_if_loaded(_conn, _paper_id):
+        raise AssertionError("paper extraction rows should not be loaded")
+
+    monkeypatch.setattr(evaluation, "_load_paper_extractions", fail_if_loaded)
+
+    with pytest.raises(ValueError, match="paper_id"):
+        evaluation.evaluate_extraction(conn, bad_paper_id, ["Any Method"])
+
+
+def test_evaluate_extraction_accepts_valid_positive_paper_id_fixture():
+    """Valid positive paper IDs keep the existing deterministic match behavior."""
+    from researchfs.evaluation import evaluate_extraction
+
+    conn = _init_memory_db()
+    paper_id, _method_id, _chunk_id = _insert_paper_memory_card(conn)
+
+    result = evaluate_extraction(conn, paper_id, ["Paper Memory Bounds Method"])
+
+    assert result["paper_id"] == paper_id
+    assert result["expected_count"] == 1
+    assert result["extracted_count"] == 1
+    assert result["matched_count"] == 1
+    assert result["missing_methods"] == []
+    assert result["extra_methods"] == []
+    assert result["passed"] is True
+
+@pytest.mark.parametrize("bad_paper_id", [True, False, "1", 1.5, 0, -1])
 def test_export_paper_memory_bundle_rejects_invalid_paper_id_before_lookup(bad_paper_id):
     """Paper bundle export accepts only positive integer paper IDs."""
     from researchfs.bundle import export_paper_memory_bundle
