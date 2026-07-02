@@ -274,6 +274,14 @@ def _optional_lesson_text(lesson: Mapping[str, Any], field: str) -> str | None:
 
 
 
+def _required_positive_paper_id(paper_id: Any, context: str) -> int:
+    if isinstance(paper_id, bool) or not isinstance(paper_id, int):
+        raise ValueError(f"{context} paper IDs must be positive integers")
+    if paper_id <= 0:
+        raise ValueError(f"{context} paper IDs must be positive integers")
+    return paper_id
+
+
 def export_paper_memory_bundle(
     paper_id: int,
     conn: Any | None = None,
@@ -285,12 +293,13 @@ def export_paper_memory_bundle(
     carries only paper metadata, bounded memory context, method metadata,
     provenance evidence snippets, feedback summaries, and source IDs.
     """
+    source_paper_id = _required_positive_paper_id(paper_id, "Paper bundle")
     conn, close = _connect(conn)
     try:
-        paper = _load_paper(conn, int(paper_id))
-        memory = get_paper_memory(int(paper_id), conn=conn, max_chars=max_chars)
-        extraction_status = _load_extraction_status(conn, int(paper_id))
-        methods = _method_rows(conn, int(paper_id))
+        paper = _load_paper(conn, source_paper_id)
+        memory = get_paper_memory(source_paper_id, conn=conn, max_chars=max_chars)
+        extraction_status = _load_extraction_status(conn, source_paper_id)
+        methods = _method_rows(conn, source_paper_id)
         lessons = _lesson_rows(conn, [method["source_method_id"] for method in methods])
         source_chunk_ids: list[int] = []
         for method in methods:
@@ -309,7 +318,7 @@ def export_paper_memory_bundle(
             "context": memory.get("context"),
             "methods": methods,
             "source_ids": {
-                "paper_id": paper_id,
+                "paper_id": source_paper_id,
                 "method_ids": [method["source_method_id"] for method in methods],
                 "chunk_ids": source_chunk_ids,
                 "lesson_ids": [lesson["source_lesson_id"] for lesson in lessons],
@@ -331,14 +340,7 @@ def _paper_ids_for_corpus_export(conn: Any, paper_ids: Iterable[int] | None) -> 
         return [int(row["paper_id"]) for row in rows]
     parsed_ids: list[int] = []
     for paper_id in paper_ids:
-        if isinstance(paper_id, bool):
-            raise ValueError("Corpus bundle paper_ids must contain integers")
-        try:
-            parsed_id = int(paper_id)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("Corpus bundle paper_ids must contain integers") from exc
-        if parsed_id < 0:
-            raise ValueError("Corpus bundle paper_ids must be non-negative")
+        parsed_id = _required_positive_paper_id(paper_id, "Corpus bundle")
         if parsed_id not in parsed_ids:
             parsed_ids.append(parsed_id)
     return parsed_ids

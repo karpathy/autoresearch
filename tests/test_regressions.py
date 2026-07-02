@@ -1347,6 +1347,44 @@ def test_get_paper_memory_missing_positive_paper_id_still_raises_lookup_error():
         get_paper_memory(999_999, conn=conn)
 
 
+
+@pytest.mark.parametrize("bad_paper_id", [True, False, "1", 1.5, 0, -1])
+def test_export_paper_memory_bundle_rejects_invalid_paper_id_before_lookup(bad_paper_id):
+    """Paper bundle export accepts only positive integer paper IDs."""
+    from researchfs.bundle import export_paper_memory_bundle
+
+    conn = _init_memory_db()
+
+    with pytest.raises(ValueError, match="paper IDs"):
+        export_paper_memory_bundle(bad_paper_id, conn=conn)
+
+
+@pytest.mark.parametrize("bad_paper_id", [True, False, "1", 1.5, 0, -1])
+def test_export_corpus_memory_bundle_rejects_invalid_explicit_paper_ids(bad_paper_id):
+    """Explicit corpus bundle paper IDs reject malformed values before export."""
+    from researchfs.bundle import export_corpus_memory_bundle
+
+    conn = _init_memory_db()
+
+    with pytest.raises(ValueError, match="paper IDs"):
+        export_corpus_memory_bundle([bad_paper_id], conn=conn)
+
+
+def test_export_corpus_memory_bundle_deduplicates_positive_explicit_paper_ids():
+    """Duplicate positive IDs are exported once while preserving valid bundle output."""
+    from researchfs.bundle import export_corpus_memory_bundle
+
+    conn = _init_memory_db()
+    paper_id, method_id, _chunk_id = _insert_paper_memory_card(conn)
+
+    bundle = export_corpus_memory_bundle([paper_id, paper_id], conn=conn, max_chars=1000)
+
+    assert bundle["metadata"]["paper_count"] == 1
+    assert len(bundle["papers"]) == 1
+    paper_bundle = bundle["papers"][0]
+    assert paper_bundle["source_ids"]["paper_id"] == paper_id
+    assert paper_bundle["source_ids"]["method_ids"] == [method_id]
+
 @pytest.mark.parametrize("bad_method_id", [True, False, "1", 1.5, 0, -1])
 def test_get_method_history_rejects_invalid_method_id_before_lookup(bad_method_id):
     """Public method history accessor accepts only positive integer method IDs."""
