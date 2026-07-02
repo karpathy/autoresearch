@@ -1706,3 +1706,94 @@ def test_log_token_usage_validates_numeric_fields_and_experiment_id_before_persi
         "completion_tokens": 0,
         "cost": None,
     }
+
+
+def test_start_agent_run_validates_mode_and_model_before_insert():
+    """Agent run creation rejects unsupported lifecycle text and stores valid mode/model pairs."""
+    from researchfs.retrieve import start_agent_run
+
+    conn = _init_memory_db()
+
+    invalid_cases = [
+        ({"mode": ""}, "mode"),
+        ({"mode": "   "}, "mode"),
+        ({"mode": "agent"}, "mode"),
+        ({"mode": "baseline", "model": ""}, "model"),
+        ({"mode": "loopgraph", "model": "   "}, "model"),
+    ]
+
+    for kwargs, expected_message in invalid_cases:
+        with pytest.raises(ValueError, match=expected_message):
+            start_agent_run(conn=conn, **kwargs)
+        assert conn.execute("SELECT COUNT(*) FROM agent_runs").fetchone()[0] == 0
+
+    valid_cases = [
+        ("baseline", None),
+        ("baseline", "gpt-4o-mini"),
+        ("loopgraph", None),
+        ("loopgraph", "gpt-4o-mini"),
+    ]
+
+    run_ids = [
+        start_agent_run(mode=mode, model=model, conn=conn)
+        for mode, model in valid_cases
+    ]
+
+    rows = conn.execute(
+        """
+        SELECT agent_run_id, mode, model, finished_at
+        FROM agent_runs
+        ORDER BY agent_run_id
+        """
+    ).fetchall()
+    assert [dict(row) for row in rows] == [
+        {
+            "agent_run_id": run_id,
+            "mode": mode,
+            "model": model,
+            "finished_at": None,
+        }
+        for run_id, (mode, model) in zip(run_ids, valid_cases)
+    ]
+
+
+def test_finish_agent_run_validates_id_without_mutating_other_runs():
+    """Run completion rejects invalid IDs without finishing another row, then finishes the target run."""
+    from researchfs.retrieve import finish_agent_run, start_agent_run
+
+    conn = _init_memory_db()
+    run_id = start_agent_run("loopgraph", "gpt-4o-mini", conn)
+
+    invalid_cases = [
+        (True, "agent_run_id"),
+        ("1", "agent_run_id"),
+        (0, "agent_run_id"),
+        (-1, "agent_run_id"),
+        (999_999, "agent_run_id"),
+    ]
+
+    for invalid_id, expected_message in invalid_cases:
+        with pytest.raises(ValueError, match=expected_message):
+            finish_agent_run(invalid_id, conn)
+        rows = conn.execute(
+            """
+            SELECT agent_run_id, mode, model, finished_at
+            FROM agent_runs
+            ORDER BY agent_run_id
+            """
+        ).fetchall()
+        assert [dict(row) for row in rows] == [
+            {
+                "agent_run_id": run_id,
+                "mode": "loopgraph",
+                "model": "gpt-4o-mini",
+                "finished_at": None,
+            }
+        ]
+
+    finish_agent_run(run_id, conn)
+    finished_at = conn.execute(
+        "SELECT finished_at FROM agent_runs WHERE agent_run_id = ?",
+        (run_id,),
+    ).fetchone()["finished_at"]
+    assert finished_at is not None

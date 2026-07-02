@@ -1361,6 +1361,9 @@ def get_experiment_brief(name: str = "nanochat_autoresearch", conn=None) -> str:
 
 def start_agent_run(mode: str, model: Optional[str] = None, conn=None) -> int:
     """Start a new agent run and return its ID."""
+    mode = _validate_agent_run_mode(mode)
+    if model is not None:
+        model = _validate_non_empty_text(model, "model")
     close = False
     if conn is None:
         conn = get_connection()
@@ -1381,12 +1384,14 @@ def start_agent_run(mode: str, model: Optional[str] = None, conn=None) -> int:
 
 def finish_agent_run(agent_run_id: int, conn=None) -> None:
     """Mark an agent run as finished."""
+    agent_run_id = _validate_positive_int_id(agent_run_id, "agent_run_id")
     close = False
     if conn is None:
         conn = get_connection()
         close = True
 
     try:
+        _require_existing_id(conn, "agent_runs", "agent_run_id", agent_run_id, "agent_run_id")
         cur = conn.cursor()
         cur.execute(
             "UPDATE agent_runs SET finished_at = CURRENT_TIMESTAMP WHERE agent_run_id = ?",
@@ -1498,6 +1503,18 @@ def _unique_method_ids(method_ids: Optional[list[int]]) -> list[int]:
 
 
 EXPERIMENT_STATUSES = {"pending", "keep", "discard", "crash"}
+AGENT_RUN_MODES = {"baseline", "loopgraph"}
+
+
+def _validate_agent_run_mode(value) -> str:
+    """Return a supported agent run mode token."""
+    mode = _validate_non_empty_text(value, "mode")
+    if mode not in AGENT_RUN_MODES:
+        allowed = ", ".join(sorted(AGENT_RUN_MODES))
+        raise ValueError(f"mode must be one of: {allowed}")
+    return mode
+
+
 
 
 def _validate_experiment_status(value) -> str:
