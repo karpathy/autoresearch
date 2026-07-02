@@ -27,8 +27,15 @@ METHOD_CATEGORY_TOKENS = (
 )
 
 
+def _validate_integer(value: Any, field_name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an integer")
+
+
 def chunk_text(text: str, chunk_size: int = 2000, overlap: int = 200) -> List[str]:
     """Split clean research artifact text into overlapping chunks of approx chunk_size characters."""
+    _validate_integer(chunk_size, "chunk_size")
+    _validate_integer(overlap, "overlap")
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive")
     if overlap < 0:
@@ -187,6 +194,7 @@ def extract_methods_from_chunks(
     window_size: int = EXTRACTION_WINDOW_SIZE,
 ) -> Dict[str, Any]:
     """Extract methods from every chunk using bounded local-numbered windows."""
+    _validate_integer(window_size, "window_size")
     if window_size <= 0:
         raise ValueError("window_size must be positive")
 

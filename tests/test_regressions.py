@@ -29,6 +29,69 @@ def _init_memory_db():
     db.initialize_db(conn)
     return conn
 
+
+@pytest.mark.parametrize("field_name", ["chunk_size", "overlap"])
+@pytest.mark.parametrize("invalid_value", [True, "2", 2.5])
+def test_chunk_text_rejects_non_integer_bounds_before_chunking(field_name, invalid_value):
+    """Extractor chunk bounds reject bools and non-integers with the field name."""
+    from researchfs.extractor import chunk_text
+
+    kwargs = {"chunk_size": 4, "overlap": 1}
+    kwargs[field_name] = invalid_value
+
+    with pytest.raises(ValueError, match=field_name):
+        chunk_text("alpha beta gamma", **kwargs)
+
+
+@pytest.mark.parametrize("invalid_window_size", [True, "2", 2.5])
+def test_extract_methods_from_chunks_rejects_non_integer_window_size_before_llm(
+    invalid_window_size,
+):
+    """Invalid window sizes fail validation before prompt assembly or LLM calls."""
+    from researchfs.extractor import extract_methods_from_chunks
+
+    llm_calls = []
+
+    def fail_llm(_prompt):
+        llm_calls.append(_prompt)
+        raise AssertionError("llm_fn should not run for invalid window_size")
+
+    with pytest.raises(ValueError, match="window_size"):
+        extract_methods_from_chunks(
+            {"title": "bounds"},
+            ["chunk zero"],
+            fail_llm,
+            window_size=invalid_window_size,
+        )
+
+    assert llm_calls == []
+
+
+def test_extractor_integer_bounds_still_allow_valid_chunking_and_windowing():
+    """Real integers continue to drive chunking and bounded extraction windows."""
+    from researchfs.extractor import chunk_text, extract_methods_from_chunks
+
+    chunks = chunk_text("abcdef", chunk_size=3, overlap=0)
+    assert chunks == ["abc", "def"]
+
+    prompts = []
+
+    def empty_methods_llm(prompt):
+        prompts.append(prompt)
+        return '{"methods": []}'
+
+    result = extract_methods_from_chunks(
+        {"title": "bounds"},
+        chunks,
+        empty_methods_llm,
+        window_size=1,
+    )
+
+    assert result["chunks"] == chunks
+    assert result["methods"] == []
+    assert len(prompts) == 2
+
+
 def test_memory_export_rejects_non_positive_paper_ids_before_export(monkeypatch):
     """CLI parsing rejects invalid paper IDs before any export/DB work runs."""
     import researchfs.memory as memory
