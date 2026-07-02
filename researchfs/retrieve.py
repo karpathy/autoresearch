@@ -1487,6 +1487,28 @@ def _validate_positive_int_id(value, field_name: str) -> int:
     return value
 
 
+def _validate_non_negative_int(value, field_name: str) -> int:
+    """Return value as an int count, rejecting bools and negative integers."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field_name} must be a non-negative integer")
+    return value
+
+
+def _validate_optional_non_negative_cost(value) -> float | None:
+    """Return cost as a finite float, allowing None and rejecting bools."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError("cost must be a non-negative finite number")
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("cost must be a non-negative finite number") from exc
+    if not math.isfinite(numeric_value) or numeric_value < 0:
+        raise ValueError("cost must be a non-negative finite number")
+    return numeric_value
+
+
 def _validate_non_empty_text(value, field_name: str) -> str:
     """Return original text after rejecting empty required public string fields."""
     if not isinstance(value, str) or not value.strip():
@@ -2576,6 +2598,17 @@ def log_token_usage(
     conn=None,
 ) -> int:
     """Log token usage for an experiment step."""
+    valid_prompt_tokens = _validate_non_negative_int(prompt_tokens, "prompt_tokens")
+    valid_completion_tokens = _validate_non_negative_int(
+        completion_tokens, "completion_tokens"
+    )
+    valid_cost = _validate_optional_non_negative_cost(cost)
+    valid_experiment_id = (
+        _validate_positive_int_id(experiment_id, "experiment_id")
+        if experiment_id is not None
+        else None
+    )
+
     close = False
     if conn is None:
         conn = get_connection()
@@ -2583,13 +2616,26 @@ def log_token_usage(
 
     try:
         cur = conn.cursor()
+        if valid_experiment_id is not None:
+            _require_existing_id(
+                conn,
+                "experiments",
+                "experiment_id",
+                valid_experiment_id,
+                "experiment_id",
+            )
         cur.execute(
             """
             INSERT INTO token_usage
             (experiment_id, prompt_tokens, completion_tokens, cost)
             VALUES (?, ?, ?, ?)
             """,
-            (experiment_id, prompt_tokens, completion_tokens, cost),
+            (
+                valid_experiment_id,
+                valid_prompt_tokens,
+                valid_completion_tokens,
+                valid_cost,
+            ),
         )
         conn.commit()
         return cur.lastrowid

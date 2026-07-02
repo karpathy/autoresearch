@@ -1185,3 +1185,73 @@ def test_log_method_feedback_validates_public_ids_before_persisting():
         "rating": 0.5,
         "label": "valid-id-control",
     }
+
+
+def test_log_token_usage_validates_numeric_fields_and_experiment_id_before_persisting():
+    """Token usage logging rejects invalid numeric values and experiment IDs before inserts."""
+    import math
+
+    from researchfs.retrieve import log_experiment, log_token_usage
+
+    conn = _init_memory_db()
+    experiment_id = log_experiment(
+        "valid-token-usage-experiment",
+        val_bpb=1.23,
+        memory_gb=4.5,
+        status="keep",
+        description="valid token usage target",
+        conn=conn,
+    )
+
+    invalid_cases = [
+        ({"prompt_tokens": True}, "prompt_tokens"),
+        ({"prompt_tokens": "12"}, "prompt_tokens"),
+        ({"prompt_tokens": 12.5}, "prompt_tokens"),
+        ({"prompt_tokens": -1}, "prompt_tokens"),
+        ({"completion_tokens": False}, "completion_tokens"),
+        ({"completion_tokens": "34"}, "completion_tokens"),
+        ({"completion_tokens": 34.5}, "completion_tokens"),
+        ({"completion_tokens": -1}, "completion_tokens"),
+        ({"cost": True}, "cost"),
+        ({"cost": "0.05"}, "cost"),
+        ({"cost": -0.01}, "cost"),
+        ({"cost": math.nan}, "cost"),
+        ({"cost": math.inf}, "cost"),
+        ({"cost": -math.inf}, "cost"),
+        ({"experiment_id": True}, "experiment_id"),
+        ({"experiment_id": 999_999}, "experiment_id"),
+    ]
+
+    for overrides, expected_message in invalid_cases:
+        kwargs = {
+            "prompt_tokens": 12,
+            "completion_tokens": 34,
+            "cost": 0.05,
+            "experiment_id": experiment_id,
+        }
+        kwargs.update(overrides)
+        with pytest.raises(ValueError, match=expected_message):
+            log_token_usage(conn=conn, **kwargs)
+        assert conn.execute("SELECT COUNT(*) FROM token_usage").fetchone()[0] == 0
+
+    usage_id = log_token_usage(
+        prompt_tokens=0,
+        completion_tokens=0,
+        cost=None,
+        experiment_id=None,
+        conn=conn,
+    )
+    stored = conn.execute(
+        """
+        SELECT experiment_id, prompt_tokens, completion_tokens, cost
+        FROM token_usage
+        WHERE usage_id = ?
+        """,
+        (usage_id,),
+    ).fetchone()
+    assert dict(stored) == {
+        "experiment_id": None,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "cost": None,
+    }
