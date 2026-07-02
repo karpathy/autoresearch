@@ -636,6 +636,55 @@ def test_migrate_db_repairs_legacy_retrieval_and_codegraph_schema():
     ).fetchone()["rationale"] == "migration target"
 
 
+
+def test_codegraph_public_readers_reject_invalid_max_chars(tmp_path):
+    """Public codegraph readers reject non-integer or negative bounds before clipping."""
+    from researchfs.codegraph import get_code_map, refresh_code_map, search_code_symbols
+
+    conn = _init_memory_db()
+    source = tmp_path / "bounds_target.py"
+    source.write_text(
+        'def codegraph_bounds_target():\n'
+        '    """codegraphboundstoken searchable doc."""\n'
+        '    return "codegraphboundstoken"\n'
+    )
+    refresh_code_map([source], conn=conn)
+
+    for invalid_max_chars in (True, False, "8", 8.0, -1):
+        with pytest.raises(ValueError):
+            get_code_map(conn=conn, max_chars=invalid_max_chars)
+        with pytest.raises(ValueError):
+            search_code_symbols("codegraphboundstoken", conn=conn, max_chars=invalid_max_chars)
+
+
+def test_codegraph_public_readers_keep_zero_and_positive_max_chars_bounds(tmp_path):
+    """Zero is a valid empty clip, while positive bounds still cap output length."""
+    from researchfs.codegraph import get_code_map, refresh_code_map, search_code_symbols
+
+    conn = _init_memory_db()
+    source = tmp_path / "bounded_output_target.py"
+    source.write_text(
+        'def bounded_output_target():\n'
+        '    """boundedoutputtoken searchable doc."""\n'
+        '    return "boundedoutputtoken"\n'
+    )
+    refresh_code_map([source], conn=conn)
+
+    full_map = get_code_map(conn=conn)
+    full_search = search_code_symbols("boundedoutputtoken", conn=conn)
+    assert "bounded_output_target" in full_map
+    assert "bounded_output_target" in full_search
+
+    assert get_code_map(conn=conn, max_chars=0) == ""
+    assert search_code_symbols("boundedoutputtoken", conn=conn, max_chars=0) == ""
+
+    map_bound = 10
+    search_bound = 12
+    bounded_map = get_code_map(conn=conn, max_chars=map_bound)
+    bounded_search = search_code_symbols("boundedoutputtoken", conn=conn, max_chars=search_bound)
+    assert 0 < len(bounded_map) <= map_bound
+    assert 0 < len(bounded_search) <= search_bound
+
 def test_memory_bundle_import_reconstructs_existing_paper_metadata_without_raw_chunks():
     """Bundle import reuses matching paper/method rows and creates usable compressed memory."""
     from researchfs.bundle import import_paper_memory_bundle

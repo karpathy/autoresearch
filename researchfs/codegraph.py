@@ -423,9 +423,18 @@ def _clip(text: str, max_chars: int | None) -> str:
         return text[:max_chars]
     return text[: max_chars - len(marker)] + marker
 
+def _validate_optional_max_chars(max_chars: int | None) -> int | None:
+    """Return max_chars when None or a nonnegative int, rejecting bools."""
+    if max_chars is None:
+        return None
+    if isinstance(max_chars, bool) or not isinstance(max_chars, int) or max_chars < 0:
+        raise ValueError("max_chars must be a non-negative integer")
+    return max_chars
+
 
 def get_code_map(conn=None, max_chars: int | None = None) -> str:
     """Return a compact map of indexed code symbols grouped by file."""
+    max_chars = _validate_optional_max_chars(max_chars)
     conn, close = _connect(conn)
     try:
         _ensure_codegraph_schema(conn)
@@ -494,6 +503,7 @@ def _compact_snippet(snippet: str | None, fallback_code: str) -> str:
 
 def search_code_symbols(query: str, conn=None, max_chars: int | None = None) -> str:
     """Search indexed code symbols with an FTS5 MATCH query built from quoted terms."""
+    max_chars = _validate_optional_max_chars(max_chars)
     conn, close = _connect(conn)
     try:
         _ensure_codegraph_schema(conn)
