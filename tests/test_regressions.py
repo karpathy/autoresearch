@@ -2096,6 +2096,82 @@ def test_log_method_feedback_validates_public_ids_before_persisting():
     }
 
 
+
+def test_get_method_feedback_summary_validates_public_method_id():
+    """Feedback summaries reject bool, non-integer, and non-positive method IDs before queries."""
+    from researchfs.retrieve import get_method_feedback_summary
+
+    conn = _init_memory_db()
+
+    for invalid_method_id in (True, False, "1", 1.5, 0, -1):
+        with pytest.raises(ValueError, match="method_id"):
+            get_method_feedback_summary(invalid_method_id, conn=conn)
+
+
+def test_get_method_feedback_summary_keeps_zero_shape_for_missing_positive_method():
+    """Unknown positive method IDs still return the established zero-count aggregate shape."""
+    from researchfs.retrieve import get_method_feedback_summary
+
+    conn = _init_memory_db()
+
+    assert get_method_feedback_summary(12345, conn=conn) == {
+        "method_id": 12345,
+        "feedback_count": 0,
+        "feedback_avg_rating": 0.0,
+        "positive_feedback_count": 0,
+        "negative_feedback_count": 0,
+        "neutral_feedback_count": 0,
+        "last_feedback_at": None,
+    }
+
+
+def test_get_method_feedback_summary_reports_existing_method_aggregates():
+    """Feedback summaries preserve aggregate counts and average for a valid method."""
+    from researchfs.retrieve import get_method_feedback_summary, log_method_feedback
+
+    conn = _init_memory_db()
+    method_id = _insert_searchable_method(
+        conn, "Feedback summary method", "feedbacksummarytoken"
+    )
+    other_method_id = _insert_searchable_method(
+        conn, "Other feedback summary method", "otherfeedbacksummarytoken"
+    )
+
+    log_method_feedback(
+        method_id=method_id,
+        rating=1.0,
+        label="positive-summary-regression",
+        conn=conn,
+    )
+    log_method_feedback(
+        method_id=method_id,
+        rating=0.0,
+        label="neutral-summary-regression",
+        conn=conn,
+    )
+    log_method_feedback(
+        method_id=method_id,
+        rating=-0.5,
+        label="negative-summary-regression",
+        conn=conn,
+    )
+    log_method_feedback(
+        method_id=other_method_id,
+        rating=1.0,
+        label="other-method-regression",
+        conn=conn,
+    )
+
+    summary = get_method_feedback_summary(method_id, conn=conn)
+
+    assert summary["method_id"] == method_id
+    assert summary["feedback_count"] == 3
+    assert summary["feedback_avg_rating"] == pytest.approx(1.0 / 6.0)
+    assert summary["positive_feedback_count"] == 1
+    assert summary["negative_feedback_count"] == 1
+    assert summary["neutral_feedback_count"] == 1
+    assert summary["last_feedback_at"] is not None
+
 def test_log_token_usage_validates_numeric_fields_and_experiment_id_before_persisting():
     """Token usage logging rejects invalid numeric values and experiment IDs before inserts."""
     import math

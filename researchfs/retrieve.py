@@ -264,6 +264,7 @@ def _feedback_multiplier(feedback_count: int, avg_rating: float | None) -> float
 
 def get_method_feedback_summary(method_id: int, conn=None) -> dict:
     """Return aggregate lab feedback for one method."""
+    method_id = _validate_positive_int_id(method_id, "method_id")
     close = False
     if conn is None:
         conn = get_connection()
