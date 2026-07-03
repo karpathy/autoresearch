@@ -10,6 +10,7 @@ from typing import Callable, Optional
 
 from researchfs import db as db_module
 from researchfs import extractor
+from researchfs.code_repos import enrich_paper_code_repositories
 from researchfs.db import get_connection, initialize_db, migrate_db
 from researchfs.fetcher import fetch_arxiv_source, fetch_arxiv_query, fetch_github_readme
 from researchfs.pdf import extract_pdf_text
@@ -1599,6 +1600,65 @@ def _attach_stored_visual_index(
     return result
 
 
+def _resolve_code_repo_search_fn(code_repo_search_fn=None, code_repo_searcher=None):
+    """Return the configured code repository search callable, accepting legacy aliases."""
+    if code_repo_search_fn is not None and code_repo_searcher is not None:
+        if code_repo_search_fn is not code_repo_searcher:
+            raise ValueError("Pass either code_repo_search_fn or code_repo_searcher, not both")
+    return code_repo_search_fn if code_repo_search_fn is not None else code_repo_searcher
+
+
+def _code_repository_rows_from_enrichment(enrichment: object) -> list[dict]:
+    """Return selected/stored repository rows from an enrichment result."""
+    if isinstance(enrichment, list):
+        return [row for row in enrichment if isinstance(row, dict)]
+    if not isinstance(enrichment, dict):
+        return []
+    selected = enrichment.get("selected")
+    if isinstance(selected, dict):
+        return [selected]
+    if isinstance(selected, list):
+        return [row for row in selected if isinstance(row, dict)]
+    stored = enrichment.get("stored")
+    if isinstance(stored, list):
+        return [row for row in stored if isinstance(row, dict)]
+    return []
+
+
+def _attach_code_repository_enrichment(
+    conn,
+    result: dict,
+    *,
+    enrich_code: bool,
+    code_repo_search_fn=None,
+) -> dict:
+    """Attach automatic code repository enrichment results to an ingestion result."""
+    if not enrich_code:
+        return result
+    paper_id = result.get("paper_id")
+    if paper_id is None:
+        return result
+    try:
+        enrichment = enrich_paper_code_repositories(
+            conn,
+            int(paper_id),
+            search_fn=code_repo_search_fn,
+        )
+    except Exception as exc:
+        result["code_repository_enrichment"] = {
+            "paper_id": int(paper_id),
+            "selected": None,
+            "stored": [],
+            "candidates": [],
+            "error_text": str(exc),
+        }
+        result["code_repositories"] = []
+        return result
+    result["code_repository_enrichment"] = enrichment
+    result["code_repositories"] = _code_repository_rows_from_enrichment(enrichment)
+    return result
+
+
 def ingest_paper(
     meta: dict,
     llm_fn: Optional[Callable[[str], str]] = None,
@@ -1607,8 +1667,12 @@ def ingest_paper(
     visual_index: bool = False,
     visual_index_root: str | Path | None = None,
     visual_index_runner=None,
+    enrich_code: bool = True,
+    code_repo_search_fn=None,
+    code_repo_searcher=None,
 ) -> dict:
     """Insert (or plan) a paper, its chunks, methods, and extraction status."""
+    code_repo_search_fn = _resolve_code_repo_search_fn(code_repo_search_fn, code_repo_searcher)
     if dry_run:
         close_conn = False
         if conn is None:
@@ -1731,6 +1795,12 @@ def ingest_paper(
                         visual_index_root,
                         runner=visual_index_runner,
                     )
+                result = _attach_code_repository_enrichment(
+                    conn,
+                    result,
+                    enrich_code=enrich_code,
+                    code_repo_search_fn=code_repo_search_fn,
+                )
                 return result
             if extraction_status is None:
                 extraction_status = _upsert_extraction_status(
@@ -1781,6 +1851,12 @@ def ingest_paper(
                     visual_index_root,
                     runner=visual_index_runner,
                 )
+            result = _attach_code_repository_enrichment(
+                conn,
+                result,
+                enrich_code=enrich_code,
+                code_repo_search_fn=code_repo_search_fn,
+            )
             return result
 
         cur.execute(
@@ -1854,10 +1930,57 @@ def ingest_paper(
                 visual_index_root,
                 runner=visual_index_runner,
             )
+        result = _attach_code_repository_enrichment(
+            conn,
+            result,
+            enrich_code=enrich_code,
+            code_repo_search_fn=code_repo_search_fn,
+        )
         return result
     finally:
         if close:
             conn.close()
+
+
+def _default_github_code_searcher(queries: list[str]) -> list[dict]:
+    """Search GitHub repositories for automatic CLI code enrichment."""
+    import requests
+
+    headers = {"Accept": "application/vnd.github+json"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    seen: set[str] = set()
+    results: list[dict] = []
+    for query_index, query in enumerate(queries):
+        query = str(query or "").strip()
+        if not query:
+            continue
+        response = requests.get(
+            "https://api.github.com/search/repositories",
+            params={"q": query, "sort": "stars", "order": "desc", "per_page": 5},
+            headers=headers,
+            timeout=15,
+        )
+        response.raise_for_status()
+        items = response.json().get("items", [])
+        for rank, item in enumerate(items):
+            html_url = item.get("html_url")
+            if not html_url or html_url in seen:
+                continue
+            seen.add(html_url)
+            results.append(
+                {
+                    "url": html_url,
+                    "full_name": item.get("full_name"),
+                    "name": item.get("name"),
+                    "description": item.get("description"),
+                    "evidence": f"GitHub search query: {query}; rank={rank + 1}",
+                    "confidence": max(0.35, 0.74 - 0.04 * query_index - 0.02 * rank),
+                }
+            )
+    return results
 
 
 def ingest_arxiv_id(
@@ -1869,12 +1992,15 @@ def ingest_arxiv_id(
     visual_index: bool = False,
     visual_index_root: str | Path | None = None,
     visual_index_runner=None,
+    enrich_code: bool = True,
+    code_repo_search_fn=None,
+    code_repo_searcher=None,
 ) -> dict:
     """Fetch and ingest a single arXiv paper.
 
     Wraps :func:`fetch_arxiv_source` and :func:`ingest_paper`, optionally
-    overriding the ``source_type`` metadata label. Returns a dict containing
-    both the fetched metadata and the ingestion result.
+    overriding the ``source_type`` metadata label. Code repository enrichment
+    runs automatically unless disabled. Returns both metadata and ingestion.
     """
     meta = fetch_arxiv_source(arxiv_id)
     _apply_source_type_override(meta, source_type)
@@ -1888,6 +2014,8 @@ def ingest_arxiv_id(
             visual_index=visual_index,
             visual_index_root=visual_index_root,
             visual_index_runner=visual_index_runner,
+            enrich_code=enrich_code,
+            code_repo_search_fn=_resolve_code_repo_search_fn(code_repo_search_fn, code_repo_searcher),
         ),
     }
 
@@ -1901,8 +2029,11 @@ def ingest_arxiv_ids(
     visual_index: bool = False,
     visual_index_root: str | Path | None = None,
     visual_index_runner=None,
+    enrich_code: bool = True,
+    code_repo_search_fn=None,
+    code_repo_searcher=None,
 ) -> list[dict]:
-    """Fetch and ingest a list of arXiv papers, continuing past individual errors."""
+    """Fetch and ingest arXiv papers with automatic code repository enrichment."""
     results: list[dict] = []
     for raw_id in arxiv_ids:
         arxiv_id = raw_id.strip()
@@ -1918,6 +2049,8 @@ def ingest_arxiv_ids(
                 visual_index=visual_index,
                 visual_index_root=visual_index_root,
                 visual_index_runner=visual_index_runner,
+                enrich_code=enrich_code,
+                code_repo_search_fn=_resolve_code_repo_search_fn(code_repo_search_fn, code_repo_searcher),
             )
             meta = outcome.get("meta", {})
             result = outcome.get("result", {})
@@ -1964,8 +2097,11 @@ def ingest_arxiv_query(
     visual_index: bool = False,
     visual_index_root: str | Path | None = None,
     visual_index_runner=None,
+    enrich_code: bool = True,
+    code_repo_search_fn=None,
+    code_repo_searcher=None,
 ) -> list[dict]:
-    """Search arXiv and ingest the matching papers."""
+    """Search arXiv and ingest matches with automatic code repository enrichment."""
     arxiv_ids = fetch_arxiv_query(query, max_results=max_results)
     return ingest_arxiv_ids(
         arxiv_ids,
@@ -1976,6 +2112,8 @@ def ingest_arxiv_query(
         visual_index=visual_index,
         visual_index_root=visual_index_root,
         visual_index_runner=visual_index_runner,
+        enrich_code=enrich_code,
+        code_repo_search_fn=_resolve_code_repo_search_fn(code_repo_search_fn, code_repo_searcher),
     )
 
 
@@ -2059,6 +2197,16 @@ def _print_single_ingestion_result(result: dict, dry_run: bool = False) -> None:
             print(f"  visual_index: {visual_index_payload.get('status')}")
             if visual_index_payload.get("error_text"):
                 print(f"  visual_error: {visual_index_payload.get('error_text')}")
+        code_repositories = result.get("code_repositories") or []
+        if code_repositories:
+            print(f"  code_repositories: {len(code_repositories)} linked")
+            for repo in code_repositories:
+                url = repo.get("repository_url") or repo.get("url") or repo.get("html_url") or repo.get("repo_url")
+                if url:
+                    print(f"    selected: {url}")
+        enrichment = result.get("code_repository_enrichment") or {}
+        if enrichment.get("error_text"):
+            print(f"  code_repository_error: {enrichment.get('error_text')}")
 
 
 def main() -> None:
@@ -2096,6 +2244,16 @@ def main() -> None:
         "--dry-run",
         action="store_true",
         help="Show the records that would be created without writing to the DB",
+    )
+    parser.add_argument(
+        "--enrich-code",
+        action="store_true",
+        help="Code repository enrichment is automatic; accepted for compatibility",
+    )
+    parser.add_argument(
+        "--no-enrich-code",
+        action="store_true",
+        help="Disable automatic code repository enrichment and GitHub repository search",
     )
     parser.add_argument(
         "--visual-index",
@@ -2141,6 +2299,9 @@ def main() -> None:
                 "or implement _build_llm_fn(). Ingesting without extraction."
             )
 
+    effective_enrich_code = not args.no_enrich_code
+    code_repo_search_fn = _default_github_code_searcher if effective_enrich_code else None
+
     if args.arxiv:
         meta = fetch_arxiv_source(args.arxiv)
         _apply_source_type_override(meta, args.source_type)
@@ -2150,6 +2311,8 @@ def main() -> None:
             dry_run=args.dry_run,
             visual_index=args.visual_index,
             visual_index_root=args.visual_index_root,
+            enrich_code=effective_enrich_code,
+            code_repo_search_fn=code_repo_search_fn,
         )
         _print_single_ingestion_result(result, dry_run=args.dry_run)
     elif args.arxiv_list:
@@ -2162,6 +2325,8 @@ def main() -> None:
             source_type=args.source_type,
             visual_index=args.visual_index,
             visual_index_root=args.visual_index_root,
+            enrich_code=effective_enrich_code,
+            code_repo_search_fn=code_repo_search_fn,
         )
         _print_arxiv_batch_summary(results, dry_run=args.dry_run)
     elif args.arxiv_query:
@@ -2173,6 +2338,8 @@ def main() -> None:
             max_results=args.max_results,
             visual_index=args.visual_index,
             visual_index_root=args.visual_index_root,
+            enrich_code=effective_enrich_code,
+            code_repo_search_fn=code_repo_search_fn,
         )
         _print_arxiv_batch_summary(results, dry_run=args.dry_run)
     elif args.repo:
@@ -2184,6 +2351,8 @@ def main() -> None:
             dry_run=args.dry_run,
             visual_index=args.visual_index,
             visual_index_root=args.visual_index_root,
+            enrich_code=effective_enrich_code,
+            code_repo_search_fn=code_repo_search_fn,
         )
         _print_single_ingestion_result(result, dry_run=args.dry_run)
     else:
@@ -2198,6 +2367,8 @@ def main() -> None:
             dry_run=args.dry_run,
             visual_index=args.visual_index,
             visual_index_root=args.visual_index_root,
+            enrich_code=effective_enrich_code,
+            code_repo_search_fn=code_repo_search_fn,
         )
         _print_single_ingestion_result(result, dry_run=args.dry_run)
 

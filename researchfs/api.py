@@ -16,11 +16,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Iterator
 from urllib.parse import parse_qs, urlparse
 
+from researchfs.code_repos import enrich_paper_code_repositories
 from researchfs.db import get_connection, initialize_db
 from researchfs.evaluation import evaluate_extraction
 from researchfs.fetcher import fetch_arxiv_source, fetch_github_readme
 from researchfs.ingest import (
     LocalFileExtractionError,
+    _code_repository_rows_from_enrichment,
     _mark_source_type_explicit,
     _source_type_label,
     ingest_paper,
@@ -33,6 +35,7 @@ JSONDict = dict[str, Any]
 LLMFn = Callable[[str], str]
 ArxivFetcher = Callable[[str], dict[str, Any]]
 RepoFetcher = Callable[[str], dict[str, Any]]
+CodeRepoSearcher = Callable[[list[str]], list[Any]]
 
 SERVICE_NAME = "ResearchFS lab API"
 LOCAL_ONLY_CAVEAT = (
@@ -53,6 +56,7 @@ _ROUTE_METADATA: tuple[JSONDict, ...] = (
     {"method": "POST", "path": "/ingest/arxiv", "description": "Fetch and ingest arXiv source metadata"},
     {"method": "POST", "path": "/ingest/repo", "description": "Fetch and ingest GitHub repository README metadata"},
     {"method": "POST", "path": "/ingest/file", "description": "Ingest a local text/Markdown/TeX/PDF file"},
+    {"method": "POST", "path": "/paper/{paper_id}/code-repositories/enrich", "description": "Enrich one paper with linked code repositories"},
     {"method": "POST", "path": "/evaluate/extraction", "description": "Evaluate stored extraction quality"},
     {"method": "POST", "path": "/retrieve", "description": "Retrieve compressed lab memory"},
     {"method": "POST", "path": "/brief", "description": "Retrieve a bounded compressed research brief"},
@@ -530,6 +534,7 @@ class ResearchFSLabAPI:
         llm_fn: LLMFn | None = None,
         arxiv_fetcher: ArxivFetcher | None = None,
         repo_fetcher: RepoFetcher | None = None,
+        code_repo_searcher: CodeRepoSearcher | None = None,
         visual_index_runner=None,
     ) -> None:
         if conn is not None and db_path is not None:
@@ -539,6 +544,7 @@ class ResearchFSLabAPI:
         self._llm_fn = llm_fn
         self._arxiv_fetcher = arxiv_fetcher or fetch_arxiv_source
         self._repo_fetcher = repo_fetcher or fetch_github_readme
+        self._code_repo_searcher = code_repo_searcher
         self._visual_index_runner = visual_index_runner
 
     @contextmanager
@@ -571,6 +577,10 @@ class ResearchFSLabAPI:
                 return self._handle_ingest_repo(_parse_body(body))
             if method == "POST" and route == "/ingest/file":
                 return self._handle_ingest_file(_parse_body(body))
+            if method == "POST" and route.startswith("/paper/") and route.endswith("/code-repositories/enrich"):
+                paper_id_text = route.removeprefix("/paper/").removesuffix("/code-repositories/enrich")
+                paper_id = _url_positive_int(paper_id_text, "Paper", "invalid_paper_id")
+                return self._handle_enrich_paper_code_repositories(paper_id)
             if method == "GET" and route == "/papers":
                 return self._handle_papers()
             if method == "GET" and route == "/stats":
@@ -646,6 +656,7 @@ class ResearchFSLabAPI:
         meta = _paper_from_payload(payload)
         llm_fn = _select_llm(payload, self._llm_fn)
         visual_index, visual_index_root = _visual_index_options(payload)
+        enrich_code = _optional_bool(payload, "enrich_code", True)
         with self._connection() as conn:
             result = ingest_paper(
                 meta,
@@ -654,6 +665,8 @@ class ResearchFSLabAPI:
                 visual_index=visual_index,
                 visual_index_root=visual_index_root,
                 visual_index_runner=self._visual_index_runner,
+                enrich_code=enrich_code,
+                code_repo_search_fn=self._code_repo_searcher,
             )
             result = _attach_current_extraction_status(conn, result)
         body = {"ok": True, **result, "ingestion": _ingestion_metadata(result, llm_fn)}
@@ -684,6 +697,7 @@ class ResearchFSLabAPI:
                 meta[key] = payload[key]
         llm_fn = _select_llm(payload, self._llm_fn)
         visual_index, visual_index_root = _visual_index_options(payload)
+        enrich_code = _optional_bool(payload, "enrich_code", True)
         with self._connection() as conn:
             result = ingest_paper(
                 meta,
@@ -692,6 +706,8 @@ class ResearchFSLabAPI:
                 visual_index=visual_index,
                 visual_index_root=visual_index_root,
                 visual_index_runner=self._visual_index_runner,
+                enrich_code=enrich_code,
+                code_repo_search_fn=self._code_repo_searcher,
             )
             result = _attach_current_extraction_status(conn, result)
         body = {
@@ -726,6 +742,7 @@ class ResearchFSLabAPI:
                 meta[key] = payload[key]
         llm_fn = _select_llm(payload, self._llm_fn)
         visual_index, visual_index_root = _visual_index_options(payload)
+        enrich_code = _optional_bool(payload, "enrich_code", True)
         with self._connection() as conn:
             result = ingest_paper(
                 meta,
@@ -734,6 +751,8 @@ class ResearchFSLabAPI:
                 visual_index=visual_index,
                 visual_index_root=visual_index_root,
                 visual_index_runner=self._visual_index_runner,
+                enrich_code=enrich_code,
+                code_repo_search_fn=self._code_repo_searcher,
             )
             result = _attach_current_extraction_status(conn, result)
         body = {
@@ -767,6 +786,7 @@ class ResearchFSLabAPI:
             raise LabAPIError(400, "unsupported_file_type", str(exc)) from exc
         llm_fn = _select_llm(payload, self._llm_fn)
         visual_index, visual_index_root = _visual_index_options(payload)
+        enrich_code = _optional_bool(payload, "enrich_code", True)
         with self._connection() as conn:
             result = ingest_paper(
                 meta,
@@ -775,6 +795,8 @@ class ResearchFSLabAPI:
                 visual_index=visual_index,
                 visual_index_root=visual_index_root,
                 visual_index_runner=self._visual_index_runner,
+                enrich_code=enrich_code,
+                code_repo_search_fn=self._code_repo_searcher,
             )
             result = _attach_current_extraction_status(conn, result)
         body = {
@@ -784,6 +806,30 @@ class ResearchFSLabAPI:
             "ingestion": _ingestion_metadata(result, llm_fn),
         }
         return LabAPIResponse(200, body)
+
+    def _handle_enrich_paper_code_repositories(self, paper_id: int) -> LabAPIResponse:
+        with self._connection() as conn:
+            try:
+                result = enrich_paper_code_repositories(
+                    conn,
+                    paper_id,
+                    search_fn=self._code_repo_searcher,
+                )
+            except LookupError as exc:
+                raise LabAPIError(404, "paper_not_found", str(exc)) from exc
+            except ValueError as exc:
+                raise LabAPIError(400, "invalid_field", str(exc)) from exc
+            except Exception as exc:
+                raise LabAPIError(502, "code_repo_search_failed", str(exc)) from exc
+        return LabAPIResponse(
+            200,
+            {
+                "ok": True,
+                "code_repository_enrichment": result,
+                "code_repositories": _code_repository_rows_from_enrichment(result),
+            },
+        )
+
 
     def _handle_papers(self) -> LabAPIResponse:
         with self._connection() as conn:
@@ -1390,6 +1436,8 @@ def dispatch_request(
     db_path: str | None = None,
     llm_fn: LLMFn | None = None,
     arxiv_fetcher: ArxivFetcher | None = None,
+    repo_fetcher: RepoFetcher | None = None,
+    code_repo_searcher: CodeRepoSearcher | None = None,
     visual_index_runner=None,
 ) -> LabAPIResponse:
     """Convenience wrapper for a single in-process ResearchFS lab API request."""
@@ -1398,6 +1446,8 @@ def dispatch_request(
         db_path=db_path,
         llm_fn=llm_fn,
         arxiv_fetcher=arxiv_fetcher,
+        repo_fetcher=repo_fetcher,
+        code_repo_searcher=code_repo_searcher,
         visual_index_runner=visual_index_runner,
     )
     return api.dispatch(method, path, body)

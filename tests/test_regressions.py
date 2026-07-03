@@ -3786,6 +3786,678 @@ def test_finish_agent_run_validates_id_without_mutating_other_runs():
     assert finished_at is not None
 
 
+def _insert_code_repo_paper(
+    conn,
+    *,
+    title="GPC: Generalized Predictive Control for Agile Humanoid Whole-Body Control",
+    abstract="ProtoMotions provides a deterministic clue for code repository discovery.",
+    url="https://arxiv.org/abs/2606.29148",
+    content="ProtoMotions clue text for repository enrichment.",
+):
+    paper_id = conn.execute(
+        """
+        INSERT INTO papers (title, authors, abstract, url, publish_date)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            title,
+            "GPC Authors",
+            abstract,
+            url,
+            "2026-06-29",
+        ),
+    ).lastrowid
+    chunk_id = conn.execute(
+        "INSERT INTO chunks (paper_id, section, content) VALUES (?, ?, ?)",
+        (paper_id, "extracted", content),
+    ).lastrowid
+    conn.commit()
+    return paper_id, chunk_id
+
+
+def _paper_code_repo_rows(conn, paper_id):
+    return [
+        dict(row)
+        for row in conn.execute(
+            """
+            SELECT
+                paper_id,
+                repo_url AS repository_url,
+                repo_key AS repository_key,
+                owner,
+                name,
+                source,
+                evidence,
+                confidence,
+                selected,
+                selected_at
+            FROM paper_code_repositories
+            WHERE paper_id = ?
+            ORDER BY selected DESC, confidence DESC, repo_key
+            """,
+            (paper_id,),
+        ).fetchall()
+    ]
+
+
+def test_code_repo_schema_creation_and_legacy_migration_are_idempotent():
+    """Schema initialization and migration create the durable paper/repository link table."""
+    from researchfs import db
+
+    conn = _memory_conn()
+    db.initialize_db(conn)
+
+    columns = {
+        row["name"]: row["type"]
+        for row in conn.execute("PRAGMA table_info(paper_code_repositories)")
+    }
+    assert {
+        "code_repository_id",
+        "paper_id",
+        "repo_url",
+        "repo_key",
+        "owner",
+        "name",
+        "source",
+        "evidence",
+        "confidence",
+        "selected",
+        "discovered_at",
+        "selected_at",
+        "updated_at",
+    } <= set(columns)
+    assert columns["paper_id"].upper() == "INTEGER"
+    assert columns["repo_key"].upper() == "TEXT"
+
+    foreign_keys = [
+        dict(row) for row in conn.execute("PRAGMA foreign_key_list(paper_code_repositories)")
+    ]
+    assert any(fk["table"] == "papers" and fk["from"] == "paper_id" for fk in foreign_keys)
+
+    legacy = _memory_conn()
+    legacy.executescript(
+        """
+        CREATE TABLE papers (
+            paper_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            authors TEXT,
+            abstract TEXT,
+            url TEXT,
+            publish_date TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO papers (title, authors, abstract, url, publish_date)
+        VALUES ('Legacy Code Repo Paper', 'Legacy Lab', 'legacy abstract', 'https://example.invalid/legacy', '2026-07-02');
+        """
+    )
+    db.migrate_db(legacy)
+    db.migrate_db(legacy)
+
+    migrated_columns = {
+        row["name"] for row in legacy.execute("PRAGMA table_info(paper_code_repositories)")
+    }
+    assert set(columns) <= migrated_columns
+    legacy.execute(
+        """
+        INSERT INTO paper_code_repositories (
+            paper_id,
+            repo_url,
+            repo_key,
+            owner,
+            name,
+            source,
+            evidence,
+            confidence,
+            selected,
+            selected_at
+        )
+        VALUES (1, ?, ?, ?, ?, 'migration-test', 'legacy insert proves FK target exists', 0.5, 1, CURRENT_TIMESTAMP)
+        """,
+        (
+            "https://github.com/nvlabs/protomotions",
+            "nvlabs/protomotions",
+            "nvlabs",
+            "protomotions",
+        ),
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        legacy.execute(
+            """
+            INSERT INTO paper_code_repositories (
+                paper_id,
+                repo_url,
+                repo_key,
+                owner,
+                name,
+                source,
+                evidence,
+                confidence,
+                selected
+            )
+            VALUES (999, 'https://github.com/nvlabs/protomotions', 'nvlabs/protomotions', 'nvlabs', 'protomotions', 'fk-test', 'bad paper', 0.1, 0)
+            """
+        )
+
+
+
+def test_code_repo_migration_rebuilds_alias_only_legacy_table():
+    """Alias-only prototype tables are rebuilt before repo_key indexes/upserts run."""
+    from researchfs import db
+
+    legacy = _memory_conn()
+    legacy.executescript(
+        """
+        CREATE TABLE papers (
+            paper_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            authors TEXT,
+            abstract TEXT,
+            url TEXT,
+            publish_date TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO papers (title, authors, abstract, url, publish_date)
+        VALUES ('Alias Legacy Paper', 'Legacy Lab', 'legacy abstract', 'https://example.invalid/alias', '2026-07-02');
+        CREATE TABLE paper_code_repositories (
+            code_repository_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paper_id INTEGER NOT NULL,
+            repository_url TEXT NOT NULL,
+            repository_key TEXT NOT NULL,
+            owner TEXT NOT NULL,
+            name TEXT NOT NULL,
+            source TEXT NOT NULL,
+            evidence TEXT,
+            confidence REAL NOT NULL DEFAULT 0.0,
+            selected INTEGER NOT NULL DEFAULT 0,
+            discovered_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            selected_at TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(paper_id, repository_key)
+        );
+        INSERT INTO paper_code_repositories (
+            paper_id, repository_url, repository_key, owner, name, source,
+            evidence, confidence, selected
+        )
+        VALUES (
+            1,
+            'https://github.com/nvlabs/protomotions',
+            'nvlabs/protomotions',
+            'nvlabs',
+            'protomotions',
+            'legacy-alias',
+            'legacy alias evidence',
+            0.6,
+            1
+        );
+        """
+    )
+
+    db.migrate_db(legacy)
+    db.migrate_db(legacy)
+
+    columns = {
+        row["name"] for row in legacy.execute("PRAGMA table_info(paper_code_repositories)")
+    }
+    assert "repo_url" in columns
+    assert "repo_key" in columns
+    assert "repository_url" not in columns
+    assert "repository_key" not in columns
+    row = legacy.execute(
+        """
+        SELECT repo_url, repo_key, source, evidence, confidence, selected
+        FROM paper_code_repositories
+        WHERE paper_id = 1
+        """
+    ).fetchone()
+    assert dict(row) == {
+        "repo_url": "https://github.com/nvlabs/protomotions",
+        "repo_key": "nvlabs/protomotions",
+        "source": "legacy-alias",
+        "evidence": "legacy alias evidence",
+        "confidence": 0.6,
+        "selected": 1,
+    }
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "https://github.com/NVlabs/ProtoMotions",
+        "github.com/NVlabs/ProtoMotions",
+        "http://github.com/NVlabs/ProtoMotions",
+        "https://www.github.com/NVlabs/ProtoMotions/",
+        "HTTPS://GITHUB.COM/NVLABS/PROTOMOTIONS.git",
+        "https://github.com/NVlabs/ProtoMotions/tree/main/protomotions",
+        "https://github.com/NVlabs/ProtoMotions/blob/main/README.md#quick-start",
+        "https://github.com/NVlabs/ProtoMotions?tab=readme-ov-file",
+    ],
+)
+def test_code_repo_url_normalization_accepts_github_root_variants(raw):
+    """GitHub repository normalization follows the eval contract for harmless URL variants."""
+    from researchfs.code_repos import normalize_github_repo_url
+
+    assert normalize_github_repo_url(raw) == "https://github.com/nvlabs/protomotions"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        "",
+        "https://example.com/NVlabs/ProtoMotions",
+        "https://github.com/NVlabs",
+        "https://gist.github.com/NVlabs/ProtoMotions",
+        "https://github.com//ProtoMotions",
+    ],
+)
+def test_code_repo_url_normalization_rejects_non_repo_urls(raw):
+    """Only github.com owner/repo URLs become repository keys."""
+    from researchfs.code_repos import normalize_github_repo_url
+
+    assert normalize_github_repo_url(raw) is None
+
+
+def test_code_repo_url_extraction_deduplicates_and_ignores_non_github_hosts():
+    """Stored text extraction returns deterministic unique GitHub repository keys in encounter order."""
+    from researchfs.code_repos import extract_github_repo_urls
+
+    text = (
+        "Official code: https://github.com/NVlabs/ProtoMotions/tree/main. "
+        "Duplicate spelling: HTTPS://github.com/NVLABS/PROTOMOTIONS.git; "
+        "sibling: https://github.com/NVlabs/SOMA-X/blob/main/README.md "
+        "docs-only host: https://protomotions.github.io/."
+    )
+
+    assert extract_github_repo_urls(text) == [
+        "https://github.com/nvlabs/protomotions",
+        "https://github.com/nvlabs/soma-x",
+    ]
+
+
+def test_code_repo_enrichment_stores_explicit_github_url_from_chunks_without_search():
+    """Deterministic enrichment links GitHub URLs already present in stored paper chunks."""
+    from researchfs.code_repos import enrich_paper_code_repositories
+
+    conn = _init_memory_db()
+    paper_id, _chunk_id = _insert_code_repo_paper(
+        conn,
+        content=(
+            "The authors publish the official implementation at "
+            "https://github.com/NVlabs/ProtoMotions/tree/main?tab=readme-ov-file."
+        ),
+    )
+
+    result = enrich_paper_code_repositories(conn, paper_id)
+    rows = _paper_code_repo_rows(conn, paper_id)
+
+    assert len(rows) == 1
+    assert rows[0]["repository_url"] == "https://github.com/nvlabs/protomotions"
+    assert rows[0]["repository_key"] == "nvlabs/protomotions"
+    assert rows[0]["owner"] == "nvlabs"
+    assert rows[0]["name"] == "protomotions"
+    assert rows[0]["selected"] == 1
+    assert rows[0]["selected_at"] is not None
+    assert "github.com/NVlabs/ProtoMotions" in rows[0]["evidence"]
+    assert result["selected"]["repository_url"] == "https://github.com/nvlabs/protomotions"
+
+
+def test_code_repo_enrichment_uses_injected_searcher_for_gpc_protomotions_clue():
+    """Opt-in injected search discovers and selects ProtoMotions without any network dependency."""
+    from researchfs.code_repos import enrich_paper_code_repositories
+
+    conn = _init_memory_db()
+    paper_id, _chunk_id = _insert_code_repo_paper(
+        conn,
+        title="GPC: Generalized Predictive Control for Agile Humanoid Whole-Body Control",
+        abstract="A GPC paper whose artifacts are associated with ProtoMotions.",
+        content="ProtoMotions is the implementation clue; no GitHub URL is stored here.",
+    )
+    queries = []
+
+    def stub_searcher(query, *_args, **_kwargs):
+        if isinstance(query, (list, tuple)):
+            query_text = " ".join(str(part) for part in query)
+        else:
+            query_text = str(query)
+        queries.append(query_text)
+        if "protomotions" not in query_text.lower():
+            return []
+        return [
+            {
+                "url": "https://github.com/NVlabs/ProtoMotions/tree/main",
+                "repository_url": "https://github.com/NVlabs/ProtoMotions/tree/main",
+                "evidence": f"stub search matched: {query_text}",
+                "confidence": 0.97,
+            }
+        ]
+
+    result = enrich_paper_code_repositories(conn, paper_id, searcher=stub_searcher)
+    rows = _paper_code_repo_rows(conn, paper_id)
+
+    assert queries
+    assert any("ProtoMotions" in query for query in queries)
+    assert len(rows) == 1
+    assert rows[0]["repository_url"] == "https://github.com/nvlabs/protomotions"
+    assert rows[0]["repository_key"] == "nvlabs/protomotions"
+    assert rows[0]["source"] == "search"
+    assert rows[0]["confidence"] == pytest.approx(0.97)
+    assert rows[0]["selected"] == 1
+    assert result["selected"]["repository_url"] == "https://github.com/nvlabs/protomotions"
+
+
+def test_paper_code_repo_memory_surfaces_selected_repository():
+    """Paper memory includes selected linked code repositories in both data and compressed context."""
+    from researchfs.retrieve import get_paper_memory
+
+    conn = _init_memory_db()
+    paper_id, _chunk_id = _insert_code_repo_paper(conn)
+    conn.execute(
+        """
+        INSERT INTO paper_code_repositories (
+            paper_id,
+            repo_url,
+            repo_key,
+            owner,
+            name,
+            source,
+            evidence,
+            confidence,
+            selected,
+            selected_at
+        )
+        VALUES (?, ?, ?, ?, ?, 'test-selected', 'selected repo evidence', 0.99, 1, CURRENT_TIMESTAMP)
+        """,
+        (
+            paper_id,
+            "https://github.com/nvlabs/protomotions",
+            "nvlabs/protomotions",
+            "nvlabs",
+            "protomotions",
+        ),
+    )
+    conn.commit()
+
+    memory = get_paper_memory(paper_id, conn=conn, max_chars=2000)
+
+    [repo] = memory["code_repositories"]
+    assert {
+        "repository_url": repo["repository_url"],
+        "repository_key": repo["repository_key"],
+        "owner": repo["owner"],
+        "name": repo["name"],
+        "source": repo["source"],
+        "evidence": repo["evidence"],
+        "confidence": repo["confidence"],
+        "selected": repo["selected"],
+    } == {
+        "repository_url": "https://github.com/nvlabs/protomotions",
+        "repository_key": "nvlabs/protomotions",
+        "owner": "nvlabs",
+        "name": "protomotions",
+        "source": "test-selected",
+        "evidence": "selected repo evidence",
+        "confidence": 0.99,
+        "selected": 1,
+    }
+    assert "## Code repositories" in memory["context"]
+    assert "https://github.com/nvlabs/protomotions" in memory["context"]
+    assert "selected repo evidence" in memory["context"]
+
+
+def test_code_repo_ingest_paper_enriches_explicit_urls_by_default_and_can_disable():
+    """Direct ingestion links explicit GitHub URLs by default; enrich_code=False disables it."""
+    from researchfs.ingest import ingest_paper
+
+    conn = _init_memory_db()
+    default_result = ingest_paper(
+        {
+            "title": "Default Ingest Code Repo Paper",
+            "authors": "Code Repo Lab",
+            "abstract": "Default ingestion should enrich explicit code repositories.",
+            "url": "https://arxiv.org/abs/2606.29148",
+            "publish_date": "2026-07-02",
+            "content": "Official code: https://github.com/NVlabs/ProtoMotions/tree/main.",
+        },
+        conn=conn,
+    )
+
+    rows = _paper_code_repo_rows(conn, default_result["paper_id"])
+    assert len(rows) == 1
+    assert rows[0]["repository_url"] == "https://github.com/nvlabs/protomotions"
+    assert rows[0]["selected"] == 1
+    assert default_result["code_repositories"][0]["repository_url"] == "https://github.com/nvlabs/protomotions"
+
+    disabled_result = ingest_paper(
+        {
+            "title": "Disabled Ingest Code Repo Paper",
+            "authors": "Code Repo Lab",
+            "abstract": "Explicit disable should suppress code repository enrichment.",
+            "url": "https://arxiv.org/abs/2606.29149",
+            "publish_date": "2026-07-02",
+            "content": "Official code: https://github.com/NVlabs/ProtoMotions/tree/main.",
+        },
+        conn=conn,
+        enrich_code=False,
+    )
+
+    assert _paper_code_repo_rows(conn, disabled_result["paper_id"]) == []
+    assert "code_repositories" not in disabled_result
+
+    explicit_true_result = ingest_paper(
+        {
+            "title": "Explicit True Ingest Code Repo Paper",
+            "authors": "Code Repo Lab",
+            "abstract": "Explicit affirmative remains accepted for backward compatibility.",
+            "url": "https://arxiv.org/abs/2606.29150",
+            "publish_date": "2026-07-02",
+            "content": "Official code: https://github.com/NVlabs/ProtoMotions/tree/main.",
+        },
+        conn=conn,
+        enrich_code=True,
+    )
+
+    explicit_true_rows = _paper_code_repo_rows(conn, explicit_true_result["paper_id"])
+    assert len(explicit_true_rows) == 1
+    assert explicit_true_rows[0]["repository_url"] == "https://github.com/nvlabs/protomotions"
+    assert explicit_true_rows[0]["selected"] == 1
+    assert explicit_true_result["code_repositories"][0]["repository_url"] == "https://github.com/nvlabs/protomotions"
+
+
+def test_code_repo_ingest_cli_enriches_by_default_and_no_enrich_code_disables(tmp_path, monkeypatch):
+    """CLI file ingestion enriches by default; --no-enrich-code disables; --enrich-code remains accepted."""
+    import socket
+
+    import researchfs.ingest as ingest_module
+
+    def fail_network(*_args, **_kwargs):
+        raise AssertionError("code repository regression tests must not open network connections")
+
+    search_queries = []
+
+    def stub_default_searcher(query, *_args, **_kwargs):
+        query_text = " ".join(str(part) for part in query) if isinstance(query, (list, tuple)) else str(query)
+        search_queries.append(query_text)
+        return [
+            {
+                "url": "https://github.com/NVlabs/ProtoMotions",
+                "evidence": "CLI default searcher hit",
+                "confidence": 0.94,
+            }
+        ]
+
+    db_path = tmp_path / "researchfs.sqlite"
+    default_source = tmp_path / "default-code-repo-paper.md"
+    default_source.write_text(
+        "# Default Code Repo Paper\n\nOfficial code: https://github.com/NVlabs/ProtoMotions/tree/main.",
+        encoding="utf-8",
+    )
+    disabled_source = tmp_path / "disabled-code-repo-paper.md"
+    disabled_source.write_text(
+        "# Disabled Code Repo Paper\n\nhttps://github.com/NVlabs/ProtoMotions should not enrich.",
+        encoding="utf-8",
+    )
+    search_source = tmp_path / "search-code-repo-paper.md"
+    search_source.write_text(
+        "# Search Code Repo Paper\n\nGPC uses the ProtoMotions artifact without embedding a GitHub URL.",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RESEARCHFS_DB_PATH", str(db_path))
+    monkeypatch.setattr(socket, "create_connection", fail_network)
+    monkeypatch.setattr(ingest_module, "_default_github_code_searcher", stub_default_searcher)
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["researchfs.ingest", "--file", str(default_source)],
+    )
+    ingest_module.main()
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT repo_url AS repository_url, repo_key AS repository_key, selected
+            FROM paper_code_repositories
+            ORDER BY code_repository_id
+            """
+        ).fetchall()
+        assert [dict(row) for row in rows] == [
+            {
+                "repository_url": "https://github.com/nvlabs/protomotions",
+                "repository_key": "nvlabs/protomotions",
+                "selected": 1,
+            }
+        ]
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["researchfs.ingest", "--file", str(disabled_source), "--no-enrich-code"],
+    )
+    ingest_module.main()
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM paper_code_repositories").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["researchfs.ingest", "--file", str(search_source), "--enrich-code"],
+    )
+    ingest_module.main()
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT repo_url AS repository_url, repo_key AS repository_key, selected
+            FROM paper_code_repositories
+            ORDER BY code_repository_id
+            """
+        ).fetchall()
+        assert search_queries
+        assert any("ProtoMotions" in query for query in search_queries)
+        assert [dict(row) for row in rows] == [
+            {
+                "repository_url": "https://github.com/nvlabs/protomotions",
+                "repository_key": "nvlabs/protomotions",
+                "selected": 1,
+            },
+            {
+                "repository_url": "https://github.com/nvlabs/protomotions",
+                "repository_key": "nvlabs/protomotions",
+                "selected": 1,
+            },
+        ]
+    finally:
+        conn.close()
+
+
+def test_paper_code_repo_api_and_client_enrich_code_defaults_with_searcher_and_explicit_urls():
+    """API/client ingestion defaults to code enrichment for injected searchers and explicit URLs."""
+    import inspect
+
+    from researchfs.api import ResearchFSLabAPI
+    from researchfs.lab_client import ResearchFSLabClient
+
+    if "code_repo_searcher" not in inspect.signature(ResearchFSLabAPI).parameters:
+        pytest.skip("API code repository enrichment route is not implemented")
+    assert "code_repo_searcher" in inspect.signature(ResearchFSLabClient).parameters
+
+    conn = _init_memory_db()
+    queries = []
+
+    def stub_searcher(query, *_args, **_kwargs):
+        query_text = " ".join(str(part) for part in query) if isinstance(query, (list, tuple)) else str(query)
+        queries.append(query_text)
+        return [
+            {
+                "url": "https://github.com/NVlabs/ProtoMotions",
+                "evidence": "API injected searcher hit",
+                "confidence": 0.93,
+            }
+        ]
+
+    client = ResearchFSLabClient(conn=conn, code_repo_searcher=stub_searcher)
+    response = client.ingest(
+        {
+            "title": "API GPC ProtoMotions Paper",
+            "authors": "API Code Repo Lab",
+            "abstract": "GPC uses a ProtoMotions clue without embedding a GitHub URL.",
+            "url": "https://arxiv.org/abs/2606.29148",
+            "publish_date": "2026-07-02",
+            "content": "ProtoMotions appears in stored paper text so search queries can be derived deterministically.",
+        },
+    )
+
+    rows = _paper_code_repo_rows(conn, response["paper_id"])
+    assert queries
+    assert rows[0]["repository_url"] == "https://github.com/nvlabs/protomotions"
+    assert rows[0]["selected"] == 1
+    assert response["code_repositories"][0]["repository_url"] == "https://github.com/nvlabs/protomotions"
+
+    explicit_response = client.ingest(
+        {
+            "title": "API Explicit Code Repo Paper",
+            "authors": "API Code Repo Lab",
+            "abstract": "Explicit GitHub URLs should enrich without requiring a search hit.",
+            "url": "https://arxiv.org/abs/2606.29149",
+            "publish_date": "2026-07-02",
+            "content": "Official code: https://github.com/NVlabs/ProtoMotions/tree/main.",
+        },
+    )
+
+    explicit_rows = _paper_code_repo_rows(conn, explicit_response["paper_id"])
+    assert explicit_rows[0]["repository_url"] == "https://github.com/nvlabs/protomotions"
+    assert explicit_rows[0]["selected"] == 1
+    assert explicit_response["code_repositories"][0]["repository_url"] == "https://github.com/nvlabs/protomotions"
+
+    disabled_response = client.ingest(
+        {
+            "title": "API Disabled Code Repo Paper",
+            "authors": "API Code Repo Lab",
+            "abstract": "Explicit disable should suppress enrichment.",
+            "url": "https://arxiv.org/abs/2606.29150",
+            "publish_date": "2026-07-02",
+            "content": "Official code: https://github.com/NVlabs/ProtoMotions/tree/main.",
+        },
+        enrich_code=False,
+    )
+
+    assert _paper_code_repo_rows(conn, disabled_response["paper_id"]) == []
+    assert "code_repositories" not in disabled_response
+
+    memory = client.get_paper_memory(response["paper_id"], max_chars=2000)
+    assert memory["code_repositories"][0]["repository_key"] == "nvlabs/protomotions"
+    assert "https://github.com/nvlabs/protomotions" in memory["context"]
+
 def _paper_code_repo_passed(result):
     if isinstance(result, bool):
         return result

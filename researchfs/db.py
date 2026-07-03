@@ -87,6 +87,23 @@ CREATE TABLE IF NOT EXISTS paper_visual_indexes (
     UNIQUE(paper_id, provider)
 );
 
+CREATE TABLE IF NOT EXISTS paper_code_repositories (
+    code_repository_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    paper_id INTEGER NOT NULL REFERENCES papers(paper_id) ON DELETE CASCADE,
+    repo_url TEXT NOT NULL,
+    repo_key TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    name TEXT NOT NULL,
+    source TEXT NOT NULL,
+    evidence TEXT,
+    confidence REAL NOT NULL DEFAULT 0.0 CHECK (confidence >= 0.0 AND confidence <= 1.0),
+    selected INTEGER NOT NULL DEFAULT 0 CHECK (selected IN (0, 1)),
+    discovered_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    selected_at TEXT,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(paper_id, repo_key)
+);
+
 CREATE TABLE IF NOT EXISTS methods (
     method_id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
@@ -438,6 +455,110 @@ def _ensure_method_feedback_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE method_feedback ADD COLUMN source TEXT")
 
 
+def _ensure_paper_code_repository_indexes(conn: sqlite3.Connection) -> None:
+    """Create indexes for paper_code_repositories after create or rebuild."""
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_paper_code_repositories_paper_id "
+        "ON paper_code_repositories(paper_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_paper_code_repositories_repo_key "
+        "ON paper_code_repositories(repo_key)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_paper_code_repositories_selected "
+        "ON paper_code_repositories(paper_id, selected)"
+    )
+
+
+def _legacy_column_expr(columns: set[str], *names: str, default: str = "NULL") -> str:
+    for name in names:
+        if name in columns:
+            return name
+    return default
+
+
+def _ensure_paper_code_repository_columns(conn: sqlite3.Connection) -> None:
+    """Keep paper_code_repositories on the canonical repo_url/repo_key schema."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'paper_code_repositories'"
+    ).fetchone()
+    if table_exists is None:
+        return
+
+    existing_columns = _table_columns(conn, "paper_code_repositories")
+    deprecated_aliases = {"repository_url", "repository_key"} & existing_columns
+    missing_canonical = {"repo_url", "repo_key"} - existing_columns
+    if not deprecated_aliases and not missing_canonical:
+        _ensure_paper_code_repository_indexes(conn)
+        return
+
+    legacy_table = "_paper_code_repositories_legacy"
+    conn.execute(f"DROP TABLE IF EXISTS {legacy_table}")
+    conn.execute(f"ALTER TABLE paper_code_repositories RENAME TO {legacy_table}")
+    conn.execute(
+        """
+        CREATE TABLE paper_code_repositories (
+            code_repository_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paper_id INTEGER NOT NULL REFERENCES papers(paper_id) ON DELETE CASCADE,
+            repo_url TEXT NOT NULL,
+            repo_key TEXT NOT NULL,
+            owner TEXT NOT NULL,
+            name TEXT NOT NULL,
+            source TEXT NOT NULL,
+            evidence TEXT,
+            confidence REAL NOT NULL DEFAULT 0.0 CHECK (confidence >= 0.0 AND confidence <= 1.0),
+            selected INTEGER NOT NULL DEFAULT 0 CHECK (selected IN (0, 1)),
+            discovered_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            selected_at TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(paper_id, repo_key)
+        )
+        """
+    )
+    legacy_columns = _table_columns(conn, legacy_table)
+    code_repository_id = _legacy_column_expr(legacy_columns, "code_repository_id", default="NULL")
+    paper_id = _legacy_column_expr(legacy_columns, "paper_id")
+    repo_url = _legacy_column_expr(legacy_columns, "repo_url", "repository_url")
+    repo_key = _legacy_column_expr(legacy_columns, "repo_key", "repository_key")
+    owner = _legacy_column_expr(legacy_columns, "owner", default="''")
+    name = _legacy_column_expr(legacy_columns, "name", default="''")
+    source = _legacy_column_expr(legacy_columns, "source", default="'migration'")
+    evidence = _legacy_column_expr(legacy_columns, "evidence")
+    confidence = _legacy_column_expr(legacy_columns, "confidence", default="0.0")
+    selected = _legacy_column_expr(legacy_columns, "selected", default="0")
+    discovered_at = _legacy_column_expr(legacy_columns, "discovered_at", "created_at", default="CURRENT_TIMESTAMP")
+    selected_at = _legacy_column_expr(legacy_columns, "selected_at")
+    updated_at = _legacy_column_expr(legacy_columns, "updated_at", default="CURRENT_TIMESTAMP")
+    conn.execute(
+        f"""
+        INSERT OR IGNORE INTO paper_code_repositories (
+            code_repository_id, paper_id, repo_url, repo_key, owner, name,
+            source, evidence, confidence, selected, discovered_at, selected_at, updated_at
+        )
+        SELECT
+            {code_repository_id},
+            {paper_id},
+            {repo_url},
+            {repo_key},
+            {owner},
+            {name},
+            {source},
+            {evidence},
+            COALESCE({confidence}, 0.0),
+            COALESCE({selected}, 0),
+            COALESCE({discovered_at}, CURRENT_TIMESTAMP),
+            {selected_at},
+            COALESCE({updated_at}, CURRENT_TIMESTAMP)
+        FROM {legacy_table}
+        WHERE {paper_id} IS NOT NULL
+          AND {repo_url} IS NOT NULL
+          AND {repo_key} IS NOT NULL
+        """
+    )
+    conn.execute(f"DROP TABLE {legacy_table}")
+    _ensure_paper_code_repository_indexes(conn)
+
 def _backfill_method_source_evidence(conn: sqlite3.Connection) -> None:
     """Populate deterministic leading excerpts for legacy method_sources rows."""
     table_exists = conn.execute(
@@ -491,6 +612,7 @@ def migrate_db(conn: sqlite3.Connection | None = None) -> None:
         _ensure_paper_extraction_status_external_id(conn)
         _ensure_method_source_evidence_columns(conn)
         _ensure_method_feedback_columns(conn)
+        _ensure_paper_code_repository_columns(conn)
         _backfill_method_source_evidence(conn)
         conn.commit()
     finally:

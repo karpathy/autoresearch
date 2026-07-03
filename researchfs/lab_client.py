@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from researchfs.api import ArxivFetcher, JSONDict, LLMFn, RepoFetcher, ResearchFSLabAPI
+from researchfs.api import ArxivFetcher, CodeRepoSearcher, JSONDict, LLMFn, RepoFetcher, ResearchFSLabAPI
 
 
 class ResearchFSLabClientError(Exception):
@@ -36,9 +36,11 @@ class ResearchFSLabClient:
         llm_fn: LLMFn | None = None,
         arxiv_fetcher: ArxivFetcher | None = None,
         repo_fetcher: RepoFetcher | None = None,
+        code_repo_searcher: CodeRepoSearcher | None = None,
     ) -> None:
         if api is not None and any(
-            value is not None for value in (conn, db_path, llm_fn, arxiv_fetcher, repo_fetcher)
+            value is not None
+            for value in (conn, db_path, llm_fn, arxiv_fetcher, repo_fetcher, code_repo_searcher)
         ):
             raise ValueError("Pass either api or API construction options, not both")
         self._api = api or ResearchFSLabAPI(
@@ -47,6 +49,7 @@ class ResearchFSLabClient:
             llm_fn=llm_fn,
             arxiv_fetcher=arxiv_fetcher,
             repo_fetcher=repo_fetcher,
+            code_repo_searcher=code_repo_searcher,
         )
 
     def dispatch(self, method: str, path: str, body: Any = None) -> JSONDict:
@@ -81,6 +84,10 @@ class ResearchFSLabClient:
         if max_chars is not None:
             path += f"?max_chars={max_chars}"
         return self.dispatch("GET", path)
+
+    def enrich_paper_code_repositories(self, paper_id: int) -> JSONDict:
+        """Run opt-in code repository enrichment for an existing paper."""
+        return self.dispatch("POST", f"/paper/{paper_id}/code-repositories/enrich", {})
 
     def export_paper_memory_bundle(self, paper_id: int, max_chars: int | None = None) -> JSONDict:
         """Export one compressed paper memory bundle."""

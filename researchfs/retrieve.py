@@ -6,6 +6,7 @@ import sqlite3
 from typing import Optional
 
 from researchfs.db import get_connection
+from researchfs.code_repos import list_paper_code_repositories
 
 
 def _fetch_all_methods(cur) -> list[dict]:
@@ -2221,6 +2222,10 @@ def get_paper_memory(
         experiment_ids = [row["experiment_id"] for row in experiments]
         lessons = _paper_memory_recent_lessons(conn, method_ids, experiment_ids)
         lesson_ids = [row["lesson_id"] for row in lessons]
+        code_repositories = list_paper_code_repositories(conn, paper_id)
+        selected_code_repositories = [
+            repo for repo in code_repositories if int(repo.get("selected") or 0) == 1
+        ]
 
         lines = [
             f"# Paper Memory: {paper['title']}",
@@ -2235,6 +2240,26 @@ def get_paper_memory(
         if paper["abstract"]:
             lines.append(f"Abstract: {_truncate_text(paper['abstract'], 500)}")
         lines.extend(_format_paper_memory_status(extraction_status))
+
+        lines.append("")
+        lines.append("## Code repositories")
+        if code_repositories:
+            for repo in code_repositories:
+                marker = "selected" if int(repo.get("selected") or 0) == 1 else "candidate"
+                detail_parts = [
+                    f"{marker}",
+                    f"confidence={float(repo.get('confidence') or 0.0):.2f}",
+                    f"source={repo.get('source') or 'unknown'}",
+                ]
+                lines.append(
+                    f"- {repo.get('repository_url') or repo.get('repo_url')} "
+                    f"({', '.join(detail_parts)})"
+                )
+                evidence = repo.get("evidence")
+                if evidence:
+                    lines.append(f"  Evidence: {_truncate_text(evidence, 220)}")
+        else:
+            lines.append("- None linked.")
 
         lines.append("")
         lines.append("## Methods and provenance")
@@ -2313,6 +2338,8 @@ def get_paper_memory(
             "lesson_ids": lesson_ids,
             "experiment_ids": experiment_ids,
             "provenance_sources": provenance_sources,
+            "code_repositories": code_repositories,
+            "selected_code_repositories": selected_code_repositories,
         }
         if extraction_status is not None:
             result["extraction_status"] = extraction_status
