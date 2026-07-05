@@ -1,0 +1,74 @@
+{
+  "id": "loop_recovery_initial_retrieval_miss",
+  "question": "How should PaperServe recover when the initial retrieval miss omits the gold context-frontier paper?",
+  "gold_paper_ids": [
+    "ps-gold-context-frontier"
+  ],
+  "candidate_papers": [
+    {
+      "id": "ps-hard-negative-vector-db",
+      "title": "Vector Recall Is Not Context Routing",
+      "text": "Initial retrieval can return a plausible vector-search hard negative that lacks the required context-frontier evidence.",
+      "source": "synthetic://paperserve/attempt-1/vector-db",
+      "score": 0.91,
+      "token_estimate": 19,
+      "metadata": {
+        "kind": "hard_negative",
+        "retrieval_attempt": 1,
+        "confuses": "ps-gold-context-frontier"
+      }
+    },
+    {
+      "id": "ps-hard-negative-long-context",
+      "title": "Long Context Windows Without Evidence Selection",
+      "text": "Initial retrieval can also surface long-context advice that does not prove the PaperServe frontier contract.",
+      "source": "synthetic://paperserve/attempt-1/long-context",
+      "score": 0.87,
+      "token_estimate": 18,
+      "metadata": {
+        "kind": "hard_negative",
+        "retrieval_attempt": 1,
+        "confuses": "ps-gold-context-frontier"
+      }
+    },
+    {
+      "id": "ps-gold-context-frontier",
+      "title": "PaperServe: Context Frontiers for Evidence-Bounded Readers",
+      "text": "After verifier feedback, the second retrieval recovers the gold paper. It states that only the selected context frontier reaches the reader.",
+      "source": "synthetic://paperserve/attempt-2/context-frontier",
+      "score": 0.97,
+      "token_estimate": 22,
+      "metadata": {
+        "kind": "gold",
+        "retrieval_attempt": 2,
+        "topic": "context_routing"
+      }
+    },
+    {
+      "id": "ps-distractor-scheduler",
+      "title": "Workflow Scheduling for Background Jobs",
+      "text": "A scheduler retry is not the same as verifier-driven evidence recovery for the reader frontier.",
+      "source": "synthetic://paperserve/distractor-scheduler",
+      "score": 0.36,
+      "token_estimate": 15,
+      "metadata": {
+        "kind": "distractor",
+        "retrieval_attempt": 2
+      }
+    }
+  ],
+  "hard_negative_ids": [
+    "ps-hard-negative-vector-db",
+    "ps-hard-negative-long-context"
+  ],
+  "expected_answer_points": [
+    "The first attempt may miss the gold paper.",
+    "Verifier feedback should report missing required evidence.",
+    "A second retrieval should recover the gold paper and answer with citation."
+  ],
+  "required_citations": [
+    "ps-gold-context-frontier"
+  ],
+  "max_selected_papers": 2,
+  "max_reader_tokens": 64
+}

@@ -29,6 +29,10 @@ from .client import ResearchFSClient
 
 __all__ = [
     "CORPUS_BUNDLE_KIND",
+    "ContextBudget",
+    "ContextCandidate",
+    "ContextSelection",
+    "EvidenceResult",
     "LabAPIResponse",
     "ResearchFSLabAPI",
     "ResearchFSClient",
@@ -63,11 +67,52 @@ __all__ = [
     "seed_initial_data",
     "start_agent_run",
     "update_experiment",
+    "citation_f1",
+    "citation_precision",
+    "citation_recall",
+    "context_efficiency",
     "dispatch_request",
+    "false_stop_rate",
+    "gold_recall_at_k",
+    "log_context_routing_audit",
+    "paper_memories_to_context_candidates",
+    "paper_memory_to_context_candidate",
+    "recovery_rate",
+    "recovery_success",
+    "research_brief_to_context_candidates",
+    "route_top_k_context",
+    "selection_audit_payload",
+    "supported_answer_rate",
 ]
+
+_CONTEXT_EXPORTS = {
+    "ContextBudget",
+    "ContextCandidate",
+    "ContextSelection",
+    "EvidenceResult",
+    "citation_f1",
+    "citation_precision",
+    "citation_recall",
+    "context_efficiency",
+    "false_stop_rate",
+    "gold_recall_at_k",
+    "log_context_routing_audit",
+    "paper_memories_to_context_candidates",
+    "paper_memory_to_context_candidate",
+    "recovery_rate",
+    "recovery_success",
+    "research_brief_to_context_candidates",
+    "route_top_k_context",
+    "selection_audit_payload",
+    "supported_answer_rate",
+}
 
 
 def __getattr__(name):
+    if name in _CONTEXT_EXPORTS:
+        from . import context as context_module
+
+        return getattr(context_module, name)
     if name in {"LabAPIResponse", "ResearchFSLabAPI", "dispatch_request"}:
         from .api import LabAPIResponse, ResearchFSLabAPI, dispatch_request
 

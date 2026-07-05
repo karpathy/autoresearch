@@ -1,0 +1,56 @@
+{
+  "id": "single_gold_easy",
+  "question": "Which paper states that PaperServe routes only a selected context frontier to the reader?",
+  "gold_paper_ids": [
+    "ps-gold-context-frontier"
+  ],
+  "candidate_papers": [
+    {
+      "id": "ps-gold-context-frontier",
+      "title": "PaperServe: Context Frontiers for Evidence-Bounded Readers",
+      "text": "PaperServe routes a selected context frontier to the reader instead of passing every retrieved paper. Verification can request another retrieval when required evidence is absent.",
+      "source": "synthetic://paperserve/context-frontier",
+      "score": 0.97,
+      "token_estimate": 25,
+      "metadata": {
+        "kind": "gold",
+        "year": 2026,
+        "topic": "context_routing"
+      }
+    },
+    {
+      "id": "ps-distractor-scheduler",
+      "title": "Workflow Scheduling for Background Jobs",
+      "text": "A scheduler decides job ordering and retry timing, but it does not select evidence for a reader context window.",
+      "source": "synthetic://paperserve/scheduler",
+      "score": 0.42,
+      "token_estimate": 18,
+      "metadata": {
+        "kind": "distractor",
+        "topic": "scheduler"
+      }
+    },
+    {
+      "id": "ps-distractor-kernels",
+      "title": "Custom Attention Kernels for Throughput",
+      "text": "Custom kernels can improve attention throughput but do not define a dependency-free paper-routing frontier.",
+      "source": "synthetic://paperserve/kernels",
+      "score": 0.31,
+      "token_estimate": 15,
+      "metadata": {
+        "kind": "distractor",
+        "topic": "kernels"
+      }
+    }
+  ],
+  "hard_negative_ids": [],
+  "expected_answer_points": [
+    "PaperServe selects a bounded context frontier before reading.",
+    "The reader should not receive every retrieved paper."
+  ],
+  "required_citations": [
+    "ps-gold-context-frontier"
+  ],
+  "max_selected_papers": 2,
+  "max_reader_tokens": 64
+}

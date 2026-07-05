@@ -1,0 +1,57 @@
+{
+  "id": "missing_gold_no_answer",
+  "question": "What does the missing gold paper say about PaperServe citation recovery when the paper is not in the corpus?",
+  "gold_paper_ids": [
+    "ps-gold-missing-citation-recovery"
+  ],
+  "candidate_papers": [
+    {
+      "id": "ps-hard-negative-vector-db",
+      "title": "Vector Recall Is Not Context Routing",
+      "text": "Vector recall returns similar papers but gives no evidence for the missing citation-recovery paper.",
+      "source": "synthetic://paperserve/hard-negative-vector-db",
+      "score": 0.82,
+      "token_estimate": 17,
+      "metadata": {
+        "kind": "hard_negative",
+        "confuses": "ps-gold-missing-citation-recovery"
+      }
+    },
+    {
+      "id": "ps-distractor-scheduler",
+      "title": "Workflow Scheduling for Background Jobs",
+      "text": "This paper discusses job retries and queues, not the missing PaperServe citation-recovery evidence.",
+      "source": "synthetic://paperserve/scheduler",
+      "score": 0.67,
+      "token_estimate": 17,
+      "metadata": {
+        "kind": "distractor",
+        "topic": "scheduler"
+      }
+    },
+    {
+      "id": "ps-distractor-kernels",
+      "title": "Custom Attention Kernels for Throughput",
+      "text": "Kernel optimization is unrelated to the absent PaperServe citation-recovery evidence.",
+      "source": "synthetic://paperserve/kernels",
+      "score": 0.52,
+      "token_estimate": 13,
+      "metadata": {
+        "kind": "distractor",
+        "topic": "kernels"
+      }
+    }
+  ],
+  "hard_negative_ids": [
+    "ps-hard-negative-vector-db"
+  ],
+  "expected_answer_points": [
+    "The system should return insufficient_evidence when required gold evidence is absent.",
+    "The reader should not invent an answer from hard negatives or distractors."
+  ],
+  "required_citations": [
+    "ps-gold-missing-citation-recovery"
+  ],
+  "max_selected_papers": 2,
+  "max_reader_tokens": 50
+}

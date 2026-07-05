@@ -1,0 +1,74 @@
+{
+  "id": "single_gold_hard_negatives",
+  "question": "Which evidence supports using context routing rather than vector recall or long-context prompting alone?",
+  "gold_paper_ids": [
+    "ps-gold-context-frontier"
+  ],
+  "candidate_papers": [
+    {
+      "id": "ps-hard-negative-vector-db",
+      "title": "Vector Recall Is Not Context Routing",
+      "text": "Vector retrieval can find similar papers, but it does not guarantee that only selected evidence reaches the reader or that verifier feedback triggers recovery.",
+      "source": "synthetic://paperserve/hard-negative-vector-db",
+      "score": 0.94,
+      "token_estimate": 25,
+      "metadata": {
+        "kind": "hard_negative",
+        "confuses": "ps-gold-context-frontier",
+        "topic": "vector_search"
+      }
+    },
+    {
+      "id": "ps-gold-context-frontier",
+      "title": "PaperServe: Context Frontiers for Evidence-Bounded Readers",
+      "text": "Context routing forms an explicit evidence frontier. The reader sees selected papers only, while the verifier can demand retrieval recovery if the gold paper is missing.",
+      "source": "synthetic://paperserve/context-frontier",
+      "score": 0.91,
+      "token_estimate": 26,
+      "metadata": {
+        "kind": "gold",
+        "year": 2026,
+        "topic": "context_routing"
+      }
+    },
+    {
+      "id": "ps-hard-negative-long-context",
+      "title": "Long Context Windows Without Evidence Selection",
+      "text": "A long-context reader may accept many retrieved papers at once, increasing attention dilution when irrelevant papers are included.",
+      "source": "synthetic://paperserve/hard-negative-long-context",
+      "score": 0.88,
+      "token_estimate": 20,
+      "metadata": {
+        "kind": "hard_negative",
+        "confuses": "ps-gold-context-frontier",
+        "topic": "long_context"
+      }
+    },
+    {
+      "id": "ps-distractor-rl-training",
+      "title": "Training a Policy for Paper Search",
+      "text": "A reinforcement learner may optimize paper selection over time, but this fixture expects deterministic dependency-free routing.",
+      "source": "synthetic://paperserve/rl-training",
+      "score": 0.39,
+      "token_estimate": 20,
+      "metadata": {
+        "kind": "distractor",
+        "topic": "rl"
+      }
+    }
+  ],
+  "hard_negative_ids": [
+    "ps-hard-negative-vector-db",
+    "ps-hard-negative-long-context"
+  ],
+  "expected_answer_points": [
+    "Context routing is not equivalent to vector recall.",
+    "Context routing is not equivalent to merely expanding the reader context window.",
+    "The selected evidence frontier and verifier recovery are the differentiators."
+  ],
+  "required_citations": [
+    "ps-gold-context-frontier"
+  ],
+  "max_selected_papers": 2,
+  "max_reader_tokens": 70
+}

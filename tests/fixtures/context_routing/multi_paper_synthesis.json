@@ -1,0 +1,72 @@
+{
+  "id": "multi_paper_synthesis",
+  "question": "Which papers jointly explain selected context frontiers and verifier-driven recovery?",
+  "gold_paper_ids": [
+    "ps-gold-context-frontier",
+    "ps-gold-verifier-recovery"
+  ],
+  "candidate_papers": [
+    {
+      "id": "ps-gold-context-frontier",
+      "title": "PaperServe: Context Frontiers for Evidence-Bounded Readers",
+      "text": "PaperServe defines the context frontier as the subset of evidence allowed into the reader, not the full retrieval set.",
+      "source": "synthetic://paperserve/context-frontier",
+      "score": 0.96,
+      "token_estimate": 20,
+      "metadata": {
+        "kind": "gold",
+        "topic": "context_frontier"
+      }
+    },
+    {
+      "id": "ps-gold-verifier-recovery",
+      "title": "Verifier Feedback for Paper Routing Recovery",
+      "text": "A verifier compares the drafted answer with selected evidence and asks retrieval to try again when required citations are absent.",
+      "source": "synthetic://paperserve/verifier-recovery",
+      "score": 0.93,
+      "token_estimate": 22,
+      "metadata": {
+        "kind": "gold",
+        "topic": "verification"
+      }
+    },
+    {
+      "id": "ps-hard-negative-vector-db",
+      "title": "Vector Recall Is Not Context Routing",
+      "text": "Embedding search ranks related records but does not specify what the reader is permitted to see.",
+      "source": "synthetic://paperserve/hard-negative-vector-db",
+      "score": 0.84,
+      "token_estimate": 16,
+      "metadata": {
+        "kind": "hard_negative",
+        "confuses": "ps-gold-context-frontier"
+      }
+    },
+    {
+      "id": "ps-distractor-policy-gradient",
+      "title": "Policy Gradient Tuning for Search Agents",
+      "text": "Policy-gradient training can tune action choices, but this benchmark is deterministic and does not train a policy.",
+      "source": "synthetic://paperserve/policy-gradient",
+      "score": 0.44,
+      "token_estimate": 18,
+      "metadata": {
+        "kind": "distractor",
+        "topic": "rl_training"
+      }
+    }
+  ],
+  "hard_negative_ids": [
+    "ps-hard-negative-vector-db"
+  ],
+  "expected_answer_points": [
+    "The context frontier is the selected subset of retrieved evidence sent to the reader.",
+    "Verifier feedback can trigger another retrieval when selected evidence is incomplete.",
+    "Both gold papers are required for a complete synthesis."
+  ],
+  "required_citations": [
+    "ps-gold-context-frontier",
+    "ps-gold-verifier-recovery"
+  ],
+  "max_selected_papers": 2,
+  "max_reader_tokens": 56
+}
