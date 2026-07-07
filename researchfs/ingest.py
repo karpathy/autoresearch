@@ -2273,12 +2273,19 @@ def main() -> None:
         help="Maximum arXiv results to ingest with --arxiv-query (default: 10)",
     )
     parser.add_argument(
+        "--arxiv-proxy-list",
+        metavar="PATH",
+        help="Load arXiv request proxies from a local proxy-list file for this run",
+    )
+    parser.add_argument(
         "--seed",
         action="store_true",
         help="Seed the database with the v0 corpus",
     )
 
     args = parser.parse_args()
+    if args.arxiv_proxy_list:
+        os.environ["RESEARCHFS_ARXIV_PROXY_LIST_PATH"] = args.arxiv_proxy_list
 
     if args.seed:
         seed_initial_data()

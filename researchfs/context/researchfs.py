@@ -8,7 +8,6 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from .routing import ContextCandidate, ContextSelection
 
 _AUDIT_JSON_MAX_CHARS = 32_000
 _TITLE_RE = re.compile(r"^#\s+Paper Memory:\s*(?P<title>.+?)\s*$")
@@ -48,6 +47,7 @@ def paper_memory_to_context_candidate(
         if key in card:
             metadata[key] = _json_safe(card[key])
 
+    from .routing import ContextCandidate
     paper_id_text = str(paper_id)
     return ContextCandidate(
         id=paper_id_text,
@@ -144,6 +144,7 @@ def selection_audit_payload(
 ) -> dict[str, Any]:
     """Return a deterministic JSON-serializable audit payload for a selection."""
 
+    from .routing import ContextSelection
     if not isinstance(selection, ContextSelection):
         raise ValueError("selection must be a ContextSelection")
     if query is not None and not isinstance(query, str):
@@ -303,6 +304,7 @@ def _embedded_paper_memory_cards(brief: Mapping[str, Any]) -> list[Mapping[str, 
 
 
 def _candidate_id(candidate: ContextCandidate, list_name: str) -> str:
+    from .routing import ContextCandidate
     if not isinstance(candidate, ContextCandidate):
         raise ValueError(f"selection.{list_name} must contain ContextCandidate objects")
     if not isinstance(candidate.id, str) or not candidate.id.strip():

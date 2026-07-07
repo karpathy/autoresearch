@@ -1,0 +1,51 @@
+{
+  "id": "multi_hop_evidence_pressure",
+  "task_type": "evidence_grounded_answer",
+  "question": "What two findings support the claim that prism latch membranes keep desalination output stable during brine surges?",
+  "gold_paper_ids": ["paper-prism-latch-flux", "paper-prism-latch-ion-balance"],
+  "required_citations": ["paper-prism-latch-flux", "paper-prism-latch-ion-balance"],
+  "expected_answer_points": [
+    "prism latch membranes maintain output flux during brine surges",
+    "ion balance remains stable after repeated brine surge cycles"
+  ],
+  "max_selected_papers": 2,
+  "max_reader_tokens": 190,
+  "candidate_papers": [
+    {
+      "id": "paper-prism-latch-flux",
+      "title": "Prism latch membranes under brine surge flux stress",
+      "text": "Prism latch membranes maintain desalination output flux during brine surges by holding the pore gates open through the high-salt pulse.",
+      "source": "synthetic",
+      "score": 0.98,
+      "token_estimate": 45,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-prism-latch-ion-balance",
+      "title": "Ion balance stability in prism latch desalination membranes",
+      "text": "After repeated brine surge cycles, prism latch desalination membranes preserve ion balance and show no measurable cation drift in the treated output.",
+      "source": "synthetic",
+      "score": 0.96,
+      "token_estimate": 47,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-prism-latch-flux-only-review",
+      "title": "Review of prism latch flux tests",
+      "text": "This review repeats the prism latch membrane flux terminology but summarizes only single-cycle flux screens and provides no ion balance evidence.",
+      "source": "synthetic",
+      "score": 0.64,
+      "token_estimate": 38,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "partial_evidence"}
+    },
+    {
+      "id": "paper-brine-surge-polymer-decoy",
+      "title": "Polymer liners during brine surge cleaning",
+      "text": "Polymer liners are cleaned during brine surges in a desalination plant, but the study does not evaluate prism latch membranes or output stability.",
+      "source": "synthetic",
+      "score": 0.55,
+      "token_estimate": 40,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "near_miss_citation"}
+    }
+  ]
+}

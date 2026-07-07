@@ -1,0 +1,49 @@
+{
+  "id": "deep_hidden_target",
+  "task_type": "deep_paper_finding",
+  "question": "Which paper reports the cryptic ferrofluid bandit catalyst stability result?",
+  "target_paper_id": "paper-ferrofluid-bandit",
+  "gold_paper_ids": ["paper-ferrofluid-bandit"],
+  "required_citations": ["paper-ferrofluid-bandit"],
+  "expected_answer_points": ["ferrofluid bandit catalyst remains stable under pulsed salinity"],
+  "max_selected_papers": 2,
+  "max_reader_tokens": 180,
+  "candidate_papers": [
+    {
+      "id": "paper-graphene-decoy",
+      "title": "Graphene aerogel transport notes",
+      "text": "A graphene aerogel study measured ordinary conductivity drift in dry cells. It does not discuss ferrofluid bandit catalysts or salinity pulses.",
+      "source": "synthetic",
+      "score": 0.42,
+      "token_estimate": 42,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-ferrofluid-bandit",
+      "title": "Cryptic ferrofluid bandit catalyst stability",
+      "text": "The cryptic ferrofluid bandit catalyst remains stable under pulsed salinity. The hidden target paper reports no collapse after the stress cycle.",
+      "source": "synthetic",
+      "score": 0.96,
+      "token_estimate": 48,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-bandit-policy",
+      "title": "Contextual bandit policy survey",
+      "text": "This survey covers contextual bandit policies for recommendation systems and omits catalyst stability evidence.",
+      "source": "synthetic",
+      "score": 0.51,
+      "token_estimate": 35,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-salinity-sensor",
+      "title": "Salinity sensor calibration",
+      "text": "A calibration note about salinity sensors provides background measurements but no ferrofluid catalyst result.",
+      "source": "synthetic",
+      "score": 0.34,
+      "token_estimate": 31,
+      "metadata": {"retrieval_attempt": 1}
+    }
+  ]
+}

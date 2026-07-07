@@ -6,7 +6,6 @@ This is RL-ready in shape but framework-free: an external trainer can call
 model, vector store, scheduler, or provider integration.
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any

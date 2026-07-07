@@ -51,6 +51,61 @@ verification = verifier(answer, selected_context=selection.selected)
 
 The reader receives selected context only. The full candidate set remains available for audit, metrics, and recovery decisions, but it is not passed into the reader prompt. If verification reports that required evidence is missing, the workflow can retrieve again and route a new frontier.
 
+## First-class routed ask loop
+
+Applications that want the full local product loop can call the routed ask
+workflow instead of hand-wiring retrieval, routing, reading, verification,
+recovery, and audit logging:
+
+```python
+from researchfs.ask import run_routed_ask
+
+result = run_routed_ask(
+    "clip matrix optimizer risk",
+    conn=conn,
+    max_papers=3,
+    k=2,
+    max_reader_tokens=1200,
+    max_retries=1,
+    include_scores=True,
+    log=True,
+)
+```
+
+The matching CLI command is:
+
+```bash
+uv run python -m researchfs.memory ask \
+  --query "clip matrix optimizer risk" \
+  --route-context \
+  --verify \
+  --recover \
+  --max-papers 3 \
+  --k 2 \
+  --max-reader-tokens 1200 \
+  --log
+```
+
+`run_routed_ask(...)` calls `get_research_brief(...)`, converts the brief to
+`ContextCandidate` records, routes a selected frontier with
+`route_top_k_context(...)`, passes only that selected frontier to the reader,
+verifies selected-frontier citations, and retries by expanding `max_papers` when
+verification says the miss is recoverable. CLI and local API defaults use the
+deterministic local extractive `default_reader(...)` plus
+`citation_verifier(...)`; they do not require a provider SDK, model package, or
+GPU.
+
+The repository may still contain NanoChat/training fixture dependencies; the
+routed ask code path does not import or require model/GPU packages.
+
+Applications that already own a model-backed reader or stricter verifier can
+inject callables in process instead of exposing a network plugin system. The
+supported injection surfaces are `ResearchFSSession.routed_ask(reader=...,
+verifier=...)`, `ResearchFSClient.ask(reader=..., verifier=...)`, and
+`ResearchFSLabAPI(reader_fn=..., verifier_fn=...)`. These callables receive the
+same selected `ContextCandidate` list that the deterministic defaults receive;
+rejected candidates stay audit-only.
+
 ## ResearchFS paper-memory adapter
 
 Use the opt-in adapter when retrieval already returned bounded ResearchFS paper
@@ -119,16 +174,21 @@ fields such as `false_stop` or `stopped_without_enough_evidence`. Use it beside
 supported-answer and recovery metrics to detect workflows that quit before the
 context frontier contains the required citations.
 
+Public metric helpers: `gold_recall_at_k(...)`, `citation_precision(...)`,
+`citation_recall(...)`, `citation_f1(...)`, `supported_answer_rate(...)`,
+`context_efficiency(...)`, `recovery_success(...)`, `recovery_rate(...)`, and
+`false_stop_rate(...)`.
+
 ## Non-goals in this checkout
 
-ResearchFS/LoopGraph in this checkout does not implement SSMax, custom attention kernels, vector DBs, provider integrations, or RL training.
+ResearchFS/LoopGraph in this checkout does not implement SSMax, custom attention kernels, vector DBs, provider integrations, RL training, GPU dependencies, or model dependencies.
 
 More explicitly, this pattern is not:
 
 - a vector database or embedding index;
 - an LLM provider integration;
 - a scheduler or NodeKind execution semantics change;
-- a GPU kernel, custom attention implementation, or SSMax substitute;
+- a GPU kernel, GPU dependency, model dependency, custom attention implementation, or SSMax substitute;
 - a reinforcement-learning trainer;
 - a claim that longer context windows alone solve evidence selection.
 

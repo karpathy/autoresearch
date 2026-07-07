@@ -33,7 +33,24 @@ def _open_sqlite_connection(db_path: str | Path) -> sqlite3.Connection:
     return sqlite3.connect(db_path_str, uri=uri)
 
 
-SCHEMA = """
+ARXIV_JOB_TYPES = (
+    "sync_metadata",
+    "download_pdf",
+    "download_source",
+    "import_s3_bin",
+    "extract_s3_bin",
+    "parse_pdf",
+    "parse_source",
+    "extract_references",
+    "chunk_text",
+    "embed_chunks",
+    "index_bm25",
+    "index_vector",
+)
+
+_ARXIV_JOB_TYPE_VALUES_SQL = ", ".join(f"'{job_type}'" for job_type in ARXIV_JOB_TYPES)
+
+SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS papers (
     paper_id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -229,6 +246,185 @@ CREATE TABLE IF NOT EXISTS lessons (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS arxiv_papers (
+    arxiv_id TEXT PRIMARY KEY,
+    latest_version INTEGER NOT NULL DEFAULT 1,
+    title TEXT,
+    abstract TEXT,
+    authors_json TEXT,
+    primary_category TEXT,
+    categories_json TEXT,
+    license TEXT,
+    doi TEXT,
+    journal_ref TEXT,
+    abs_url TEXT,
+    first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    oai_datestamp TEXT,
+    raw_oai_xml TEXT
+);
+
+CREATE TABLE IF NOT EXISTS arxiv_versions (
+    arxiv_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    submitted_at TEXT,
+    announced_at TEXT,
+    title TEXT,
+    abstract TEXT,
+    authors_json TEXT,
+    categories_json TEXT,
+    raw_version_metadata_json TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (arxiv_id, version),
+    FOREIGN KEY (arxiv_id) REFERENCES arxiv_papers(arxiv_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS arxiv_assets (
+    asset_key TEXT PRIMARY KEY,
+    arxiv_id TEXT NOT NULL,
+    version INTEGER,
+    asset_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    storage_path TEXT,
+    checksum TEXT,
+    byte_size INTEGER,
+    source TEXT,
+    error_message TEXT,
+    first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (arxiv_id) REFERENCES arxiv_papers(arxiv_id) ON DELETE CASCADE,
+    CHECK (asset_type IN (
+        'metadata',
+        'pdf',
+        'source',
+        'parsed_text',
+        'chunks',
+        'embedding',
+        'bm25_index',
+        'vector_index'
+    )),
+    CHECK (status IN (
+        'seen',
+        'queued',
+        'running',
+        'downloaded',
+        'imported',
+        'parsed',
+        'indexed',
+        'failed',
+        'skipped'
+    ))
+);
+
+CREATE TABLE IF NOT EXISTS arxiv_chunks (
+    arxiv_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    chunks_asset_key TEXT NOT NULL,
+    source_asset_key TEXT,
+    source_asset_type TEXT,
+    chunks_checksum TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (arxiv_id, version, chunk_index),
+    FOREIGN KEY (arxiv_id) REFERENCES arxiv_papers(arxiv_id) ON DELETE CASCADE
+);
+
+
+CREATE TABLE IF NOT EXISTS arxiv_jobs (
+    job_key TEXT PRIMARY KEY,
+    job_type TEXT NOT NULL,
+    arxiv_id TEXT,
+    version INTEGER,
+    asset_type TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    priority INTEGER DEFAULT 100,
+    attempts INTEGER DEFAULT 0,
+    max_attempts INTEGER DEFAULT 5,
+    run_after TEXT DEFAULT CURRENT_TIMESTAMP,
+    locked_by TEXT,
+    locked_at TEXT,
+    payload_json TEXT,
+    error_message TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    CHECK (job_type IN ({_ARXIV_JOB_TYPE_VALUES_SQL})),
+    CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'skipped'))
+);
+
+CREATE TABLE IF NOT EXISTS arxiv_sync_state (
+    sync_name TEXT PRIMARY KEY,
+    metadata_prefix TEXT NOT NULL DEFAULT 'arXivRaw',
+    set_spec TEXT,
+    committed_from TEXT,
+    last_response_date TEXT,
+    pending_response_date TEXT,
+    last_resumption_token TEXT,
+    status TEXT NOT NULL DEFAULT 'idle',
+    records_seen_last_run INTEGER DEFAULT 0,
+    records_updated_last_run INTEGER DEFAULT 0,
+    records_inserted_last_run INTEGER DEFAULT 0,
+    versions_inserted_last_run INTEGER DEFAULT 0,
+    jobs_queued_last_run INTEGER DEFAULT 0,
+    error_message TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    CHECK (status IN ('idle', 'running', 'succeeded', 'failed'))
+);
+
+CREATE TABLE IF NOT EXISTS arxiv_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    arxiv_id TEXT,
+    version INTEGER,
+    asset_type TEXT,
+    job_key TEXT,
+    payload_json TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS arxiv_s3_bins (
+    bin_key TEXT PRIMARY KEY,
+    asset_type TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    size_bytes INTEGER,
+    checksum TEXT,
+    first_item TEXT,
+    last_item TEXT,
+    item_count INTEGER,
+    status TEXT NOT NULL DEFAULT 'seen',
+    storage_path TEXT,
+    downloaded_at TEXT,
+    imported_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS arxiv_bin_members (
+    bin_key TEXT NOT NULL,
+    arxiv_id TEXT NOT NULL,
+    version INTEGER,
+    asset_type TEXT NOT NULL,
+    storage_path TEXT,
+    checksum TEXT,
+    PRIMARY KEY (bin_key, arxiv_id, version, asset_type),
+    FOREIGN KEY (bin_key) REFERENCES arxiv_s3_bins(bin_key) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS arxiv_bloom_filters (
+    filter_name TEXT PRIMARY KEY,
+    false_positive_rate REAL NOT NULL,
+    bit_count INTEGER NOT NULL,
+    hash_count INTEGER NOT NULL,
+    item_count INTEGER NOT NULL,
+    bits BLOB NOT NULL,
+    source_table TEXT NOT NULL,
+    source_column TEXT NOT NULL,
+    rebuilt_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS methods_fts USING fts5(
     method_id UNINDEXED,
     name,
@@ -247,6 +443,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     content='chunks',
     content_rowid='chunk_id'
 );
+
+CREATE VIRTUAL TABLE IF NOT EXISTS arxiv_chunks_fts USING fts5(
+    arxiv_id UNINDEXED,
+    version UNINDEXED,
+    chunk_index UNINDEXED,
+    text,
+    content='arxiv_chunks',
+    content_rowid='rowid',
+    tokenize='unicode61'
+);
+
 
 CREATE VIRTUAL TABLE IF NOT EXISTS code_symbols_fts USING fts5(
     file_path,
@@ -292,6 +499,24 @@ CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
     VALUES (new.chunk_id, new.chunk_id, new.section, new.content);
 END;
 
+CREATE TRIGGER IF NOT EXISTS arxiv_chunks_ai AFTER INSERT ON arxiv_chunks BEGIN
+    INSERT INTO arxiv_chunks_fts(rowid, arxiv_id, version, chunk_index, text)
+    VALUES (new.rowid, new.arxiv_id, new.version, new.chunk_index, new.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS arxiv_chunks_ad AFTER DELETE ON arxiv_chunks BEGIN
+    INSERT INTO arxiv_chunks_fts(arxiv_chunks_fts, rowid, arxiv_id, version, chunk_index, text)
+    VALUES ('delete', old.rowid, old.arxiv_id, old.version, old.chunk_index, old.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS arxiv_chunks_au AFTER UPDATE ON arxiv_chunks BEGIN
+    INSERT INTO arxiv_chunks_fts(arxiv_chunks_fts, rowid, arxiv_id, version, chunk_index, text)
+    VALUES ('delete', old.rowid, old.arxiv_id, old.version, old.chunk_index, old.text);
+    INSERT INTO arxiv_chunks_fts(rowid, arxiv_id, version, chunk_index, text)
+    VALUES (new.rowid, new.arxiv_id, new.version, new.chunk_index, new.text);
+END;
+
+
 CREATE TRIGGER IF NOT EXISTS code_symbols_ai AFTER INSERT ON code_symbols BEGIN
     INSERT INTO code_symbols_fts(rowid, file_path, symbol_name, symbol_kind, docstring, code)
     VALUES (new.symbol_id, new.file_path, new.symbol_name, new.symbol_kind, new.docstring, new.code);
@@ -326,6 +551,15 @@ CREATE INDEX IF NOT EXISTS idx_method_code_targets_method_id ON method_code_targ
 CREATE INDEX IF NOT EXISTS idx_experiment_methods_method_id ON experiment_methods(method_id);
 CREATE INDEX IF NOT EXISTS idx_lessons_method_id ON lessons(method_id);
 CREATE INDEX IF NOT EXISTS idx_lessons_experiment_id ON lessons(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_arxiv_papers_oai_datestamp ON arxiv_papers(oai_datestamp);
+CREATE INDEX IF NOT EXISTS idx_arxiv_papers_primary_category ON arxiv_papers(primary_category);
+CREATE INDEX IF NOT EXISTS idx_arxiv_versions_arxiv_id ON arxiv_versions(arxiv_id);
+CREATE INDEX IF NOT EXISTS idx_arxiv_assets_arxiv_type_status ON arxiv_assets(arxiv_id, asset_type, status);
+CREATE INDEX IF NOT EXISTS idx_arxiv_chunks_asset_key ON arxiv_chunks(chunks_asset_key);
+CREATE INDEX IF NOT EXISTS idx_arxiv_chunks_updated_at ON arxiv_chunks(updated_at);
+CREATE INDEX IF NOT EXISTS idx_arxiv_jobs_status_run_after ON arxiv_jobs(status, run_after, priority);
+CREATE INDEX IF NOT EXISTS idx_arxiv_events_arxiv_id ON arxiv_events(arxiv_id);
+CREATE INDEX IF NOT EXISTS idx_arxiv_s3_bins_status ON arxiv_s3_bins(status);
 """
 
 
@@ -344,7 +578,7 @@ def get_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
     return conn
 
 
-FTS_TABLES = ("methods_fts", "chunks_fts", "code_symbols_fts")
+FTS_TABLES = ("methods_fts", "chunks_fts", "code_symbols_fts", "arxiv_chunks_fts")
 
 
 def ensure_fts_populated(conn: sqlite3.Connection | None = None) -> None:
@@ -381,6 +615,48 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
         for row in conn.execute(f"PRAGMA table_info({table_name})")
     }
 
+
+
+
+def _ensure_arxiv_sync_state_scope_columns(conn: sqlite3.Connection) -> None:
+    """Add sync scope columns to legacy arxiv_sync_state tables."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'arxiv_sync_state'"
+    ).fetchone()
+    if table_exists is None:
+        return
+
+    existing_columns = _table_columns(conn, "arxiv_sync_state")
+    scope_columns = {
+        "metadata_prefix": "TEXT NOT NULL DEFAULT 'arXivRaw'",
+        "set_spec": "TEXT",
+    }
+    for column_name, column_type in scope_columns.items():
+        if column_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE arxiv_sync_state ADD COLUMN {column_name} {column_type}"
+            )
+
+
+
+def _ensure_arxiv_sync_state_counter_columns(conn: sqlite3.Connection) -> None:
+    """Add durable last-run insertion counters to legacy arxiv_sync_state tables."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'arxiv_sync_state'"
+    ).fetchone()
+    if table_exists is None:
+        return
+
+    existing_columns = _table_columns(conn, "arxiv_sync_state")
+    counter_columns = {
+        "records_inserted_last_run": "INTEGER DEFAULT 0",
+        "versions_inserted_last_run": "INTEGER DEFAULT 0",
+    }
+    for column_name, column_type in counter_columns.items():
+        if column_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE arxiv_sync_state ADD COLUMN {column_name} {column_type}"
+            )
 
 
 
@@ -559,6 +835,95 @@ def _ensure_paper_code_repository_columns(conn: sqlite3.Connection) -> None:
     conn.execute(f"DROP TABLE {legacy_table}")
     _ensure_paper_code_repository_indexes(conn)
 
+def _ensure_arxiv_jobs_indexes(conn: sqlite3.Connection) -> None:
+    """Create indexes for arxiv_jobs after create or rebuild."""
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_arxiv_jobs_status_run_after "
+        "ON arxiv_jobs(status, run_after, priority)"
+    )
+
+
+def _ensure_arxiv_jobs_job_type_constraint(conn: sqlite3.Connection) -> None:
+    """Rebuild legacy arxiv_jobs tables so job_type is guarded by SQLite."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'arxiv_jobs'"
+    ).fetchone()
+    if row is None:
+        return
+    create_sql = row["sql"] if isinstance(row, sqlite3.Row) else row[0]
+    if create_sql and "JOB_TYPE IN" in create_sql.upper():
+        return
+
+    existing_columns = _table_columns(conn, "arxiv_jobs")
+    new_table = "arxiv_jobs__job_type_migration_new"
+    create_new_table_sql = f"""
+        CREATE TABLE {new_table} (
+            job_key TEXT PRIMARY KEY,
+            job_type TEXT NOT NULL,
+            arxiv_id TEXT,
+            version INTEGER,
+            asset_type TEXT,
+            status TEXT NOT NULL DEFAULT 'queued',
+            priority INTEGER DEFAULT 100,
+            attempts INTEGER DEFAULT 0,
+            max_attempts INTEGER DEFAULT 5,
+            run_after TEXT DEFAULT CURRENT_TIMESTAMP,
+            locked_by TEXT,
+            locked_at TEXT,
+            payload_json TEXT,
+            error_message TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            CHECK (job_type IN ({_ARXIV_JOB_TYPE_VALUES_SQL})),
+            CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'skipped'))
+        )
+    """
+    copy_expressions = {
+        "job_key": _legacy_column_expr(existing_columns, "job_key"),
+        "job_type": _legacy_column_expr(existing_columns, "job_type"),
+        "arxiv_id": _legacy_column_expr(existing_columns, "arxiv_id"),
+        "version": _legacy_column_expr(existing_columns, "version"),
+        "asset_type": _legacy_column_expr(existing_columns, "asset_type"),
+        "status": "COALESCE("
+        + _legacy_column_expr(existing_columns, "status", default="'queued'")
+        + ", 'queued')",
+        "priority": f"COALESCE({_legacy_column_expr(existing_columns, 'priority', default='100')}, 100)",
+        "attempts": f"COALESCE({_legacy_column_expr(existing_columns, 'attempts', default='0')}, 0)",
+        "max_attempts": f"COALESCE({_legacy_column_expr(existing_columns, 'max_attempts', default='5')}, 5)",
+        "run_after": f"COALESCE({_legacy_column_expr(existing_columns, 'run_after', default='CURRENT_TIMESTAMP')}, CURRENT_TIMESTAMP)",
+        "locked_by": _legacy_column_expr(existing_columns, "locked_by"),
+        "locked_at": _legacy_column_expr(existing_columns, "locked_at"),
+        "payload_json": _legacy_column_expr(existing_columns, "payload_json"),
+        "error_message": _legacy_column_expr(existing_columns, "error_message"),
+        "created_at": f"COALESCE({_legacy_column_expr(existing_columns, 'created_at', default='CURRENT_TIMESTAMP')}, CURRENT_TIMESTAMP)",
+        "updated_at": f"COALESCE({_legacy_column_expr(existing_columns, 'updated_at', default='CURRENT_TIMESTAMP')}, CURRENT_TIMESTAMP)",
+    }
+    columns_sql = ", ".join(copy_expressions)
+    select_sql = ", ".join(copy_expressions[column] for column in copy_expressions)
+
+    conn.execute("SAVEPOINT arxiv_jobs_job_type_constraint")
+    try:
+        conn.execute(f"DROP TABLE IF EXISTS {new_table}")
+        conn.execute(create_new_table_sql)
+        conn.execute(
+            f"""
+            INSERT INTO {new_table} ({columns_sql})
+            SELECT {select_sql}
+            FROM arxiv_jobs
+            """
+        )
+        conn.execute("DROP INDEX IF EXISTS idx_arxiv_jobs_status_run_after")
+        conn.execute("DROP TABLE arxiv_jobs")
+        conn.execute(f"ALTER TABLE {new_table} RENAME TO arxiv_jobs")
+        _ensure_arxiv_jobs_indexes(conn)
+    except Exception:
+        conn.execute("ROLLBACK TO SAVEPOINT arxiv_jobs_job_type_constraint")
+        conn.execute("RELEASE SAVEPOINT arxiv_jobs_job_type_constraint")
+        raise
+    else:
+        conn.execute("RELEASE SAVEPOINT arxiv_jobs_job_type_constraint")
+
+
 def _backfill_method_source_evidence(conn: sqlite3.Connection) -> None:
     """Populate deterministic leading excerpts for legacy method_sources rows."""
     table_exists = conn.execute(
@@ -608,6 +973,9 @@ def migrate_db(conn: sqlite3.Connection | None = None) -> None:
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(SCHEMA)
+        _ensure_arxiv_jobs_job_type_constraint(conn)
+        _ensure_arxiv_sync_state_scope_columns(conn)
+        _ensure_arxiv_sync_state_counter_columns(conn)
         _ensure_paper_extraction_status_columns(conn)
         _ensure_paper_extraction_status_external_id(conn)
         _ensure_method_source_evidence_columns(conn)
@@ -645,7 +1013,7 @@ def initialize_db(
                 SELECT name
                 FROM sqlite_master
                 WHERE type = 'table'
-                  AND name IN (?, ?, ?)
+                  AND name IN (?, ?, ?, ?)
                 """,
                 FTS_TABLES,
             )

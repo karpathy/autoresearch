@@ -1,6 +1,5 @@
 """Dependency-free context routing primitives for ResearchFS."""
 
-from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
@@ -56,6 +55,29 @@ class ContextSelection:
     budget_used_tokens: int
     budget_max_tokens: int | None
     reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.selected, list) or not all(
+            isinstance(candidate, ContextCandidate) for candidate in self.selected
+        ):
+            raise ValueError("ContextSelection.selected must be a list of ContextCandidate")
+        if not isinstance(self.rejected, list) or not all(
+            isinstance(candidate, ContextCandidate) for candidate in self.rejected
+        ):
+            raise ValueError("ContextSelection.rejected must be a list of ContextCandidate")
+        self.budget_used_tokens = _validate_optional_int(
+            self.budget_used_tokens,
+            "ContextSelection.budget_used_tokens",
+            minimum=0,
+        )
+        if self.budget_max_tokens is not None:
+            self.budget_max_tokens = _validate_optional_int(
+                self.budget_max_tokens,
+                "ContextSelection.budget_max_tokens",
+                minimum=0,
+            )
+        if self.reason is not None and not isinstance(self.reason, str):
+            raise ValueError("ContextSelection.reason must be a string or None")
 
 
 @dataclass(slots=True)

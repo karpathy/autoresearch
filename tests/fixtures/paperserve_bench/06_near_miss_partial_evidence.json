@@ -1,0 +1,57 @@
+{
+  "id": "answer_near_miss_partial_evidence",
+  "task_type": "evidence_grounded_answer",
+  "question": "Which papers show that prism cache invalidation causes stale shards and that epoch pinning prevents the stale-shard failures?",
+  "gold_paper_ids": ["paper-prism-cache-failure", "paper-prism-epoch-pinning"],
+  "required_citations": ["paper-prism-cache-failure", "paper-prism-epoch-pinning"],
+  "expected_answer_points": ["prism cache invalidation causes stale shards", "epoch pinning prevents stale-shard failures"],
+  "max_selected_papers": 2,
+  "max_reader_tokens": 180,
+  "candidate_papers": [
+    {
+      "id": "paper-prism-cache-failure",
+      "title": "Prism cache invalidation stale-shard failures",
+      "text": "Prism cache invalidation causes stale shards when leases expire during mirror promotion. The study reports stale-shard failures after invalidation races.",
+      "source": "synthetic",
+      "score": 0.98,
+      "token_estimate": 48,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-prism-epoch-pinning",
+      "title": "Epoch pinning for prism cache leases",
+      "text": "Epoch pinning prevents prism stale-shard failures by holding cache leases through mirror promotion until every shard observes the new epoch.",
+      "source": "synthetic",
+      "score": 0.95,
+      "token_estimate": 45,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-prism-prefetch-near-miss",
+      "title": "Prism prefetch citation appendix",
+      "text": "This near-miss citation discusses prism cache prefetch timing and names stale shards, but it does not test invalidation races or epoch pinning.",
+      "source": "synthetic",
+      "score": 0.64,
+      "token_estimate": 42,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "near_miss_citation"}
+    },
+    {
+      "id": "paper-shard-audit-partial",
+      "title": "Shard audit partial evidence note",
+      "text": "A shard audit observes stale records after lease churn, but it does not identify prism cache invalidation as the cause and gives no epoch-pinning mitigation.",
+      "source": "synthetic",
+      "score": 0.6,
+      "token_estimate": 39,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "partial_evidence"}
+    },
+    {
+      "id": "paper-epoch-counter-background",
+      "title": "Epoch counters for log compaction",
+      "text": "Epoch counters compact append-only logs and mention cache leases only as unrelated implementation background.",
+      "source": "synthetic",
+      "score": 0.33,
+      "token_estimate": 31,
+      "metadata": {"retrieval_attempt": 1}
+    }
+  ]
+}

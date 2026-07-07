@@ -33,10 +33,14 @@ __all__ = [
     "ContextCandidate",
     "ContextSelection",
     "EvidenceResult",
+    "ReaderFn",
+    "VerifierFn",
     "LabAPIResponse",
     "ResearchFSLabAPI",
     "ResearchFSClient",
     "ResearchFSLabClient",
+    "citation_verifier",
+    "default_reader",
     "ResearchFSLabClientError",
     "ensure_seed",
     "export_paper_memory_bundle",
@@ -60,6 +64,10 @@ __all__ = [
     "log_lesson",
     "log_retrieval_event",
     "log_token_usage",
+    "ROUTING_TRACE_SCHEMA_VERSION",
+    "DEFAULT_ROUTING_TRACE_EVENT_TYPES",
+    "export_routing_traces",
+    "run_routed_ask",
     "search_methods",
     "recommend_next_experiments",
     "refresh_code_map",
@@ -81,9 +89,27 @@ __all__ = [
     "recovery_success",
     "research_brief_to_context_candidates",
     "route_top_k_context",
+    "iter_routing_traces",
     "selection_audit_payload",
     "supported_answer_rate",
+    "write_routing_traces_jsonl",
 ]
+
+_ASK_EXPORTS = {
+    "ReaderFn",
+    "VerifierFn",
+    "citation_verifier",
+    "default_reader",
+    "run_routed_ask",
+}
+
+_ROUTING_TRACE_EXPORTS = {
+    "ROUTING_TRACE_SCHEMA_VERSION",
+    "DEFAULT_ROUTING_TRACE_EVENT_TYPES",
+    "iter_routing_traces",
+    "export_routing_traces",
+    "write_routing_traces_jsonl",
+}
 
 _CONTEXT_EXPORTS = {
     "ContextBudget",
@@ -109,6 +135,14 @@ _CONTEXT_EXPORTS = {
 
 
 def __getattr__(name):
+    if name in _ASK_EXPORTS:
+        from . import ask as ask_module
+
+        return getattr(ask_module, name)
+    if name in _ROUTING_TRACE_EXPORTS:
+        from . import routing_traces as routing_traces_module
+
+        return getattr(routing_traces_module, name)
     if name in _CONTEXT_EXPORTS:
         from . import context as context_module
 

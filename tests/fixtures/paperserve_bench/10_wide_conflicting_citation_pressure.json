@@ -1,0 +1,61 @@
+{
+  "id": "wide_conflicting_citation_pressure",
+  "task_type": "wide_literature_collection",
+  "question": "Collect papers showing braid phase calibration methods that reduce timing drift in cooperative drone swarms.",
+  "gold_paper_ids": ["paper-braid-phase-anchor", "paper-braid-phase-handshake", "paper-braid-phase-echo"],
+  "required_citations": ["paper-braid-phase-anchor", "paper-braid-phase-handshake", "paper-braid-phase-echo"],
+  "expected_answer_points": [
+    "anchor calibration reduces timing drift in cooperative drone swarms",
+    "handshake calibration reduces timing drift in cooperative drone swarms",
+    "echo calibration reduces timing drift in cooperative drone swarms"
+  ],
+  "max_selected_papers": 3,
+  "max_reader_tokens": 230,
+  "candidate_papers": [
+    {
+      "id": "paper-braid-phase-anchor",
+      "title": "Anchor braid phase calibration for cooperative drone swarms",
+      "text": "Anchor braid phase calibration reduces timing drift in cooperative drone swarms by pinning each drone clock to a shared phase marker before formation changes.",
+      "source": "synthetic",
+      "score": 0.98,
+      "token_estimate": 45,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-braid-phase-handshake",
+      "title": "Handshake calibration for braid phase drone timing",
+      "text": "Handshake braid phase calibration reduces cooperative drone swarm timing drift by exchanging paired timing beacons at the start of each route segment.",
+      "source": "synthetic",
+      "score": 0.96,
+      "token_estimate": 44,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-braid-phase-echo",
+      "title": "Echo braid phase calibration in swarm timing control",
+      "text": "Echo braid phase calibration reduces timing drift in cooperative drone swarms by replaying a short reference pulse after each maneuver.",
+      "source": "synthetic",
+      "score": 0.94,
+      "token_estimate": 41,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-braid-phase-collision-conflict",
+      "title": "Braid phase collision avoidance without timing calibration",
+      "text": "This conflicting citation studies cooperative drone swarms and braid phase control but reports that timing calibration did not reduce drift in collision trials.",
+      "source": "synthetic",
+      "score": 0.69,
+      "token_estimate": 42,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "conflicting_evidence"}
+    },
+    {
+      "id": "paper-drone-swarm-phase-review",
+      "title": "Review of drone swarm phase coordination",
+      "text": "This close review repeats braid phase, calibration, timing drift, and cooperative drone swarm terms, but it cites background coordination work without measuring drift reduction.",
+      "source": "synthetic",
+      "score": 0.65,
+      "token_estimate": 43,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "near_miss_citation"}
+    }
+  ]
+}

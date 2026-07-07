@@ -1,0 +1,58 @@
+{
+  "id": "deep_near_duplicate_pressure",
+  "task_type": "deep_paper_finding",
+  "question": "Which paper reports the umber lattice coolant reversal result after microburst heating?",
+  "target_paper_id": "paper-umber-lattice-coolant-reversal",
+  "gold_paper_ids": ["paper-umber-lattice-coolant-reversal"],
+  "required_citations": ["paper-umber-lattice-coolant-reversal"],
+  "expected_answer_points": ["umber lattice coolant reverses heat buildup after microburst heating"],
+  "max_selected_papers": 1,
+  "max_reader_tokens": 150,
+  "candidate_papers": [
+    {
+      "id": "paper-umber-lattice-coolant-reversal",
+      "title": "Umber lattice coolant reversal after microburst heating",
+      "text": "The umber lattice coolant reversal paper reports that the coolant reverses heat buildup after microburst heating and restores the lattice to baseline temperature.",
+      "source": "synthetic",
+      "score": 0.99,
+      "token_estimate": 46,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-umber-lattice-coolant-preview",
+      "title": "Preview of umber lattice coolant tests",
+      "text": "This near-duplicate preview uses the same umber lattice coolant and microburst heating language, but it only proposes reversal tests and reports no result.",
+      "source": "synthetic",
+      "score": 0.74,
+      "token_estimate": 42,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "closer_gold_like"}
+    },
+    {
+      "id": "paper-umber-lattice-warmup-null",
+      "title": "Umber lattice coolant warmup null study",
+      "text": "A gold-like null study of umber lattice coolant during microburst heating found ordinary warmup behavior and did not report heat buildup reversal.",
+      "source": "synthetic",
+      "score": 0.7,
+      "token_estimate": 40,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "conflicting_evidence"}
+    },
+    {
+      "id": "paper-microburst-heating-sensor",
+      "title": "Sensor placement for microburst heating rigs",
+      "text": "The sensor placement note discusses microburst heating rigs and calibration, but contains no umber lattice coolant reversal evidence.",
+      "source": "synthetic",
+      "score": 0.57,
+      "token_estimate": 35,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "near_miss_citation"}
+    },
+    {
+      "id": "paper-lattice-cooling-survey",
+      "title": "Survey of lattice cooling vocabulary",
+      "text": "This survey repeats lattice cooling vocabulary and cites broad thermal control work without reporting the requested umber coolant microburst result.",
+      "source": "synthetic",
+      "score": 0.5,
+      "token_estimate": 37,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "closer_gold_like"}
+    }
+  ]
+}

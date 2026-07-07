@@ -1,0 +1,3 @@
+{"question":"Which paper introduced Example Deep Method?","answer":"Example Deep Method","arxiv_id":"2401.00001"}
+{"question":"Which papers are relevant to Example Wide Topic?","answer":["Wide Paper One","Wide Paper Two"],"arxiv_id":["2401.00002","2401.00003"]}
+{"question":"Explicit wide task with one answer list","answer":"Explicit Wide Paper","arxiv_id":["2401.00004"],"task_type":"wide_research"}

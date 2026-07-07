@@ -328,6 +328,319 @@ auth, call an LLM, run vector search, perform OCR, or repaste full papers. The
 returned `context` stays bounded to the same evidence snippets and compact
 memory cards already produced by `get_research_brief(...)`.
 
+## Routed ask workflow
+
+Use routed ask when a caller wants ResearchFS to retrieve compressed local
+memory, route a bounded evidence frontier, run a reader over that selected
+frontier only, verify citations, and optionally recover by widening retrieval.
+The loop is deterministic by default:
+
+1. `get_research_brief(...)` assembles bounded paper memory from local SQLite
+   rows.
+2. `research_brief_to_context_candidates(...)` turns the brief's paper-memory
+   cards into candidate evidence records.
+3. `route_top_k_context(...)` applies the item/token budget and selects the
+   reader-visible context frontier.
+4. The reader receives only `selection.selected`; rejected candidates and the
+   full candidate list remain available for audit metadata and recovery
+   decisions, not for answer generation.
+5. `citation_verifier(...)` checks that returned citations are grounded in the
+   selected frontier. It does not validate PDF coordinates.
+6. If verification reports a recoverable miss, the workflow retries with an
+   expanded `max_papers` retrieval budget; it does not rewrite the query, call a
+   model, use vector search, or touch scheduler behavior.
+7. With `log=True`, each routing attempt can write a
+   `routed_ask_routing_audit` event through `log_context_routing_audit(...)`,
+   and the final answer summary is logged as a `routed_ask` retrieval event.
+   The response also includes routing/recovery metrics.
+
+The CLI entry point is the module command in this repository:
+
+```bash
+uv run python -m researchfs.memory ask \
+  --query "clip matrix optimizer risk" \
+  --route-context \
+  --verify \
+  --recover \
+  --max-papers 3 \
+  --k 2 \
+  --max-reader-tokens 1200 \
+  --log
+```
+
+`--route-context`, `--verify`, and `--recover` are compatibility flags: routed
+ask always routes selected context and verifies citations, while recovery is
+controlled by `--max-retries` (default `1`). The command writes one stable JSON
+object to stdout.
+
+The in-process SDK wrapper exposes the same local route:
+
+```python
+from researchfs.lab_client import ResearchFSLabClient
+
+client = ResearchFSLabClient(db_path="./researchfs.db")
+result = client.ask(
+    "clip matrix optimizer risk",
+    max_papers=3,
+    k=2,
+    max_reader_tokens=1200,
+    include_scores=True,
+    log=True,
+)
+
+print(result["status"], result["citations"], result["selected_ids"])
+```
+
+Agent sessions can keep the existing `agent_run_id` and log routed ask events
+without creating a second run:
+
+```python
+from researchfs.client import ResearchFSClient
+
+client = ResearchFSClient(db_path="./researchfs.db")
+session = client.start_session(mode="routed_ask", model="local")
+
+try:
+    result = session.routed_ask(
+        "clip matrix optimizer risk",
+        max_papers=3,
+        k=2,
+        max_reader_tokens=1200,
+        log=True,
+    )
+finally:
+    client.close()
+
+print(result["event_id"], result["metrics"])
+```
+
+Successful routed ask responses include `status`, `answer`, `citations`,
+`selected_ids`, `rejected_ids`, `attempts`, `event_id`, and `metrics`, along
+with the selected-only `context`, `selected_context` summaries,
+`reader_context_ids_by_attempt`, `all_candidate_ids_by_attempt`, `retrieval`,
+`routing`, `verifier`, `routing_event_ids`, `max_chars`, `max_papers`, and
+`source_types`. Unsupported answers are not surfaced as final answer text:
+unsupported or exhausted recovery returns `answer: null` and `citations: []`.
+
+Routed ask keeps the same local-only safety boundary as the rest of the stdlib
+lab API. It is not a hosted service and does not add built-in authentication;
+keep any API server bound to loopback such as `127.0.0.1`. The routed ask code
+path uses local compressed memory only: no vector DB, no OCR or scanned-PDF
+parsing, no PDF-coordinate citation validation, no raw full-paper context to the
+reader, and no required model/GPU dependency. The repository may still contain
+NanoChat/training fixture dependencies such as `torch`; the routed ask code path
+does not import or require model/GPU packages.
+
+## PaperServe-Bench synthetic scaffold
+
+PaperServe-Bench — Budgeted Scientific Literature Routing for Supported Research
+Answers — is a local synthetic benchmark scaffold for the routed-context product
+loop. It exercises budgeted scientific literature routing with small deterministic
+fixtures, not external benchmark downloads or model execution. The fixture set
+keeps at least one deterministic fixture for each required task type and adds
+evidence-pressure cases that remain local, synthetic, and capped at small
+candidate sets before scaling. Required task types are:
+
+- `deep_paper_finding`: find one hidden target paper.
+- `wide_literature_collection`: collect all papers satisfying a condition.
+- `evidence_grounded_answer`: answer from selected papers with citations.
+- `missing_evidence_no_answer`: report insufficient evidence when the gold paper
+  is absent.
+- `loop_recovery`: miss on the first attempt, then recover through verifier-led
+  retrieval expansion.
+
+The evidence-pressure pack hardens those tasks with four local case types:
+
+- Multi-hop evidence: the answer requires combining support across papers rather
+  than finding one obvious abstract.
+- Stronger near-duplicate distractors: gold-like papers share terminology,
+  venues, methods, or citation shape while withholding required evidence.
+- Conflicting-citation pressure: distractors cite plausible but wrong or
+  contradictory claims so routed answers must keep support and citations aligned.
+- Recovery under evidence pressure: verifier-led retry paths must recover the
+  supporting paper after an initial miss amid harder distractors.
+
+Run the scaffold from the repository root:
+
+```bash
+uv run python -m examples.paperserve_benchmark --compact
+```
+
+Scaling mode expands each fixture to deterministic corpus sizes. The default
+`--distractor-mode mixed` cycles through all local distractor variants:
+
+```bash
+uv run python -m examples.paperserve_benchmark --compact --scaling --corpus-sizes 5,20,50,100 --distractor-mode mixed
+```
+
+Available distractor modes are `mixed`, `closer_gold_like`,
+`near_miss_citation`, `partial_evidence`, and `conflicting_evidence`. These are
+synthetic lexical/citation-pressure variants only; they are not embedding,
+reranker, model, or external benchmark baselines.
+
+For a human-readable dashboard/regression summary, render the scaling table:
+
+```bash
+uv run python -m examples.paperserve_benchmark --scaling --table --corpus-sizes 5,20,50,100
+```
+
+File exports are optional. Use `--output` for the JSON report and
+`--csv-output` for chart-ready CSV rows:
+
+```bash
+uv run python -m examples.paperserve_benchmark --compact --scaling --output paperserve-scaling.json
+uv run python -m examples.paperserve_benchmark --scaling --csv-output paperserve-scaling.csv
+```
+
+Scaling JSON includes top-level `benchmark`, `mode: "scaling"`,
+`corpus_sizes`, `distractor_mode`, `scaling`, `chart`, and `thresholds`. The
+`chart.series` object is keyed by strategy name; each point contains
+`corpus_size`, `supported_answer_rate_at_budget`, `paperserve_score`,
+`context_efficiency`, `average_selected_tokens`, `average_selected_papers`,
+`false_stop_rate`, `recovery_rate`, `gold_recall_at_20`, `citation_f1`,
+`wide_research_precision`, and `wide_research_recall`. CSV exports use the same
+diagnostic metric fields plus `strategy`.
+
+Threshold checks should be practiced per distractor mode, not only in the mixed
+default. Run scaling with `--distractor-mode ... --check-thresholds` for
+`mixed`, `closer_gold_like`, `near_miss_citation`, `partial_evidence`, and
+`conflicting_evidence` when reviewing regressions. The report always includes
+threshold status under `thresholds`: `kind`, `passed`, `failure_count`,
+`skipped_count`, and `checks`. Each check has `strategy`, `corpus_size`,
+`metric`, `minimum`, `value`, and `status`. The default gates check routed
+strategies at corpus size `100`: `context_frontier_router` must have
+`supported_answer_rate_at_budget >= 0.5`, and `router_verifier_loop` must have
+`supported_answer_rate_at_budget >= 0.8`. Missing strategy/corpus/metric points
+are reported as `skipped`; only evaluated checks with `status: "failed"` are
+failures. Add `--check-thresholds` to exit nonzero when a threshold fails;
+`--fail-on-thresholds` is accepted as a hidden compatibility alias for the same
+behavior.
+
+For trend artifacts, combine the threshold run with `--output` and
+`--csv-output` so dashboards can archive both the full JSON report and long-form
+chart rows:
+
+```bash
+uv run python -m examples.paperserve_benchmark --compact --scaling --corpus-sizes 5,20,50,100 --distractor-mode conflicting_evidence --check-thresholds --output paperserve-scaling-conflicting.json --csv-output paperserve-scaling-conflicting.csv
+```
+
+The benchmark compares four deterministic strategies: `bm25_top20` lexical
+overlap selection, `long_context_all_docs` selection of every candidate,
+`context_frontier_router` using fixture scores plus `route_top_k_context(...)`
+under the paper/token budget, and `router_verifier_loop` using fixture
+retrieval-attempt metadata for retry/recovery. It reports fixture-level evidence
+IDs, citations, support and recovery state, selected tokens, context efficiency,
+and citation F1, plus aggregate headline/diagnostic metrics such as
+deep-research accuracy, wide-research IoU/precision/recall, supported-answer
+rate at budget, citation F1, context efficiency, average selected tokens and
+papers, false-stop rate, no-answer accuracy, gold-recall-at-20, and recovery
+rate. The combined `paperserve_score` uses the benchmark weighting from the
+thesis: `0.35 * supported_answer_rate_at_budget + 0.25 * gold_recall_at_20 +
+0.20 * citation_f1 + 0.10 * recovery_rate + 0.10 * context_efficiency`.
+
+This is intentionally the dependency-free local Track B hardening path for the
+PaperServe thesis. AutoResearchBench external evaluation remains blocked until
+the user supplies official upstream data and the required evaluation tooling.
+This scaffold does not download or run AutoResearchBench, claim official or
+external benchmark scores, train a model, use a vector database, call provider
+SDKs, start a hosted service, integrate a scheduler, or require a GPU.
+
+### AutoResearchBench adapter
+
+The AutoResearchBench adapter is the Track A loading, normalization, and local
+bridge layer for official AutoResearchBench records that users already have
+locally. It accepts decrypted or upstream example JSONL records with `question`,
+`answer`, and `arxiv_id` fields, normalizes them into ResearchFS-friendly task
+rows, and emits a JSON-safe adapter report. It is not a benchmark runner and
+does not produce, estimate, or claim external AutoResearchBench scores.
+
+Users must obtain and, when required, decrypt the official AutoResearchBench
+JSONL externally by following the upstream AutoResearchBench project. ResearchFS
+can explicitly download bytes from a user-supplied URL to a user-supplied output
+path for private mirrors or already authorized copies, but it does not decrypt
+obfuscated data, infer whether downloaded content is plaintext JSONL, run
+model/search inference, invoke the official evaluators, or create fake candidate
+papers.
+
+To fetch a user-provided artifact without loading or evaluating it, pass both
+`--download-url` and `--download-output`:
+
+```bash
+python -m examples.autoresearchbench_adapter --download-url https://example.com/path/AutoResearchBench.jsonl --download-output input_data/AutoResearchBench.jsonl
+```
+
+For private mirrors, `--download-token-env TOKEN_ENV_NAME` reads a bearer token
+from the named environment variable and sends it with the request; do not put
+token values in the command itself. The underlying
+`download_autoresearchbench_file(...)` helper is stdlib-only and reports download
+metadata, but loading, decryption, adapter normalization, and any deterministic
+local overlap checks remain separate explicit steps.
+
+Run the adapter from the repository root against a local decrypted/example JSONL
+file:
+
+```bash
+python -m examples.autoresearchbench_adapter --input-file input_data/AutoResearchBench.jsonl --compact --output autoresearchbench-report.json --researchfs-output autoresearchbench-tasks.jsonl
+```
+
+The report uses `mode: "adapter"` and contains normalized `tasks`, not model
+predictions. Deep Research rows are represented as `deep_research` tasks when a
+single `arxiv_id`/answer is present; Wide Research rows are represented as
+`wide_research` tasks when `arxiv_id` or answers contain multiple items, unless
+an explicit supported `task_type` is supplied. Normalized task rows keep the
+question, `answer_titles`, `expected_arxiv_ids`, task ID, task type, source, and
+line-number metadata for downstream local tooling.
+
+`--researchfs-output` writes those normalized task rows as ResearchFS-style JSONL
+for local pipelines that want one task object per line:
+
+```bash
+python -m examples.autoresearchbench_adapter --input-file input_data/AutoResearchBench.jsonl --researchfs-output autoresearchbench-researchfs-tasks.jsonl
+```
+
+For adapter-side smoke checks, the CLI can compare a local predictions JSONL file
+against the normalized task rows by deterministic arXiv-ID overlap:
+
+```bash
+python -m examples.autoresearchbench_adapter --input-file input_data/AutoResearchBench.jsonl --predictions-file predictions.jsonl --evaluation-output autoresearchbench-local-eval.json --compact
+```
+
+Prediction rows must provide the task identity and predicted arXiv IDs in the
+shape supported by the adapter. The emitted evaluation report uses
+`mode: "deterministic_adapter_evaluation"` and reports exact-ID overlap metrics
+such as intersection-over-union, recall, and precision for predictions that
+include arXiv IDs. This is a lower-scope adapter sanity evaluation only: the
+official AutoResearchBench wide evaluator computes arXiv-ID IoU/recall/precision
+under the upstream benchmark protocol, and the official deep evaluator uses a
+title LLM judge. The ResearchFS bridge does not run those official evaluators,
+does not judge titles with an LLM, and must not be presented as an official
+AutoResearchBench score or external benchmark result.
+
+This Track A bridge is separate from the local PaperServe-Bench scaffold above:
+PaperServe-Bench reports deterministic synthetic ResearchFS routing behavior,
+while the AutoResearchBench adapter only prepares externally obtained benchmark
+records and deterministic local overlap checks for downstream workflows.
+
+### Routing trace export
+
+Export existing routed ask logs as deterministic JSONL training/evaluation
+rows:
+
+```bash
+uv run python -m researchfs.memory export-routing-traces --output routing-traces.jsonl
+uv run python -m researchfs.memory export-routing-traces --no-candidate-text
+```
+
+Each JSONL row is one candidate in one routed-ask attempt. Rows include the
+query, candidate ID, selected/rejected state, citation/support label, attempt
+verifier state, final support state, and optional bounded paper memory text.
+
+Labels and candidate IDs come only from existing local `retrieval_events`
+summaries. Optional candidate text is reconstructed through existing paper-memory
+APIs. The exporter does not train a model, call a provider, add vector storage,
+or rerun retrieval.
+
+
 ### Local extraction evaluation CLI
 
 Use `researchfs.memory evaluate` when a lab script or auto-research agent wants

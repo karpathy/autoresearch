@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Tuple
 
 import researchfs.db as db_module
 from researchfs import retrieve as rfs
@@ -508,6 +508,55 @@ class ResearchFSSession:
         self.search_cache[cache_key] = (pack, ids)
         return pack, ids
 
+    def routed_ask(
+        self,
+        query: str,
+        *,
+        reader: Callable[[str, list[Any]], Mapping[str, Any] | str] | None = None,
+        verifier: Callable[[Mapping[str, Any], list[Any]], Mapping[str, Any] | bool] | None = None,
+        max_chars: Optional[int] = None,
+        max_papers: int = 3,
+        per_paper_max_chars: Optional[int] = None,
+        k: Optional[int] = 2,
+        max_reader_tokens: Optional[int] = 1200,
+        min_score: Optional[float] = None,
+        overflow_policy: str = "drop_lowest_score",
+        max_retries: int = 1,
+        include_scores: bool = False,
+        source_types=None,
+        source_type=None,
+        experiment_id: Optional[int] = None,
+        log: bool = True,
+        event_type: str = "routed_ask",
+    ) -> dict:
+        """Run a routed local ask workflow using this session's agent run."""
+        from researchfs.ask import run_routed_ask
+
+        result = run_routed_ask(
+            query,
+            conn=self.client.get_connection(),
+            reader=reader,
+            verifier=verifier,
+            max_chars=max_chars,
+            max_papers=max_papers,
+            per_paper_max_chars=per_paper_max_chars,
+            k=k,
+            max_reader_tokens=max_reader_tokens,
+            min_score=min_score,
+            overflow_policy=overflow_policy,
+            max_retries=max_retries,
+            include_scores=include_scores,
+            source_types=source_types,
+            source_type=source_type,
+            agent_run_id=self.agent_run_id,
+            experiment_id=experiment_id,
+            log=log,
+            event_type=event_type,
+        )
+        if log:
+            self._clear_search_cache()
+        return result
+
     # ------------------------------------------------------------------
     # Outcome logging (used for query reuse and history feedback)
     # ------------------------------------------------------------------
@@ -620,6 +669,31 @@ class ResearchFSClient:
         else:
             run_id = _validate_positive_int(run_id, "run_id")
         return ResearchFSSession(self, run_id, baseline_metric=baseline_metric)
+
+    def ask(
+        self,
+        query: str,
+        *,
+        reader: Callable[[str, list[Any]], Mapping[str, Any] | str] | None = None,
+        verifier: Callable[[Mapping[str, Any], list[Any]], Mapping[str, Any] | bool] | None = None,
+        mode: str = "routed_ask",
+        model: str = "unknown",
+        baseline_metric: Optional[float] = None,
+        **kwargs,
+    ) -> dict:
+        """Run one routed ask in a temporary ResearchFS session."""
+        session = self.start_session(mode=mode, model=model, baseline_metric=baseline_metric)
+        try:
+            result = session.routed_ask(
+                query,
+                reader=reader,
+                verifier=verifier,
+                **kwargs,
+            )
+        finally:
+            rfs.finish_agent_run(session.agent_run_id, conn=self.get_connection())
+        result.setdefault("agent_run_id", session.agent_run_id)
+        return result
 
     def close(self) -> None:
         """Close any connection held by the client."""

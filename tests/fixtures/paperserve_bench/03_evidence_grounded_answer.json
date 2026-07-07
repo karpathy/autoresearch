@@ -1,0 +1,48 @@
+{
+  "id": "answer_clip_matrix_risk",
+  "task_type": "evidence_grounded_answer",
+  "question": "What risks are reported for clip matrix optimizers, and what mitigation is supported?",
+  "gold_paper_ids": ["paper-clip-risk", "paper-clip-mitigation"],
+  "required_citations": ["paper-clip-risk", "paper-clip-mitigation"],
+  "expected_answer_points": ["gradient clipping can hide matrix optimizer divergence", "curvature audits mitigate silent drift"],
+  "max_selected_papers": 2,
+  "max_reader_tokens": 180,
+  "candidate_papers": [
+    {
+      "id": "paper-clip-risk",
+      "title": "Clip matrix optimizer divergence risks",
+      "text": "Clip matrix optimizers can hide divergence when gradient clipping masks rapidly rotating eigenspaces. The risk is silent loss drift.",
+      "source": "synthetic",
+      "score": 0.93,
+      "token_estimate": 52,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-clip-mitigation",
+      "title": "Curvature audits for clipped optimizers",
+      "text": "Curvature audits mitigate clip matrix optimizer risk by checking eigenspace drift after clipped updates.",
+      "source": "synthetic",
+      "score": 0.9,
+      "token_estimate": 43,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-tokenizer-note",
+      "title": "Tokenizer normalization note",
+      "text": "Tokenizer normalization improves string matching but contains no matrix optimizer mitigation evidence.",
+      "source": "synthetic",
+      "score": 0.31,
+      "token_estimate": 32,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-matrix-rendering",
+      "title": "Matrix rendering pipeline",
+      "text": "A graphics pipeline accelerates matrix rendering. It does not discuss optimizer clipping or curvature audits.",
+      "source": "synthetic",
+      "score": 0.27,
+      "token_estimate": 33,
+      "metadata": {"retrieval_attempt": 1}
+    }
+  ]
+}

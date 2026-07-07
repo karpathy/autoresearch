@@ -18,6 +18,7 @@ from researchfs.bundle import (
 from researchfs.evaluation import evaluate_extraction
 from researchfs.db import get_connection, initialize_db
 from researchfs import retrieve as rfs
+from researchfs.routing_traces import export_routing_traces, write_routing_traces_jsonl
 
 JSONDict = dict[str, Any]
 
@@ -99,6 +100,24 @@ def _metric_threshold(value: str) -> float:
         raise argparse.ArgumentTypeError("must be between 0.0 and 1.0")
     return parsed
 
+def _finite_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a finite number") from exc
+    if not math.isfinite(parsed):
+        raise argparse.ArgumentTypeError("must be a finite number")
+    return parsed
+
+
+def _overflow_policy(value: str) -> str:
+    policy = value.strip()
+    if policy not in {"truncate", "raise", "drop_lowest_score"}:
+        raise argparse.ArgumentTypeError(
+            "must be one of truncate, raise, or drop_lowest_score"
+        )
+    return policy
+
 
 def _non_empty_text(value: str) -> str:
     text = value.strip()
@@ -170,6 +189,42 @@ def _export(args: argparse.Namespace, stdout: TextIO) -> int:
     else:
         _write_json(bundle, stdout)
     return 0
+
+def _export_routing_traces(args: argparse.Namespace, stdout: TextIO) -> int:
+    with _open_initialized_connection(args.db_path) as conn:
+        result = export_routing_traces(
+            conn=conn,
+            event_types=args.event_type,
+            agent_run_id=args.agent_run_id,
+            experiment_id=args.experiment_id,
+            since_event_id=args.since_event_id,
+            limit=args.limit,
+            include_candidate_text=args.include_candidate_text,
+            max_candidate_chars=args.max_candidate_chars,
+        )
+
+    if args.output:
+        output = Path(args.output).expanduser()
+        if output.parent != Path(""):
+            output.parent.mkdir(parents=True, exist_ok=True)
+        with output.open("w", encoding="utf-8") as stream:
+            write_routing_traces_jsonl(result["traces"], stream)
+        _write_json(
+            {
+                "ok": True,
+                "action": "export-routing-traces",
+                "output": str(output),
+                "trace_count": result["trace_count"],
+                "event_count": result["event_count"],
+                "skipped_event_count": result["skipped_event_count"],
+                "schema_version": result["schema_version"],
+            },
+            stdout,
+        )
+    else:
+        write_routing_traces_jsonl(result["traces"], stdout)
+    return 0
+
 
 
 def _import(args: argparse.Namespace, stdin: TextIO, stdout: TextIO) -> int:
@@ -245,6 +300,30 @@ def _query(args: argparse.Namespace, stdout: TextIO) -> int:
     _write_json(body, stdout)
     return 0
 
+def _ask(args: argparse.Namespace, stdout: TextIO) -> int:
+    from researchfs.ask import run_routed_ask
+
+    with _open_initialized_connection(args.db_path) as conn:
+        body = run_routed_ask(
+            args.query,
+            conn=conn,
+            max_chars=args.max_chars,
+            max_papers=args.max_papers,
+            k=args.k,
+            max_reader_tokens=args.max_reader_tokens,
+            min_score=args.min_score,
+            overflow_policy=args.overflow_policy,
+            max_retries=args.max_retries,
+            include_scores=args.include_scores,
+            source_types=args.source_type,
+            agent_run_id=args.agent_run_id,
+            experiment_id=args.experiment_id,
+            log=args.log,
+            event_type=args.event_type,
+        )
+    _write_json(body, stdout)
+    return 0
+
 
 def build_parser(stderr: TextIO | None = None) -> argparse.ArgumentParser:
     parser = _ArgumentParser(
@@ -270,6 +349,26 @@ def build_parser(stderr: TextIO | None = None) -> argparse.ArgumentParser:
     export_parser.add_argument("--max-chars", type=_non_negative_int, default=None)
     export_parser.add_argument("--db-path", default=None, help="SQLite DB path")
     export_parser.add_argument("--output", default=None, help="Write bundle JSON to this file")
+
+    routing_export_parser = subparsers.add_parser(
+        "export-routing-traces",
+        help="Export routed ask trace rows as JSONL.",
+    )
+    routing_export_parser.add_argument("--db-path", default=None, help="SQLite DB path")
+    routing_export_parser.add_argument("--output", default=None, help="Write trace JSONL to this file")
+    routing_export_parser.add_argument("--event-type", action="append", type=_non_empty_text, default=None)
+    routing_export_parser.add_argument("--agent-run-id", type=_positive_int, default=None)
+    routing_export_parser.add_argument("--experiment-id", type=_positive_int, default=None)
+    routing_export_parser.add_argument("--since-event-id", type=_positive_int, default=None)
+    routing_export_parser.add_argument("--limit", type=_positive_int, default=None)
+    routing_export_parser.add_argument(
+        "--include-candidate-text",
+        "--candidate-text",
+        action=argparse.BooleanOptionalAction,
+        dest="include_candidate_text",
+        default=True,
+    )
+    routing_export_parser.add_argument("--max-candidate-chars", type=_non_negative_int, default=2000)
 
     import_parser = subparsers.add_parser(
         "import",
@@ -298,6 +397,35 @@ def build_parser(stderr: TextIO | None = None) -> argparse.ArgumentParser:
     query_parser.add_argument("--agent-run-id", type=_non_negative_int, default=None)
     query_parser.add_argument("--experiment-id", type=_non_negative_int, default=None)
     query_parser.add_argument("--db-path", default=None, help="SQLite DB path")
+
+    ask_parser = subparsers.add_parser(
+        "ask",
+        help="Ask over routed compressed ResearchFS memory.",
+    )
+    ask_parser.add_argument("--query", required=True, type=_non_empty_text)
+    ask_parser.add_argument("--max-chars", type=_non_negative_int, default=None)
+    ask_parser.add_argument("--max-papers", type=_positive_int, default=3)
+    ask_parser.add_argument(
+        "--source-type",
+        action="append",
+        type=_source_type_label,
+        default=None,
+        help="Restrict retrieval to a source type; repeat for multiple labels",
+    )
+    ask_parser.add_argument("--include-scores", action="store_true")
+    ask_parser.add_argument("--log", action="store_true")
+    ask_parser.add_argument("--event-type", type=_non_empty_text, default="routed_ask")
+    ask_parser.add_argument("--agent-run-id", type=_non_negative_int, default=None)
+    ask_parser.add_argument("--experiment-id", type=_non_negative_int, default=None)
+    ask_parser.add_argument("--db-path", default=None, help="SQLite DB path")
+    ask_parser.add_argument("--k", type=_positive_int, default=2)
+    ask_parser.add_argument("--max-reader-tokens", type=_positive_int, default=1200)
+    ask_parser.add_argument("--min-score", type=_finite_float, default=None)
+    ask_parser.add_argument("--overflow-policy", type=_overflow_policy, default="drop_lowest_score")
+    ask_parser.add_argument("--max-retries", type=_non_negative_int, default=1)
+    ask_parser.add_argument("--route-context", action="store_true", help="Compatibility flag; routed ask always routes context")
+    ask_parser.add_argument("--verify", action="store_true", help="Compatibility flag; routed ask always verifies citations")
+    ask_parser.add_argument("--recover", action="store_true", help="Compatibility flag; routed ask recovery is controlled by --max-retries")
 
     evaluate_parser = subparsers.add_parser(
         "evaluate",
@@ -350,10 +478,14 @@ def main(
     try:
         if args.command == "export":
             return _export(args, stdout)
+        if args.command == "export-routing-traces":
+            return _export_routing_traces(args, stdout)
         if args.command == "import":
             return _import(args, stdin, stdout)
         if args.command == "query":
             return _query(args, stdout)
+        if args.command == "ask":
+            return _ask(args, stdout)
     except (LookupError, ValueError, OSError, json.JSONDecodeError) as exc:
         _write_json({"error": str(exc), "ok": False}, stderr)
         return 1

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from urllib.parse import quote, urlencode
+from typing import Any, Callable, Mapping
 
 from researchfs.api import ArxivFetcher, CodeRepoSearcher, JSONDict, LLMFn, RepoFetcher, ResearchFSLabAPI
 
@@ -37,10 +38,21 @@ class ResearchFSLabClient:
         arxiv_fetcher: ArxivFetcher | None = None,
         repo_fetcher: RepoFetcher | None = None,
         code_repo_searcher: CodeRepoSearcher | None = None,
+        reader_fn: Callable[[str, list[Any]], Mapping[str, Any] | str] | None = None,
+        verifier_fn: Callable[[Mapping[str, Any], list[Any]], Mapping[str, Any] | bool] | None = None,
     ) -> None:
         if api is not None and any(
             value is not None
-            for value in (conn, db_path, llm_fn, arxiv_fetcher, repo_fetcher, code_repo_searcher)
+            for value in (
+                conn,
+                db_path,
+                llm_fn,
+                arxiv_fetcher,
+                repo_fetcher,
+                code_repo_searcher,
+                reader_fn,
+                verifier_fn,
+            )
         ):
             raise ValueError("Pass either api or API construction options, not both")
         self._api = api or ResearchFSLabAPI(
@@ -50,6 +62,8 @@ class ResearchFSLabClient:
             arxiv_fetcher=arxiv_fetcher,
             repo_fetcher=repo_fetcher,
             code_repo_searcher=code_repo_searcher,
+            reader_fn=reader_fn,
+            verifier_fn=verifier_fn,
         )
 
     def dispatch(self, method: str, path: str, body: Any = None) -> JSONDict:
@@ -77,6 +91,94 @@ class ResearchFSLabClient:
     def get_paper(self, paper_id: int) -> JSONDict:
         """Return one paper with chunks, methods, and provenance."""
         return self.dispatch("GET", f"/paper/{paper_id}")
+
+    def get_arxiv_paper(self, arxiv_id: str) -> JSONDict:
+        """Return one PaperStream arXiv paper state."""
+        return self.dispatch("GET", f"/arxiv/papers/{quote(arxiv_id, safe='')}")
+
+    def search_arxiv_papers(
+        self,
+        query: str,
+        limit: int | None = None,
+        max_chunk_chars: int | None = None,
+        include_chunks: bool | None = None,
+    ) -> JSONDict:
+        """Search PaperStream arXiv metadata and chunks."""
+        params: JSONDict = {"query": query}
+        if limit is not None:
+            params["limit"] = limit
+        if max_chunk_chars is not None:
+            params["max_chunk_chars"] = max_chunk_chars
+        if include_chunks is not None:
+            params["include_chunks"] = include_chunks
+        return self.dispatch("GET", "/arxiv/search?" + urlencode(params))
+
+    def get_arxiv_paper_chunks(
+        self,
+        arxiv_id: str,
+        version: int | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        max_chars: int | None = None,
+    ) -> JSONDict:
+        """Return bounded PaperStream chunks for one arXiv paper."""
+        params: JSONDict = {}
+        if version is not None:
+            params["version"] = version
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        if max_chars is not None:
+            params["max_chars"] = max_chars
+        path = f"/arxiv/papers/{quote(arxiv_id, safe='')}/chunks"
+        if params:
+            path += "?" + urlencode(params)
+        return self.dispatch("GET", path)
+
+    def list_missing_arxiv_assets(
+        self,
+        asset_type: str,
+        category: str | None = None,
+        limit: int | None = None,
+    ) -> JSONDict:
+        """Return PaperStream arXiv papers missing the requested asset type."""
+        query: JSONDict = {"asset_type": asset_type}
+        if category is not None:
+            query["category"] = category
+        if limit is not None:
+            query["limit"] = limit
+        return self.dispatch("GET", "/arxiv/assets/missing?" + urlencode(query))
+
+    def list_arxiv_jobs(
+        self,
+        status: str | None = None,
+        job_types: str | list[str] | tuple[str, ...] | None = None,
+        limit: int | None = None,
+    ) -> JSONDict:
+        """Return PaperStream arXiv queue jobs."""
+        query: JSONDict = {}
+        if status is not None:
+            query["status"] = status
+        if job_types is not None:
+            if isinstance(job_types, str):
+                query["job_types"] = job_types
+            else:
+                query["job_types"] = ",".join(job_types)
+        if limit is not None:
+            query["limit"] = limit
+        path = "/arxiv/jobs"
+        if query:
+            path += "?" + urlencode(query)
+        return self.dispatch("GET", path)
+
+    def paperstream_sync_status(self) -> JSONDict:
+        """Return PaperStream arXiv sync and queue status."""
+        return self.dispatch("GET", "/arxiv/sync/status")
+
+    def get_arxiv_sync_status(self) -> JSONDict:
+        """Return PaperStream arXiv sync and queue status."""
+        return self.paperstream_sync_status()
 
     def get_paper_memory(self, paper_id: int, max_chars: int | None = None) -> JSONDict:
         """Return one compact paper memory card."""
@@ -244,6 +346,56 @@ class ResearchFSLabClient:
         if experiment_id is not None:
             payload["experiment_id"] = experiment_id
         return self.dispatch("POST", "/brief", payload)
+
+    def ask(
+        self,
+        query: str,
+        max_chars: int | None = None,
+        max_papers: int | None = None,
+        k: int | None = None,
+        max_reader_tokens: int | None = None,
+        min_score: float | None = None,
+        overflow_policy: str | None = None,
+        max_retries: int | None = None,
+        include_scores: bool = False,
+        log: bool = False,
+        event_type: str | None = None,
+        agent_run_id: int | None = None,
+        experiment_id: int | None = None,
+        source_types: str | list[str] | tuple[str, ...] | None = None,
+        source_type: str | None = None,
+    ) -> JSONDict:
+        """Run a routed local ask workflow over compressed ResearchFS memory."""
+        payload: JSONDict = {
+            "query": query,
+            "include_scores": include_scores,
+            "log": log,
+        }
+        if max_chars is not None:
+            payload["max_chars"] = max_chars
+        if max_papers is not None:
+            payload["max_papers"] = max_papers
+        if k is not None:
+            payload["k"] = k
+        if max_reader_tokens is not None:
+            payload["max_reader_tokens"] = max_reader_tokens
+        if min_score is not None:
+            payload["min_score"] = min_score
+        if overflow_policy is not None:
+            payload["overflow_policy"] = overflow_policy
+        if max_retries is not None:
+            payload["max_retries"] = max_retries
+        if event_type is not None:
+            payload["event_type"] = event_type
+        if agent_run_id is not None:
+            payload["agent_run_id"] = agent_run_id
+        if experiment_id is not None:
+            payload["experiment_id"] = experiment_id
+        if source_types is not None:
+            payload["source_types"] = source_types
+        elif source_type is not None:
+            payload["source_type"] = source_type
+        return self.dispatch("POST", "/ask", payload)
 
     def feedback(
         self,

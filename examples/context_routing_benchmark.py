@@ -80,14 +80,104 @@ def run_benchmark(fixture_dir: str | Path = DEFAULT_FIXTURE_DIR, *, k: int | Non
     }
 
 
+def evaluate_fixture_ablation(fixture: dict, *, k: int | None = None) -> dict:
+    """Evaluate one fixture under all deterministic context-routing strategies."""
+
+    resolved_k = _fixture_int(fixture, "max_selected_papers") if k is None else k
+    max_tokens = _fixture_int(fixture, "max_reader_tokens")
+    candidates = list(fixture.get("candidate_papers", []))
+
+    all_ids = [candidate.id for candidate in candidates]
+    all_citations = _reader_citations(fixture, all_ids)
+    all_context = _fixture_result(
+        fixture,
+        {
+            "selected_ids": all_ids,
+            "selected_tokens": sum(_candidate_token_estimate(candidate) for candidate in candidates),
+            "rejected_ids": [],
+            "status": "answered" if all_citations else "insufficient_evidence",
+            "citations": all_citations,
+            "supported": bool(all_citations),
+        },
+        resolved_k,
+        max_tokens,
+        False,
+        1,
+    )
+
+    top_k_selection = route_top_k_context(
+        candidates,
+        k=resolved_k,
+        budget=ContextBudget(max_items=resolved_k, max_tokens=None, overflow_policy="truncate"),
+    )
+    top_k_ids = [candidate.id for candidate in top_k_selection.selected]
+    top_k_citations = _reader_citations(fixture, top_k_ids)
+    top_k_score = _fixture_result(
+        fixture,
+        {
+            "selected_ids": top_k_ids,
+            "selected_tokens": top_k_selection.budget_used_tokens,
+            "rejected_ids": [candidate.id for candidate in top_k_selection.rejected],
+            "status": "answered" if top_k_citations else "insufficient_evidence",
+            "citations": top_k_citations,
+            "supported": bool(top_k_citations),
+        },
+        resolved_k,
+        max_tokens,
+        False,
+        1,
+    )
+
+    score_budget_route = _fixture_result(
+        fixture,
+        _route_and_read(fixture, candidates, resolved_k, max_tokens),
+        resolved_k,
+        max_tokens,
+        False,
+        1,
+    )
+    route_recover = evaluate_fixture(fixture, k=resolved_k)
+
+    return {
+        "fixture_id": str(fixture["id"]),
+        "strategies": {
+            "all_context": all_context,
+            "top_k_score": top_k_score,
+            "score_budget_route": score_budget_route,
+            "route_recover": route_recover,
+        },
+    }
+
+
+def run_ablation_benchmark(fixture_dir: str | Path = DEFAULT_FIXTURE_DIR, *, k: int | None = None) -> dict:
+    """Run every fixture under each ablation strategy and aggregate metrics."""
+
+    fixtures = [evaluate_fixture_ablation(fixture, k=k) for fixture in load_fixtures(fixture_dir)]
+    strategy_names = ["all_context", "top_k_score", "score_budget_route", "route_recover"]
+    aggregate = {
+        strategy_name: _aggregate_results(
+            [fixture["strategies"][strategy_name] for fixture in fixtures]
+        )
+        for strategy_name in strategy_names
+    }
+    return {
+        "fixtures": fixtures,
+        "aggregate": aggregate,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the deterministic context-routing benchmark.")
     parser.add_argument("--fixture-dir", default=str(DEFAULT_FIXTURE_DIR), help="Directory of JSON fixtures.")
     parser.add_argument("--k", type=int, default=None, help="Override selected-paper limit for every fixture.")
     parser.add_argument("--compact", action="store_true", help="Print compact JSON instead of pretty JSON.")
+    parser.add_argument("--ablation", action="store_true", help="Run four-strategy ablation benchmark.")
     args = parser.parse_args(argv)
 
-    result = run_benchmark(args.fixture_dir, k=args.k)
+    if args.ablation:
+        result = run_ablation_benchmark(args.fixture_dir, k=args.k)
+    else:
+        result = run_benchmark(args.fixture_dir, k=args.k)
     if args.compact:
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     else:
@@ -214,6 +304,12 @@ def _fixture_int(fixture: dict, key: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"fixture {fixture.get('id', '<unknown>')} {key} must be an integer")
     return value
+
+
+def _candidate_token_estimate(candidate: ContextCandidate) -> int:
+    if candidate.token_estimate is not None:
+        return candidate.token_estimate
+    return len(candidate.text.split())
 
 
 def _average_field(results: list[dict], field: str) -> float:

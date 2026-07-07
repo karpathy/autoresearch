@@ -1,0 +1,39 @@
+{
+  "id": "missing_polymer_claim",
+  "task_type": "missing_evidence_no_answer",
+  "question": "Which paper proves room-temperature self-healing in the amber polymer lattice?",
+  "gold_paper_ids": [],
+  "required_citations": [],
+  "expected_answer_points": ["insufficient evidence"],
+  "max_selected_papers": 2,
+  "max_reader_tokens": 160,
+  "candidate_papers": [
+    {
+      "id": "paper-polymer-simulation",
+      "title": "Amber polymer lattice simulation",
+      "text": "The simulation proposes an amber polymer lattice but explicitly omits room-temperature self-healing experiments.",
+      "source": "synthetic",
+      "score": 0.82,
+      "token_estimate": 38,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-room-temp-sensor",
+      "title": "Room-temperature sensor packaging",
+      "text": "This packaging note mentions room-temperature testing for sensors and provides no polymer lattice healing claim.",
+      "source": "synthetic",
+      "score": 0.47,
+      "token_estimate": 35,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-lattice-color",
+      "title": "Optical color in lattice films",
+      "text": "A materials paper measures amber coloration in lattice films without self-healing evidence.",
+      "source": "synthetic",
+      "score": 0.36,
+      "token_estimate": 29,
+      "metadata": {"retrieval_attempt": 1}
+    }
+  ]
+}

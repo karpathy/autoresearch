@@ -1,0 +1,44 @@
+{
+  "id": "loop_recovery_hydrogel",
+  "task_type": "loop_recovery",
+  "question": "Which paper supports the hydrogel catalyst recovery claim after nitrate shock?",
+  "target_paper_id": "paper-hydrogel-recovery",
+  "gold_paper_ids": ["paper-hydrogel-recovery"],
+  "required_citations": ["paper-hydrogel-recovery"],
+  "expected_answer_points": ["hydrogel catalyst recovers activity after nitrate shock"],
+  "max_selected_papers": 1,
+  "max_reader_tokens": 120,
+  "retrieval_attempts": [
+    {"attempt": 1, "visible_ids": ["paper-nitrate-decoy", "paper-hydrogel-primer"]},
+    {"attempt": 2, "visible_ids": ["paper-nitrate-decoy", "paper-hydrogel-primer", "paper-hydrogel-recovery"]}
+  ],
+  "candidate_papers": [
+    {
+      "id": "paper-nitrate-decoy",
+      "title": "Nitrate shock in ceramic filters",
+      "text": "Ceramic filters face nitrate shock, but this decoy paper reports no hydrogel catalyst recovery.",
+      "source": "synthetic",
+      "score": 0.58,
+      "token_estimate": 34,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-hydrogel-primer",
+      "title": "Hydrogel catalyst primer",
+      "text": "The primer defines hydrogel catalyst preparation and says recovery after nitrate shock was left for future work.",
+      "source": "synthetic",
+      "score": 0.52,
+      "token_estimate": 36,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-hydrogel-recovery",
+      "title": "Hydrogel catalyst recovery after nitrate shock",
+      "text": "The hydrogel catalyst recovers activity after nitrate shock when rinsed with buffered brine, supporting the recovery claim.",
+      "source": "synthetic",
+      "score": 0.97,
+      "token_estimate": 42,
+      "metadata": {"retrieval_attempt": 2}
+    }
+  ]
+}

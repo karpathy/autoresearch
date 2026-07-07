@@ -10,7 +10,8 @@ def gold_recall_at_k(selected_ids: Iterable[Any], gold_ids: Iterable[Any], k: in
     """Return recall of unique gold IDs found in the first ``k`` selections."""
 
     k = _validate_int(k, "k", minimum=0)
-    selected = _unique_ids(list(selected_ids), "selected_ids")[:k]
+    selected_window = list(selected_ids)[:k]
+    selected = _unique_ids(selected_window, "selected_ids")
     gold = set(_unique_ids(list(gold_ids), "gold_ids"))
     if not gold:
         return 1.0

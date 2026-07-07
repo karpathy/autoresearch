@@ -13,8 +13,8 @@ import math
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable, Iterator
-from urllib.parse import parse_qs, urlparse
+from typing import Any, Callable, Iterator, Mapping
+from urllib.parse import parse_qs, unquote, urlparse
 
 from researchfs.code_repos import enrich_paper_code_repositories
 from researchfs.db import get_connection, initialize_db
@@ -29,10 +29,20 @@ from researchfs.ingest import (
     load_local_file_metadata,
 )
 from researchfs.bundle import export_corpus_memory_bundle, export_paper_memory_bundle, import_memory_bundle
+from researchfs.paperstream import (
+    get_arxiv_paper_chunks,
+    get_arxiv_paper_state,
+    get_paperstream_status,
+    list_arxiv_jobs,
+    list_missing_arxiv_assets,
+    search_paperstream,
+)
 from researchfs import retrieve as rfs
 
 JSONDict = dict[str, Any]
 LLMFn = Callable[[str], str]
+RoutedAskReader = Callable[[str, list[Any]], Mapping[str, Any] | str]
+RoutedAskVerifier = Callable[[Mapping[str, Any], list[Any]], Mapping[str, Any] | bool]
 ArxivFetcher = Callable[[str], dict[str, Any]]
 RepoFetcher = Callable[[str], dict[str, Any]]
 CodeRepoSearcher = Callable[[list[str]], list[Any]]
@@ -54,12 +64,19 @@ _ROUTE_METADATA: tuple[JSONDict, ...] = (
     {"method": "GET", "path": "/stats", "description": "Aggregate ResearchFS memory statistics"},
     {"method": "POST", "path": "/ingest", "description": "Ingest paper metadata and extracted methods"},
     {"method": "POST", "path": "/ingest/arxiv", "description": "Fetch and ingest arXiv source metadata"},
+    {"method": "GET", "path": "/arxiv/search", "description": "Search PaperStream arXiv metadata and chunks"},
+    {"method": "GET", "path": "/arxiv/papers/{arxiv_id}/chunks", "description": "Retrieve bounded PaperStream arXiv paper chunks"},
+    {"method": "GET", "path": "/arxiv/papers/{arxiv_id}", "description": "Inspect one PaperStream arXiv paper state"},
+    {"method": "GET", "path": "/arxiv/assets/missing", "description": "List PaperStream arXiv papers missing a PDF or source asset"},
+    {"method": "GET", "path": "/arxiv/jobs", "description": "List PaperStream arXiv queue jobs"},
+    {"method": "GET", "path": "/arxiv/sync/status", "description": "Inspect PaperStream sync and queue status"},
     {"method": "POST", "path": "/ingest/repo", "description": "Fetch and ingest GitHub repository README metadata"},
     {"method": "POST", "path": "/ingest/file", "description": "Ingest a local text/Markdown/TeX/PDF file"},
     {"method": "POST", "path": "/paper/{paper_id}/code-repositories/enrich", "description": "Enrich one paper with linked code repositories"},
     {"method": "POST", "path": "/evaluate/extraction", "description": "Evaluate stored extraction quality"},
     {"method": "POST", "path": "/retrieve", "description": "Retrieve compressed lab memory"},
     {"method": "POST", "path": "/brief", "description": "Retrieve a bounded compressed research brief"},
+    {"method": "POST", "path": "/ask", "description": "Run a routed local ask workflow over compressed ResearchFS memory"},
     {"method": "POST", "path": "/memory/import", "description": "Import a compressed paper or corpus memory bundle"},
     {"method": "POST", "path": "/feedback", "description": "Record usefulness feedback for a method"},
     {"method": "POST", "path": "/experiment", "description": "Log a lab experiment"},
@@ -158,6 +175,51 @@ def _query_optional_int(query: str, key: str) -> int | None:
         raise LabAPIError(400, "invalid_field", f"'{key}' must be non-negative")
     return parsed
 
+def _query_optional_bool(query: str, key: str) -> bool | None:
+    values = parse_qs(query, keep_blank_values=True).get(key)
+    if not values:
+        return None
+    value = values[-1]
+    if not isinstance(value, str):
+        raise LabAPIError(400, "invalid_field", f"'{key}' must be a boolean")
+    normalized = value.strip().lower()
+    if not normalized:
+        raise LabAPIError(400, "invalid_field", f"'{key}' must be a boolean")
+    if normalized in {"true", "1"}:
+        return True
+    if normalized in {"false", "0"}:
+        return False
+    raise LabAPIError(400, "invalid_field", f"'{key}' must be a boolean")
+
+def _query_optional_str(query: str, key: str) -> str | None:
+    values = parse_qs(query, keep_blank_values=True).get(key)
+    if not values:
+        return None
+    value = values[-1]
+    if not isinstance(value, str):
+        raise LabAPIError(400, "invalid_field", f"'{key}' must be a string")
+    value = value.strip()
+    if not value:
+        raise LabAPIError(400, "invalid_field", f"'{key}' must not be blank")
+    return value
+
+
+def _query_optional_str_list(query: str, key: str) -> list[str] | None:
+    values = parse_qs(query, keep_blank_values=True).get(key)
+    if not values:
+        return None
+    parsed_values: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or value == "":
+            raise LabAPIError(400, "invalid_field", f"'{key}' must contain non-empty strings")
+        for part in value.split(","):
+            part = part.strip()
+            if not part:
+                raise LabAPIError(400, "invalid_field", f"'{key}' must contain non-empty strings")
+            if part not in parsed_values:
+                parsed_values.append(part)
+    return parsed_values
+
 def _url_positive_int(value: str, name: str, code: str) -> int:
     if not value.isdecimal():
         raise LabAPIError(400, code, f"{name} id must be a positive integer")
@@ -202,6 +264,20 @@ def _optional_float(payload: JSONDict, key: str) -> float | None:
     if not math.isfinite(parsed):
         raise LabAPIError(400, "invalid_field", f"'{key}' must be a number")
     return parsed
+
+def _optional_positive_int(payload: JSONDict, key: str) -> int | None:
+    value = _optional_int(payload, key)
+    if value is not None and value <= 0:
+        raise LabAPIError(400, "invalid_field", f"'{key}' must be positive")
+    return value
+
+
+def _optional_non_negative_int(payload: JSONDict, key: str) -> int | None:
+    return _optional_int(payload, key)
+
+
+def _optional_finite_float(payload: JSONDict, key: str) -> float | None:
+    return _optional_float(payload, key)
 
 def _optional_metric_threshold(payload: JSONDict, key: str) -> float | None:
     value = _optional_float(payload, key)
@@ -536,6 +612,8 @@ class ResearchFSLabAPI:
         repo_fetcher: RepoFetcher | None = None,
         code_repo_searcher: CodeRepoSearcher | None = None,
         visual_index_runner=None,
+        reader_fn: RoutedAskReader | None = None,
+        verifier_fn: RoutedAskVerifier | None = None,
     ) -> None:
         if conn is not None and db_path is not None:
             raise ValueError("Pass either conn or db_path, not both")
@@ -546,6 +624,8 @@ class ResearchFSLabAPI:
         self._repo_fetcher = repo_fetcher or fetch_github_readme
         self._code_repo_searcher = code_repo_searcher
         self._visual_index_runner = visual_index_runner
+        self._reader_fn = reader_fn
+        self._verifier_fn = verifier_fn
 
     @contextmanager
     def _connection(self) -> Iterator[Any]:
@@ -585,6 +665,34 @@ class ResearchFSLabAPI:
                 return self._handle_papers()
             if method == "GET" and route == "/stats":
                 return self._handle_stats()
+            if method == "GET" and route == "/arxiv/search":
+                query = _query_optional_str(parsed.query, "query")
+                limit = _query_optional_int(parsed.query, "limit")
+                max_chunk_chars = _query_optional_int(parsed.query, "max_chunk_chars")
+                include_chunks = _query_optional_bool(parsed.query, "include_chunks")
+                return self._handle_arxiv_search(query, limit, max_chunk_chars, include_chunks)
+            if method == "GET" and route.startswith("/arxiv/papers/") and route.endswith("/chunks"):
+                arxiv_id = unquote(route.removeprefix("/arxiv/papers/").removesuffix("/chunks"))
+                version = _query_optional_int(parsed.query, "version")
+                limit = _query_optional_int(parsed.query, "limit")
+                offset = _query_optional_int(parsed.query, "offset")
+                max_chars = _query_optional_int(parsed.query, "max_chars")
+                return self._handle_arxiv_paper_chunks(arxiv_id, version, limit, offset, max_chars)
+            if method == "GET" and route.startswith("/arxiv/papers/"):
+                arxiv_id = unquote(route.removeprefix("/arxiv/papers/"))
+                return self._handle_arxiv_paper(arxiv_id)
+            if method == "GET" and route == "/arxiv/assets/missing":
+                asset_type = _query_optional_str(parsed.query, "asset_type")
+                category = _query_optional_str(parsed.query, "category")
+                limit = _query_optional_int(parsed.query, "limit")
+                return self._handle_arxiv_missing_assets(asset_type, category, limit)
+            if method == "GET" and route == "/arxiv/jobs":
+                status = _query_optional_str(parsed.query, "status")
+                job_types = _query_optional_str_list(parsed.query, "job_types")
+                limit = _query_optional_int(parsed.query, "limit")
+                return self._handle_arxiv_jobs(status, job_types, limit)
+            if method == "GET" and route == "/arxiv/sync/status":
+                return self._handle_arxiv_sync_status()
             if method == "GET" and route == "/memory/export":
                 paper_ids = _query_optional_int_list(parsed.query, "paper_ids")
                 max_chars = _query_optional_int(parsed.query, "max_chars")
@@ -611,6 +719,8 @@ class ResearchFSLabAPI:
                 return self._handle_retrieve(_parse_body(body))
             if method == "POST" and route == "/brief":
                 return self._handle_brief(_parse_body(body))
+            if method == "POST" and route == "/ask":
+                return self._handle_ask(_parse_body(body))
             if method == "GET" and route.startswith("/method/"):
                 method_id_text = route.removeprefix("/method/")
                 method_id = _url_positive_int(method_id_text, "Method", "invalid_method_id")
@@ -651,6 +761,111 @@ class ResearchFSLabAPI:
                 "local_only": True,
             },
         )
+
+    def _handle_arxiv_search(
+        self,
+        query: str | None,
+        limit: int | None,
+        max_chunk_chars: int | None,
+        include_chunks: bool | None,
+    ) -> LabAPIResponse:
+        if query is None:
+            raise LabAPIError(400, "missing_field", "'query' must be provided")
+        kwargs: JSONDict = {}
+        if limit is not None:
+            kwargs["limit"] = limit
+        if max_chunk_chars is not None:
+            kwargs["max_chunk_chars"] = max_chunk_chars
+        if include_chunks is not None:
+            kwargs["include_chunks"] = include_chunks
+        with self._connection() as conn:
+            try:
+                payload = search_paperstream(conn, query, **kwargs)
+            except (TypeError, ValueError) as exc:
+                raise LabAPIError(400, "invalid_field", str(exc)) from exc
+        return LabAPIResponse(200, payload)
+
+    def _handle_arxiv_paper_chunks(
+        self,
+        arxiv_id: str,
+        version: int | None,
+        limit: int | None,
+        offset: int | None,
+        max_chars: int | None,
+    ) -> LabAPIResponse:
+        kwargs: JSONDict = {}
+        if version is not None:
+            kwargs["version"] = version
+        if limit is not None:
+            kwargs["limit"] = limit
+        if offset is not None:
+            kwargs["offset"] = offset
+        if max_chars is not None:
+            kwargs["max_chars"] = max_chars
+        with self._connection() as conn:
+            try:
+                payload = get_arxiv_paper_chunks(conn, arxiv_id, **kwargs)
+            except (TypeError, ValueError) as exc:
+                code = "invalid_arxiv_id" if "arxiv_id" in str(exc) else "invalid_field"
+                raise LabAPIError(400, code, str(exc)) from exc
+        if payload is None:
+            raise LabAPIError(404, "not_found", f"No chunks found for arXiv paper id {arxiv_id}")
+        return LabAPIResponse(200, payload)
+
+    def _handle_arxiv_paper(self, arxiv_id: str) -> LabAPIResponse:
+        with self._connection() as conn:
+            try:
+                paper = get_arxiv_paper_state(conn, arxiv_id)
+            except (TypeError, ValueError) as exc:
+                raise LabAPIError(400, "invalid_arxiv_id", str(exc)) from exc
+        if paper is None:
+            raise LabAPIError(404, "not_found", f"No arXiv paper found for id {arxiv_id}")
+        return LabAPIResponse(200, {"ok": True, **paper})
+
+    def _handle_arxiv_missing_assets(
+        self,
+        asset_type: str | None,
+        category: str | None,
+        limit: int | None,
+    ) -> LabAPIResponse:
+        if asset_type is None:
+            raise LabAPIError(400, "invalid_field", "'asset_type' is required")
+        kwargs: JSONDict = {"asset_type": asset_type}
+        if category is not None:
+            kwargs["category"] = category
+        if limit is not None:
+            kwargs["limit"] = limit
+        with self._connection() as conn:
+            try:
+                assets = list_missing_arxiv_assets(conn, **kwargs)
+            except (TypeError, ValueError) as exc:
+                raise LabAPIError(400, "invalid_field", str(exc)) from exc
+        return LabAPIResponse(200, {"ok": True, "assets": assets})
+
+    def _handle_arxiv_jobs(
+        self,
+        status: str | None,
+        job_types: list[str] | None,
+        limit: int | None,
+    ) -> LabAPIResponse:
+        kwargs: JSONDict = {}
+        if status is not None:
+            kwargs["status"] = status
+        if job_types is not None:
+            kwargs["job_types"] = job_types
+        if limit is not None:
+            kwargs["limit"] = limit
+        with self._connection() as conn:
+            try:
+                jobs = list_arxiv_jobs(conn, **kwargs)
+            except (TypeError, ValueError) as exc:
+                raise LabAPIError(400, "invalid_field", str(exc)) from exc
+        return LabAPIResponse(200, {"ok": True, "jobs": jobs})
+
+    def _handle_arxiv_sync_status(self) -> LabAPIResponse:
+        with self._connection() as conn:
+            status = get_paperstream_status(conn)
+        return LabAPIResponse(200, {"ok": True, **status})
 
     def _handle_ingest(self, payload: JSONDict) -> LabAPIResponse:
         meta = _paper_from_payload(payload)
@@ -1304,6 +1519,74 @@ class ResearchFSLabAPI:
             body["event_id"] = event_id
         return LabAPIResponse(200, body)
 
+    def _handle_ask(self, payload: JSONDict) -> LabAPIResponse:
+        query = _required_str(payload, "query")
+        max_chars = _optional_non_negative_int(payload, "max_chars")
+        max_papers = _optional_positive_int(payload, "max_papers")
+        if max_papers is None:
+            max_papers = 3
+        source_types = payload.get("source_types") if payload.get("source_types") is not None else None
+        source_type = payload.get("source_type") if "source_type" in payload else None
+        include_scores = _optional_bool(payload, "include_scores")
+        log_requested = _optional_bool(payload, "log")
+        agent_run_id = _optional_positive_int(payload, "agent_run_id")
+        experiment_id = _optional_positive_int(payload, "experiment_id")
+        event_type = payload.get("event_type", "routed_ask")
+        if event_type is None:
+            event_type = "routed_ask"
+        if not isinstance(event_type, str) or not event_type.strip():
+            raise LabAPIError(400, "invalid_field", "'event_type' must be a non-empty string")
+
+        k = _optional_positive_int(payload, "k")
+        if k is None:
+            k = 2
+        max_reader_tokens = _optional_positive_int(payload, "max_reader_tokens")
+        if max_reader_tokens is None:
+            max_reader_tokens = 1200
+        min_score = _optional_finite_float(payload, "min_score")
+        overflow_policy = payload.get("overflow_policy", "drop_lowest_score")
+        if overflow_policy is None:
+            overflow_policy = "drop_lowest_score"
+        if overflow_policy not in {"truncate", "raise", "drop_lowest_score"}:
+            raise LabAPIError(
+                400,
+                "invalid_field",
+                "'overflow_policy' must be one of 'truncate', 'raise', or 'drop_lowest_score'",
+            )
+        max_retries = _optional_non_negative_int(payload, "max_retries")
+        if max_retries is None:
+            max_retries = 1
+
+        from researchfs.ask import run_routed_ask
+
+        with self._connection() as conn:
+            try:
+                body = run_routed_ask(
+                    query,
+                    conn=conn,
+                    reader=self._reader_fn,
+                    verifier=self._verifier_fn,
+                    max_chars=max_chars,
+                    max_papers=max_papers,
+                    k=k,
+                    max_reader_tokens=max_reader_tokens,
+                    min_score=min_score,
+                    overflow_policy=overflow_policy,
+                    max_retries=max_retries,
+                    include_scores=include_scores,
+                    source_types=source_types,
+                    source_type=source_type,
+                    agent_run_id=agent_run_id,
+                    experiment_id=experiment_id,
+                    log=log_requested,
+                    event_type=event_type,
+                )
+            except ValueError as exc:
+                raise LabAPIError(400, "invalid_field", str(exc)) from exc
+            except LookupError as exc:
+                raise LabAPIError(404, "not_found", str(exc)) from exc
+        return LabAPIResponse(200, body)
+
     def _handle_feedback(self, payload: JSONDict) -> LabAPIResponse:
         method_id = _required_int(payload, "method_id")
         if method_id <= 0:
@@ -1439,6 +1722,8 @@ def dispatch_request(
     repo_fetcher: RepoFetcher | None = None,
     code_repo_searcher: CodeRepoSearcher | None = None,
     visual_index_runner=None,
+    reader_fn: RoutedAskReader | None = None,
+    verifier_fn: RoutedAskVerifier | None = None,
 ) -> LabAPIResponse:
     """Convenience wrapper for a single in-process ResearchFS lab API request."""
     api = ResearchFSLabAPI(
@@ -1449,6 +1734,8 @@ def dispatch_request(
         repo_fetcher=repo_fetcher,
         code_repo_searcher=code_repo_searcher,
         visual_index_runner=visual_index_runner,
+        reader_fn=reader_fn,
+        verifier_fn=verifier_fn,
     )
     return api.dispatch(method, path, body)
 

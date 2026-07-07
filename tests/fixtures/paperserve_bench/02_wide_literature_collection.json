@@ -1,0 +1,57 @@
+{
+  "id": "wide_low_power_adapters",
+  "task_type": "wide_literature_collection",
+  "question": "Collect papers that show low-power adapters reducing edge robot telemetry energy.",
+  "gold_paper_ids": ["paper-lora-adapter", "paper-spike-adapter", "paper-sleep-adapter"],
+  "required_citations": ["paper-lora-adapter", "paper-spike-adapter", "paper-sleep-adapter"],
+  "expected_answer_points": ["LoRA adapter reduction", "spiking adapter reduction", "sleep-gate adapter reduction"],
+  "max_selected_papers": 3,
+  "max_reader_tokens": 220,
+  "candidate_papers": [
+    {
+      "id": "paper-lora-adapter",
+      "title": "LoRA telemetry adapters for edge robots",
+      "text": "Low-power LoRA adapters reduce edge robot telemetry energy by compressing sensor updates before radio transmission.",
+      "source": "synthetic",
+      "score": 0.94,
+      "token_estimate": 44,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-spike-adapter",
+      "title": "Spiking adapters for telemetry throttling",
+      "text": "A spiking adapter lowers edge robot telemetry energy by emitting sparse event packets during idle motion.",
+      "source": "synthetic",
+      "score": 0.91,
+      "token_estimate": 40,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-drone-battery",
+      "title": "Drone battery pack comparison",
+      "text": "This battery comparison studies pack chemistry and flight time, not low-power telemetry adapters.",
+      "source": "synthetic",
+      "score": 0.39,
+      "token_estimate": 34,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-sleep-adapter",
+      "title": "Sleep-gate adapters for robot telemetry",
+      "text": "Sleep-gate adapters reduce edge robot telemetry energy by suppressing unchanged payload fields between checkpoints.",
+      "source": "synthetic",
+      "score": 0.89,
+      "token_estimate": 39,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-cloud-dashboard",
+      "title": "Cloud dashboard latency",
+      "text": "The dashboard paper improves visualization latency but does not measure edge robot telemetry energy reduction.",
+      "source": "synthetic",
+      "score": 0.28,
+      "token_estimate": 36,
+      "metadata": {"retrieval_attempt": 1}
+    }
+  ]
+}

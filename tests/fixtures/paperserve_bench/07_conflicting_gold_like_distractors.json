@@ -1,0 +1,57 @@
+{
+  "id": "wide_conflicting_gold_like_distractors",
+  "task_type": "wide_literature_collection",
+  "question": "Collect papers showing calibration methods that reduce thermal drift in compact ion sensors.",
+  "gold_paper_ids": ["paper-ion-dual-beacon", "paper-ion-thermal-anchor", "paper-ion-pulse-calibration"],
+  "required_citations": ["paper-ion-dual-beacon", "paper-ion-thermal-anchor", "paper-ion-pulse-calibration"],
+  "expected_answer_points": ["dual-beacon calibration reduces compact ion sensor thermal drift", "thermal-anchor calibration reduces compact ion sensor thermal drift", "pulse calibration reduces compact ion sensor thermal drift"],
+  "max_selected_papers": 3,
+  "max_reader_tokens": 220,
+  "candidate_papers": [
+    {
+      "id": "paper-ion-dual-beacon",
+      "title": "Dual-beacon calibration for compact ion sensors",
+      "text": "Dual-beacon calibration reduces thermal drift in compact ion sensors by comparing paired reference emissions before each sampling window.",
+      "source": "synthetic",
+      "score": 0.97,
+      "token_estimate": 43,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-ion-thermal-anchor",
+      "title": "Thermal-anchor calibration for compact ion sensors",
+      "text": "Thermal-anchor calibration reduces compact ion sensor drift by locking the response curve to a stable reference wafer during heat ramps.",
+      "source": "synthetic",
+      "score": 0.94,
+      "token_estimate": 42,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-ion-pulse-calibration",
+      "title": "Pulse calibration lowers ion sensor thermal drift",
+      "text": "Pulse calibration reduces thermal drift in compact ion sensors by injecting short reference pulses between measurement bursts.",
+      "source": "synthetic",
+      "score": 0.91,
+      "token_estimate": 39,
+      "metadata": {"retrieval_attempt": 1}
+    },
+    {
+      "id": "paper-ion-cooling-conflict",
+      "title": "Cooling-only protocol for compact ion sensors",
+      "text": "This close distractor studies compact ion sensors and thermal drift, but it reports that cooling alone did not reduce drift and rejects calibration changes.",
+      "source": "synthetic",
+      "score": 0.66,
+      "token_estimate": 40,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "conflicting_evidence"}
+    },
+    {
+      "id": "paper-ion-beacon-goldlike-decoy",
+      "title": "Beacon telemetry for compact ion sensor dashboards",
+      "text": "This gold-like distractor repeats beacon, compact ion sensor, and thermal terms, but it only improves dashboard telemetry and provides no calibration evidence.",
+      "source": "synthetic",
+      "score": 0.63,
+      "token_estimate": 38,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "closer_gold_like"}
+    }
+  ]
+}

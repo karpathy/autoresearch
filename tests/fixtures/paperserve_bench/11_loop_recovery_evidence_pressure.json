@@ -1,0 +1,53 @@
+{
+  "id": "loop_recovery_evidence_pressure",
+  "task_type": "loop_recovery",
+  "question": "Which paper supports the claim that cobalt weave filters recover selectivity after acid fog exposure?",
+  "target_paper_id": "paper-cobalt-weave-filter-recovery",
+  "gold_paper_ids": ["paper-cobalt-weave-filter-recovery"],
+  "required_citations": ["paper-cobalt-weave-filter-recovery"],
+  "expected_answer_points": ["cobalt weave filters recover selectivity after acid fog exposure"],
+  "max_selected_papers": 1,
+  "max_reader_tokens": 140,
+  "retrieval_attempts": [
+    {"attempt": 1, "visible_ids": ["paper-cobalt-weave-partial", "paper-acid-fog-conflict", "paper-cobalt-filter-primer"]},
+    {"attempt": 2, "visible_ids": ["paper-cobalt-weave-partial", "paper-acid-fog-conflict", "paper-cobalt-filter-primer", "paper-cobalt-weave-filter-recovery"]}
+  ],
+  "candidate_papers": [
+    {
+      "id": "paper-cobalt-weave-partial",
+      "title": "Cobalt weave filters after acid fog exposure",
+      "text": "This plausible partial paper shows cobalt weave filters surviving acid fog exposure, but it does not measure selectivity recovery after the exposure.",
+      "source": "synthetic",
+      "score": 0.72,
+      "token_estimate": 39,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "partial_evidence"}
+    },
+    {
+      "id": "paper-acid-fog-conflict",
+      "title": "Acid fog damage in woven cobalt filters",
+      "text": "This conflicting paper studies woven cobalt filters and acid fog, but it reports persistent selectivity loss rather than recovery.",
+      "source": "synthetic",
+      "score": 0.68,
+      "token_estimate": 36,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "conflicting_evidence"}
+    },
+    {
+      "id": "paper-cobalt-filter-primer",
+      "title": "Primer on cobalt weave filter selectivity",
+      "text": "The primer defines cobalt weave filter selectivity and acid fog chambers, but it contains no recovery result.",
+      "source": "synthetic",
+      "score": 0.54,
+      "token_estimate": 32,
+      "metadata": {"retrieval_attempt": 1, "distractor_type": "near_miss_citation"}
+    },
+    {
+      "id": "paper-cobalt-weave-filter-recovery",
+      "title": "Cobalt weave filter selectivity recovery after acid fog",
+      "text": "Cobalt weave filters recover selectivity after acid fog exposure when rinsed with neutral buffer, supporting the recovery claim after the second retrieval attempt.",
+      "source": "synthetic",
+      "score": 0.99,
+      "token_estimate": 43,
+      "metadata": {"retrieval_attempt": 2}
+    }
+  ]
+}

@@ -2,12 +2,12 @@
 
 import gzip
 import html
+import itertools
 import io
 import os
 import re
 import tarfile
 import tempfile
-import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urlparse
@@ -15,59 +15,80 @@ from urllib.parse import urlparse
 import requests
 
 from researchfs.pdf import extract_pdf_text
+from researchfs.scraping import (
+    ScrapingEngine,
+    load_proxy_list,
+    normalize_proxy_url,
+    proxy_dict,
+    retry_count,
+    retry_delay_seconds,
+)
 
 
 _ARXIV_MODERN_RE = re.compile(r"^\d{4}\.\d{4,5}$")
 _ARXIV_OLD_RE = re.compile(r"^[a-zA-Z-]+(?:\.[A-Z]{2})?/\d{7}$")
 _ARXIV_PROXY_URL_ENV = "RESEARCHFS_ARXIV_PROXY_URL"
+_ARXIV_PROXY_LIST_PATH_ENV = "RESEARCHFS_ARXIV_PROXY_LIST_PATH"
 _ARXIV_RETRIES_ENV = "RESEARCHFS_ARXIV_RETRIES"
 _ARXIV_RETRY_DELAY_ENV = "RESEARCHFS_ARXIV_RETRY_DELAY_SECONDS"
 _ARXIV_RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+_ARXIV_PROXY_ROTATION_COUNTER = itertools.count()
+_ARXIV_ENGINE = ScrapingEngine(
+    proxy_url_env=_ARXIV_PROXY_URL_ENV,
+    proxy_list_path_env=_ARXIV_PROXY_LIST_PATH_ENV,
+    retries_env=_ARXIV_RETRIES_ENV,
+    retry_delay_env=_ARXIV_RETRY_DELAY_ENV,
+    retry_status_codes=_ARXIV_RETRY_STATUS_CODES,
+    rotation_counter=_ARXIV_PROXY_ROTATION_COUNTER,
+)
+
+
+def _arxiv_proxy_dict(proxy_url: str) -> dict[str, str]:
+    """Return a requests proxy mapping for one proxy URL."""
+    return proxy_dict(proxy_url)
+
+
+def _normalize_arxiv_proxy_url(raw_proxy: str) -> str | None:
+    """Normalize one proxy-list entry to a proxy URL, or skip invalid entries."""
+    return normalize_proxy_url(raw_proxy)
 
 
 def _arxiv_proxy_config() -> dict[str, str] | None:
-    """Return explicit proxy settings for arXiv requests, if configured."""
+    """Return explicit single-proxy settings for arXiv requests, if configured."""
     proxy_url = os.environ.get(_ARXIV_PROXY_URL_ENV, "").strip()
     if not proxy_url:
         return None
-    return {"http": proxy_url, "https": proxy_url}
+    return proxy_dict(proxy_url)
+
+
+def _arxiv_proxy_list_configs() -> list[dict[str, str]]:
+    """Return proxy settings loaded from a configured arXiv proxy-list file."""
+    list_path = os.environ.get(_ARXIV_PROXY_LIST_PATH_ENV, "").strip()
+    if not list_path:
+        return []
+    return load_proxy_list(list_path)
 
 
 def _arxiv_retry_count() -> int:
     """Return bounded arXiv retry count from environment configuration."""
-    try:
-        retries = int(os.environ.get(_ARXIV_RETRIES_ENV, "3"))
-    except ValueError:
-        retries = 3
-    return min(max(retries, 1), 5)
+    return retry_count(_ARXIV_RETRIES_ENV)
 
 
 def _arxiv_retry_delay_seconds() -> float:
     """Return bounded arXiv retry delay from environment configuration."""
-    try:
-        delay = float(os.environ.get(_ARXIV_RETRY_DELAY_ENV, "1.0"))
-    except ValueError:
-        delay = 1.0
-    return min(max(delay, 0.0), 10.0)
+    return retry_delay_seconds(_ARXIV_RETRY_DELAY_ENV)
 
 
 def _arxiv_get(url: str, *, timeout: int, **kwargs):
     """GET an arXiv URL with optional proxy and retry behavior."""
-    proxies = _arxiv_proxy_config()
-    if proxies is not None:
-        kwargs.setdefault("proxies", proxies)
+    _ARXIV_ENGINE.rotation_counter = _ARXIV_PROXY_ROTATION_COUNTER
+    _ARXIV_ENGINE.retry_status_codes = frozenset(_ARXIV_RETRY_STATUS_CODES)
+    return _ARXIV_ENGINE.get(url, timeout=timeout, **kwargs)
 
-    attempts = _arxiv_retry_count()
-    delay = _arxiv_retry_delay_seconds()
-    response = None
-    for attempt in range(attempts):
-        response = requests.get(url, timeout=timeout, **kwargs)
-        status_code = getattr(response, "status_code", None)
-        if status_code not in _ARXIV_RETRY_STATUS_CODES or attempt == attempts - 1:
-            return response
-        if delay:
-            time.sleep(delay * (2 ** attempt))
-    return response
+
+def _arxiv_error_label(exc: Exception) -> str:
+    """Return non-sensitive arXiv error text safe for logs."""
+    return exc.__class__.__name__
 
 
 def normalize_arxiv_id(value: str) -> str:
@@ -237,7 +258,10 @@ def fetch_arxiv_metadata(arxiv_id: str) -> dict:
     try:
         return fetch_arxiv_metadata_api(normalized_id)
     except Exception as api_exc:
-        print(f"Warning: arXiv API metadata fetch failed, falling back to HTML scraping: {api_exc}")
+        print(
+            "Warning: arXiv API metadata fetch failed, falling back to HTML scraping "
+            f"({_arxiv_error_label(api_exc)})"
+        )
         return _fetch_arxiv_metadata_html(normalized_id)
 
 
@@ -311,7 +335,7 @@ def fetch_arxiv_source(arxiv_id: str) -> dict:
         res.raise_for_status()
         latex_text = _extract_latex_from_source(res.content)
     except Exception as exc:
-        print(f"Warning: Could not download LaTeX source: {exc}")
+        print(f"Warning: Could not download LaTeX source ({_arxiv_error_label(exc)})")
 
     if not latex_text:
         pdf_url = f"https://arxiv.org/pdf/{normalized_id}.pdf"
@@ -325,7 +349,7 @@ def fetch_arxiv_source(arxiv_id: str) -> dict:
                 tmp_path = tmp.name
             latex_text = extract_pdf_text(Path(tmp_path))
         except Exception as pdf_exc:
-            print(f"Warning: PDF fallback failed: {pdf_exc}")
+            print(f"Warning: PDF fallback failed ({_arxiv_error_label(pdf_exc)})")
         finally:
             if tmp_path:
                 try:
