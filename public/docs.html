@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ResearchFS Documentation</title>
+  <meta name="description" content="ResearchFS local research-memory documentation: quick start, ingestion, retrieval, context routing, API routes, and benchmark commands.">
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --surface-2: #1a1a25;
+      --surface-3: #20202c;
+      --text: #f2f2f5;
+      --text-dim: #a9b0bd;
+      --accent: #6366f1;
+      --accent-2: #8b5cf6;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --border: #272735;
+      --radius: 12px;
+      --max: 1120px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; text-decoration: none; }
+    a:hover, a:focus { color: var(--text); outline-color: var(--accent); }
+    code { color: #c4b5fd; }
+    .container { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+    header { position: sticky; top: 0; z-index: 50; background: rgba(10,10,15,0.88); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+    nav { display: flex; align-items: center; justify-content: space-between; min-height: 68px; gap: 24px; }
+    .logo { font-weight: 850; font-size: 1.2rem; letter-spacing: -0.02em; display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+    .logo-mark { width: 28px; height: 28px; border-radius: 7px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 0 30px rgba(99,102,241,0.45); }
+    .nav-links { display: flex; gap: 20px; font-size: 0.9rem; color: var(--text-dim); align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+    .nav-links a { border-bottom: 1px solid transparent; }
+    .nav-links a:hover, .nav-links a:focus { border-bottom-color: var(--accent); }
+    .hero { padding: 108px 0 72px; background: radial-gradient(circle at 50% 0%, rgba(99,102,241,0.24), transparent 36%); }
+    .badge { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); font-size: 0.85rem; margin-bottom: 24px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); display: inline-block; }
+    h1 { font-size: clamp(2.45rem, 6vw, 4.4rem); line-height: 1.04; letter-spacing: -0.04em; margin-bottom: 24px; }
+    h2 { font-size: clamp(1.85rem, 3vw, 2.35rem); letter-spacing: -0.03em; line-height: 1.15; margin-bottom: 16px; }
+    h3 { font-size: 1.12rem; margin-bottom: 10px; }
+    .lead { font-size: 1.18rem; color: var(--text-dim); max-width: 880px; margin-bottom: 28px; }
+    .section-sub, p, li { color: var(--text-dim); }
+    section { padding: 78px 0; }
+    section.alt { background: var(--surface); }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; margin-top: 36px; }
+    .card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+    .card-kicker { color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.76rem; font-weight: 800; margin-bottom: 10px; }
+    .safety { margin-top: 28px; padding: 18px; border: 1px solid rgba(245,158,11,0.38); border-radius: var(--radius); background: rgba(245,158,11,0.08); color: #f8d99b; }
+    .grid-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+    .stack { display: grid; gap: 16px; }
+    ul { margin-left: 20px; display: grid; gap: 8px; }
+    pre { margin: 20px 0; background: #0d0d14; border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; overflow-x: auto; }
+    pre code { color: #e2e2ea; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9rem; line-height: 1.55; }
+    .endpoint-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-top: 24px; }
+    .endpoint { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 13px 15px; color: #e2e2ea; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.88rem; }
+    .note { padding: 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+    footer { padding: 40px 0; border-top: 1px solid var(--border); color: var(--text-dim); font-size: 0.85rem; text-align: center; }
+    @media (max-width: 900px) {
+      nav { align-items: flex-start; flex-direction: column; padding: 16px 0; }
+      .nav-links { justify-content: flex-start; gap: 14px; }
+      .hero { padding-top: 76px; }
+      .grid-two { grid-template-columns: 1fr; }
+      section { padding: 58px 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <a href="#overview" class="logo"><div class="logo-mark"></div> ResearchFS Docs</a>
+      <div class="nav-links">
+        <a href="#overview">Overview</a>
+        <a href="#quick-start">Quick start</a>
+        <a href="#local-api">Local API</a>
+        <a href="#context-routing">Context routing</a>
+        <a href="#benchmarks">Benchmarks</a>
+        <a href="index.html">Back to landing</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero" id="overview">
+      <div class="container">
+        <div class="badge"><span class="dot"></span> Local research memory for labs and agents</div>
+        <h1>ResearchFS documentation</h1>
+        <p class="lead">ResearchFS is a local SQLite-backed research memory layer that ingests papers, notes, PDFs, arXiv source text, repository READMEs, and experiment reports; compresses them into method/provenance memory; retrieves bounded context; and logs experiments, feedback, token usage, and lessons.</p>
+        <div class="cards">
+          <article class="card">
+            <div class="card-kicker">Storage</div>
+            <h3>Local-first</h3>
+            <p>Research artifacts, compressed memory, feedback, and experiment logs live in a local SQLite database by default.</p>
+          </article>
+          <article class="card">
+            <div class="card-kicker">Compression</div>
+            <h3>Compressed memory</h3>
+            <p>Chunks preserve source provenance while optional extraction turns artifacts into method records with implementation hints and risks.</p>
+          </article>
+          <article class="card">
+            <div class="card-kicker">Retrieval</div>
+            <h3>Bounded retrieval</h3>
+            <p>Method packs, graph context, and paper memory cards are assembled with local keyword matching and character budgets.</p>
+          </article>
+          <article class="card">
+            <div class="card-kicker">Audit</div>
+            <h3>Auditable experiments</h3>
+            <p>Retrieval events, feedback, outcomes, token usage, and lessons are persisted so later runs can inspect what happened.</p>
+          </article>
+        </div>
+        <p class="safety">ResearchFS is local-only by default; keep the stdlib API bound to loopback such as 127.0.0.1 because it has no built-in authentication.</p>
+      </div>
+    </section>
+
+    <section id="quick-start">
+      <div class="container grid-two">
+        <div class="stack">
+          <h2>Quick start</h2>
+          <p class="section-sub">Python 3.10+ and uv; SQLite comes from the Python standard library.</p>
+          <p>Optional extraction requires <code>OPENAI_API_KEY</code> and can use <code>uv run python -m researchfs.ingest --file notes/clip-matrix.md --extract</code>.</p>
+          <p>The default SQLite file is <code>researchfs.db</code>; <code>RESEARCHFS_DB_PATH</code> overrides it.</p>
+        </div>
+        <div>
+          <pre><code>uv sync
+uv run python -m researchfs.ingest --seed
+uv run python -m researchfs.ingest --file notes/clip-matrix.md
+uv run python -m researchfs.memory query --query "clip matrix optimizer risk" --max-chars 3000</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="alt" id="ingestion">
+      <div class="container grid-two">
+        <div class="stack">
+          <h2>Ingestion sources</h2>
+          <p>ResearchFS ingests local research artifacts and stores source labels for corpus inspection and retrieval provenance.</p>
+          <ul>
+            <li><code>.txt</code> files</li>
+            <li><code>.md</code> files</li>
+            <li><code>.markdown</code> files</li>
+            <li><code>.tex</code> files</li>
+            <li><code>.pdf</code> files</li>
+            <li>arXiv source text</li>
+            <li>repository README</li>
+            <li>in-process metadata dictionary</li>
+          </ul>
+          <p>Exact <code>source_type</code> examples: <code>paper</code>, <code>lab_note</code>, <code>experiment_report</code>, <code>repo_readme</code>, and <code>file</code>.</p>
+        </div>
+        <div>
+          <pre><code>uv run python -m researchfs.ingest --arxiv 2305.13245
+uv run python -m researchfs.ingest --repo https://github.com/example/project
+uv run python -m researchfs.ingest --file notes/clip-matrix.md --source-type lab_note</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="retrieval">
+      <div class="container grid-two">
+        <div class="stack">
+          <h2>Retrieval and memory modes</h2>
+          <p><code>method</code> mode returns the bounded method/provenance/lesson pack for an agent prompt. <code>graph</code> mode returns graph context. <code>memory</code> mode returns bounded paper memory cards through the research brief implementation.</p>
+          <p><code>/brief</code> and <code>mode="memory"</code> use deterministic local SQLite/stdlib keyword assembly over compressed markdown memory, with no fresh LLM call, no raw full-paper context, no vector search, no OCR, and no hosted search service.</p>
+        </div>
+        <div>
+          <pre><code>uv run python -m researchfs.memory query --query "optimizer risk" --source-type paper --source-type lab_note --max-chars 3000 --include-scores --log
+uv run python -m researchfs.memory export --paper-id 42 --output paper-42.bundle.json
+uv run python -m researchfs.memory import --db-path /tmp/target.db --input paper-42.bundle.json</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="alt" id="local-api">
+      <div class="container">
+        <h2>Local stdlib API</h2>
+        <p class="section-sub">Serve the unauthenticated local API on loopback, then call routes directly or through <code>ResearchFSLabClient</code>. Local browser testing normally reaches <code>http://127.0.0.1:8765</code>.</p>
+        <pre><code>uv run python -m researchfs.api --host 127.0.0.1 --port 8765 --db-path ./researchfs.db</code></pre>
+        <div class="endpoint-grid" aria-label="ResearchFS API endpoints">
+          <div class="endpoint">GET /</div>
+          <div class="endpoint">GET /health</div>
+          <div class="endpoint">GET /papers</div>
+          <div class="endpoint">GET /paper/&lt;id&gt;/memory</div>
+          <div class="endpoint">GET /paper/&lt;id&gt;/memory/export</div>
+          <div class="endpoint">GET /memory/export</div>
+          <div class="endpoint">GET /paper/&lt;id&gt;</div>
+          <div class="endpoint">GET /method/&lt;id&gt;</div>
+          <div class="endpoint">GET /stats</div>
+          <div class="endpoint">POST /ingest</div>
+          <div class="endpoint">POST /ingest/arxiv</div>
+          <div class="endpoint">POST /ingest/repo</div>
+          <div class="endpoint">POST /ingest/file</div>
+          <div class="endpoint">POST /evaluate/extraction</div>
+          <div class="endpoint">POST /retrieve</div>
+          <div class="endpoint">POST /brief</div>
+          <div class="endpoint">POST /memory/import</div>
+          <div class="endpoint">POST /feedback</div>
+          <div class="endpoint">POST /experiment</div>
+          <div class="endpoint">POST /lesson</div>
+        </div>
+        <pre><code>from researchfs import ResearchFSLabClient
+
+client = ResearchFSLabClient()
+brief = client.research_brief(
+    query="clip matrix optimizer risk",
+    max_chars=3000,
+    max_papers=2,
+    source_types=["paper", "lab_note"],
+    include_scores=True,
+    log=True,
+)
+print(brief["context"])</code></pre>
+      </div>
+    </section>
+
+    <section id="context-routing">
+      <div class="container grid-two">
+        <div class="stack">
+          <h2>Context routing</h2>
+          <p>Route a bounded selected evidence frontier before passing context to a reader; rejected candidates remain audit-only and can guide retry/recovery.</p>
+          <p>Deterministic routed ask defaults do not require provider SDKs, model packages, or GPU.</p>
+          <pre><code>uv run python -m researchfs.memory ask --query "clip matrix optimizer risk" --route-context --verify --recover --max-papers 3 --k 2 --max-reader-tokens 1200 --log</code></pre>
+        </div>
+        <div>
+          <pre><code>from researchfs.context import ContextBudget, route_top_k_context
+
+selection = route_top_k_context(
+    candidates,
+    k=2,
+    budget=ContextBudget(max_items=2, max_tokens=800, overflow_policy="drop_lowest_score"),
+)
+answer = reader(question, context=selection.selected)</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="alt" id="benchmarks">
+      <div class="container grid-two">
+        <div class="stack">
+          <h2>Benchmarks and evaluation fixtures</h2>
+          <p>NanoChat/autoresearch is an evaluation fixture, not the product surface.</p>
+          <p>The current CLI supports one <code>--distractor-mode</code> per scaling run; available modes are <code>mixed</code>, <code>closer_gold_like</code>, <code>near_miss_citation</code>, <code>partial_evidence</code>, and <code>conflicting_evidence</code>.</p>
+          <p>PaperServe-Bench is local, synthetic, dependency-free, and does not download/run AutoResearchBench or claim official external benchmark scores.</p>
+        </div>
+        <div>
+          <pre><code>uv run python -m examples.paperserve_benchmark --compact
+uv run python -m examples.paperserve_benchmark --scaling --table --corpus-sizes 5,20,50,100
+uv run python -m examples.paperserve_benchmark --compact --scaling --corpus-sizes 5,20,50,100 --distractor-mode conflicting_evidence --check-thresholds --output paperserve-scaling-conflicting.json --csv-output paperserve-scaling-conflicting.csv</code></pre>
+          <pre><code>uv run python compare_runs.py --list
+uv run python compare_runs.py &lt;baseline_run_id&gt; &lt;loopgraph_run_id&gt;
+uv run python compare_runs.py --benchmarks &lt;baseline_run_id&gt; &lt;loopgraph_run_id&gt;</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="development">
+      <div class="container grid-two">
+        <div class="stack">
+          <h2>Development checks</h2>
+          <p>Targeted new tests belong under <code>tests/</code>. The repo has no configured Ruff, Black, mypy, coverage, tox, pre-commit, or console scripts.</p>
+        </div>
+        <div>
+          <pre><code>uv run pytest tests/test_regressions.py -q
+uv run pytest test_runner.py tests/test_regressions.py -q</code></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">ResearchFS documentation is static HTML in this repository. Keep claims local, deterministic, and source-grounded.</div>
+  </footer>
+</body>
+</html>
