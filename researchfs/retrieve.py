@@ -2586,7 +2586,7 @@ def get_graph_context(
     max_chars: Optional[int] = None,
     agent_run_id: Optional[int] = None,
 ) -> str:
-    """Return method, experiment, lesson, and code context for loopgraph prompts."""
+    """Return method, experiment, lesson, and code context for research-agent prompts."""
     close = False
     if conn is None:
         conn = get_connection()

@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v8
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Install locked core environment
+        run: uv sync --locked --group dev
+      - name: Run core tests
+        run: uv run pytest -q
+
+  distribution:
+    name: Verify distribution boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v8
+        with:
+          python-version: "3.10"
+          enable-cache: true
+      - name: Build wheel and source distribution
+        run: uv build
+      - name: Reject benchmark or heavyweight runtime leakage
+        run: uv run python scripts/verify_distribution.py dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: researchfs-core-dist
+          path: dist/*
+          if-no-files-found: error

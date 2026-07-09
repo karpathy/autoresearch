@@ -59,3 +59,12 @@ uv run pytest -q test_runner.py
 
 The root ResearchFS suite is intentionally independent and runs from the
 repository root with `uv run pytest -q`.
+
+## Origin and license
+
+This fixture is adapted from Andrej Karpathy's
+[`autoresearch`](https://github.com/karpathy/autoresearch) project and includes
+training/data-preparation code derived from
+[`nanochat`](https://github.com/karpathy/nanochat). The fixture preserves the
+nanochat MIT notice in [`LICENSE`](LICENSE); the ResearchFS core has its own MIT
+license at the repository root.

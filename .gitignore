@@ -3,6 +3,14 @@
 .ipynb_checkpoints/
 .wrangler/
 
+# Local credentials and environment files
+.env
+.env.*
+!.env.example
+*.key
+*.p12
+*.pem
+
 # Python-generated files
 __pycache__/
 *.py[oc]
@@ -29,8 +37,10 @@ dev/
 # Results file
 results.tsv
 
-# ResearchFS DB
-researchfs.db
+# ResearchFS/local SQLite databases
+*.db
+*.sqlite
+*.sqlite3
 
 # ASEP workspace state
 .asep/

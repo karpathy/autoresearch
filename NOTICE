@@ -1,0 +1,16 @@
+# Third-party notices
+
+The optional benchmark project under `benchmarks/nanochat/` is adapted from
+Andrej Karpathy's autoresearch project:
+
+https://github.com/karpathy/autoresearch
+
+Its training and data-preparation code includes work derived from nanochat:
+
+https://github.com/karpathy/nanochat
+
+Nanochat is distributed under the MIT License, Copyright (c) 2025 Andrej
+Karpathy. The full notice is preserved in `benchmarks/nanochat/LICENSE`.
+
+These benchmark materials are excluded from the `researchfs-core` wheel and
+source distribution dependency graph.

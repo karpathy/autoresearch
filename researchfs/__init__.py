@@ -1,4 +1,4 @@
-"""ResearchFS v0: lightweight literature retrieval and experiment logging package."""
+"""ResearchFS: local research memory with durable SQLite provenance."""
 
 from .db import get_connection, initialize_db
 from .codegraph import (

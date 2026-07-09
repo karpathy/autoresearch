@@ -1,5 +1,10 @@
 # ResearchFS
 
+[![CI](https://github.com/mattmccarthy11/researchfs/actions/workflows/ci.yml/badge.svg)](https://github.com/mattmccarthy11/researchfs/actions/workflows/ci.yml)
+[![Release](https://github.com/mattmccarthy11/researchfs/actions/workflows/release.yml/badge.svg)](https://github.com/mattmccarthy11/researchfs/actions/workflows/release.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 ResearchFS is a compressed paper/lab memory layer for labs and autonomous
 research agents. It ingests research artifact text into durable SQLite storage,
 compresses it into method and provenance memory, retrieves bounded context for a
@@ -111,6 +116,30 @@ available for that paper.
 
 By default the database is `researchfs.db` at the repository root. Set
 `RESEARCHFS_DB_PATH=/path/to/researchfs.db` to use another SQLite file.
+
+## Database migrations
+
+ResearchFS records every applied schema change in `schema_migrations`. Migration
+versions and names are immutable once released; startup applies pending versions
+in order and rejects gapped, renamed, or newer-than-supported histories.
+
+Inspect or upgrade a database explicitly before deploying a new application
+version:
+
+```bash
+# Show current and pending versions without changing the schema
+uv run python -m researchfs.migrations status --db-path ./researchfs.db
+
+# Exit 1 when migrations are pending (useful in deployment checks)
+uv run python -m researchfs.migrations check --db-path ./researchfs.db
+
+# Apply and record all pending versions
+uv run python -m researchfs.migrations upgrade --db-path ./researchfs.db
+```
+
+The installed `researchfs-migrate` command exposes the same interface. Back up
+long-lived databases before upgrading, and test the upgrade against a copy when
+moving between tagged ResearchFS releases.
 
 ## Quick start: local ResearchFS API
 
@@ -1000,6 +1029,7 @@ examples/                  — dependency-light product examples and routing eva
 evals/                     — dependency-light ResearchFS product evaluations
 tests/test_regressions.py  — focused regression tests for recent safety fixes
 pyproject.toml             — lightweight researchfs-core package manifest
+SECURITY.md                — vulnerability reporting and supported-version policy
 ```
 
 ## NanoChat evaluation fixture

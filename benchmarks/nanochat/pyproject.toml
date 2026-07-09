@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Optional NanoChat/autoresearch evaluation fixture for ResearchFS"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
 dependencies = [
     "kernels>=0.11.7",
     "pyarrow>=21.0.0",

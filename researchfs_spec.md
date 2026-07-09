@@ -14,6 +14,7 @@ researchfs/
   api.py         # Stdlib local lab API dispatch and optional server entry point
   ask.py         # Routed local ask workflow over compressed memory and selected context
   db.py          # Database connection, cursor helpers, and schema creation
+  migrations.py  # Version status/check/upgrade CLI over the migration ledger
   ingest.py      # Paper ingestion and chunking/extraction orchestration
   retrieve.py    # Context retrieval, experiment logging, and lesson history
   extractor.py   # Optional LLM extraction helpers
@@ -41,6 +42,9 @@ tests/fixtures/paperserve_bench/
 ## 2. SQLite Database Schema
 The database should be saved at the repository root as `researchfs.db`.
 Create the following tables:
+*   `schema_migrations`: Ordered, immutable migration version/name records with
+    application timestamps. Databases with gaps, renamed versions, or a schema
+    newer than the running package must fail closed instead of guessing.
 *   `papers`: Ingested papers (title, authors, abstract, url, publish_date).
 *   `paper_extraction_status`: Explicit extraction/compression status,
     source labels, character counts, nullable `extractor_model`, nullable
@@ -83,7 +87,18 @@ Create the following tables:
 
 ### `researchfs/db.py`
 *   Define a helper `get_connection()` that returns a `sqlite3.Connection` to `researchfs.db`.
-*   Implement `initialize_db()` which creates all tables if they do not exist. Call this automatically on package import or setup.
+*   Implement `initialize_db()` which creates all tables if they do not exist
+    and applies pending migrations in ascending version order.
+*   Keep released migration numbers and names immutable. Record each completed
+    version in `schema_migrations`, make reapplication idempotent, and reject
+    gapped, renamed, or future histories.
+*   Expose non-mutating schema-version and pending-migration inspection helpers.
+
+### `researchfs/migrations.py`
+*   Provide `status`, `check`, and `upgrade` commands through
+    `python -m researchfs.migrations` and the `researchfs-migrate` entry point.
+*   Emit machine-readable JSON. `check` exits nonzero when upgrades are pending;
+    `upgrade` reports every version applied.
 
 ### `researchfs/ingest.py`
 *   Include a `__main__` entry point to allow running: `uv run python -m researchfs.ingest`.
