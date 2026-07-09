@@ -1,34 +1,37 @@
 [project]
-name = "autoresearch"
-version = "0.1.0"
-description = "Autonomous pretraining research swarm"
+name = "researchfs-core"
+version = "0.2.0"
+description = "Lightweight, local SQLite-backed memory for research artifacts and agents"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "kernels>=0.11.7",
-    "matplotlib>=3.10.8",
-    "numpy>=2.2.6",
-    "pandas>=2.3.3",
-    "pyarrow>=21.0.0",
     "pypdf>=6.4.0",
     "requests>=2.32.0",
-    "rustbpe>=0.1.0",
-    "tiktoken>=0.11.0",
-    "torch==2.9.1",
 ]
 
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+[project.optional-dependencies]
+llm = [
+    "openai>=1.0.0",
 ]
 
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["researchfs"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/README.md",
+    "/pyproject.toml",
+    "/researchfs",
+]
 
 [dependency-groups]
 dev = [
-    "modal>=1.5.1",
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -18,10 +18,10 @@ from researchfs.client import ResearchFSSession
 from researchfs.db import initialize_db
 from researchfs import retrieve as rfs
 from researchfs.client import ResearchFSClient, _estimate_tokens
-from researchfs.ingest import ensure_seed
 from evals.nanochat_bpb.metrics import estimate_cost
 
 from agents.editor import apply_hunks, check_syntax, HunkError
+from nanochat_codegraph import link_nanochat_methods_to_code
 from run_agent import (
     _commit_train_py,
     _drop_last_commit_and_restore_train,
@@ -29,6 +29,7 @@ from run_agent import (
     parse_log,
     read_results_tsv,
 )
+from seed import ensure_seed
 
 
 
@@ -98,21 +99,7 @@ def _run_train(time_budget: int, steps_budget: int, env: dict, log_path: str) ->
 
 def _refresh_loopgraph_code_map() -> None:
     """Refresh ResearchFS code symbols for the editable training targets."""
-    import importlib
-
-    try:
-        codegraph = importlib.import_module("researchfs.codegraph")
-    except ModuleNotFoundError as exc:
-        if exc.name == "researchfs.codegraph":
-            return
-        raise
-
-    refresh_code_map = getattr(codegraph, "refresh_code_map", None)
-    link_methods_to_code = getattr(codegraph, "link_methods_to_code", None)
-    if callable(refresh_code_map):
-        refresh_code_map(paths=("train.py", "prepare.py"))
-    if callable(link_methods_to_code):
-        link_methods_to_code()
+    link_nanochat_methods_to_code()
 
 
 def _get_loopgraph_context(query: str, max_chars: int | None, agent_run_id: Optional[int]) -> str:
@@ -308,6 +295,14 @@ def run_agent_mode(
                 model=model,
                 run_id=agent_run_id,
                 baseline_metric=baseline_val_bpb,
+                task_target="the NanoChat training script `train.py`",
+                objective="minimize validation bits per byte (val_bpb)",
+                task_name="the NanoChat pretraining benchmark",
+                query_examples=(
+                    "MLP SwiGLU",
+                    "GQA attention",
+                    "Muon learning rate",
+                ),
             )
 
         # Iterative loop

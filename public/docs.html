@@ -124,13 +124,12 @@
       <div class="container grid-two">
         <div class="stack">
           <h2>Quick start</h2>
-          <p class="section-sub">Python 3.10+ and uv; SQLite comes from the Python standard library.</p>
-          <p>Optional extraction requires <code>OPENAI_API_KEY</code> and can use <code>uv run python -m researchfs.ingest --file notes/clip-matrix.md --extract</code>.</p>
+          <p class="section-sub">Python 3.10+ and uv; researchfs-core has only requests and pypdf as runtime dependencies.</p>
+          <p>Optional extraction uses <code>uv sync --extra llm</code>, requires <code>OPENAI_API_KEY</code>, and can run with <code>uv run python -m researchfs.ingest --file notes/clip-matrix.md --extract</code>.</p>
           <p>The default SQLite file is <code>researchfs.db</code>; <code>RESEARCHFS_DB_PATH</code> overrides it.</p>
         </div>
         <div>
           <pre><code>uv sync
-uv run python -m researchfs.ingest --seed
 uv run python -m researchfs.ingest --file notes/clip-matrix.md
 uv run python -m researchfs.memory query --query "clip matrix optimizer risk" --max-chars 3000</code></pre>
         </div>
@@ -244,7 +243,7 @@ answer = reader(question, context=selection.selected)</code></pre>
       <div class="container grid-two">
         <div class="stack">
           <h2>Benchmarks and evaluation fixtures</h2>
-          <p>NanoChat/autoresearch is an evaluation fixture, not the product surface.</p>
+          <p>NanoChat/autoresearch is a separately managed project under <code>benchmarks/nanochat</code>; Torch, Modal, training code, and benchmark images are excluded from researchfs-core.</p>
           <p>The current CLI supports one <code>--distractor-mode</code> per scaling run; available modes are <code>mixed</code>, <code>closer_gold_like</code>, <code>near_miss_citation</code>, <code>partial_evidence</code>, and <code>conflicting_evidence</code>.</p>
           <p>PaperServe-Bench is local, synthetic, dependency-free, and does not download/run AutoResearchBench or claim official external benchmark scores.</p>
         </div>
@@ -252,9 +251,9 @@ answer = reader(question, context=selection.selected)</code></pre>
           <pre><code>uv run python -m examples.paperserve_benchmark --compact
 uv run python -m examples.paperserve_benchmark --scaling --table --corpus-sizes 5,20,50,100
 uv run python -m examples.paperserve_benchmark --compact --scaling --corpus-sizes 5,20,50,100 --distractor-mode conflicting_evidence --check-thresholds --output paperserve-scaling-conflicting.json --csv-output paperserve-scaling-conflicting.csv</code></pre>
-          <pre><code>uv run python compare_runs.py --list
-uv run python compare_runs.py &lt;baseline_run_id&gt; &lt;loopgraph_run_id&gt;
-uv run python compare_runs.py --benchmarks &lt;baseline_run_id&gt; &lt;loopgraph_run_id&gt;</code></pre>
+          <pre><code>cd benchmarks/nanochat
+uv sync
+uv run python compare_runs.py --list</code></pre>
         </div>
       </div>
     </section>

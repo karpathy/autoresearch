@@ -148,7 +148,6 @@ import sqlite3
 from researchfs.db import initialize_db, migrate_db
 from researchfs.evaluation import evaluate_extraction
 from researchfs.ingest import (
-    seed_initial_data,
     ingest_paper,
     _normalize_extracted_method,
     load_local_file_metadata,
@@ -161,6 +160,8 @@ from researchfs.fetcher import clean_latex, fetch_github_readme, _parse_github_r
 from researchfs.api import ResearchFSLabAPI, _make_handler
 from evals.nanochat_bpb import metrics
 from agents.editor import apply_hunks, check_syntax, HunkError
+from nanochat_codegraph import link_nanochat_methods_to_code
+from seed import ensure_seed, seed_initial_data
 
 
 def _in_memory_db():
@@ -648,33 +649,9 @@ def top_attention(x):
         assert "Applies attention transform" in function_hits
 
 
-def test_link_methods_to_code_links_seeded_methods_to_temp_train_symbols():
-    import tempfile
-    from pathlib import Path
-    from researchfs import codegraph
-
+def test_link_nanochat_methods_to_code_links_seeded_methods_to_fixture_symbols():
     conn = _in_memory_db()
-    with tempfile.TemporaryDirectory() as tmpdir:
-        train_path = Path(tmpdir) / "train.py"
-        train_path.write_text(
-            '''class CausalSelfAttention:
-    """Attention implementation target."""
-    pass
-
-
-class MLP:
-    """Feed-forward MLP target."""
-    pass
-
-
-class MuonAdamW:
-    """Muon optimizer target."""
-    pass
-''',
-            encoding="utf-8",
-        )
-        codegraph.refresh_code_map(paths=(str(train_path),), conn=conn)
-        linked_count = codegraph.link_methods_to_code(conn=conn)
+    linked_count = link_nanochat_methods_to_code(conn=conn)
 
     assert linked_count >= 3
     rows = conn.execute(
@@ -923,7 +900,7 @@ def test_get_method_pack_contains_methods():
 
 def test_researchfs_package_root_exports_public_api():
     import researchfs
-    from researchfs import bundle, codegraph, ingest, retrieve
+    from researchfs import bundle, codegraph, retrieve
 
     expected_exports = {
         "ResearchFSClient": researchfs.ResearchFSClient,
@@ -931,7 +908,6 @@ def test_researchfs_package_root_exports_public_api():
         "ResearchFSLabClientError": researchfs.ResearchFSLabClientError,
         "export_paper_memory_bundle": bundle.export_paper_memory_bundle,
         "import_paper_memory_bundle": bundle.import_paper_memory_bundle,
-        "ensure_seed": ingest.ensure_seed,
         "finish_agent_run": retrieve.finish_agent_run,
         "get_code_map": codegraph.get_code_map,
         "get_connection": researchfs.get_connection,
@@ -941,7 +917,7 @@ def test_researchfs_package_root_exports_public_api():
         "get_method_pack": retrieve.get_method_pack,
         "initialize_db": researchfs.initialize_db,
         "link_experiment_methods": retrieve.link_experiment_methods,
-        "link_methods_to_code": codegraph.link_methods_to_code,
+        "replace_method_code_targets": codegraph.replace_method_code_targets,
         "log_experiment": retrieve.log_experiment,
         "log_lesson": retrieve.log_lesson,
         "log_retrieval_event": retrieve.log_retrieval_event,
@@ -950,7 +926,6 @@ def test_researchfs_package_root_exports_public_api():
         "refresh_code_map": codegraph.refresh_code_map,
         "search_code_symbols": codegraph.search_code_symbols,
         "search_methods": retrieve.search_methods,
-        "seed_initial_data": ingest.seed_initial_data,
         "start_agent_run": retrieve.start_agent_run,
         "update_experiment": retrieve.update_experiment,
     }
@@ -958,6 +933,9 @@ def test_researchfs_package_root_exports_public_api():
     for name, expected_obj in expected_exports.items():
         assert name in researchfs.__all__
         assert getattr(researchfs, name) is expected_obj
+
+    assert "ensure_seed" not in researchfs.__all__
+    assert "seed_initial_data" not in researchfs.__all__
 
 
 
@@ -3138,14 +3116,14 @@ def test_empirical_feedback_and_stats():
     assert swiglu_id in ids
 
     # Check stats for SwiGLU
-    # 3 runs, 33% success (1 keeps, 1 discards, 1 crashes), avg -0.050000 BPB.
-    expected_swiglu_stats = "3 runs, 33% success (1 keeps, 1 discards, 1 crashes), avg -0.050000 BPB"
+    # 3 runs, 33% success (1 keeps, 1 discards, 1 crashes), avg metric delta -0.050000.
+    expected_swiglu_stats = "3 runs, 33% success (1 keeps, 1 discards, 1 crashes), avg metric delta -0.050000"
     assert expected_swiglu_stats in pack
 
     # Get method pack for GQA
     pack_gqa, ids_gqa = rfs.search_methods_and_ids("Grouped-Query", conn)
     assert gqa_id in ids_gqa
-    expected_gqa_stats = "2 runs, 100% success (2 keeps, 0 discards, 0 crashes), avg -0.110000 BPB"
+    expected_gqa_stats = "2 runs, 100% success (2 keeps, 0 discards, 0 crashes), avg metric delta -0.110000"
     assert expected_gqa_stats in pack_gqa
 
     # Verify sorting in the full method pack
@@ -3342,7 +3320,7 @@ def test_method_stats_calculation():
     rfs.log_retrieval_event("agent_search", "query", "retrieved", run_id, exp4_id, conn, method_ids=[method_id])
 
     pack = rfs.search_methods("Grouped-Query Attention", conn)
-    expected_stats = "3 runs, 33% success (1 keeps, 1 discards, 1 crashes), avg -0.050000 BPB"
+    expected_stats = "3 runs, 33% success (1 keeps, 1 discards, 1 crashes), avg metric delta -0.050000"
     assert expected_stats in pack
 
 
@@ -3367,8 +3345,8 @@ def test_method_pack_stats_formatting():
 
     pack = rfs.get_method_pack(conn)
 
-    assert "1 runs, 100% success (1 keeps, 0 discards, 0 crashes), avg -0.100000 BPB" in pack
-    assert "1 runs, 0% success (0 keeps, 1 discards, 0 crashes), avg +0.000000 BPB" in pack
+    assert "1 runs, 100% success (1 keeps, 0 discards, 0 crashes), avg metric delta -0.100000" in pack
+    assert "1 runs, 0% success (0 keeps, 1 discards, 0 crashes), avg metric delta +0.000000" in pack
     assert "No runs yet" in pack
 
     pos_gqa = pack.find("Grouped-Query Attention (GQA)")
@@ -3379,7 +3357,7 @@ def test_method_pack_stats_formatting():
     assert pos_muon < pos_swiglu
 
     pack_search_gqa = rfs.search_methods("Grouped-Query Attention", conn)
-    assert "1 runs, 100% success (1 keeps, 0 discards, 0 crashes), avg -0.100000 BPB" in pack_search_gqa
+    assert "1 runs, 100% success (1 keeps, 0 discards, 0 crashes), avg metric delta -0.100000" in pack_search_gqa
 
     pack_search_muon = rfs.search_methods("Muon", conn)
     assert "No runs yet" in pack_search_muon
@@ -3392,7 +3370,7 @@ def test_run_agent_mode_reuses_query():
     import unittest.mock
     from agents import harness_agent
     from researchfs.db import initialize_db
-    from researchfs.ingest import ensure_seed
+    from seed import ensure_seed
     from researchfs import retrieve as rfs
 
     # Use a named shared in-memory database so functions that close their
@@ -3482,7 +3460,7 @@ def test_run_agent_mode_reuses_query_saves_tokens_across_experiments():
     import unittest.mock
     from agents import harness_agent
     from researchfs.db import initialize_db
-    from researchfs.ingest import ensure_seed
+    from seed import ensure_seed
     from researchfs import retrieve as rfs
 
     db_uri = "file:reuse_test_mem2?mode=memory&cache=shared"
@@ -3779,8 +3757,8 @@ def test_get_query_history_str():
 
     # 5. Assert expectations
     expected_lines = [
-        "Query: 'SwiGLU' -> Outcome: Kept (improved BPB to 2.153019)",
-        "Query: 'Muon' -> Outcome: Discarded (BPB: 2.164321)",
+        "Query: 'SwiGLU' -> Outcome: Kept (improved metric to 2.153019)",
+        "Query: 'Muon' -> Outcome: Discarded (metric: 2.164321)",
         "Query: 'Attention' -> Outcome: Crashed"
     ]
     for line in expected_lines:
@@ -3804,7 +3782,15 @@ def test_researchfs_client_session():
     cur.execute("INSERT INTO agent_runs (mode, model) VALUES ('loopgraph', 'test-model')")
     agent_run_id = cur.lastrowid
 
-    session = ResearchFSSession(client, agent_run_id, baseline_metric=2.18)
+    session = ResearchFSSession(
+        client,
+        agent_run_id,
+        baseline_metric=2.18,
+        task_target="the NanoChat training script `train.py`",
+        objective="minimize validation bits per byte",
+        task_name="the NanoChat pretraining benchmark",
+        query_examples=("MLP SwiGLU", "GQA attention", "Muon learning rate"),
+    )
     assert isinstance(session, ResearchFSSession)
 
     # Test query reuse: nothing yet should return None
@@ -4594,9 +4580,10 @@ def test_suggest_query_async_returns_same_decision():
 def _landing_page_sources():
     from pathlib import Path
 
+    repo_root = Path(__file__).resolve().parents[2]
     return {
-        "index.html": Path("index.html").read_text(encoding="utf-8"),
-        "public/index.html": Path("public/index.html").read_text(encoding="utf-8"),
+        "index.html": (repo_root / "index.html").read_text(encoding="utf-8"),
+        "public/index.html": (repo_root / "public" / "index.html").read_text(encoding="utf-8"),
     }
 
 def _landing_page_script(html):

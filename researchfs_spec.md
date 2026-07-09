@@ -1,10 +1,11 @@
 # ResearchFS v0 Core Spec
 
 ResearchFS is a lightweight SQLite-backed paper/lab memory layer for labs and
-auto-research agents. It stores research artifact text, compressed method
-records, provenance chunks, retrieval events, experiments, and lessons. The
-NanoChat autoresearch loop is an evaluation fixture for this memory layer, not
-the canonical product surface.
+research agents. It stores research artifact text, compressed method records,
+provenance chunks, retrieval events, experiments, and lessons. The installable
+distribution is `researchfs-core`. The NanoChat autoresearch loop is a
+separately managed evaluation project under `benchmarks/nanochat`, not part of
+the core wheel or dependency graph.
 
 ## 1. Directory Structure
 ```text
@@ -13,7 +14,7 @@ researchfs/
   api.py         # Stdlib local lab API dispatch and optional server entry point
   ask.py         # Routed local ask workflow over compressed memory and selected context
   db.py          # Database connection, cursor helpers, and schema creation
-  ingest.py      # Paper ingestion, seed data, chunking/extraction orchestration
+  ingest.py      # Paper ingestion and chunking/extraction orchestration
   retrieve.py    # Context retrieval, experiment logging, and lesson history
   extractor.py   # Optional LLM extraction helpers
   evaluation.py  # Deterministic expected-method/source/evidence evaluator
@@ -21,7 +22,13 @@ researchfs/
   lab_client.py  # SDK wrapper over the local lab API dispatch surface
   memory.py      # Local compressed-memory query and bundle CLI
   routing_traces.py  # Read-only routed ask trace export over retrieval_events
-  client.py      # DB-backed session client for autoresearch agents
+  client.py      # DB-backed session client for research agents
+benchmarks/nanochat/
+  pyproject.toml # Separate Torch/training environment
+  seed.py        # Fixture-only compressed method seed importer
+  train.py       # NanoChat training target
+  prepare.py     # NanoChat data/tokenizer preparation
+  assets/        # Historical benchmark images
 examples/
   paperserve_benchmark.py  # Local synthetic PaperServe-Bench scaffold
   autoresearchbench_adapter.py  # Local AutoResearchBench JSONL loader/normalizer bridge
@@ -33,7 +40,7 @@ tests/fixtures/paperserve_bench/
 
 ## 2. SQLite Database Schema
 The database should be saved at the repository root as `researchfs.db`.
-Create the following tables (refer to `design_spec.md` for column guidelines):
+Create the following tables:
 *   `papers`: Ingested papers (title, authors, abstract, url, publish_date).
 *   `paper_extraction_status`: Explicit extraction/compression status,
     source labels, character counts, nullable `extractor_model`, nullable
@@ -79,11 +86,6 @@ Create the following tables (refer to `design_spec.md` for column guidelines):
 *   Implement `initialize_db()` which creates all tables if they do not exist. Call this automatically on package import or setup.
 
 ### `researchfs/ingest.py`
-*   Create a seeding function `seed_initial_data()` that populates:
-    *   Papers: Abstracts/metadata for the GQA, SwiGLU, and Muon papers.
-    *   Chunks: Actual text chunks from the papers detailing implementation.
-    *   Methods: Entries for GQA, SwiGLU, and Muon, mapping them to the source chunks in `method_sources`.
-    *   Experiment Briefs: The default objective and hypotheses (based on the current `experiment_brief.md`).
 *   Include a `__main__` entry point to allow running: `uv run python -m researchfs.ingest`.
 *   Support local file ingestion with `--file PATH` for `.txt`, `.md`, `.markdown`, `.tex`, and `.pdf` notes. Support `--source-type LABEL` for `--file`, `--arxiv`, and `--repo` ingestion; the CLI must strip whitespace, reject empty labels through argparse, and apply the label to metadata before ingesting. Local file/API ingestion should default unlabeled local files to extraction-status `source_type` `file` and preserve optional metadata labels such as `paper`, `lab_note`, `experiment_report`, or `repo_readme` when supplied. PDF input should be extracted with `pypdf` text extraction only; do not claim OCR, scanned-image parsing, PDF-coordinate citation validation, vector retrieval, or hosted-service behavior.
 *   Duplicate paper ingestion should support retrying extraction for the
@@ -165,9 +167,9 @@ Create the following tables (refer to `design_spec.md` for column guidelines):
     documented module command form above, not ingestion, not bundle movement,
     not an HTTP server, not hosted sync/auth, not vector search, not OCR, not
     scanned-PDF parsing, not PDF-coordinate citation validation, not a
-    query-rewriting LLM loop, and not a model/GPU-required path. The repository
-    may contain NanoChat/training fixture dependencies, but the routed ask code
-    path does not import or require model/GPU packages.
+    query-rewriting LLM loop, and not a model/GPU-required path. NanoChat and
+    its model/GPU dependencies live in the separate `benchmarks/nanochat`
+    project and are excluded from the core install.
 *   `evaluate` must call the existing
     `researchfs.evaluation.evaluate_extraction(conn, paper_id,
     expected_methods, ...)` helper over stored SQLite rows and write

@@ -1,0 +1,47 @@
+[project]
+name = "researchfs-nanochat-benchmark"
+version = "0.1.0"
+description = "Optional NanoChat/autoresearch evaluation fixture for ResearchFS"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "kernels>=0.11.7",
+    "pyarrow>=21.0.0",
+    "requests>=2.32.0",
+    "researchfs-core",
+    "rustbpe>=0.1.0",
+    "tiktoken>=0.11.0",
+    "torch==2.9.1",
+]
+
+[project.optional-dependencies]
+analysis = [
+    "matplotlib>=3.10.8",
+    "numpy>=2.2.6",
+    "pandas>=2.3.3",
+]
+modal = [
+    "modal>=1.5.1",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+researchfs-core = { path = "../..", editable = true }
+torch = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

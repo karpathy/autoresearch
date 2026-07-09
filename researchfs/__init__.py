@@ -3,7 +3,7 @@
 from .db import get_connection, initialize_db
 from .codegraph import (
     get_code_map,
-    link_methods_to_code,
+    replace_method_code_targets,
     refresh_code_map,
     search_code_symbols,
 )
@@ -42,7 +42,6 @@ __all__ = [
     "citation_verifier",
     "default_reader",
     "ResearchFSLabClientError",
-    "ensure_seed",
     "export_paper_memory_bundle",
     "export_corpus_memory_bundle",
     "finish_agent_run",
@@ -60,7 +59,7 @@ __all__ = [
     "initialize_db",
     "log_experiment",
     "link_experiment_methods",
-    "link_methods_to_code",
+    "replace_method_code_targets",
     "log_lesson",
     "log_retrieval_event",
     "log_token_usage",
@@ -72,7 +71,6 @@ __all__ = [
     "recommend_next_experiments",
     "refresh_code_map",
     "search_code_symbols",
-    "seed_initial_data",
     "start_agent_run",
     "update_experiment",
     "citation_f1",
@@ -188,14 +186,6 @@ def __getattr__(name):
             "import_corpus_memory_bundle": import_corpus_memory_bundle,
             "import_memory_bundle": import_memory_bundle,
             "import_paper_memory_bundle": import_paper_memory_bundle,
-        }
-        return exports[name]
-    if name in {"ensure_seed", "seed_initial_data"}:
-        from .ingest import ensure_seed, seed_initial_data
-
-        exports = {
-            "ensure_seed": ensure_seed,
-            "seed_initial_data": seed_initial_data,
         }
         return exports[name]
     raise AttributeError(f"module 'researchfs' has no attribute {name!r}")

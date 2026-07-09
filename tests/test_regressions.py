@@ -1,4 +1,3 @@
-import ast
 import io
 import json
 import os
@@ -28,6 +27,44 @@ def _init_memory_db():
     conn = _memory_conn()
     db.initialize_db(conn)
     return conn
+
+
+def test_core_manifest_and_layout_exclude_nanochat_runtime():
+    """The root install stays lightweight while the fixture owns heavyweight runtime files."""
+    import researchfs
+    from researchfs import ingest
+
+    manifest = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    project_block = manifest.split("[project.optional-dependencies]", 1)[0].lower()
+    assert 'name = "researchfs-core"' in project_block
+    for dependency in (
+        "torch",
+        "modal",
+        "kernels",
+        "matplotlib",
+        "numpy",
+        "pandas",
+        "pyarrow",
+        "rustbpe",
+        "tiktoken",
+    ):
+        assert dependency not in project_block
+
+    benchmark_root = REPO_ROOT / "benchmarks" / "nanochat"
+    for filename in ("train.py", "prepare.py", "modal_loopgraph_benchmark.py"):
+        assert not (REPO_ROOT / filename).exists()
+        assert (benchmark_root / filename).is_file()
+    assert (benchmark_root / "assets" / "benchmark_results.png").is_file()
+    assert (benchmark_root / "assets" / "progress.png").is_file()
+
+    benchmark_manifest = (benchmark_root / "pyproject.toml").read_text(encoding="utf-8").lower()
+    for dependency in ("torch", "modal", "pyarrow", "rustbpe", "tiktoken"):
+        assert dependency in benchmark_manifest
+
+    assert "seed_initial_data" not in researchfs.__all__
+    assert "ensure_seed" not in researchfs.__all__
+    assert not hasattr(ingest, "seed_initial_data")
+    assert not hasattr(ingest, "ensure_seed")
 
 
 
@@ -310,54 +347,6 @@ def test_memory_evaluate_accepts_finite_thresholds_without_db_work(
     assert getattr(captured[0], attr) == pytest.approx(float(value))
 
 
-def _attr_path(node):
-    parts = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if isinstance(node, ast.Name):
-        parts.append(node.id)
-    return ".".join(reversed(parts))
-
-
-def _call_is_fill_one(call):
-    return (
-        isinstance(call, ast.Call)
-        and isinstance(call.func, ast.Attribute)
-        and call.func.attr == "fill_"
-        and len(call.args) == 1
-        and isinstance(call.args[0], ast.Constant)
-        and call.args[0].value == 1.0
-    )
-
-
-def test_train_init_weights_explicitly_initializes_all_rmsnorm_scales_without_importing_training():
-    """RMSNorm parameters created on the meta device are reset to neutral scale before training."""
-    tree = ast.parse(Path("train.py").read_text())
-    gpt_class = next(
-        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "GPT"
-    )
-    init_weights = next(
-        node
-        for node in gpt_class.body
-        if isinstance(node, ast.FunctionDef) and node.name == "init_weights"
-    )
-
-    filled_paths = {
-        _attr_path(call.func.value)
-        for call in ast.walk(init_weights)
-        if _call_is_fill_one(call)
-    }
-
-    assert {
-        "block.attn.q_norm.scale",
-        "block.attn.k_norm.scale",
-        "block.norm1.scale",
-        "block.norm2.scale",
-        "self.ln_f.scale",
-    } <= filled_paths
-
-
 def test_initialize_db_skips_existing_fts_rebuild_unless_explicitly_requested(monkeypatch):
     """Default initialization rebuilds FTS only for new FTS tables; explicit repair still rebuilds."""
     from researchfs import db
@@ -547,153 +536,6 @@ def _insert_run(conn, mode, model="gpt-4o-mini"):
     return run_id
 
 
-def test_missing_token_usage_renders_unknown_not_zero_savings():
-    """Runs without token_usage rows are reported as unknown, not as zero-token savings."""
-    from evals.nanochat_bpb import metrics
-
-    conn = _init_memory_db()
-    baseline_id = _insert_run(conn, "baseline")
-    loopgraph_id = _insert_run(conn, "loopgraph")
-
-    comparison = metrics.compare_runs(baseline_id, loopgraph_id, conn=conn)
-    assert comparison["baseline"]["has_token_usage"] is False
-    assert comparison["researchfs"]["has_token_usage"] is False
-    assert comparison["token_reduction_ratio"] is None
-
-    rendered = metrics.format_comparison(comparison)
-    assert "| Prompt tokens | N/A | N/A |" in rendered
-    assert "| Completion tokens | N/A | N/A |" in rendered
-    assert "| Total tokens | N/A | N/A |" in rendered
-    assert "fewer tokens" not in rendered
-    assert "more tokens" not in rendered
-    assert "same number of tokens" not in rendered
-
-
-def test_codex_dirty_guard_allows_preexisting_non_train_diff_but_rejects_new_outside_edits(tmp_path, monkeypatch):
-    """Codex guard covers tracked/untracked changes and scoped ignored artifacts."""
-    import run_agent
-    import hashlib
-
-    env = os.environ.copy()
-    env.update(
-        {
-            "GIT_AUTHOR_NAME": "Regression Tester",
-            "GIT_AUTHOR_EMAIL": "regression@example.invalid",
-            "GIT_COMMITTER_NAME": "Regression Tester",
-            "GIT_COMMITTER_EMAIL": "regression@example.invalid",
-        }
-    )
-    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, env=env)
-    (tmp_path / "train.py").write_text("print('base')\n")
-    (tmp_path / "notes.txt").write_text("base notes\n")
-    (tmp_path / ".gitignore").write_text("results.tsv\nresults/\n")
-    subprocess.run(["git", "add", "train.py", "notes.txt", ".gitignore"], cwd=tmp_path, check=True, env=env)
-    subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True, env=env)
-
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "notes.txt").write_text("pre-existing user note\n")
-    preexisting_untracked = tmp_path / "preexisting-untracked.txt"
-    preexisting_untracked.write_text("pre-existing untracked user note\n")
-    ignored_results = tmp_path / "results.tsv"
-    ignored_results_content = "step\tval_bpb\n1\t2.5\n"
-    ignored_results.write_text(ignored_results_content)
-    ignored_dir = tmp_path / "results"
-    ignored_dir.mkdir()
-    ignored_dir_result = ignored_dir / "seed.tsv"
-    ignored_dir_result_content = "seed\tval_bpb\n1\t2.6\n"
-    ignored_dir_result.write_text(ignored_dir_result_content)
-    before_snapshot = run_agent._snapshot_tracked_non_train_diff(env)
-    untracked_path, untracked_size, untracked_hash = before_snapshot["untracked"].splitlines()[0].split("\t")
-    assert untracked_path == "preexisting-untracked.txt"
-    assert int(untracked_size) == len("pre-existing untracked user note\n")
-    assert len(untracked_hash) == 64
-    ignored_entries = {
-        path: (size, digest)
-        for path, size, digest in (line.split("\t") for line in before_snapshot["ignored"].splitlines())
-    }
-    assert ignored_entries["results.tsv"] == (
-        str(len(ignored_results_content)),
-        hashlib.sha256(ignored_results_content.encode()).hexdigest(),
-    )
-    assert ignored_entries["results/seed.tsv"] == (
-        str(len(ignored_dir_result_content)),
-        hashlib.sha256(ignored_dir_result_content.encode()).hexdigest(),
-    )
-
-    (tmp_path / "train.py").write_text("print('codex experiment')\n")
-    after_train_only_snapshot = run_agent._ensure_codex_only_changed_train_py(before_snapshot, env)
-    assert after_train_only_snapshot == before_snapshot
-
-    ignored_dir_result.write_text("seed\tval_bpb\n1\t9.9\n")
-    with pytest.raises(RuntimeError, match=r"outside train\.py .*ignored"):
-        run_agent._ensure_codex_only_changed_train_py(before_snapshot, env)
-    ignored_dir_result.write_text(ignored_dir_result_content)
-
-    preexisting_untracked.write_text("codex changed existing untracked note\n")
-    with pytest.raises(RuntimeError, match=r"outside train\.py .*untracked"):
-        run_agent._ensure_codex_only_changed_train_py(before_snapshot, env)
-    preexisting_untracked.write_text("pre-existing untracked user note\n")
-
-    (tmp_path / "notes.txt").write_text("new codex-side outside edit\n")
-    with pytest.raises(RuntimeError, match="notes.txt|non-train|outside"):
-        run_agent._ensure_codex_only_changed_train_py(before_snapshot, env)
-
-    (tmp_path / "notes.txt").write_text("pre-existing user note\n")
-    (tmp_path / "codex-output.txt").write_text("new codex-side untracked output\n")
-    with pytest.raises(RuntimeError, match=r"outside train\.py .*untracked"):
-        run_agent._ensure_codex_only_changed_train_py(before_snapshot, env)
-
-
-def test_asep_branch_selection_deletes_single_candidate_but_refuses_multiple_new_candidates():
-    """ASEP cleanup selects one current autoresearch branch and refuses ambiguous new branches."""
-    import asep_loopgraph_benchmark as asep
-
-    before = {"autoresearch/exp_existing"}
-    after_one = before | {"autoresearch/exp_new"}
-    assert (
-        asep._temporary_branch_from_this_run(
-            "autoresearch/exp_new", "main", before, branches_after=after_one
-        )
-        == "autoresearch/exp_new"
-    )
-
-    after_two = before | {"autoresearch/exp_new", "autoresearch/exp_other"}
-    assert (
-        asep._temporary_branch_from_this_run(
-            "autoresearch/exp_new", "main", before, branches_after=after_two
-        )
-        is None
-    )
-
-
-def test_asep_cleanup_checks_out_original_branch_before_deleting_single_generated_branch(monkeypatch):
-    """Cleanup returns to the original branch before deleting the generated autoresearch branch."""
-    import asep_loopgraph_benchmark as asep
-
-    calls = []
-    monkeypatch.setattr(asep, "current_git_branch", lambda: "autoresearch/exp_new")
-
-    def fake_run(cmd, **_kwargs):
-        calls.append(cmd)
-        if cmd == ["git", "branch", "--list", "autoresearch/exp_*"]:
-            return SimpleNamespace(
-                returncode=0,
-                stdout="  autoresearch/exp_existing\n* autoresearch/exp_new\n",
-                stderr="",
-            )
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(asep.subprocess, "run", fake_run)
-
-    asep.cleanup_git_state("main", {"autoresearch/exp_existing"})
-
-    checkout_call = ["git", "checkout", "main"]
-    delete_call = ["git", "branch", "-D", "autoresearch/exp_new"]
-    assert checkout_call in calls
-    assert delete_call in calls
-    assert calls.index(checkout_call) < calls.index(delete_call)
-
-
 def test_dry_run_duplicate_planning_uses_target_database_state_without_writes():
     """Dry-run ingestion reports a merge when the target DB already has the extracted method."""
     from researchfs.ingest import ingest_paper
@@ -806,16 +648,6 @@ def test_dry_run_without_conn_uses_env_database_for_duplicate_planning(
         assert conn.execute("SELECT COUNT(*) FROM methods").fetchone()[0] == 1
     finally:
         conn.close()
-
-
-def test_empty_search_replace_replacement_deletes_matched_text():
-    """An empty REPLACE block is a deletion, not a malformed hunk or no-op."""
-    from agents.editor import apply_hunks
-
-    content = "alpha\nremove me\nomega"
-    response = "<<<<<<< SEARCH\nremove me\n=======\n>>>>>>>"
-
-    assert apply_hunks(content, response) == "alpha\n\nomega"
 
 
 def test_migrate_db_repairs_legacy_retrieval_and_codegraph_schema():
@@ -1070,6 +902,44 @@ def test_codegraph_public_readers_keep_zero_and_positive_max_chars_bounds(tmp_pa
     bounded_search = search_code_symbols("boundedoutputtoken", conn=conn, max_chars=search_bound)
     assert 0 < len(bounded_map) <= map_bound
     assert 0 < len(bounded_search) <= search_bound
+
+
+def test_replace_method_code_targets_accepts_explicit_generic_mappings(tmp_path):
+    """Core stores caller-selected links without embedding fixture-specific heuristics."""
+    from researchfs.codegraph import refresh_code_map, replace_method_code_targets
+
+    conn = _init_memory_db()
+    method_id = conn.execute(
+        """
+        INSERT INTO methods (name, description, implementation_hint, risks, category)
+        VALUES ('Generic evidence method', 'description', 'hint', 'risk', 'workflow')
+        """
+    ).lastrowid
+    source = tmp_path / "workflow.py"
+    source.write_text("def validate_evidence():\n    return True\n", encoding="utf-8")
+    symbols = refresh_code_map(source, conn=conn)
+    symbol = next(row for row in symbols if row["symbol_name"] == "validate_evidence")
+
+    count = replace_method_code_targets(
+        [symbol["file_path"]],
+        [
+            {
+                "method_id": method_id,
+                "file_path": symbol["file_path"],
+                "symbol_name": symbol["symbol_name"],
+                "symbol_kind": symbol["symbol_kind"],
+                "rationale": "caller-selected evidence validation target",
+            }
+        ],
+        conn=conn,
+    )
+
+    assert count == 1
+    row = conn.execute(
+        "SELECT * FROM method_code_targets WHERE method_id = ?", (method_id,)
+    ).fetchone()
+    assert row["symbol_name"] == "validate_evidence"
+    assert row["rationale"] == "caller-selected evidence validation target"
 
 def test_memory_bundle_import_reconstructs_existing_paper_metadata_without_raw_chunks():
     """Bundle import reuses matching paper/method rows and creates usable compressed memory."""

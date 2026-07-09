@@ -1,1 +1,1 @@
-"""Evaluation harness for autonomous research agents."""
+"""Dependency-light evaluation helpers for ResearchFS product behavior."""

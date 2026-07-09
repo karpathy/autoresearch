@@ -16,6 +16,7 @@ import modal
 
 APP_NAME = "loopgraph-benchmark"
 REMOTE_REPO = "/root/loopgraph"
+REMOTE_BENCHMARK = f"{REMOTE_REPO}/benchmarks/nanochat"
 CACHE_PATH = "/root/.cache/autoresearch"
 
 _PROVIDER_ENV_KEYS = (
@@ -39,15 +40,20 @@ image = (
     .apt_install("git")
     .pip_install("uv")
     .add_local_dir(
-        Path(__file__).resolve().parent,
+        Path(__file__).resolve().parents[2],
         remote_path=REMOTE_REPO,
         copy=True,
         ignore=[
             ".git",
             ".venv",
+            "**/.venv/**",
             "__pycache__",
+            "**/__pycache__/**",
             ".pytest_cache",
             "*.pyc",
+            "**/*.pem",
+            "**/*.key",
+            "**/.env*",
             "run_*.log",
             "run_baseline.log",
             "results.tsv",
@@ -57,10 +63,12 @@ image = (
 )
 
 
-def _run(cmd: list[str], *, env: dict[str, str]) -> dict[str, object]:
+def _run(
+    cmd: list[str], *, env: dict[str, str], cwd: str = REMOTE_BENCHMARK
+) -> dict[str, object]:
     proc = subprocess.run(
         cmd,
-        cwd=REMOTE_REPO,
+        cwd=cwd,
         env=env,
         capture_output=True,
         text=True,
@@ -86,7 +94,7 @@ def _ensure_git_repo(env: dict[str, str]) -> dict[str, object]:
         ["git", "add", "."],
         ["git", "commit", "-m", "modal benchmark base"],
     ):
-        step = _run(cmd, env=env)
+        step = _run(cmd, env=env, cwd=REMOTE_REPO)
         steps.append(step)
         if step["returncode"] != 0:
             return {

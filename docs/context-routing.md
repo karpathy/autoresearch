@@ -95,8 +95,8 @@ deterministic local extractive `default_reader(...)` plus
 `citation_verifier(...)`; they do not require a provider SDK, model package, or
 GPU.
 
-The repository may still contain NanoChat/training fixture dependencies; the
-routed ask code path does not import or require model/GPU packages.
+NanoChat and its model/GPU dependencies live in the separately managed
+`benchmarks/nanochat` project and are excluded from the core install.
 
 Applications that already own a model-backed reader or stricter verifier can
 inject callables in process instead of exposing a network plugin system. The

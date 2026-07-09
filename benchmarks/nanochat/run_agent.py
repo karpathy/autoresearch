@@ -7,12 +7,16 @@ import argparse
 import datetime
 import re
 import subprocess
+from pathlib import Path
 import requests
 
 from researchfs.db import initialize_db
 from researchfs import retrieve as rfs
-from researchfs.ingest import ensure_seed
 from evals.nanochat_bpb.metrics import estimate_cost, load_run
+from seed import ensure_seed
+
+
+BENCHMARK_ROOT = Path(__file__).resolve().parent
 
 def extract_code_block(response_text):
     """Extract code from the single Python markdown block in an LLM response."""
@@ -240,9 +244,16 @@ def _snapshot_ignored_codex_files():
     return _snapshot_file_entries(paths)
 
 
+def _top_level_train_path() -> str:
+    """Return the train target relative to this checkout's git top level."""
+    if Path.cwd().resolve() == BENCHMARK_ROOT:
+        return "benchmarks/nanochat/train.py"
+    return "train.py"
+
+
 def _snapshot_tracked_non_train_diff(env):
     """Capture non-train changes plus scoped ignored reproducibility artifacts."""
-    pathspec = ["--", ":(top)", ":(exclude,top)train.py"]
+    pathspec = ["--", ":(top)", f":(exclude,top){_top_level_train_path()}"]
     return {
         "unstaged": _run_git_checked(
             ["diff", "--binary", *pathspec],

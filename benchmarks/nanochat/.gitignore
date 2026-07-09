@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[oc]
+researchfs.db
+results.tsv
+results/
+queue/
+.asep/
+run_*.log
+run_baseline.log
+CLAUDE.md
+AGENTS.md

@@ -1,0 +1,1761 @@
+{
+  "kind": "researchfs.corpus_memory_bundle",
+  "metadata": {
+    "compression": "paper_memory_bundles",
+    "max_chars": null,
+    "omitted": [
+      "papers.content",
+      "chunks.content"
+    ],
+    "paper_count": 11
+  },
+  "papers": [
+    {
+      "context": "# Paper Memory: GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints\nPaper ID: 1\nAuthors: Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebr\u00f3n, Sumit Sanghai\nPublished: 2023-05-22\nURL: https://arxiv.org/abs/2305.13245\nAbstract: Multi-query attention (MQA) speeds up decoder inference but quality degrades. Grouped-query attention (GQA) divides query heads into groups that share key/value heads, interpolating between MHA and MQA to balance quality and speed.\nExtraction: status=extracted; source=arxiv; chunks=2; methods=1; source_chars=520; compressed_chars=425; compression_ratio=0.817; confidence=0.87; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.817; compression=sane; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Grouped-Query Attention (GQA) (method_id=1, category=attention)\nEvidence:\n- chunk_id=1, section=Architecture, chars=0-285, strategy=matched_term:grouped: Grouped-Query Attention (GQA) sets n_kv_head to a value strictly between 1 and n_head, with n_head divisible by n_kv_head. The fallback scaled_dot_product_attention and FlashAttention implementations support GQA natively, and the rotary-embedding broadcasting does not require changes.\n- chunk_id=2, section=Configuration, chars=0-233, strategy=matched_term:query: To configure GQA, change GPTConfig.n_kv_head to a divisor of n_head, e.g. n_head=6, n_kv_head=2. This yields 3 query heads per key/value head, reducing KV-cache and parameter footprint while preserving most representational capacity.\nDescription: Reduce KV heads to a divisor of n_head to lower parameter count and sequence processing overhead while retaining model quality.\nImplementation hint: Set GPTConfig.n_kv_head to a divisor of n_head (e.g. n_head=6, n_kv_head=2). No attention code changes are required because scaled_dot_product_attention supports GQA.\nRisks: Too few KV heads may degrade long-context modeling; n_head must remain divisible by n_kv_head.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+      "extraction_status": {
+        "chunk_count": 2,
+        "compressed_char_count": 425,
+        "compression_ratio": 0.8173076923076923,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.817; compression=sane",
+        "confidence_score": 0.867,
+        "created_at": "2026-07-09 18:25:17",
+        "error_text": null,
+        "extractor_model": null,
+        "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+        "method_count": 1,
+        "paper_id": 1,
+        "source_char_count": 520,
+        "source_type": "arxiv",
+        "status": "extracted",
+        "updated_at": "2026-07-09 18:25:17"
+      },
+      "kind": "researchfs.paper_memory_bundle",
+      "lessons": [],
+      "memory": {
+        "chunk_ids": [
+          1,
+          2
+        ],
+        "code_repositories": [],
+        "compressed_char_count": 425,
+        "compression_ratio": 0.8173076923076923,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.817; compression=sane",
+        "confidence_score": 0.867,
+        "context": "# Paper Memory: GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints\nPaper ID: 1\nAuthors: Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebr\u00f3n, Sumit Sanghai\nPublished: 2023-05-22\nURL: https://arxiv.org/abs/2305.13245\nAbstract: Multi-query attention (MQA) speeds up decoder inference but quality degrades. Grouped-query attention (GQA) divides query heads into groups that share key/value heads, interpolating between MHA and MQA to balance quality and speed.\nExtraction: status=extracted; source=arxiv; chunks=2; methods=1; source_chars=520; compressed_chars=425; compression_ratio=0.817; confidence=0.87; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.817; compression=sane; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Grouped-Query Attention (GQA) (method_id=1, category=attention)\nEvidence:\n- chunk_id=1, section=Architecture, chars=0-285, strategy=matched_term:grouped: Grouped-Query Attention (GQA) sets n_kv_head to a value strictly between 1 and n_head, with n_head divisible by n_kv_head. The fallback scaled_dot_product_attention and FlashAttention implementations support GQA natively, and the rotary-embedding broadcasting does not require changes.\n- chunk_id=2, section=Configuration, chars=0-233, strategy=matched_term:query: To configure GQA, change GPTConfig.n_kv_head to a divisor of n_head, e.g. n_head=6, n_kv_head=2. This yields 3 query heads per key/value head, reducing KV-cache and parameter footprint while preserving most representational capacity.\nDescription: Reduce KV heads to a divisor of n_head to lower parameter count and sequence processing overhead while retaining model quality.\nImplementation hint: Set GPTConfig.n_kv_head to a divisor of n_head (e.g. n_head=6, n_kv_head=2). No attention code changes are required because scaled_dot_product_attention supports GQA.\nRisks: Too few KV heads may degrade long-context modeling; n_head must remain divisible by n_kv_head.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+        "experiment_ids": [],
+        "extraction": {
+          "chunk_count": 2,
+          "compressed_char_count": 425,
+          "compression_ratio": 0.8173076923076923,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.817; compression=sane",
+          "confidence_score": 0.867,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 1,
+          "source_char_count": 520,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "extraction_status": {
+          "chunk_count": 2,
+          "compressed_char_count": 425,
+          "compression_ratio": 0.8173076923076923,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.817; compression=sane",
+          "confidence_score": 0.867,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 1,
+          "source_char_count": 520,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "lesson_ids": [],
+        "max_chars": null,
+        "method_ids": [
+          1
+        ],
+        "paper_id": 1,
+        "provenance_sources": [
+          {
+            "chunk_id": 1,
+            "evidence_end": 285,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:grouped",
+            "evidence_text": "Grouped-Query Attention (GQA) sets n_kv_head to a value strictly between 1 and n_head, with n_head divisible by n_kv_head. The fallback scaled_dot_product_attention and FlashAttention implementations support GQA natively, and the rotary-embedding broadcasting does not require changes.",
+            "method_id": 1,
+            "section": "Architecture"
+          },
+          {
+            "chunk_id": 2,
+            "evidence_end": 233,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:query",
+            "evidence_text": "To configure GQA, change GPTConfig.n_kv_head to a divisor of n_head, e.g. n_head=6, n_kv_head=2. This yields 3 query heads per key/value head, reducing KV-cache and parameter footprint while preserving most representational capacity.",
+            "method_id": 1,
+            "section": "Configuration"
+          }
+        ],
+        "selected_code_repositories": [],
+        "source_char_count": 520
+      },
+      "metadata": {
+        "compression": "evidence_snippets_only",
+        "max_chars": null,
+        "omitted": [
+          "papers.content",
+          "chunks.content"
+        ]
+      },
+      "methods": [
+        {
+          "category": "attention",
+          "created_at": "2026-07-09 18:25:17",
+          "description": "Reduce KV heads to a divisor of n_head to lower parameter count and sequence processing overhead while retaining model quality.",
+          "feedback_summary": {
+            "feedback_avg_rating": 0.0,
+            "feedback_count": 0,
+            "last_feedback_at": null,
+            "method_id": 1,
+            "negative_feedback_count": 0,
+            "neutral_feedback_count": 0,
+            "positive_feedback_count": 0
+          },
+          "implementation_hint": "Set GPTConfig.n_kv_head to a divisor of n_head (e.g. n_head=6, n_kv_head=2). No attention code changes are required because scaled_dot_product_attention supports GQA.",
+          "name": "Grouped-Query Attention (GQA)",
+          "risks": "Too few KV heads may degrade long-context modeling; n_head must remain divisible by n_kv_head.",
+          "source_method_id": 1,
+          "sources": [
+            {
+              "evidence_end": 285,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:grouped",
+              "evidence_text": "Grouped-Query Attention (GQA) sets n_kv_head to a value strictly between 1 and n_head, with n_head divisible by n_kv_head. The fallback scaled_dot_product_attention and FlashAttention implementations support GQA natively, and the rotary-embedding broadcasting does not require changes.",
+              "section": "Architecture",
+              "source_chunk_id": 1,
+              "source_method_id": 1
+            },
+            {
+              "evidence_end": 233,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:query",
+              "evidence_text": "To configure GQA, change GPTConfig.n_kv_head to a divisor of n_head, e.g. n_head=6, n_kv_head=2. This yields 3 query heads per key/value head, reducing KV-cache and parameter footprint while preserving most representational capacity.",
+              "section": "Configuration",
+              "source_chunk_id": 2,
+              "source_method_id": 1
+            }
+          ]
+        }
+      ],
+      "paper": {
+        "abstract": "Multi-query attention (MQA) speeds up decoder inference but quality degrades. Grouped-query attention (GQA) divides query heads into groups that share key/value heads, interpolating between MHA and MQA to balance quality and speed.",
+        "authors": "Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebr\u00f3n, Sumit Sanghai",
+        "created_at": "2026-07-09 18:25:17",
+        "publish_date": "2023-05-22",
+        "source_paper_id": 1,
+        "title": "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints",
+        "url": "https://arxiv.org/abs/2305.13245"
+      },
+      "source_ids": {
+        "chunk_ids": [
+          1,
+          2
+        ],
+        "lesson_ids": [],
+        "method_ids": [
+          1
+        ],
+        "paper_id": 1
+      },
+      "version": 1
+    },
+    {
+      "context": "# Paper Memory: GLU Variants Improve Transformer\nPaper ID: 2\nAuthors: Noam Shazeer\nPublished: 2020-02-12\nURL: https://arxiv.org/abs/2002.05202\nAbstract: Replaces the Transformer feed-forward ReLU activation with gated linear units (GLUs) such as ReGLU, GEGLU, SwiGLU, and approximates parameter count by scaling the hidden dimension. SwiGLU is shown to improve language modeling quality.\nExtraction: status=extracted; source=arxiv; chunks=2; methods=1; source_chars=474; compressed_chars=386; compression_ratio=0.814; confidence=0.87; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.814; compression=sane; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### SwiGLU MLP (method_id=2, category=mlp)\nEvidence:\n- chunk_id=3, section=Architecture, chars=0-203, strategy=matched_term:swiglu: SwiGLU computes (SiLU(x W_gate) * (x W_val)) W_proj. The gate and value projections are frequently fused into a single linear layer outputting 2 * hidden_dim channels and chunked inside the forward pass.\n- chunk_id=4, section=Parameter matching, chars=0-269, strategy=matched_term:swiglu: To keep parameter count comparable to the baseline ReLU^2 block with intermediate dimension 4 * d_model, a SwiGLU block should use d_ff = int(8/3 * d_model) and round to a multiple of 64. The fused gate+value projection is then nn.Linear(d_model, 2 * d_ff, bias=False).\nDescription: Replace ReLU^2 with a gated SiLU activation to improve representational capacity in the feed-forward block.\nImplementation hint: Implement MLP with hidden_dim = int(8/3 * n_embd) rounded to 64, a single c_fc layer of size 2*hidden_dim, chunk into gate/value, apply F.silu(gate) * value, then c_proj.\nRisks: Memory and FLOP increase if hidden_dim is not parameter-matched; c_proj must initialize to zero.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+      "extraction_status": {
+        "chunk_count": 2,
+        "compressed_char_count": 386,
+        "compression_ratio": 0.8143459915611815,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.814; compression=sane",
+        "confidence_score": 0.867,
+        "created_at": "2026-07-09 18:25:17",
+        "error_text": null,
+        "extractor_model": null,
+        "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+        "method_count": 1,
+        "paper_id": 2,
+        "source_char_count": 474,
+        "source_type": "arxiv",
+        "status": "extracted",
+        "updated_at": "2026-07-09 18:25:17"
+      },
+      "kind": "researchfs.paper_memory_bundle",
+      "lessons": [],
+      "memory": {
+        "chunk_ids": [
+          3,
+          4
+        ],
+        "code_repositories": [],
+        "compressed_char_count": 386,
+        "compression_ratio": 0.8143459915611815,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.814; compression=sane",
+        "confidence_score": 0.867,
+        "context": "# Paper Memory: GLU Variants Improve Transformer\nPaper ID: 2\nAuthors: Noam Shazeer\nPublished: 2020-02-12\nURL: https://arxiv.org/abs/2002.05202\nAbstract: Replaces the Transformer feed-forward ReLU activation with gated linear units (GLUs) such as ReGLU, GEGLU, SwiGLU, and approximates parameter count by scaling the hidden dimension. SwiGLU is shown to improve language modeling quality.\nExtraction: status=extracted; source=arxiv; chunks=2; methods=1; source_chars=474; compressed_chars=386; compression_ratio=0.814; confidence=0.87; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.814; compression=sane; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### SwiGLU MLP (method_id=2, category=mlp)\nEvidence:\n- chunk_id=3, section=Architecture, chars=0-203, strategy=matched_term:swiglu: SwiGLU computes (SiLU(x W_gate) * (x W_val)) W_proj. The gate and value projections are frequently fused into a single linear layer outputting 2 * hidden_dim channels and chunked inside the forward pass.\n- chunk_id=4, section=Parameter matching, chars=0-269, strategy=matched_term:swiglu: To keep parameter count comparable to the baseline ReLU^2 block with intermediate dimension 4 * d_model, a SwiGLU block should use d_ff = int(8/3 * d_model) and round to a multiple of 64. The fused gate+value projection is then nn.Linear(d_model, 2 * d_ff, bias=False).\nDescription: Replace ReLU^2 with a gated SiLU activation to improve representational capacity in the feed-forward block.\nImplementation hint: Implement MLP with hidden_dim = int(8/3 * n_embd) rounded to 64, a single c_fc layer of size 2*hidden_dim, chunk into gate/value, apply F.silu(gate) * value, then c_proj.\nRisks: Memory and FLOP increase if hidden_dim is not parameter-matched; c_proj must initialize to zero.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+        "experiment_ids": [],
+        "extraction": {
+          "chunk_count": 2,
+          "compressed_char_count": 386,
+          "compression_ratio": 0.8143459915611815,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.814; compression=sane",
+          "confidence_score": 0.867,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 2,
+          "source_char_count": 474,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "extraction_status": {
+          "chunk_count": 2,
+          "compressed_char_count": 386,
+          "compression_ratio": 0.8143459915611815,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.814; compression=sane",
+          "confidence_score": 0.867,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 2,
+          "source_char_count": 474,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "lesson_ids": [],
+        "max_chars": null,
+        "method_ids": [
+          2
+        ],
+        "paper_id": 2,
+        "provenance_sources": [
+          {
+            "chunk_id": 3,
+            "evidence_end": 203,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:swiglu",
+            "evidence_text": "SwiGLU computes (SiLU(x W_gate) * (x W_val)) W_proj. The gate and value projections are frequently fused into a single linear layer outputting 2 * hidden_dim channels and chunked inside the forward pass.",
+            "method_id": 2,
+            "section": "Architecture"
+          },
+          {
+            "chunk_id": 4,
+            "evidence_end": 269,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:swiglu",
+            "evidence_text": "To keep parameter count comparable to the baseline ReLU^2 block with intermediate dimension 4 * d_model, a SwiGLU block should use d_ff = int(8/3 * d_model) and round to a multiple of 64. The fused gate+value projection is then nn.Linear(d_model, 2 * d_ff, bias=False).",
+            "method_id": 2,
+            "section": "Parameter matching"
+          }
+        ],
+        "selected_code_repositories": [],
+        "source_char_count": 474
+      },
+      "metadata": {
+        "compression": "evidence_snippets_only",
+        "max_chars": null,
+        "omitted": [
+          "papers.content",
+          "chunks.content"
+        ]
+      },
+      "methods": [
+        {
+          "category": "mlp",
+          "created_at": "2026-07-09 18:25:17",
+          "description": "Replace ReLU^2 with a gated SiLU activation to improve representational capacity in the feed-forward block.",
+          "feedback_summary": {
+            "feedback_avg_rating": 0.0,
+            "feedback_count": 0,
+            "last_feedback_at": null,
+            "method_id": 2,
+            "negative_feedback_count": 0,
+            "neutral_feedback_count": 0,
+            "positive_feedback_count": 0
+          },
+          "implementation_hint": "Implement MLP with hidden_dim = int(8/3 * n_embd) rounded to 64, a single c_fc layer of size 2*hidden_dim, chunk into gate/value, apply F.silu(gate) * value, then c_proj.",
+          "name": "SwiGLU MLP",
+          "risks": "Memory and FLOP increase if hidden_dim is not parameter-matched; c_proj must initialize to zero.",
+          "source_method_id": 2,
+          "sources": [
+            {
+              "evidence_end": 203,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:swiglu",
+              "evidence_text": "SwiGLU computes (SiLU(x W_gate) * (x W_val)) W_proj. The gate and value projections are frequently fused into a single linear layer outputting 2 * hidden_dim channels and chunked inside the forward pass.",
+              "section": "Architecture",
+              "source_chunk_id": 3,
+              "source_method_id": 2
+            },
+            {
+              "evidence_end": 269,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:swiglu",
+              "evidence_text": "To keep parameter count comparable to the baseline ReLU^2 block with intermediate dimension 4 * d_model, a SwiGLU block should use d_ff = int(8/3 * d_model) and round to a multiple of 64. The fused gate+value projection is then nn.Linear(d_model, 2 * d_ff, bias=False).",
+              "section": "Parameter matching",
+              "source_chunk_id": 4,
+              "source_method_id": 2
+            }
+          ]
+        }
+      ],
+      "paper": {
+        "abstract": "Replaces the Transformer feed-forward ReLU activation with gated linear units (GLUs) such as ReGLU, GEGLU, SwiGLU, and approximates parameter count by scaling the hidden dimension. SwiGLU is shown to improve language modeling quality.",
+        "authors": "Noam Shazeer",
+        "created_at": "2026-07-09 18:25:17",
+        "publish_date": "2020-02-12",
+        "source_paper_id": 2,
+        "title": "GLU Variants Improve Transformer",
+        "url": "https://arxiv.org/abs/2002.05202"
+      },
+      "source_ids": {
+        "chunk_ids": [
+          3,
+          4
+        ],
+        "lesson_ids": [],
+        "method_ids": [
+          2
+        ],
+        "paper_id": 2
+      },
+      "version": 1
+    },
+    {
+      "context": "# Paper Memory: Muon: An Optimizer for Hidden Layers in Neural Networks\nPaper ID: 3\nAuthors: Keller Jordan, Jeremy Bernstein, Brendan Rappazzo, ...\nPublished: 2024\nURL: https://github.com/KellerJordan/Muon\nAbstract: Muon applies orthogonal updates to 2D matrix parameters via Newton-Schulz iterations, combined with AdamW for non-matrix parameters. It is especially effective for small-scale transformer training.\nExtraction: status=extracted; source=github; chunks=2; methods=1; source_chars=403; compressed_chars=271; compression_ratio=0.672; confidence=0.87; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.672; compression=sane; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Muon LR Tuning (method_id=3, category=optimizer)\nEvidence:\n- chunk_id=5, section=Optimizers, chars=0-182, strategy=matched_term:muon: MuonAdamW applies Muon orthogonal updates to 2D matrix parameters and AdamW to all other parameters (embeddings, LM head, scalars). The Newton-Schulz iteration default is ns_steps=5.\n- chunk_id=6, section=Hyperparameters, chars=0-219, strategy=matched_term:matrix: MATRIX_LR controls the learning rate for 2D matrix parameters. The default of 0.04 is a reasonable starting point, but optimal values often fall between 0.02 and 0.08 for small transformers and scale with sqrt(d_model).\nDescription: Tune MATRIX_LR for 2D matrix parameters to accelerate convergence of the Muon optimizer.\nImplementation hint: Adjust the MATRIX_LR constant in train.py between 0.02 and 0.08, keeping other LRs fixed.\nRisks: Values too high cause instability/NaN; values too low slow convergence.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+      "extraction_status": {
+        "chunk_count": 2,
+        "compressed_char_count": 271,
+        "compression_ratio": 0.6724565756823822,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.672; compression=sane",
+        "confidence_score": 0.867,
+        "created_at": "2026-07-09 18:25:17",
+        "error_text": null,
+        "extractor_model": null,
+        "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+        "method_count": 1,
+        "paper_id": 3,
+        "source_char_count": 403,
+        "source_type": "github",
+        "status": "extracted",
+        "updated_at": "2026-07-09 18:25:17"
+      },
+      "kind": "researchfs.paper_memory_bundle",
+      "lessons": [],
+      "memory": {
+        "chunk_ids": [
+          5,
+          6
+        ],
+        "code_repositories": [],
+        "compressed_char_count": 271,
+        "compression_ratio": 0.6724565756823822,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.672; compression=sane",
+        "confidence_score": 0.867,
+        "context": "# Paper Memory: Muon: An Optimizer for Hidden Layers in Neural Networks\nPaper ID: 3\nAuthors: Keller Jordan, Jeremy Bernstein, Brendan Rappazzo, ...\nPublished: 2024\nURL: https://github.com/KellerJordan/Muon\nAbstract: Muon applies orthogonal updates to 2D matrix parameters via Newton-Schulz iterations, combined with AdamW for non-matrix parameters. It is especially effective for small-scale transformer training.\nExtraction: status=extracted; source=github; chunks=2; methods=1; source_chars=403; compressed_chars=271; compression_ratio=0.672; confidence=0.87; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.672; compression=sane; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Muon LR Tuning (method_id=3, category=optimizer)\nEvidence:\n- chunk_id=5, section=Optimizers, chars=0-182, strategy=matched_term:muon: MuonAdamW applies Muon orthogonal updates to 2D matrix parameters and AdamW to all other parameters (embeddings, LM head, scalars). The Newton-Schulz iteration default is ns_steps=5.\n- chunk_id=6, section=Hyperparameters, chars=0-219, strategy=matched_term:matrix: MATRIX_LR controls the learning rate for 2D matrix parameters. The default of 0.04 is a reasonable starting point, but optimal values often fall between 0.02 and 0.08 for small transformers and scale with sqrt(d_model).\nDescription: Tune MATRIX_LR for 2D matrix parameters to accelerate convergence of the Muon optimizer.\nImplementation hint: Adjust the MATRIX_LR constant in train.py between 0.02 and 0.08, keeping other LRs fixed.\nRisks: Values too high cause instability/NaN; values too low slow convergence.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+        "experiment_ids": [],
+        "extraction": {
+          "chunk_count": 2,
+          "compressed_char_count": 271,
+          "compression_ratio": 0.6724565756823822,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.672; compression=sane",
+          "confidence_score": 0.867,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 3,
+          "source_char_count": 403,
+          "source_type": "github",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "extraction_status": {
+          "chunk_count": 2,
+          "compressed_char_count": 271,
+          "compression_ratio": 0.6724565756823822,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.672; compression=sane",
+          "confidence_score": 0.867,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 3,
+          "source_char_count": 403,
+          "source_type": "github",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "lesson_ids": [],
+        "max_chars": null,
+        "method_ids": [
+          3
+        ],
+        "paper_id": 3,
+        "provenance_sources": [
+          {
+            "chunk_id": 5,
+            "evidence_end": 182,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:muon",
+            "evidence_text": "MuonAdamW applies Muon orthogonal updates to 2D matrix parameters and AdamW to all other parameters (embeddings, LM head, scalars). The Newton-Schulz iteration default is ns_steps=5.",
+            "method_id": 3,
+            "section": "Optimizers"
+          },
+          {
+            "chunk_id": 6,
+            "evidence_end": 219,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:matrix",
+            "evidence_text": "MATRIX_LR controls the learning rate for 2D matrix parameters. The default of 0.04 is a reasonable starting point, but optimal values often fall between 0.02 and 0.08 for small transformers and scale with sqrt(d_model).",
+            "method_id": 3,
+            "section": "Hyperparameters"
+          }
+        ],
+        "selected_code_repositories": [],
+        "source_char_count": 403
+      },
+      "metadata": {
+        "compression": "evidence_snippets_only",
+        "max_chars": null,
+        "omitted": [
+          "papers.content",
+          "chunks.content"
+        ]
+      },
+      "methods": [
+        {
+          "category": "optimizer",
+          "created_at": "2026-07-09 18:25:17",
+          "description": "Tune MATRIX_LR for 2D matrix parameters to accelerate convergence of the Muon optimizer.",
+          "feedback_summary": {
+            "feedback_avg_rating": 0.0,
+            "feedback_count": 0,
+            "last_feedback_at": null,
+            "method_id": 3,
+            "negative_feedback_count": 0,
+            "neutral_feedback_count": 0,
+            "positive_feedback_count": 0
+          },
+          "implementation_hint": "Adjust the MATRIX_LR constant in train.py between 0.02 and 0.08, keeping other LRs fixed.",
+          "name": "Muon LR Tuning",
+          "risks": "Values too high cause instability/NaN; values too low slow convergence.",
+          "source_method_id": 3,
+          "sources": [
+            {
+              "evidence_end": 182,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:muon",
+              "evidence_text": "MuonAdamW applies Muon orthogonal updates to 2D matrix parameters and AdamW to all other parameters (embeddings, LM head, scalars). The Newton-Schulz iteration default is ns_steps=5.",
+              "section": "Optimizers",
+              "source_chunk_id": 5,
+              "source_method_id": 3
+            },
+            {
+              "evidence_end": 219,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:matrix",
+              "evidence_text": "MATRIX_LR controls the learning rate for 2D matrix parameters. The default of 0.04 is a reasonable starting point, but optimal values often fall between 0.02 and 0.08 for small transformers and scale with sqrt(d_model).",
+              "section": "Hyperparameters",
+              "source_chunk_id": 6,
+              "source_method_id": 3
+            }
+          ]
+        }
+      ],
+      "paper": {
+        "abstract": "Muon applies orthogonal updates to 2D matrix parameters via Newton-Schulz iterations, combined with AdamW for non-matrix parameters. It is especially effective for small-scale transformer training.",
+        "authors": "Keller Jordan, Jeremy Bernstein, Brendan Rappazzo, ...",
+        "created_at": "2026-07-09 18:25:17",
+        "publish_date": "2024",
+        "source_paper_id": 3,
+        "title": "Muon: An Optimizer for Hidden Layers in Neural Networks",
+        "url": "https://github.com/KellerJordan/Muon"
+      },
+      "source_ids": {
+        "chunk_ids": [
+          5,
+          6
+        ],
+        "lesson_ids": [],
+        "method_ids": [
+          3
+        ],
+        "paper_id": 3
+      },
+      "version": 1
+    },
+    {
+      "context": "# Paper Memory: Longformer: The Long-Document Transformer\nPaper ID: 4\nAuthors: Iz Beltagy, Matthew E. Peters, Arman Cohan\nPublished: 2020-04-10\nURL: https://arxiv.org/abs/2004.05150\nAbstract: Introduces attention patterns that combine local sliding-window attention with global attention on pre-selected tokens, reducing the quadratic cost of self-attention and enabling longer contexts.\nExtraction: status=extracted; source=arxiv; chunks=2; methods=1; source_chars=461; compressed_chars=414; compression_ratio=0.898; confidence=0.87; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.898; compression=sane; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Sliding Window Attention Patterns (method_id=4, category=attention)\nEvidence:\n- chunk_id=7, section=Sliding window, chars=0-254, strategy=matched_term:sliding: Sliding-window attention restricts each token to attend only to nearby tokens within a fixed window size. In small-transformer training, alternating short-window (S) and full-context (L) layers trades context modeling for speed under a fixed time budget.\n- chunk_id=8, section=Patterns, chars=0-205, strategy=matched_term:window: Common window patterns are strings of S (short, half sequence length) and L (long, full sequence length), e.g. 'SSSL' or 'SLSL'. The last layer is typically kept as L to preserve final-context aggregation.\nDescription: Alternate short-context (S) and full-context (L) layers to reduce per-step cost and fit more training steps into the fixed time budget.\nImplementation hint: Change WINDOW_PATTERN in train.py to strings like 'SSSL', 'SLSL', or 'SSSS'. The last layer is always treated as full-context internally.\nRisks: Too many short layers hurts long-range dependency modeling; throughput gains are hardware-dependent.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+      "extraction_status": {
+        "chunk_count": 2,
+        "compressed_char_count": 414,
+        "compression_ratio": 0.8980477223427332,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.898; compression=sane",
+        "confidence_score": 0.867,
+        "created_at": "2026-07-09 18:25:17",
+        "error_text": null,
+        "extractor_model": null,
+        "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+        "method_count": 1,
+        "paper_id": 4,
+        "source_char_count": 461,
+        "source_type": "arxiv",
+        "status": "extracted",
+        "updated_at": "2026-07-09 18:25:17"
+      },
+      "kind": "researchfs.paper_memory_bundle",
+      "lessons": [],
+      "memory": {
+        "chunk_ids": [
+          7,
+          8
+        ],
+        "code_repositories": [],
+        "compressed_char_count": 414,
+        "compression_ratio": 0.8980477223427332,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.898; compression=sane",
+        "confidence_score": 0.867,
+        "context": "# Paper Memory: Longformer: The Long-Document Transformer\nPaper ID: 4\nAuthors: Iz Beltagy, Matthew E. Peters, Arman Cohan\nPublished: 2020-04-10\nURL: https://arxiv.org/abs/2004.05150\nAbstract: Introduces attention patterns that combine local sliding-window attention with global attention on pre-selected tokens, reducing the quadratic cost of self-attention and enabling longer contexts.\nExtraction: status=extracted; source=arxiv; chunks=2; methods=1; source_chars=461; compressed_chars=414; compression_ratio=0.898; confidence=0.87; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.898; compression=sane; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Sliding Window Attention Patterns (method_id=4, category=attention)\nEvidence:\n- chunk_id=7, section=Sliding window, chars=0-254, strategy=matched_term:sliding: Sliding-window attention restricts each token to attend only to nearby tokens within a fixed window size. In small-transformer training, alternating short-window (S) and full-context (L) layers trades context modeling for speed under a fixed time budget.\n- chunk_id=8, section=Patterns, chars=0-205, strategy=matched_term:window: Common window patterns are strings of S (short, half sequence length) and L (long, full sequence length), e.g. 'SSSL' or 'SLSL'. The last layer is typically kept as L to preserve final-context aggregation.\nDescription: Alternate short-context (S) and full-context (L) layers to reduce per-step cost and fit more training steps into the fixed time budget.\nImplementation hint: Change WINDOW_PATTERN in train.py to strings like 'SSSL', 'SLSL', or 'SSSS'. The last layer is always treated as full-context internally.\nRisks: Too many short layers hurts long-range dependency modeling; throughput gains are hardware-dependent.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+        "experiment_ids": [],
+        "extraction": {
+          "chunk_count": 2,
+          "compressed_char_count": 414,
+          "compression_ratio": 0.8980477223427332,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.898; compression=sane",
+          "confidence_score": 0.867,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 4,
+          "source_char_count": 461,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "extraction_status": {
+          "chunk_count": 2,
+          "compressed_char_count": 414,
+          "compression_ratio": 0.8980477223427332,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.898; compression=sane",
+          "confidence_score": 0.867,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 4,
+          "source_char_count": 461,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "lesson_ids": [],
+        "max_chars": null,
+        "method_ids": [
+          4
+        ],
+        "paper_id": 4,
+        "provenance_sources": [
+          {
+            "chunk_id": 7,
+            "evidence_end": 254,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:sliding",
+            "evidence_text": "Sliding-window attention restricts each token to attend only to nearby tokens within a fixed window size. In small-transformer training, alternating short-window (S) and full-context (L) layers trades context modeling for speed under a fixed time budget.",
+            "method_id": 4,
+            "section": "Sliding window"
+          },
+          {
+            "chunk_id": 8,
+            "evidence_end": 205,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:window",
+            "evidence_text": "Common window patterns are strings of S (short, half sequence length) and L (long, full sequence length), e.g. 'SSSL' or 'SLSL'. The last layer is typically kept as L to preserve final-context aggregation.",
+            "method_id": 4,
+            "section": "Patterns"
+          }
+        ],
+        "selected_code_repositories": [],
+        "source_char_count": 461
+      },
+      "metadata": {
+        "compression": "evidence_snippets_only",
+        "max_chars": null,
+        "omitted": [
+          "papers.content",
+          "chunks.content"
+        ]
+      },
+      "methods": [
+        {
+          "category": "attention",
+          "created_at": "2026-07-09 18:25:17",
+          "description": "Alternate short-context (S) and full-context (L) layers to reduce per-step cost and fit more training steps into the fixed time budget.",
+          "feedback_summary": {
+            "feedback_avg_rating": 0.0,
+            "feedback_count": 0,
+            "last_feedback_at": null,
+            "method_id": 4,
+            "negative_feedback_count": 0,
+            "neutral_feedback_count": 0,
+            "positive_feedback_count": 0
+          },
+          "implementation_hint": "Change WINDOW_PATTERN in train.py to strings like 'SSSL', 'SLSL', or 'SSSS'. The last layer is always treated as full-context internally.",
+          "name": "Sliding Window Attention Patterns",
+          "risks": "Too many short layers hurts long-range dependency modeling; throughput gains are hardware-dependent.",
+          "source_method_id": 4,
+          "sources": [
+            {
+              "evidence_end": 254,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:sliding",
+              "evidence_text": "Sliding-window attention restricts each token to attend only to nearby tokens within a fixed window size. In small-transformer training, alternating short-window (S) and full-context (L) layers trades context modeling for speed under a fixed time budget.",
+              "section": "Sliding window",
+              "source_chunk_id": 7,
+              "source_method_id": 4
+            },
+            {
+              "evidence_end": 205,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:window",
+              "evidence_text": "Common window patterns are strings of S (short, half sequence length) and L (long, full sequence length), e.g. 'SSSL' or 'SLSL'. The last layer is typically kept as L to preserve final-context aggregation.",
+              "section": "Patterns",
+              "source_chunk_id": 8,
+              "source_method_id": 4
+            }
+          ]
+        }
+      ],
+      "paper": {
+        "abstract": "Introduces attention patterns that combine local sliding-window attention with global attention on pre-selected tokens, reducing the quadratic cost of self-attention and enabling longer contexts.",
+        "authors": "Iz Beltagy, Matthew E. Peters, Arman Cohan",
+        "created_at": "2026-07-09 18:25:17",
+        "publish_date": "2020-04-10",
+        "source_paper_id": 4,
+        "title": "Longformer: The Long-Document Transformer",
+        "url": "https://arxiv.org/abs/2004.05150"
+      },
+      "source_ids": {
+        "chunk_ids": [
+          7,
+          8
+        ],
+        "lesson_ids": [],
+        "method_ids": [
+          4
+        ],
+        "paper_id": 4
+      },
+      "version": 1
+    },
+    {
+      "context": "# Paper Memory: Layer Normalization\nPaper ID: 5\nAuthors: Jimmy Lei Ba, Jamie Ryan Kiros, Geoffrey E. Hinton\nPublished: 2016-07-21\nURL: https://arxiv.org/abs/1607.06450\nAbstract: LayerNorm normalizes across the feature dimension. RMSNorm is a reparameterized variant that removes the mean-centering step and often trains with comparable stability at lower cost.\nExtraction: status=extracted; source=arxiv; chunks=2; methods=1; source_chars=363; compressed_chars=368; compression_ratio=1.014; confidence=0.82; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=1.014; compression=large; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### LayerNorm / RMSNorm Swap (method_id=5, category=normalization)\nEvidence:\n- chunk_id=9, section=Forms, chars=0-174, strategy=matched_term:layernorm: Functional RMSNorm can be swapped for functional LayerNorm with no extra parameters. RMSNorm uses F.rms_norm(x, (x.size(-1),)); LayerNorm uses F.layer_norm(x, (x.size(-1),)).\n- chunk_id=10, section=Learnable scale, chars=0-187, strategy=matched_term:rmsnorm: A learnable RMSNorm registers a weight parameter and multiplies after normalization. When used, it must be added as a module so MuonAdamW groups it correctly as a scalar/vector parameter.\nDescription: Replace functional RMSNorm with functional LayerNorm or add learnable scale parameters to change normalization behavior.\nImplementation hint: Swap F.rms_norm for F.layer_norm in the norm() function, or implement a LearnableRMSNorm module and use it in Block.\nRisks: Learnable norms must be registered as modules for correct parameter grouping and checkpointing.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+      "extraction_status": {
+        "chunk_count": 2,
+        "compressed_char_count": 368,
+        "compression_ratio": 1.0137741046831956,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=1.014; compression=large",
+        "confidence_score": 0.817,
+        "created_at": "2026-07-09 18:25:17",
+        "error_text": null,
+        "extractor_model": null,
+        "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+        "method_count": 1,
+        "paper_id": 5,
+        "source_char_count": 363,
+        "source_type": "arxiv",
+        "status": "extracted",
+        "updated_at": "2026-07-09 18:25:17"
+      },
+      "kind": "researchfs.paper_memory_bundle",
+      "lessons": [],
+      "memory": {
+        "chunk_ids": [
+          9,
+          10
+        ],
+        "code_repositories": [],
+        "compressed_char_count": 368,
+        "compression_ratio": 1.0137741046831956,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=1.014; compression=large",
+        "confidence_score": 0.817,
+        "context": "# Paper Memory: Layer Normalization\nPaper ID: 5\nAuthors: Jimmy Lei Ba, Jamie Ryan Kiros, Geoffrey E. Hinton\nPublished: 2016-07-21\nURL: https://arxiv.org/abs/1607.06450\nAbstract: LayerNorm normalizes across the feature dimension. RMSNorm is a reparameterized variant that removes the mean-centering step and often trains with comparable stability at lower cost.\nExtraction: status=extracted; source=arxiv; chunks=2; methods=1; source_chars=363; compressed_chars=368; compression_ratio=1.014; confidence=0.82; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=1.014; compression=large; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### LayerNorm / RMSNorm Swap (method_id=5, category=normalization)\nEvidence:\n- chunk_id=9, section=Forms, chars=0-174, strategy=matched_term:layernorm: Functional RMSNorm can be swapped for functional LayerNorm with no extra parameters. RMSNorm uses F.rms_norm(x, (x.size(-1),)); LayerNorm uses F.layer_norm(x, (x.size(-1),)).\n- chunk_id=10, section=Learnable scale, chars=0-187, strategy=matched_term:rmsnorm: A learnable RMSNorm registers a weight parameter and multiplies after normalization. When used, it must be added as a module so MuonAdamW groups it correctly as a scalar/vector parameter.\nDescription: Replace functional RMSNorm with functional LayerNorm or add learnable scale parameters to change normalization behavior.\nImplementation hint: Swap F.rms_norm for F.layer_norm in the norm() function, or implement a LearnableRMSNorm module and use it in Block.\nRisks: Learnable norms must be registered as modules for correct parameter grouping and checkpointing.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+        "experiment_ids": [],
+        "extraction": {
+          "chunk_count": 2,
+          "compressed_char_count": 368,
+          "compression_ratio": 1.0137741046831956,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=1.014; compression=large",
+          "confidence_score": 0.817,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 5,
+          "source_char_count": 363,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "extraction_status": {
+          "chunk_count": 2,
+          "compressed_char_count": 368,
+          "compression_ratio": 1.0137741046831956,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=1.014; compression=large",
+          "confidence_score": 0.817,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 5,
+          "source_char_count": 363,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "lesson_ids": [],
+        "max_chars": null,
+        "method_ids": [
+          5
+        ],
+        "paper_id": 5,
+        "provenance_sources": [
+          {
+            "chunk_id": 9,
+            "evidence_end": 174,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:layernorm",
+            "evidence_text": "Functional RMSNorm can be swapped for functional LayerNorm with no extra parameters. RMSNorm uses F.rms_norm(x, (x.size(-1),)); LayerNorm uses F.layer_norm(x, (x.size(-1),)).",
+            "method_id": 5,
+            "section": "Forms"
+          },
+          {
+            "chunk_id": 10,
+            "evidence_end": 187,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:rmsnorm",
+            "evidence_text": "A learnable RMSNorm registers a weight parameter and multiplies after normalization. When used, it must be added as a module so MuonAdamW groups it correctly as a scalar/vector parameter.",
+            "method_id": 5,
+            "section": "Learnable scale"
+          }
+        ],
+        "selected_code_repositories": [],
+        "source_char_count": 363
+      },
+      "metadata": {
+        "compression": "evidence_snippets_only",
+        "max_chars": null,
+        "omitted": [
+          "papers.content",
+          "chunks.content"
+        ]
+      },
+      "methods": [
+        {
+          "category": "normalization",
+          "created_at": "2026-07-09 18:25:17",
+          "description": "Replace functional RMSNorm with functional LayerNorm or add learnable scale parameters to change normalization behavior.",
+          "feedback_summary": {
+            "feedback_avg_rating": 0.0,
+            "feedback_count": 0,
+            "last_feedback_at": null,
+            "method_id": 5,
+            "negative_feedback_count": 0,
+            "neutral_feedback_count": 0,
+            "positive_feedback_count": 0
+          },
+          "implementation_hint": "Swap F.rms_norm for F.layer_norm in the norm() function, or implement a LearnableRMSNorm module and use it in Block.",
+          "name": "LayerNorm / RMSNorm Swap",
+          "risks": "Learnable norms must be registered as modules for correct parameter grouping and checkpointing.",
+          "source_method_id": 5,
+          "sources": [
+            {
+              "evidence_end": 174,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:layernorm",
+              "evidence_text": "Functional RMSNorm can be swapped for functional LayerNorm with no extra parameters. RMSNorm uses F.rms_norm(x, (x.size(-1),)); LayerNorm uses F.layer_norm(x, (x.size(-1),)).",
+              "section": "Forms",
+              "source_chunk_id": 9,
+              "source_method_id": 5
+            },
+            {
+              "evidence_end": 187,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:rmsnorm",
+              "evidence_text": "A learnable RMSNorm registers a weight parameter and multiplies after normalization. When used, it must be added as a module so MuonAdamW groups it correctly as a scalar/vector parameter.",
+              "section": "Learnable scale",
+              "source_chunk_id": 10,
+              "source_method_id": 5
+            }
+          ]
+        }
+      ],
+      "paper": {
+        "abstract": "LayerNorm normalizes across the feature dimension. RMSNorm is a reparameterized variant that removes the mean-centering step and often trains with comparable stability at lower cost.",
+        "authors": "Jimmy Lei Ba, Jamie Ryan Kiros, Geoffrey E. Hinton",
+        "created_at": "2026-07-09 18:25:17",
+        "publish_date": "2016-07-21",
+        "source_paper_id": 5,
+        "title": "Layer Normalization",
+        "url": "https://arxiv.org/abs/1607.06450"
+      },
+      "source_ids": {
+        "chunk_ids": [
+          9,
+          10
+        ],
+        "lesson_ids": [],
+        "method_ids": [
+          5
+        ],
+        "paper_id": 5
+      },
+      "version": 1
+    },
+    {
+      "context": "# Paper Memory: Dropout: A Simple Way to Prevent Neural Networks from Overfitting\nPaper ID: 6\nAuthors: Nitish Srivastava, Geoffrey Hinton, Alex Krizhevsky, Ilya Sutskever, Ruslan Salakhutdinov\nPublished: 2014\nURL: https://jmlr.org/papers/v15/srivastava14a.html\nAbstract: Dropout randomly zeroes a subset of activations during training, acting as a strong regularizer that reduces co-adaptation and improves generalization.\nExtraction: status=extracted; chunks=1; methods=1; source_chars=171; compressed_chars=342; compression_ratio=2.000; confidence=0.82; confidence_reason=extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=2.000; compression=large; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Dropout Regularization (method_id=6, category=regularization)\nEvidence:\n- chunk_id=11, section=Residual dropout, chars=0-171, strategy=matched_term:dropout: Adding nn.Dropout after the attention and MLP residuals before the addition can reduce overfitting on small datasets or longer training runs. Typical rates are 0.0 to 0.1.\nDescription: Add dropout to attention and MLP residuals to reduce overfitting on small data or longer runs.\nImplementation hint: Add nn.Dropout(p) layers in Block and apply them to the attention and MLP outputs before the residual addition.\nRisks: Too much dropout slows convergence; too little has no effect. Rates above 0.1 are rarely useful here.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+      "extraction_status": {
+        "chunk_count": 1,
+        "compressed_char_count": 342,
+        "compression_ratio": 2.0,
+        "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=2.000; compression=large",
+        "confidence_score": 0.817,
+        "created_at": "2026-07-09 18:25:17",
+        "error_text": null,
+        "extractor_model": null,
+        "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+        "method_count": 1,
+        "paper_id": 6,
+        "source_char_count": 171,
+        "source_type": null,
+        "status": "extracted",
+        "updated_at": "2026-07-09 18:25:17"
+      },
+      "kind": "researchfs.paper_memory_bundle",
+      "lessons": [],
+      "memory": {
+        "chunk_ids": [
+          11
+        ],
+        "code_repositories": [],
+        "compressed_char_count": 342,
+        "compression_ratio": 2.0,
+        "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=2.000; compression=large",
+        "confidence_score": 0.817,
+        "context": "# Paper Memory: Dropout: A Simple Way to Prevent Neural Networks from Overfitting\nPaper ID: 6\nAuthors: Nitish Srivastava, Geoffrey Hinton, Alex Krizhevsky, Ilya Sutskever, Ruslan Salakhutdinov\nPublished: 2014\nURL: https://jmlr.org/papers/v15/srivastava14a.html\nAbstract: Dropout randomly zeroes a subset of activations during training, acting as a strong regularizer that reduces co-adaptation and improves generalization.\nExtraction: status=extracted; chunks=1; methods=1; source_chars=171; compressed_chars=342; compression_ratio=2.000; confidence=0.82; confidence_reason=extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=2.000; compression=large; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Dropout Regularization (method_id=6, category=regularization)\nEvidence:\n- chunk_id=11, section=Residual dropout, chars=0-171, strategy=matched_term:dropout: Adding nn.Dropout after the attention and MLP residuals before the addition can reduce overfitting on small datasets or longer training runs. Typical rates are 0.0 to 0.1.\nDescription: Add dropout to attention and MLP residuals to reduce overfitting on small data or longer runs.\nImplementation hint: Add nn.Dropout(p) layers in Block and apply them to the attention and MLP outputs before the residual addition.\nRisks: Too much dropout slows convergence; too little has no effect. Rates above 0.1 are rarely useful here.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+        "experiment_ids": [],
+        "extraction": {
+          "chunk_count": 1,
+          "compressed_char_count": 342,
+          "compression_ratio": 2.0,
+          "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=2.000; compression=large",
+          "confidence_score": 0.817,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 6,
+          "source_char_count": 171,
+          "source_type": null,
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "extraction_status": {
+          "chunk_count": 1,
+          "compressed_char_count": 342,
+          "compression_ratio": 2.0,
+          "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=2.000; compression=large",
+          "confidence_score": 0.817,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 6,
+          "source_char_count": 171,
+          "source_type": null,
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "lesson_ids": [],
+        "max_chars": null,
+        "method_ids": [
+          6
+        ],
+        "paper_id": 6,
+        "provenance_sources": [
+          {
+            "chunk_id": 11,
+            "evidence_end": 171,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:dropout",
+            "evidence_text": "Adding nn.Dropout after the attention and MLP residuals before the addition can reduce overfitting on small datasets or longer training runs. Typical rates are 0.0 to 0.1.",
+            "method_id": 6,
+            "section": "Residual dropout"
+          }
+        ],
+        "selected_code_repositories": [],
+        "source_char_count": 171
+      },
+      "metadata": {
+        "compression": "evidence_snippets_only",
+        "max_chars": null,
+        "omitted": [
+          "papers.content",
+          "chunks.content"
+        ]
+      },
+      "methods": [
+        {
+          "category": "regularization",
+          "created_at": "2026-07-09 18:25:17",
+          "description": "Add dropout to attention and MLP residuals to reduce overfitting on small data or longer runs.",
+          "feedback_summary": {
+            "feedback_avg_rating": 0.0,
+            "feedback_count": 0,
+            "last_feedback_at": null,
+            "method_id": 6,
+            "negative_feedback_count": 0,
+            "neutral_feedback_count": 0,
+            "positive_feedback_count": 0
+          },
+          "implementation_hint": "Add nn.Dropout(p) layers in Block and apply them to the attention and MLP outputs before the residual addition.",
+          "name": "Dropout Regularization",
+          "risks": "Too much dropout slows convergence; too little has no effect. Rates above 0.1 are rarely useful here.",
+          "source_method_id": 6,
+          "sources": [
+            {
+              "evidence_end": 171,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:dropout",
+              "evidence_text": "Adding nn.Dropout after the attention and MLP residuals before the addition can reduce overfitting on small datasets or longer training runs. Typical rates are 0.0 to 0.1.",
+              "section": "Residual dropout",
+              "source_chunk_id": 11,
+              "source_method_id": 6
+            }
+          ]
+        }
+      ],
+      "paper": {
+        "abstract": "Dropout randomly zeroes a subset of activations during training, acting as a strong regularizer that reduces co-adaptation and improves generalization.",
+        "authors": "Nitish Srivastava, Geoffrey Hinton, Alex Krizhevsky, Ilya Sutskever, Ruslan Salakhutdinov",
+        "created_at": "2026-07-09 18:25:17",
+        "publish_date": "2014",
+        "source_paper_id": 6,
+        "title": "Dropout: A Simple Way to Prevent Neural Networks from Overfitting",
+        "url": "https://jmlr.org/papers/v15/srivastava14a.html"
+      },
+      "source_ids": {
+        "chunk_ids": [
+          11
+        ],
+        "lesson_ids": [],
+        "method_ids": [
+          6
+        ],
+        "paper_id": 6
+      },
+      "version": 1
+    },
+    {
+      "context": "# Paper Memory: Hash Embeddings for Efficient Word Representations\nPaper ID: 7\nAuthors: Daniele Sgr\u00f2\nPublished: 2017-09-12\nURL: https://arxiv.org/abs/1709.03993\nAbstract: Hash embeddings compress a large vocabulary by mapping tokens through multiple hash functions into a shared embedding space, trading a small collision risk for large memory savings.\nExtraction: status=extracted; source=arxiv; chunks=2; methods=1; source_chars=435; compressed_chars=388; compression_ratio=0.892; confidence=0.87; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.892; compression=sane; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Hashed n-gram Value Embeddings (method_id=7, category=embeddings)\nEvidence:\n- chunk_id=12, section=Hashed n-grams, chars=0-247, strategy=matched_term:hashed: Hashed bigram/trigram value embeddings enrich token representations with local statistics by combining the current token embedding with hashed representations of nearby tokens. They are gated and added per-layer where value embeddings are enabled.\n- chunk_id=13, section=Tradeoffs, chars=0-186, strategy=matched_term:bigram: Hash collisions add noise but allow a large effective vocabulary with a small embedding matrix. Ablate bigram-only, trigram-only, and gated mixtures to find the best speed/quality point.\nDescription: Augment token representations with hashed bigram/trigram value embeddings to capture local token statistics.\nImplementation hint: Where value embeddings are enabled (has_ve), combine the current token embedding with hashed embeddings of previous/next tokens, gated before addition.\nRisks: Hash collisions add noise; memory overhead increases with n-gram order; ablate carefully.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+      "extraction_status": {
+        "chunk_count": 2,
+        "compressed_char_count": 388,
+        "compression_ratio": 0.8919540229885058,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.892; compression=sane",
+        "confidence_score": 0.867,
+        "created_at": "2026-07-09 18:25:17",
+        "error_text": null,
+        "extractor_model": null,
+        "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+        "method_count": 1,
+        "paper_id": 7,
+        "source_char_count": 435,
+        "source_type": "arxiv",
+        "status": "extracted",
+        "updated_at": "2026-07-09 18:25:17"
+      },
+      "kind": "researchfs.paper_memory_bundle",
+      "lessons": [],
+      "memory": {
+        "chunk_ids": [
+          12,
+          13
+        ],
+        "code_repositories": [],
+        "compressed_char_count": 388,
+        "compression_ratio": 0.8919540229885058,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.892; compression=sane",
+        "confidence_score": 0.867,
+        "context": "# Paper Memory: Hash Embeddings for Efficient Word Representations\nPaper ID: 7\nAuthors: Daniele Sgr\u00f2\nPublished: 2017-09-12\nURL: https://arxiv.org/abs/1709.03993\nAbstract: Hash embeddings compress a large vocabulary by mapping tokens through multiple hash functions into a shared embedding space, trading a small collision risk for large memory savings.\nExtraction: status=extracted; source=arxiv; chunks=2; methods=1; source_chars=435; compressed_chars=388; compression_ratio=0.892; confidence=0.87; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.892; compression=sane; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Hashed n-gram Value Embeddings (method_id=7, category=embeddings)\nEvidence:\n- chunk_id=12, section=Hashed n-grams, chars=0-247, strategy=matched_term:hashed: Hashed bigram/trigram value embeddings enrich token representations with local statistics by combining the current token embedding with hashed representations of nearby tokens. They are gated and added per-layer where value embeddings are enabled.\n- chunk_id=13, section=Tradeoffs, chars=0-186, strategy=matched_term:bigram: Hash collisions add noise but allow a large effective vocabulary with a small embedding matrix. Ablate bigram-only, trigram-only, and gated mixtures to find the best speed/quality point.\nDescription: Augment token representations with hashed bigram/trigram value embeddings to capture local token statistics.\nImplementation hint: Where value embeddings are enabled (has_ve), combine the current token embedding with hashed embeddings of previous/next tokens, gated before addition.\nRisks: Hash collisions add noise; memory overhead increases with n-gram order; ablate carefully.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+        "experiment_ids": [],
+        "extraction": {
+          "chunk_count": 2,
+          "compressed_char_count": 388,
+          "compression_ratio": 0.8919540229885058,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.892; compression=sane",
+          "confidence_score": 0.867,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 7,
+          "source_char_count": 435,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "extraction_status": {
+          "chunk_count": 2,
+          "compressed_char_count": 388,
+          "compression_ratio": 0.8919540229885058,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.892; compression=sane",
+          "confidence_score": 0.867,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 7,
+          "source_char_count": 435,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "lesson_ids": [],
+        "max_chars": null,
+        "method_ids": [
+          7
+        ],
+        "paper_id": 7,
+        "provenance_sources": [
+          {
+            "chunk_id": 12,
+            "evidence_end": 247,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:hashed",
+            "evidence_text": "Hashed bigram/trigram value embeddings enrich token representations with local statistics by combining the current token embedding with hashed representations of nearby tokens. They are gated and added per-layer where value embeddings are enabled.",
+            "method_id": 7,
+            "section": "Hashed n-grams"
+          },
+          {
+            "chunk_id": 13,
+            "evidence_end": 186,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:bigram",
+            "evidence_text": "Hash collisions add noise but allow a large effective vocabulary with a small embedding matrix. Ablate bigram-only, trigram-only, and gated mixtures to find the best speed/quality point.",
+            "method_id": 7,
+            "section": "Tradeoffs"
+          }
+        ],
+        "selected_code_repositories": [],
+        "source_char_count": 435
+      },
+      "metadata": {
+        "compression": "evidence_snippets_only",
+        "max_chars": null,
+        "omitted": [
+          "papers.content",
+          "chunks.content"
+        ]
+      },
+      "methods": [
+        {
+          "category": "embeddings",
+          "created_at": "2026-07-09 18:25:17",
+          "description": "Augment token representations with hashed bigram/trigram value embeddings to capture local token statistics.",
+          "feedback_summary": {
+            "feedback_avg_rating": 0.0,
+            "feedback_count": 0,
+            "last_feedback_at": null,
+            "method_id": 7,
+            "negative_feedback_count": 0,
+            "neutral_feedback_count": 0,
+            "positive_feedback_count": 0
+          },
+          "implementation_hint": "Where value embeddings are enabled (has_ve), combine the current token embedding with hashed embeddings of previous/next tokens, gated before addition.",
+          "name": "Hashed n-gram Value Embeddings",
+          "risks": "Hash collisions add noise; memory overhead increases with n-gram order; ablate carefully.",
+          "source_method_id": 7,
+          "sources": [
+            {
+              "evidence_end": 247,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:hashed",
+              "evidence_text": "Hashed bigram/trigram value embeddings enrich token representations with local statistics by combining the current token embedding with hashed representations of nearby tokens. They are gated and added per-layer where value embeddings are enabled.",
+              "section": "Hashed n-grams",
+              "source_chunk_id": 12,
+              "source_method_id": 7
+            },
+            {
+              "evidence_end": 186,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:bigram",
+              "evidence_text": "Hash collisions add noise but allow a large effective vocabulary with a small embedding matrix. Ablate bigram-only, trigram-only, and gated mixtures to find the best speed/quality point.",
+              "section": "Tradeoffs",
+              "source_chunk_id": 13,
+              "source_method_id": 7
+            }
+          ]
+        }
+      ],
+      "paper": {
+        "abstract": "Hash embeddings compress a large vocabulary by mapping tokens through multiple hash functions into a shared embedding space, trading a small collision risk for large memory savings.",
+        "authors": "Daniele Sgr\u00f2",
+        "created_at": "2026-07-09 18:25:17",
+        "publish_date": "2017-09-12",
+        "source_paper_id": 7,
+        "title": "Hash Embeddings for Efficient Word Representations",
+        "url": "https://arxiv.org/abs/1709.03993"
+      },
+      "source_ids": {
+        "chunk_ids": [
+          12,
+          13
+        ],
+        "lesson_ids": [],
+        "method_ids": [
+          7
+        ],
+        "paper_id": 7
+      },
+      "version": 1
+    },
+    {
+      "context": "# Paper Memory: FP8-LM: Training FP8 Large Language Models\nPaper ID: 8\nAuthors: Houwen Peng, Kan Wu, Yixuan Wei, Guoshuai Zhao, Yuxiang Yang, Ze Liu, Yifan Xiong, Ziyue Yang, Bolin Ni, Jingcheng Hu, Ruihang Li, Miaosen Zhang, Fei Chao, Dongsheng Li, Yuqing Yang, Lili Qiu\nPublished: 2023-10-27\nURL: https://arxiv.org/abs/2310.18313\nAbstract: Demonstrates training of large language models in FP8 while maintaining accuracy, using per-tensor scaling, delayed scaling, and mixed precision where needed for numerical stability.\nExtraction: status=extracted; source=arxiv; chunks=1; methods=1; source_chars=210; compressed_chars=385; compression_ratio=1.833; confidence=0.82; confidence_reason=extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=1.833; compression=large; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### FP8 / bf16 Training (method_id=8, category=precision)\nEvidence:\n- chunk_id=14, section=Mixed precision, chars=0-210, strategy=matched_term:fp8: FP8 matmul can accelerate training on supported hardware, but optimizer states and sensitive layers are often kept in bf16 or fp32 for stability. On unsupported hardware, bf16 autocast remains the safe default.\nDescription: Use lower-precision matmul to accelerate training on supported hardware while keeping sensitive states in bf16/fp32 for stability.\nImplementation hint: On CUDA with FP8 support, enable FP8 autocast for matmuls. Otherwise keep bf16 autocast and ensure scaler/optimizer states remain stable.\nRisks: FP8 requires hardware support and careful scaling; bf16 is the safe fallback on most GPUs.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+      "extraction_status": {
+        "chunk_count": 1,
+        "compressed_char_count": 385,
+        "compression_ratio": 1.8333333333333333,
+        "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=1.833; compression=large",
+        "confidence_score": 0.817,
+        "created_at": "2026-07-09 18:25:17",
+        "error_text": null,
+        "extractor_model": null,
+        "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+        "method_count": 1,
+        "paper_id": 8,
+        "source_char_count": 210,
+        "source_type": "arxiv",
+        "status": "extracted",
+        "updated_at": "2026-07-09 18:25:17"
+      },
+      "kind": "researchfs.paper_memory_bundle",
+      "lessons": [],
+      "memory": {
+        "chunk_ids": [
+          14
+        ],
+        "code_repositories": [],
+        "compressed_char_count": 385,
+        "compression_ratio": 1.8333333333333333,
+        "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=1.833; compression=large",
+        "confidence_score": 0.817,
+        "context": "# Paper Memory: FP8-LM: Training FP8 Large Language Models\nPaper ID: 8\nAuthors: Houwen Peng, Kan Wu, Yixuan Wei, Guoshuai Zhao, Yuxiang Yang, Ze Liu, Yifan Xiong, Ziyue Yang, Bolin Ni, Jingcheng Hu, Ruihang Li, Miaosen Zhang, Fei Chao, Dongsheng Li, Yuqing Yang, Lili Qiu\nPublished: 2023-10-27\nURL: https://arxiv.org/abs/2310.18313\nAbstract: Demonstrates training of large language models in FP8 while maintaining accuracy, using per-tensor scaling, delayed scaling, and mixed precision where needed for numerical stability.\nExtraction: status=extracted; source=arxiv; chunks=1; methods=1; source_chars=210; compressed_chars=385; compression_ratio=1.833; confidence=0.82; confidence_reason=extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=1.833; compression=large; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### FP8 / bf16 Training (method_id=8, category=precision)\nEvidence:\n- chunk_id=14, section=Mixed precision, chars=0-210, strategy=matched_term:fp8: FP8 matmul can accelerate training on supported hardware, but optimizer states and sensitive layers are often kept in bf16 or fp32 for stability. On unsupported hardware, bf16 autocast remains the safe default.\nDescription: Use lower-precision matmul to accelerate training on supported hardware while keeping sensitive states in bf16/fp32 for stability.\nImplementation hint: On CUDA with FP8 support, enable FP8 autocast for matmuls. Otherwise keep bf16 autocast and ensure scaler/optimizer states remain stable.\nRisks: FP8 requires hardware support and careful scaling; bf16 is the safe fallback on most GPUs.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+        "experiment_ids": [],
+        "extraction": {
+          "chunk_count": 1,
+          "compressed_char_count": 385,
+          "compression_ratio": 1.8333333333333333,
+          "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=1.833; compression=large",
+          "confidence_score": 0.817,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 8,
+          "source_char_count": 210,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "extraction_status": {
+          "chunk_count": 1,
+          "compressed_char_count": 385,
+          "compression_ratio": 1.8333333333333333,
+          "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=1.833; compression=large",
+          "confidence_score": 0.817,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 8,
+          "source_char_count": 210,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "lesson_ids": [],
+        "max_chars": null,
+        "method_ids": [
+          8
+        ],
+        "paper_id": 8,
+        "provenance_sources": [
+          {
+            "chunk_id": 14,
+            "evidence_end": 210,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:fp8",
+            "evidence_text": "FP8 matmul can accelerate training on supported hardware, but optimizer states and sensitive layers are often kept in bf16 or fp32 for stability. On unsupported hardware, bf16 autocast remains the safe default.",
+            "method_id": 8,
+            "section": "Mixed precision"
+          }
+        ],
+        "selected_code_repositories": [],
+        "source_char_count": 210
+      },
+      "metadata": {
+        "compression": "evidence_snippets_only",
+        "max_chars": null,
+        "omitted": [
+          "papers.content",
+          "chunks.content"
+        ]
+      },
+      "methods": [
+        {
+          "category": "precision",
+          "created_at": "2026-07-09 18:25:17",
+          "description": "Use lower-precision matmul to accelerate training on supported hardware while keeping sensitive states in bf16/fp32 for stability.",
+          "feedback_summary": {
+            "feedback_avg_rating": 0.0,
+            "feedback_count": 0,
+            "last_feedback_at": null,
+            "method_id": 8,
+            "negative_feedback_count": 0,
+            "neutral_feedback_count": 0,
+            "positive_feedback_count": 0
+          },
+          "implementation_hint": "On CUDA with FP8 support, enable FP8 autocast for matmuls. Otherwise keep bf16 autocast and ensure scaler/optimizer states remain stable.",
+          "name": "FP8 / bf16 Training",
+          "risks": "FP8 requires hardware support and careful scaling; bf16 is the safe fallback on most GPUs.",
+          "source_method_id": 8,
+          "sources": [
+            {
+              "evidence_end": 210,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:fp8",
+              "evidence_text": "FP8 matmul can accelerate training on supported hardware, but optimizer states and sensitive layers are often kept in bf16 or fp32 for stability. On unsupported hardware, bf16 autocast remains the safe default.",
+              "section": "Mixed precision",
+              "source_chunk_id": 14,
+              "source_method_id": 8
+            }
+          ]
+        }
+      ],
+      "paper": {
+        "abstract": "Demonstrates training of large language models in FP8 while maintaining accuracy, using per-tensor scaling, delayed scaling, and mixed precision where needed for numerical stability.",
+        "authors": "Houwen Peng, Kan Wu, Yixuan Wei, Guoshuai Zhao, Yuxiang Yang, Ze Liu, Yifan Xiong, Ziyue Yang, Bolin Ni, Jingcheng Hu, Ruihang Li, Miaosen Zhang, Fei Chao, Dongsheng Li, Yuqing Yang, Lili Qiu",
+        "created_at": "2026-07-09 18:25:17",
+        "publish_date": "2023-10-27",
+        "source_paper_id": 8,
+        "title": "FP8-LM: Training FP8 Large Language Models",
+        "url": "https://arxiv.org/abs/2310.18313"
+      },
+      "source_ids": {
+        "chunk_ids": [
+          14
+        ],
+        "lesson_ids": [],
+        "method_ids": [
+          8
+        ],
+        "paper_id": 8
+      },
+      "version": 1
+    },
+    {
+      "context": "# Paper Memory: RWKV: Reinventing RNNs for the Transformer Era\nPaper ID: 9\nAuthors: Bo Peng, Eric Alcaide, Quentin Anthony, Alon Albalak, Samuel Arcadinho, Huanqi Cao, Xin Cheng, Michael Chung, Matteo Grella, Kranthi Kiran GV, Xuzhan He, Haowen Hou, Przemyslaw Kazienko, Jan Kocon, Jiaming Kong, Bartlom\u2026\nPublished: 2023-05-22\nURL: https://arxiv.org/abs/2305.13048\nAbstract: RWKV combines transformer-like parallel training with efficient linear-time inference. A key ingredient is a small time-shift (token shift) that mixes the current token with the previous token before gating, improving local statistics without adding sequence cost.\nExtraction: status=extracted; source=arxiv; chunks=2; methods=1; source_chars=445; compressed_chars=395; compression_ratio=0.888; confidence=0.87; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.888; compression=sane; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Token Shifting (method_id=9, category=attention)\nEvidence:\n- chunk_id=15, section=Token shift, chars=0-260, strategy=matched_term:token: Token shift mixes the current token representation with the previous token representation before the gating path. In transformers this can be implemented as a small shift-and-mix operation on the input to each layer, improving local context at negligible cost.\n- chunk_id=16, section=Stability, chars=0-183, strategy=matched_term:token: Token shifting can destabilize training if the shift coefficient is too large or if it interacts badly with learning-rate schedules. Start with a small coefficient and gate from zero.\nDescription: Mix each token with the previous token before the layer's main computation to improve local context modeling at negligible cost.\nImplementation hint: In the Block forward, shift the input by one position and combine with a learned or fixed coefficient before attention/MLP. Gate the contribution from zero.\nRisks: Large shift coefficients can destabilize training, especially with aggressive schedules.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+      "extraction_status": {
+        "chunk_count": 2,
+        "compressed_char_count": 395,
+        "compression_ratio": 0.8876404494382022,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.888; compression=sane",
+        "confidence_score": 0.867,
+        "created_at": "2026-07-09 18:25:17",
+        "error_text": null,
+        "extractor_model": null,
+        "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+        "method_count": 1,
+        "paper_id": 9,
+        "source_char_count": 445,
+        "source_type": "arxiv",
+        "status": "extracted",
+        "updated_at": "2026-07-09 18:25:17"
+      },
+      "kind": "researchfs.paper_memory_bundle",
+      "lessons": [],
+      "memory": {
+        "chunk_ids": [
+          15,
+          16
+        ],
+        "code_repositories": [],
+        "compressed_char_count": 395,
+        "compression_ratio": 0.8876404494382022,
+        "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.888; compression=sane",
+        "confidence_score": 0.867,
+        "context": "# Paper Memory: RWKV: Reinventing RNNs for the Transformer Era\nPaper ID: 9\nAuthors: Bo Peng, Eric Alcaide, Quentin Anthony, Alon Albalak, Samuel Arcadinho, Huanqi Cao, Xin Cheng, Michael Chung, Matteo Grella, Kranthi Kiran GV, Xuzhan He, Haowen Hou, Przemyslaw Kazienko, Jan Kocon, Jiaming Kong, Bartlom\u2026\nPublished: 2023-05-22\nURL: https://arxiv.org/abs/2305.13048\nAbstract: RWKV combines transformer-like parallel training with efficient linear-time inference. A key ingredient is a small time-shift (token shift) that mixes the current token with the previous token before gating, improving local statistics without adding sequence cost.\nExtraction: status=extracted; source=arxiv; chunks=2; methods=1; source_chars=445; compressed_chars=395; compression_ratio=0.888; confidence=0.87; confidence_reason=extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.888; compression=sane; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Token Shifting (method_id=9, category=attention)\nEvidence:\n- chunk_id=15, section=Token shift, chars=0-260, strategy=matched_term:token: Token shift mixes the current token representation with the previous token representation before the gating path. In transformers this can be implemented as a small shift-and-mix operation on the input to each layer, improving local context at negligible cost.\n- chunk_id=16, section=Stability, chars=0-183, strategy=matched_term:token: Token shifting can destabilize training if the shift coefficient is too large or if it interacts badly with learning-rate schedules. Start with a small coefficient and gate from zero.\nDescription: Mix each token with the previous token before the layer's main computation to improve local context modeling at negligible cost.\nImplementation hint: In the Block forward, shift the input by one position and combine with a learned or fixed coefficient before attention/MLP. Gate the contribution from zero.\nRisks: Large shift coefficients can destabilize training, especially with aggressive schedules.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+        "experiment_ids": [],
+        "extraction": {
+          "chunk_count": 2,
+          "compressed_char_count": 395,
+          "compression_ratio": 0.8876404494382022,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.888; compression=sane",
+          "confidence_score": 0.867,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 9,
+          "source_char_count": 445,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "extraction_status": {
+          "chunk_count": 2,
+          "compressed_char_count": 395,
+          "compression_ratio": 0.8876404494382022,
+          "confidence_reason": "extracted: methods=1; valid_source_links=2/2; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=2/2; compression_ratio=0.888; compression=sane",
+          "confidence_score": 0.867,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 9,
+          "source_char_count": 445,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "lesson_ids": [],
+        "max_chars": null,
+        "method_ids": [
+          9
+        ],
+        "paper_id": 9,
+        "provenance_sources": [
+          {
+            "chunk_id": 15,
+            "evidence_end": 260,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:token",
+            "evidence_text": "Token shift mixes the current token representation with the previous token representation before the gating path. In transformers this can be implemented as a small shift-and-mix operation on the input to each layer, improving local context at negligible cost.",
+            "method_id": 9,
+            "section": "Token shift"
+          },
+          {
+            "chunk_id": 16,
+            "evidence_end": 183,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:token",
+            "evidence_text": "Token shifting can destabilize training if the shift coefficient is too large or if it interacts badly with learning-rate schedules. Start with a small coefficient and gate from zero.",
+            "method_id": 9,
+            "section": "Stability"
+          }
+        ],
+        "selected_code_repositories": [],
+        "source_char_count": 445
+      },
+      "metadata": {
+        "compression": "evidence_snippets_only",
+        "max_chars": null,
+        "omitted": [
+          "papers.content",
+          "chunks.content"
+        ]
+      },
+      "methods": [
+        {
+          "category": "attention",
+          "created_at": "2026-07-09 18:25:17",
+          "description": "Mix each token with the previous token before the layer's main computation to improve local context modeling at negligible cost.",
+          "feedback_summary": {
+            "feedback_avg_rating": 0.0,
+            "feedback_count": 0,
+            "last_feedback_at": null,
+            "method_id": 9,
+            "negative_feedback_count": 0,
+            "neutral_feedback_count": 0,
+            "positive_feedback_count": 0
+          },
+          "implementation_hint": "In the Block forward, shift the input by one position and combine with a learned or fixed coefficient before attention/MLP. Gate the contribution from zero.",
+          "name": "Token Shifting",
+          "risks": "Large shift coefficients can destabilize training, especially with aggressive schedules.",
+          "source_method_id": 9,
+          "sources": [
+            {
+              "evidence_end": 260,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:token",
+              "evidence_text": "Token shift mixes the current token representation with the previous token representation before the gating path. In transformers this can be implemented as a small shift-and-mix operation on the input to each layer, improving local context at negligible cost.",
+              "section": "Token shift",
+              "source_chunk_id": 15,
+              "source_method_id": 9
+            },
+            {
+              "evidence_end": 183,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:token",
+              "evidence_text": "Token shifting can destabilize training if the shift coefficient is too large or if it interacts badly with learning-rate schedules. Start with a small coefficient and gate from zero.",
+              "section": "Stability",
+              "source_chunk_id": 16,
+              "source_method_id": 9
+            }
+          ]
+        }
+      ],
+      "paper": {
+        "abstract": "RWKV combines transformer-like parallel training with efficient linear-time inference. A key ingredient is a small time-shift (token shift) that mixes the current token with the previous token before gating, improving local statistics without adding sequence cost.",
+        "authors": "Bo Peng, Eric Alcaide, Quentin Anthony, Alon Albalak, Samuel Arcadinho, Huanqi Cao, Xin Cheng, Michael Chung, Matteo Grella, Kranthi Kiran GV, Xuzhan He, Haowen Hou, Przemyslaw Kazienko, Jan Kocon, Jiaming Kong, Bartlomiej Koptyra, Hayden Lau, Krishna Sri Ipsit Mantri, Ferdinand Mom, Atsushi Saito, Xiangru Tang, Bolun Wang, Johan S. Wind, Stanslav Wozniak, Ruichong Zhang, Zhenyuan Zhang, Qihang Zhao, Peng Zhou, Jian Zhu, Rui-Jie Zhu",
+        "created_at": "2026-07-09 18:25:17",
+        "publish_date": "2023-05-22",
+        "source_paper_id": 9,
+        "title": "RWKV: Reinventing RNNs for the Transformer Era",
+        "url": "https://arxiv.org/abs/2305.13048"
+      },
+      "source_ids": {
+        "chunk_ids": [
+          15,
+          16
+        ],
+        "lesson_ids": [],
+        "method_ids": [
+          9
+        ],
+        "paper_id": 9
+      },
+      "version": 1
+    },
+    {
+      "context": "# Paper Memory: Decoupled Weight Decay Regularization\nPaper ID: 10\nAuthors: Ilya Loshchilov, Frank Hutter\nPublished: 2017-11-14\nURL: https://arxiv.org/abs/1711.05101\nAbstract: AdamW decouples weight decay from the gradient update, often improving generalization over Adam with L2 regularization. The weight decay is typically annealed over training.\nExtraction: status=extracted; source=arxiv; chunks=1; methods=1; source_chars=183; compressed_chars=384; compression_ratio=2.098; confidence=0.78; confidence_reason=extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=2.098; compression=overs\u2026; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Learning Rate Warmup / Warmdown (method_id=10, category=optimizer)\nEvidence:\n- chunk_id=17, section=Scheduling, chars=0-183, strategy=matched_term:training: Weight decay is commonly annealed with training progress. In the MuonAdamW setup used here, WEIGHT_DECAY starts at a configured value and is multiplied by (1 - progress) over the run.\nDescription: Schedule learning rate with an optional warmup phase and a warmdown/cooldown phase to stabilize early training and anneal smoothly.\nImplementation hint: Adjust WARMUP_RATIO, WARMDOWN_RATIO, and FINAL_LR_FRAC in train.py. Schedules are computed from training_time / TIME_BUDGET.\nRisks: Long warmup wastes budget on small updates; abrupt warmdown can truncate useful training.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+      "extraction_status": {
+        "chunk_count": 1,
+        "compressed_char_count": 384,
+        "compression_ratio": 2.098360655737705,
+        "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=2.098; compression=oversized",
+        "confidence_score": 0.777,
+        "created_at": "2026-07-09 18:25:17",
+        "error_text": null,
+        "extractor_model": null,
+        "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+        "method_count": 1,
+        "paper_id": 10,
+        "source_char_count": 183,
+        "source_type": "arxiv",
+        "status": "extracted",
+        "updated_at": "2026-07-09 18:25:17"
+      },
+      "kind": "researchfs.paper_memory_bundle",
+      "lessons": [],
+      "memory": {
+        "chunk_ids": [
+          17
+        ],
+        "code_repositories": [],
+        "compressed_char_count": 384,
+        "compression_ratio": 2.098360655737705,
+        "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=2.098; compression=oversized",
+        "confidence_score": 0.777,
+        "context": "# Paper Memory: Decoupled Weight Decay Regularization\nPaper ID: 10\nAuthors: Ilya Loshchilov, Frank Hutter\nPublished: 2017-11-14\nURL: https://arxiv.org/abs/1711.05101\nAbstract: AdamW decouples weight decay from the gradient update, often improving generalization over Adam with L2 regularization. The weight decay is typically annealed over training.\nExtraction: status=extracted; source=arxiv; chunks=1; methods=1; source_chars=183; compressed_chars=384; compression_ratio=2.098; confidence=0.78; confidence_reason=extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=2.098; compression=overs\u2026; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Learning Rate Warmup / Warmdown (method_id=10, category=optimizer)\nEvidence:\n- chunk_id=17, section=Scheduling, chars=0-183, strategy=matched_term:training: Weight decay is commonly annealed with training progress. In the MuonAdamW setup used here, WEIGHT_DECAY starts at a configured value and is multiplied by (1 - progress) over the run.\nDescription: Schedule learning rate with an optional warmup phase and a warmdown/cooldown phase to stabilize early training and anneal smoothly.\nImplementation hint: Adjust WARMUP_RATIO, WARMDOWN_RATIO, and FINAL_LR_FRAC in train.py. Schedules are computed from training_time / TIME_BUDGET.\nRisks: Long warmup wastes budget on small updates; abrupt warmdown can truncate useful training.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+        "experiment_ids": [],
+        "extraction": {
+          "chunk_count": 1,
+          "compressed_char_count": 384,
+          "compression_ratio": 2.098360655737705,
+          "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=2.098; compression=oversized",
+          "confidence_score": 0.777,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 10,
+          "source_char_count": 183,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "extraction_status": {
+          "chunk_count": 1,
+          "compressed_char_count": 384,
+          "compression_ratio": 2.098360655737705,
+          "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=2.098; compression=oversized",
+          "confidence_score": 0.777,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 10,
+          "source_char_count": 183,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "lesson_ids": [],
+        "max_chars": null,
+        "method_ids": [
+          10
+        ],
+        "paper_id": 10,
+        "provenance_sources": [
+          {
+            "chunk_id": 17,
+            "evidence_end": 183,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:training",
+            "evidence_text": "Weight decay is commonly annealed with training progress. In the MuonAdamW setup used here, WEIGHT_DECAY starts at a configured value and is multiplied by (1 - progress) over the run.",
+            "method_id": 10,
+            "section": "Scheduling"
+          }
+        ],
+        "selected_code_repositories": [],
+        "source_char_count": 183
+      },
+      "metadata": {
+        "compression": "evidence_snippets_only",
+        "max_chars": null,
+        "omitted": [
+          "papers.content",
+          "chunks.content"
+        ]
+      },
+      "methods": [
+        {
+          "category": "optimizer",
+          "created_at": "2026-07-09 18:25:17",
+          "description": "Schedule learning rate with an optional warmup phase and a warmdown/cooldown phase to stabilize early training and anneal smoothly.",
+          "feedback_summary": {
+            "feedback_avg_rating": 0.0,
+            "feedback_count": 0,
+            "last_feedback_at": null,
+            "method_id": 10,
+            "negative_feedback_count": 0,
+            "neutral_feedback_count": 0,
+            "positive_feedback_count": 0
+          },
+          "implementation_hint": "Adjust WARMUP_RATIO, WARMDOWN_RATIO, and FINAL_LR_FRAC in train.py. Schedules are computed from training_time / TIME_BUDGET.",
+          "name": "Learning Rate Warmup / Warmdown",
+          "risks": "Long warmup wastes budget on small updates; abrupt warmdown can truncate useful training.",
+          "source_method_id": 10,
+          "sources": [
+            {
+              "evidence_end": 183,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:training",
+              "evidence_text": "Weight decay is commonly annealed with training progress. In the MuonAdamW setup used here, WEIGHT_DECAY starts at a configured value and is multiplied by (1 - progress) over the run.",
+              "section": "Scheduling",
+              "source_chunk_id": 17,
+              "source_method_id": 10
+            }
+          ]
+        }
+      ],
+      "paper": {
+        "abstract": "AdamW decouples weight decay from the gradient update, often improving generalization over Adam with L2 regularization. The weight decay is typically annealed over training.",
+        "authors": "Ilya Loshchilov, Frank Hutter",
+        "created_at": "2026-07-09 18:25:17",
+        "publish_date": "2017-11-14",
+        "source_paper_id": 10,
+        "title": "Decoupled Weight Decay Regularization",
+        "url": "https://arxiv.org/abs/1711.05101"
+      },
+      "source_ids": {
+        "chunk_ids": [
+          17
+        ],
+        "lesson_ids": [],
+        "method_ids": [
+          10
+        ],
+        "paper_id": 10
+      },
+      "version": 1
+    },
+    {
+      "context": "# Paper Memory: On the Difficulty of Training Recurrent Neural Networks\nPaper ID: 11\nAuthors: Razvan Pascanu, Tomas Mikolov, Yoshua Bengio\nPublished: 2012-11-21\nURL: https://arxiv.org/abs/1211.5063\nAbstract: Introduces gradient clipping as a simple and effective stabilization technique for deep networks, bounding the norm of gradients to prevent parameter spikes.\nExtraction: status=extracted; source=arxiv; chunks=1; methods=1; source_chars=190; compressed_chars=299; compression_ratio=1.574; confidence=0.82; confidence_reason=extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=1.574; compression=large; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Gradient Clipping (method_id=11, category=optimizer)\nEvidence:\n- chunk_id=18, section=Gradient clipping, chars=0-190, strategy=matched_term:clipping: Clipping gradients by global norm prevents rare large updates from destabilizing training. A typical threshold is 1.0; it is most useful when using large learning rates or new architectures.\nDescription: Clip gradients by global norm to prevent rare large updates from destabilizing training.\nImplementation hint: Call torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) before optimizer.step().\nRisks: Too-low clipping slows convergence; it is usually unnecessary with MuonAdamW at modest LRs.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+      "extraction_status": {
+        "chunk_count": 1,
+        "compressed_char_count": 299,
+        "compression_ratio": 1.5736842105263158,
+        "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=1.574; compression=large",
+        "confidence_score": 0.817,
+        "created_at": "2026-07-09 18:25:17",
+        "error_text": null,
+        "extractor_model": null,
+        "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+        "method_count": 1,
+        "paper_id": 11,
+        "source_char_count": 190,
+        "source_type": "arxiv",
+        "status": "extracted",
+        "updated_at": "2026-07-09 18:25:17"
+      },
+      "kind": "researchfs.paper_memory_bundle",
+      "lessons": [],
+      "memory": {
+        "chunk_ids": [
+          18
+        ],
+        "code_repositories": [],
+        "compressed_char_count": 299,
+        "compression_ratio": 1.5736842105263158,
+        "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=1.574; compression=large",
+        "confidence_score": 0.817,
+        "context": "# Paper Memory: On the Difficulty of Training Recurrent Neural Networks\nPaper ID: 11\nAuthors: Razvan Pascanu, Tomas Mikolov, Yoshua Bengio\nPublished: 2012-11-21\nURL: https://arxiv.org/abs/1211.5063\nAbstract: Introduces gradient clipping as a simple and effective stabilization technique for deep networks, bounding the norm of gradients to prevent parameter spikes.\nExtraction: status=extracted; source=arxiv; chunks=1; methods=1; source_chars=190; compressed_chars=299; compression_ratio=1.574; confidence=0.82; confidence_reason=extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=1.574; compression=large; extractor_prompt_version=researchfs-extractor-windowed-methods-v3.\n\n## Code repositories\n- None linked.\n\n## Methods and provenance\n### Gradient Clipping (method_id=11, category=optimizer)\nEvidence:\n- chunk_id=18, section=Gradient clipping, chars=0-190, strategy=matched_term:clipping: Clipping gradients by global norm prevents rare large updates from destabilizing training. A typical threshold is 1.0; it is most useful when using large learning rates or new architectures.\nDescription: Clip gradients by global norm to prevent rare large updates from destabilizing training.\nImplementation hint: Call torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) before optimizer.step().\nRisks: Too-low clipping slows convergence; it is usually unnecessary with MuonAdamW at modest LRs.\n\n## Recent experiments\n- None linked.\n\n## Lessons\n- None recorded.",
+        "experiment_ids": [],
+        "extraction": {
+          "chunk_count": 1,
+          "compressed_char_count": 299,
+          "compression_ratio": 1.5736842105263158,
+          "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=1.574; compression=large",
+          "confidence_score": 0.817,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 11,
+          "source_char_count": 190,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "extraction_status": {
+          "chunk_count": 1,
+          "compressed_char_count": 299,
+          "compression_ratio": 1.5736842105263158,
+          "confidence_reason": "extracted: methods=1; valid_source_links=1/1; method_source_coverage=1/1; evidence_coverage=1/1; evidence_links=1/1; compression_ratio=1.574; compression=large",
+          "confidence_score": 0.817,
+          "created_at": "2026-07-09 18:25:17",
+          "error_text": null,
+          "extractor_model": null,
+          "extractor_prompt_version": "researchfs-extractor-windowed-methods-v3",
+          "method_count": 1,
+          "paper_id": 11,
+          "source_char_count": 190,
+          "source_type": "arxiv",
+          "status": "extracted",
+          "updated_at": "2026-07-09 18:25:17"
+        },
+        "lesson_ids": [],
+        "max_chars": null,
+        "method_ids": [
+          11
+        ],
+        "paper_id": 11,
+        "provenance_sources": [
+          {
+            "chunk_id": 18,
+            "evidence_end": 190,
+            "evidence_start": 0,
+            "evidence_strategy": "matched_term:clipping",
+            "evidence_text": "Clipping gradients by global norm prevents rare large updates from destabilizing training. A typical threshold is 1.0; it is most useful when using large learning rates or new architectures.",
+            "method_id": 11,
+            "section": "Gradient clipping"
+          }
+        ],
+        "selected_code_repositories": [],
+        "source_char_count": 190
+      },
+      "metadata": {
+        "compression": "evidence_snippets_only",
+        "max_chars": null,
+        "omitted": [
+          "papers.content",
+          "chunks.content"
+        ]
+      },
+      "methods": [
+        {
+          "category": "optimizer",
+          "created_at": "2026-07-09 18:25:17",
+          "description": "Clip gradients by global norm to prevent rare large updates from destabilizing training.",
+          "feedback_summary": {
+            "feedback_avg_rating": 0.0,
+            "feedback_count": 0,
+            "last_feedback_at": null,
+            "method_id": 11,
+            "negative_feedback_count": 0,
+            "neutral_feedback_count": 0,
+            "positive_feedback_count": 0
+          },
+          "implementation_hint": "Call torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) before optimizer.step().",
+          "name": "Gradient Clipping",
+          "risks": "Too-low clipping slows convergence; it is usually unnecessary with MuonAdamW at modest LRs.",
+          "source_method_id": 11,
+          "sources": [
+            {
+              "evidence_end": 190,
+              "evidence_start": 0,
+              "evidence_strategy": "matched_term:clipping",
+              "evidence_text": "Clipping gradients by global norm prevents rare large updates from destabilizing training. A typical threshold is 1.0; it is most useful when using large learning rates or new architectures.",
+              "section": "Gradient clipping",
+              "source_chunk_id": 18,
+              "source_method_id": 11
+            }
+          ]
+        }
+      ],
+      "paper": {
+        "abstract": "Introduces gradient clipping as a simple and effective stabilization technique for deep networks, bounding the norm of gradients to prevent parameter spikes.",
+        "authors": "Razvan Pascanu, Tomas Mikolov, Yoshua Bengio",
+        "created_at": "2026-07-09 18:25:17",
+        "publish_date": "2012-11-21",
+        "source_paper_id": 11,
+        "title": "On the Difficulty of Training Recurrent Neural Networks",
+        "url": "https://arxiv.org/abs/1211.5063"
+      },
+      "source_ids": {
+        "chunk_ids": [
+          18
+        ],
+        "lesson_ids": [],
+        "method_ids": [
+          11
+        ],
+        "paper_id": 11
+      },
+      "version": 1
+    }
+  ],
+  "version": 1
+}

@@ -10,7 +10,7 @@ import sys
 from compare_runs import build_comparison_report
 
 from researchfs.db import initialize_db
-from researchfs.ingest import ensure_seed
+from seed import ensure_seed
 
 
 def _run_agent(

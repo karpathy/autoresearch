@@ -5,12 +5,11 @@ from __future__ import annotations
 import ast
 import re
 import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Iterable
 
 from researchfs.db import get_connection
-
-DEFAULT_CODE_PATHS = ("train.py", "prepare.py")
 
 _CODEGRAPH_SCHEMA = """
 CREATE TABLE IF NOT EXISTS code_symbols (
@@ -84,7 +83,7 @@ def _rebuild_code_symbols_fts(conn: sqlite3.Connection) -> None:
 
 def _iter_path_args(paths: Iterable[str | Path] | str | Path | None) -> tuple[str | Path, ...]:
     if paths is None:
-        return DEFAULT_CODE_PATHS
+        return ()
     if isinstance(paths, (str, Path)):
         return (paths,)
     return tuple(paths)
@@ -197,10 +196,16 @@ def _is_main_guard(node: ast.If) -> bool:
 
 
 def _loop_symbol_name(node: ast.AST, file_path: str) -> str:
-    if file_path.endswith("train.py") and isinstance(node, ast.While):
+    del file_path
+    if isinstance(node, ast.While):
         test = node.test
         if isinstance(test, ast.Constant) and test.value is True:
-            return "training_loop"
+            return "infinite_loop"
+        return f"while_loop_{getattr(node, 'lineno', 0)}"
+    if isinstance(node, ast.AsyncFor):
+        return f"async_for_loop_{getattr(node, 'lineno', 0)}"
+    if isinstance(node, ast.For):
+        return f"for_loop_{getattr(node, 'lineno', 0)}"
     return ""
 
 
@@ -378,7 +383,7 @@ def _fetch_symbols_for_paths(conn: sqlite3.Connection, file_paths: list[str]) ->
     return [dict(row) for row in rows]
 
 
-def refresh_code_map(paths: Iterable[str | Path] | str | Path | None = DEFAULT_CODE_PATHS, conn=None) -> list[dict]:
+def refresh_code_map(paths: Iterable[str | Path] | str | Path | None, conn=None) -> list[dict]:
     """Parse Python files into ``code_symbols`` and rebuild the code FTS index."""
     conn, close = _connect(conn)
     try:
@@ -405,7 +410,6 @@ def refresh_code_map(paths: Iterable[str | Path] | str | Path | None = DEFAULT_C
     finally:
         if close:
             conn.close()
-
 
 def _line_range(row: sqlite3.Row | dict) -> str:
     start = int(row["start_line"])
@@ -549,175 +553,102 @@ def search_code_symbols(query: str, conn=None, max_chars: int | None = None) -> 
             conn.close()
 
 
-def _metadata_text(method: sqlite3.Row) -> str:
-    return " ".join(
-        str(method[key] or "")
-        for key in ("category", "name")
-        if key in method.keys()
-    ).lower()
+def _target_path_key(value: str | Path) -> str:
+    if isinstance(value, Path):
+        return _path_key(value)
+    if not isinstance(value, str):
+        raise ValueError("file paths must be non-empty strings or Path values")
+    path = value.strip()
+    if not path:
+        raise ValueError("file paths must be non-empty strings or Path values")
+    return path
 
 
-def _has_any(text: str, keywords: tuple[str, ...]) -> bool:
-    return any(keyword in text for keyword in keywords)
+def replace_method_code_targets(
+    file_paths: Iterable[str | Path] | str | Path,
+    targets: Iterable[Mapping[str, object]],
+    conn=None,
+) -> int:
+    """Replace explicit method-to-symbol links for a set of indexed files.
 
+    ResearchFS owns generic code indexing and storage. Domain-specific target
+    selection belongs to the caller, which supplies concrete method/symbol
+    mappings after indexing its own source files.
+    """
+    if isinstance(file_paths, (str, Path)):
+        raw_file_paths = (file_paths,)
+    else:
+        raw_file_paths = tuple(file_paths)
+    normalized_paths = tuple(dict.fromkeys(_target_path_key(path) for path in raw_file_paths))
+    if not normalized_paths:
+        raise ValueError("file_paths must contain at least one indexed path")
 
-def _symbols_by_name(symbols: list[sqlite3.Row]) -> dict[str, list[sqlite3.Row]]:
-    indexed: dict[str, list[sqlite3.Row]] = {}
-    for symbol in symbols:
-        name = symbol["symbol_name"].lower()
-        indexed.setdefault(name, []).append(symbol)
-        if "." in name:
-            indexed.setdefault(name.rsplit(".", 1)[-1], []).append(symbol)
-    return indexed
+    normalized_targets: dict[tuple[int, str, str, str], dict[str, object]] = {}
+    for target in targets:
+        if not isinstance(target, Mapping):
+            raise ValueError("targets must contain mapping objects")
+        method_id = target.get("method_id")
+        if isinstance(method_id, bool) or not isinstance(method_id, int) or method_id <= 0:
+            raise ValueError("target method_id must be a positive integer")
+        file_path = _target_path_key(target.get("file_path"))
+        if file_path not in normalized_paths:
+            raise ValueError(f"target file_path is outside file_paths: {file_path}")
+        symbol_name = target.get("symbol_name")
+        symbol_kind = target.get("symbol_kind")
+        if not isinstance(symbol_name, str) or not symbol_name.strip():
+            raise ValueError("target symbol_name must be a non-empty string")
+        if not isinstance(symbol_kind, str) or not symbol_kind.strip():
+            raise ValueError("target symbol_kind must be a non-empty string")
+        rationale = target.get("rationale")
+        if rationale is not None and not isinstance(rationale, str):
+            raise ValueError("target rationale must be a string or None")
+        row = {
+            "method_id": method_id,
+            "file_path": file_path,
+            "symbol_name": symbol_name.strip(),
+            "symbol_kind": symbol_kind.strip(),
+            "rationale": rationale.strip() if isinstance(rationale, str) else None,
+        }
+        key = (method_id, file_path, row["symbol_name"], row["symbol_kind"])
+        normalized_targets[key] = row
 
-
-def _target_rows(indexed: dict[str, list[sqlite3.Row]], names: tuple[str, ...]) -> list[sqlite3.Row]:
-    rows: list[sqlite3.Row] = []
-    seen: set[int] = set()
-    for name in names:
-        for row in indexed.get(name.lower(), []):
-            symbol_id = int(row["symbol_id"])
-            if symbol_id in seen:
-                continue
-            seen.add(symbol_id)
-            rows.append(row)
-    return rows
-
-
-def _method_targets(method: sqlite3.Row, indexed: dict[str, list[sqlite3.Row]]) -> list[tuple[sqlite3.Row, str]]:
-    text = _metadata_text(method)
-    target_specs: list[tuple[tuple[str, ...], str]] = []
-
-    if _has_any(text, ("mlp", "swiglu", "feed-forward", "feed forward")):
-        target_specs.append((("MLP",), "heuristic: mlp keyword maps to the MLP block"))
-
-    if _has_any(text, ("attention", "gqa", "grouped-query", "window", "sliding", "token shifting")):
-        target_specs.append(
-            (
-                ("CausalSelfAttention", "Block", "GPT._compute_window_sizes", "WINDOW_PATTERN"),
-                "heuristic: attention/gqa/window keyword maps to attention and block symbols",
-            )
-        )
-
-    if _has_any(text, ("optimizer", "muon", "lr", "learning rate", "warmup", "warmdown", "gradient", "clip")):
-        target_specs.append(
-            (
-                (
-                    "MuonAdamW",
-                    "GPT.setup_optimizer",
-                    "optimizer",
-                    "get_lr_multiplier",
-                    "get_muon_momentum",
-                    "get_weight_decay",
-                    "MATRIX_LR",
-                    "EMBEDDING_LR",
-                    "UNEMBEDDING_LR",
-                    "SCALAR_LR",
-                    "WEIGHT_DECAY",
-                    "ADAM_BETAS",
-                    "WARMUP_RATIO",
-                    "WARMDOWN_RATIO",
-                    "FINAL_LR_FRAC",
-                ),
-                "heuristic: optimizer/muon/lr keyword maps to optimizer setup and schedules",
-            )
-        )
-
-    if _has_any(text, ("normalization", "rmsnorm", "layernorm", "norm")):
-        target_specs.append((("RMSNorm", "GPT.setup_optimizer"), "heuristic: normalization/rmsnorm keyword maps to norm symbols"))
-
-    if _has_any(text, ("training", "batch", "dataloader", "data", "tokens", "precision", "bf16", "fp8")):
-        target_specs.append(
-            (
-                (
-                    "training_loop",
-                    "TOTAL_BATCH_SIZE",
-                    "DEVICE_BATCH_SIZE",
-                    "grad_accum_steps",
-                    "tokens_per_fwdbwd",
-                    "train_loader",
-                    "MAX_SEQ_LEN",
-                    "TIME_BUDGET",
-                    "make_dataloader",
-                    "evaluate_bpb",
-                ),
-                "heuristic: training/batch keyword maps to loop, dataloader, and batch symbols",
-            )
-        )
-
-    targets: list[tuple[sqlite3.Row, str]] = []
-    seen: set[int] = set()
-    for names, rationale in target_specs:
-        for row in _target_rows(indexed, names):
-            symbol_id = int(row["symbol_id"])
-            if symbol_id in seen:
-                continue
-            seen.add(symbol_id)
-            targets.append((row, rationale))
-    return targets
-
-
-def link_methods_to_code(conn=None) -> int:
-    """Deterministically link existing method rows to indexed train.py/prepare.py symbols."""
     conn, close = _connect(conn)
     try:
         _ensure_codegraph_schema(conn)
-        target_paths = [_path_key(Path(path)) for path in DEFAULT_CODE_PATHS]
-        placeholders = ",".join("?" for _ in target_paths)
-        existing_paths = {
-            row["file_path"]
-            for row in conn.execute(
-                f"SELECT DISTINCT file_path FROM code_symbols WHERE file_path IN ({placeholders})",
-                target_paths,
-            ).fetchall()
-        }
-        if set(target_paths) - existing_paths:
-            refresh_code_map(DEFAULT_CODE_PATHS, conn=conn)
-
-        symbols = conn.execute(
-            f"""
-            SELECT symbol_id, file_path, symbol_name, symbol_kind, start_line, end_line
-            FROM code_symbols
-            WHERE file_path IN ({placeholders})
-            ORDER BY file_path, start_line, symbol_name
-            """,
-            target_paths,
-        ).fetchall()
-        indexed = _symbols_by_name(symbols)
-
-        methods = conn.execute(
-            """
-            SELECT method_id, name, category
-            FROM methods
-            ORDER BY method_id
-            """
-        ).fetchall()
-
-        conn.execute(f"DELETE FROM method_code_targets WHERE file_path IN ({placeholders})", target_paths)
-        link_rows = []
-        for method in methods:
-            for symbol, rationale in _method_targets(method, indexed):
-                link_rows.append(
-                    {
-                        "method_id": method["method_id"],
-                        "file_path": symbol["file_path"],
-                        "symbol_name": symbol["symbol_name"],
-                        "symbol_kind": symbol["symbol_kind"],
-                        "rationale": rationale,
-                    }
+        for row in normalized_targets.values():
+            if conn.execute(
+                "SELECT 1 FROM methods WHERE method_id = ?",
+                (row["method_id"],),
+            ).fetchone() is None:
+                raise ValueError(f"unknown method_id: {row['method_id']}")
+            if conn.execute(
+                """
+                SELECT 1 FROM code_symbols
+                WHERE file_path = ? AND symbol_name = ? AND symbol_kind = ?
+                """,
+                (row["file_path"], row["symbol_name"], row["symbol_kind"]),
+            ).fetchone() is None:
+                raise ValueError(
+                    "unknown indexed symbol: "
+                    f"{row['file_path']}:{row['symbol_kind']}:{row['symbol_name']}"
                 )
 
-        if link_rows:
+        placeholders = ",".join("?" for _ in normalized_paths)
+        conn.execute(
+            f"DELETE FROM method_code_targets WHERE file_path IN ({placeholders})",
+            normalized_paths,
+        )
+        if normalized_targets:
             conn.executemany(
                 """
-                INSERT OR IGNORE INTO method_code_targets
+                INSERT INTO method_code_targets
                 (method_id, file_path, symbol_name, symbol_kind, rationale)
                 VALUES (:method_id, :file_path, :symbol_name, :symbol_kind, :rationale)
                 """,
-                link_rows,
+                normalized_targets.values(),
             )
         conn.commit()
-        return len(link_rows)
+        return len(normalized_targets)
     finally:
         if close:
             conn.close()

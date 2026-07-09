@@ -1,7 +1,7 @@
-"""ResearchFS client SDK for auto-researcher agents.
+"""ResearchFS client SDK for research agents.
 
 This module exposes a thin, agent-agnostic wrapper around the ResearchFS
-retrieval database.  Any auto-research agent can instantiate a
+retrieval database. Any research agent can instantiate a
 `ResearchFSClient`, start a session, and ask it to suggest queries,
 cache context, and log outcomes.  The goal is to centralise token- and
 time-saving RAG logic so that it can be reused across different agent
@@ -115,7 +115,7 @@ def _assemble_retrieval_prompt(
 ) -> str:
     """Assemble prompt to ask the agent for a search query decision."""
     prompt = (
-        "You are an expert machine learning researcher agent.\n"
+        "You are an expert research agent.\n"
         f"Your goal is to optimize {session.task_target} to {session.objective} "
         f"on {session.task_name}.\n\n"
         f"Experiment Brief:\n{experiment_brief}\n\n"
@@ -137,21 +137,20 @@ def _assemble_retrieval_prompt(
 
     prompt += (
         "Avoid repeating queries that were recently used or already reused multiple "
-        "times in a row. Prefer exploring a different optimization area unless a "
+        "times in a row. Prefer exploring a different research area unless a "
         "prior query has clear, unexplored potential.\n\n"
-        "Based on the results, decide what optimization area you want to explore "
-        "next (e.g. attention, MLP, optimizer learning rate, precision, regularization).\n"
+        "Based on the results, decide what evidence or method area you want to explore "
+        f"next (e.g. {', '.join(session.query_examples)}).\n"
         "You must decide whether you want to search the methods database or skip searching.\n\n"
         "Please respond with a structured JSON object containing the following keys:\n"
         '  - "search": a boolean indicating whether you want to search (true) or skip search (false).\n'
-        '  - "query": a string specifying the search query (1-2 keywords, e.g. \'MLP SwiGLU\', '
-        "'GQA attention', or 'Muon LR') if you want to search, or empty string \"\" if you want to skip search.\n"
+        '  - "query": a short search query if you want to search, or empty string "" if you want to skip search.\n'
         '  - "reason": a string explaining your decision.\n\n'
         "Response format:\n"
         "{\n"
         '  "search": true,\n'
-        '  "query": "MLP SwiGLU",\n'
-        '  "reason": "We want to try SwiGLU activation for the feedforward network."\n'
+        f'  "query": "{session.query_examples[0]}",\n'
+        '  "reason": "This method area has not been tested against the current evidence."\n'
         "}"
     )
     return prompt
@@ -162,7 +161,7 @@ class ResearchFSSession:
 
     The session tracks query decisions, caches retrieved method packs, and logs
     experiment outcomes.  It is deliberately lightweight so that any
-    auto-research agent can hold one without importing the rest of LoopGraph.
+    research agent can hold one without importing benchmark integrations.
     """
 
     def __init__(
@@ -170,9 +169,14 @@ class ResearchFSSession:
         client: "ResearchFSClient",
         agent_run_id: int,
         baseline_metric: Optional[float] = None,
-        task_target: str = "the training script `train.py`",
-        objective: str = "minimize the validation bits per byte (val_bpb)",
-        task_name: str = "pretraining task",
+        task_target: str = "the current research task",
+        objective: str = "improve the target outcome",
+        task_name: str = "research workflow",
+        query_examples: tuple[str, ...] = (
+            "experimental design",
+            "retrieval quality",
+            "data provenance",
+        ),
         recent_areas_count: int = 3,
     ) -> None:
         self.client = client
@@ -181,6 +185,11 @@ class ResearchFSSession:
         self.task_target = task_target
         self.objective = objective
         self.task_name = task_name
+        if not query_examples or any(
+            not isinstance(value, str) or not value.strip() for value in query_examples
+        ):
+            raise ValueError("query_examples must contain non-empty strings")
+        self.query_examples = tuple(value.strip() for value in query_examples)
         self.recent_areas_count = recent_areas_count
         self.search_cache: Dict[Tuple[str, Optional[int]], Tuple[str, List[int]]] = {}
         self.prompt_tokens_accum = 0
@@ -346,13 +355,13 @@ class ResearchFSSession:
 
                 if status_val == "keep":
                     outcome = (
-                        f"Kept (improved BPB to {val_bpb_val:.6f})"
+                        f"Kept (improved metric to {val_bpb_val:.6f})"
                         if val_bpb_val is not None
                         else "Kept"
                     )
                 elif status_val == "discard":
                     outcome = (
-                        f"Discarded (BPB: {val_bpb_val:.6f})"
+                        f"Discarded (metric: {val_bpb_val:.6f})"
                         if val_bpb_val is not None
                         else "Discarded"
                     )
@@ -604,7 +613,7 @@ class ResearchFSSession:
 
 
 class ResearchFSClient:
-    """Lightweight client for ResearchFS-backed auto-research agents.
+    """Lightweight client for ResearchFS-backed research agents.
 
     Example usage:
 
@@ -618,7 +627,7 @@ class ResearchFSClient:
         # ... run experiment ...
 
         exp_id = session.log_outcome(val_metric=2.15, status="keep",
-                                     description="Tuned Muon LR")
+                                     description="Tested a retrieved method")
         session.log_retrieval("agent_search", decision["query"], pack[:2000],
                               experiment_id=exp_id)
         client.close()
@@ -655,10 +664,18 @@ class ResearchFSClient:
 
     def start_session(
         self,
-        mode: str = "loopgraph",
+        mode: str = "research",
         model: str = "unknown",
         baseline_metric: Optional[float] = None,
         run_id: Optional[int] = None,
+        task_target: str = "the current research task",
+        objective: str = "improve the target outcome",
+        task_name: str = "research workflow",
+        query_examples: tuple[str, ...] = (
+            "experimental design",
+            "retrieval quality",
+            "data provenance",
+        ),
     ) -> ResearchFSSession:
         """Start a new research session.
 
@@ -668,7 +685,15 @@ class ResearchFSClient:
             run_id = rfs.start_agent_run(mode=mode, model=model, conn=self.get_connection())
         else:
             run_id = _validate_positive_int(run_id, "run_id")
-        return ResearchFSSession(self, run_id, baseline_metric=baseline_metric)
+        return ResearchFSSession(
+            self,
+            run_id,
+            baseline_metric=baseline_metric,
+            task_target=task_target,
+            objective=objective,
+            task_name=task_name,
+            query_examples=query_examples,
+        )
 
     def ask(
         self,

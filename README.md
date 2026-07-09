@@ -6,10 +6,10 @@ compresses it into method and provenance memory, retrieves bounded context for a
 question, and records experiments and lessons so later agents can reuse what
 the lab has already learned.
 
-The NanoChat/autoresearch training loop in this repository is now an
-evaluation fixture: it gives ResearchFS a small, real research environment for
-measuring whether paper-grounded memory helps an agent choose better
-experiments. NanoChat remains useful, but it is no longer the product surface.
+The installable product is `researchfs-core`. The NanoChat/autoresearch loop is
+an optional, separately managed project under `benchmarks/nanochat/`; its
+training runtime, reports, images, and orchestration code are excluded from the
+core wheel and root environment.
 
 ## Product path
 
@@ -68,17 +68,15 @@ The first shippable path is intentionally local and small:
 ## Quick start: local paper/lab memory
 
 **Requirements:** Python 3.10+ and [uv](https://docs.astral.sh/uv/). ResearchFS
-uses SQLite from the Python standard library. The NanoChat fixture additionally
-needs a single NVIDIA GPU for training experiments.
+uses SQLite from the Python standard library and has only `requests` and
+`pypdf` as runtime dependencies. Optional OpenAI-compatible extraction support
+is installed with `uv sync --extra llm`.
 
 ```bash
 # 1. Install dependencies
 uv sync
 
-# 2. Seed the local SQLite database with the bundled method corpus
-uv run python -m researchfs.ingest --seed
-
-# 3. Ingest a local markdown/text paper note without method extraction
+# 2. Ingest a local markdown/text paper note without method extraction
 mkdir -p notes
 cat > notes/clip-matrix.md <<'EOF'
 # Clip Matrix Update Norms
@@ -124,7 +122,7 @@ and no claim that binding it beyond `127.0.0.1` is safe. Use
 wraps `ResearchFSLabAPI.dispatch`, returns response bodies for successful API
 responses, and raises a small client exception for non-2xx responses. Keep it
 distinct from `ResearchFSClient` and `ResearchFSSession`, which are DB-backed
-helpers for autoresearch agent sessions, query reuse, prompt assembly, and
+helpers for research-agent sessions, query reuse, prompt assembly, and
 experiment logging.
 
 ```python
@@ -427,9 +425,9 @@ lab API. It is not a hosted service and does not add built-in authentication;
 keep any API server bound to loopback such as `127.0.0.1`. The routed ask code
 path uses local compressed memory only: no vector DB, no OCR or scanned-PDF
 parsing, no PDF-coordinate citation validation, no raw full-paper context to the
-reader, and no required model/GPU dependency. The repository may still contain
-NanoChat/training fixture dependencies such as `torch`; the routed ask code path
-does not import or require model/GPU packages.
+reader, and no required model/GPU dependency. NanoChat and its model/GPU
+dependencies live in the separately managed `benchmarks/nanochat` project and
+are excluded from the core install.
 
 ## PaperServe-Bench synthetic scaffold
 
@@ -957,7 +955,7 @@ ResearchFS memory record.
 
 - Retrieval is early FTS5 keyword/hybrid ranking, not production vector search.
 - Human/agent feedback is a modest ranking signal layered onto keyword rank,
-  empirical experiment outcomes, BPB deltas, and fatigue. A positive average
+  empirical experiment outcomes, metric deltas, and fatigue. A positive average
   rating can nudge a method upward and a negative average can nudge it
   downward, but feedback alone should not override measured experiment results.
 - LLM method extraction is optional. Without `--extract` or an injected
@@ -980,72 +978,58 @@ ResearchFS memory record.
 
 ## Development checks
 
-Focused regression coverage lives under `tests/`; keep new targeted tests there
-instead of growing the legacy monolithic `test_runner.py` unless an existing
-fixture helper must be reused. Run the current checks with:
+Core regression coverage lives under `tests/`. Run it from the repository root
+without installing any benchmark dependency:
 
 ```bash
-uv run pytest tests/test_regressions.py -q
-uv run pytest test_runner.py tests/test_regressions.py -q
+uv sync
+uv run pytest -q
 ```
 
-`test_runner.py` remains the broad compatibility suite for existing ResearchFS,
-API, bundle, and NanoChat fixture behavior.
-
-The Codex experiment guard permits generated agent edits only in `train.py`.
-Outside `train.py`, it compares tracked/staged diffs, untracked file hashes, and
-a scoped ignored-artifact whitelist: `results.tsv`, `researchfs.db`, `.asep/**`,
-`results/**`, `queue/**`, `CLAUDE.md`, `AGENTS.md`, `run_*.log`, and
-`run_baseline.log`. It deliberately does not scan every gitignored path such as
-`.venv/`, `data/`, `worktrees/`, or Python caches.
+The NanoChat project has its own environment and test commands in
+[`benchmarks/nanochat/README.md`](benchmarks/nanochat/README.md). Its legacy
+compatibility runner and train-only edit guard stay with the fixture.
 
 ## Project structure
 
 ```
 researchfs/                — ResearchFS ingestion, retrieval, evaluation, ranking, SDK, and DB helpers
 researchfs_spec.md         — compact v0 product/schema notes
-program.md                 — baseline prompt for the NanoChat evaluation fixture
-prepare.py                 — NanoChat fixture data prep, tokenizer, dataloader, fixed BPB eval
-train.py                   — NanoChat fixture model, optimizer, and training loop
-run_agent.py               — CLI loop for fixture experiments
-agents/harness_agent.py    — in-process agent loop used by tests/ASEP wrappers
-evals/nanochat_bpb/        — fixture run metrics, benchmark comparison, safety screens
-compare_runs.py            — compare fixture runs against each other and published baselines
+benchmarks/nanochat/       — separately managed NanoChat fixture project and heavy dependencies
+examples/                  — dependency-light product examples and routing evaluations
+evals/                     — dependency-light ResearchFS product evaluations
 tests/test_regressions.py  — focused regression tests for recent safety fixes
-pyproject.toml             — dependencies
+pyproject.toml             — lightweight researchfs-core package manifest
 ```
 
 ## NanoChat evaluation fixture
 
-The original autoresearch workflow gives ResearchFS a concrete benchmark: an
-agent edits `train.py`, trains for a fixed 5-minute budget, checks validation
-bits per byte (`val_bpb`; lower is better), and keeps or discards the change.
-ResearchFS supplies retrieved method context before the experiment and stores
-the result afterward.
+The original autoresearch workflow remains available as a concrete benchmark,
+but it is not installed with `researchfs-core`. The fixture owns NanoChat,
+Torch, Modal integration, data preparation, training, benchmark plots, and
+fixture-specific seeds.
 
 To run the fixture directly:
 
 ```bash
-# One-time data/tokenizer preparation for the NanoChat fixture
-uv run prepare.py
+cd benchmarks/nanochat
+uv sync
 
-# Manual 5-minute fixture training run
-uv run train.py
+# One-time data/tokenizer preparation and manual training run
+uv run python prepare.py
+uv run python train.py
 ```
 
 List and compare recorded fixture runs:
 
 ```bash
 uv run python compare_runs.py --list
-uv run python compare_runs.py <baseline_run_id> <loopgraph_run_id>
-uv run python compare_runs.py --benchmarks <baseline_run_id> <loopgraph_run_id>
-uv run python compare_runs.py --benchmark-only <run_id>
-uv run python compare_runs.py --aggregate-seeds <run_id_1> <run_id_2> [run_id_3 ...]
+uv run python compare_runs.py <baseline_run_id> <researchfs_run_id>
+uv run python compare_runs.py --benchmarks <baseline_run_id> <researchfs_run_id>
 ```
 
-The benchmark reports include published NanoChat Autoresearch reference points
-from Recursive/autoresearch@home and flag suspicious single-seed claims that
-need multi-seed validation.
+See [`benchmarks/nanochat/README.md`](benchmarks/nanochat/README.md) for optional
+Modal and analysis extras, full comparison modes, and fixture test commands.
 
 ## Fixture platform support
 

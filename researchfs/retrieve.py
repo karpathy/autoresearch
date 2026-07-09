@@ -440,7 +440,7 @@ def _build_method_pack(
                 f"**Empirical Swarm Stats:** {stats['total_runs']} runs, "
                 f"{stats['success_rate']:.0%} success ({stats['keeps']} keeps, "
                 f"{stats['discards']} discards, {stats['crashes']} crashes), "
-                f"avg {stats['avg_bpb_delta']:+.6f} BPB."
+                f"avg metric delta {stats['avg_bpb_delta']:+.6f}."
             )
         else:
             method_lines.append("**Empirical Swarm Stats:** No runs yet.")
@@ -556,7 +556,7 @@ def get_method_pack(conn=None) -> str:
         pack_str, _ = _build_method_pack(
             method_list,
             conn,
-            "# Method Pack: Autoresearch Optimization Catalog\n"
+            "# ResearchFS Method Catalog\n"
         )
         return pack_str
     finally:
@@ -874,7 +874,7 @@ def search_methods_and_ids(
             main_pack_str, main_ids = _build_method_pack(
                 methods,
                 conn,
-                "# Method Pack: Autoresearch Optimization Catalog\n",
+                "# ResearchFS Method Catalog\n",
                 max_chars=valid_max_chars,
             )
         else:
@@ -979,7 +979,7 @@ def search_methods_with_scores(
             main_pack_str, main_ids = _build_method_pack(
                 methods,
                 conn,
-                "# Method Pack: Autoresearch Optimization Catalog\n",
+                "# ResearchFS Method Catalog\n",
                 max_chars=valid_max_chars,
             )
             score_rows.extend(_score_rows_for_ids(methods, main_ids))
@@ -1371,7 +1371,7 @@ def get_research_brief(
             conn.close()
 
 
-def get_experiment_brief(name: str = "nanochat_autoresearch", conn=None) -> str:
+def get_experiment_brief(name: str, conn=None) -> str:
     """Return the named experiment brief content."""
     close = False
     if conn is None:
@@ -1778,7 +1778,7 @@ def _format_stats_summary(stats: dict) -> str:
     return (
         f"history: {stats['total_runs']} runs, {stats['success_rate']:.0%} success "
         f"({stats['keeps']} keep, {stats['discards']} discard, "
-        f"{stats['crashes']} crash), avg {stats['avg_bpb_delta']:+.6f} BPB"
+        f"{stats['crashes']} crash), avg metric delta {stats['avg_bpb_delta']:+.6f}"
         f"{feedback_suffix}"
     )
 
