@@ -1,7 +1,9 @@
-"""SQLite database connection and schema for ResearchFS v0."""
+"""SQLite database connections, schema, and versioned migrations for ResearchFS."""
 
 import os
 import sqlite3
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 DB_NAME = "researchfs.db"
@@ -51,6 +53,12 @@ ARXIV_JOB_TYPES = (
 _ARXIV_JOB_TYPE_VALUES_SQL = ", ".join(f"'{job_type}'" for job_type in ARXIV_JOB_TYPES)
 
 SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS papers (
     paper_id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -964,8 +972,114 @@ def _backfill_method_source_evidence(conn: sqlite3.Connection) -> None:
         )
 
 
-def migrate_db(conn: sqlite3.Connection | None = None) -> None:
-    """Apply idempotent schema migrations for databases created by older ResearchFS versions."""
+@dataclass(frozen=True)
+class Migration:
+    """One immutable, ordered ResearchFS schema migration."""
+
+    version: int
+    name: str
+    apply: Callable[[sqlite3.Connection], None]
+
+
+def _baseline_schema(_conn: sqlite3.Connection) -> None:
+    """Record the schema created by the idempotent SCHEMA bootstrap."""
+
+
+MIGRATIONS = (
+    Migration(1, "baseline_schema", _baseline_schema),
+    Migration(2, "constrain_arxiv_job_types", _ensure_arxiv_jobs_job_type_constraint),
+    Migration(3, "add_arxiv_sync_scope", _ensure_arxiv_sync_state_scope_columns),
+    Migration(4, "add_arxiv_sync_counters", _ensure_arxiv_sync_state_counter_columns),
+    Migration(5, "add_extraction_metadata", _ensure_paper_extraction_status_columns),
+    Migration(6, "add_extraction_external_id", _ensure_paper_extraction_status_external_id),
+    Migration(7, "add_method_source_evidence", _ensure_method_source_evidence_columns),
+    Migration(8, "add_method_feedback_source", _ensure_method_feedback_columns),
+    Migration(9, "normalize_paper_code_repositories", _ensure_paper_code_repository_columns),
+    Migration(10, "backfill_method_source_evidence", _backfill_method_source_evidence),
+)
+
+CURRENT_SCHEMA_VERSION = MIGRATIONS[-1].version
+
+
+def _read_applied_migrations(conn: sqlite3.Connection) -> dict[int, str]:
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
+    ).fetchone()
+    if table_exists is None:
+        return {}
+    rows = conn.execute(
+        "SELECT version, name FROM schema_migrations ORDER BY version"
+    ).fetchall()
+    return {
+        int(row["version"] if isinstance(row, sqlite3.Row) else row[0]): str(
+            row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        )
+        for row in rows
+    }
+
+
+def _validate_migration_history(applied: dict[int, str]) -> None:
+    """Reject databases whose migration ledger cannot be upgraded safely."""
+    if not applied:
+        return
+
+    latest_applied = max(applied)
+    if latest_applied > CURRENT_SCHEMA_VERSION:
+        raise RuntimeError(
+            "Database schema version "
+            f"{latest_applied} is newer than supported version {CURRENT_SCHEMA_VERSION}."
+        )
+
+    expected_versions = set(range(1, latest_applied + 1))
+    missing_versions = sorted(expected_versions - set(applied))
+    if missing_versions:
+        missing = ", ".join(str(version) for version in missing_versions)
+        raise RuntimeError(f"Database migration history has gaps at version(s): {missing}.")
+
+    migration_names = {migration.version: migration.name for migration in MIGRATIONS}
+    for version, stored_name in applied.items():
+        expected_name = migration_names.get(version)
+        if expected_name != stored_name:
+            raise RuntimeError(
+                f"Database migration {version} is named {stored_name!r}; "
+                f"expected {expected_name!r}."
+            )
+
+
+def get_schema_version(conn: sqlite3.Connection | None = None) -> int:
+    """Return the latest recorded schema version without applying migrations."""
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+    try:
+        applied = _read_applied_migrations(conn)
+        _validate_migration_history(applied)
+        return max(applied, default=0)
+    finally:
+        if close:
+            conn.close()
+
+
+def get_pending_migrations(
+    conn: sqlite3.Connection | None = None,
+) -> tuple[Migration, ...]:
+    """Return ordered migrations that have not yet been recorded."""
+    close = False
+    if conn is None:
+        conn = get_connection()
+        close = True
+    try:
+        applied = _read_applied_migrations(conn)
+        _validate_migration_history(applied)
+        return tuple(migration for migration in MIGRATIONS if migration.version not in applied)
+    finally:
+        if close:
+            conn.close()
+
+
+def migrate_db(conn: sqlite3.Connection | None = None) -> tuple[Migration, ...]:
+    """Apply and record pending schema migrations in version order."""
     close = False
     if conn is None:
         conn = get_connection()
@@ -973,16 +1087,29 @@ def migrate_db(conn: sqlite3.Connection | None = None) -> None:
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(SCHEMA)
-        _ensure_arxiv_jobs_job_type_constraint(conn)
-        _ensure_arxiv_sync_state_scope_columns(conn)
-        _ensure_arxiv_sync_state_counter_columns(conn)
-        _ensure_paper_extraction_status_columns(conn)
-        _ensure_paper_extraction_status_external_id(conn)
-        _ensure_method_source_evidence_columns(conn)
-        _ensure_method_feedback_columns(conn)
-        _ensure_paper_code_repository_columns(conn)
-        _backfill_method_source_evidence(conn)
+        applied = _read_applied_migrations(conn)
+        _validate_migration_history(applied)
+        pending = tuple(
+            migration for migration in MIGRATIONS if migration.version not in applied
+        )
+        for migration in pending:
+            savepoint = f"researchfs_migration_{migration.version}"
+            conn.execute(f"SAVEPOINT {savepoint}")
+            try:
+                migration.apply(conn)
+                conn.execute(
+                    "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
+                    (migration.version, migration.name),
+                )
+            except Exception:
+                conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                conn.rollback()
+                raise
+            else:
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         conn.commit()
+        return pending
     finally:
         if close:
             conn.close()
@@ -1018,7 +1145,6 @@ def initialize_db(
                 FTS_TABLES,
             )
         }
-        conn.executescript(SCHEMA)
         migrate_db(conn)
         if rebuild_fts or any(table not in existing_fts_tables for table in FTS_TABLES):
             ensure_fts_populated(conn)

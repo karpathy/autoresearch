@@ -67,6 +67,102 @@ def test_core_manifest_and_layout_exclude_nanochat_runtime():
     assert not hasattr(ingest, "ensure_seed")
 
 
+def test_schema_migrations_are_versioned_recorded_and_idempotent():
+    """Fresh databases record the immutable migration sequence exactly once."""
+    from researchfs import db
+
+    conn = _memory_conn()
+    applied = db.migrate_db(conn)
+
+    assert applied == db.MIGRATIONS
+    assert db.get_schema_version(conn) == db.CURRENT_SCHEMA_VERSION
+    assert db.get_pending_migrations(conn) == ()
+    rows = conn.execute(
+        "SELECT version, name, applied_at FROM schema_migrations ORDER BY version"
+    ).fetchall()
+    assert [(row["version"], row["name"]) for row in rows] == [
+        (migration.version, migration.name) for migration in db.MIGRATIONS
+    ]
+    assert all(row["applied_at"] for row in rows)
+
+    timestamps = [row["applied_at"] for row in rows]
+    assert db.migrate_db(conn) == ()
+    assert [
+        row["applied_at"]
+        for row in conn.execute(
+            "SELECT applied_at FROM schema_migrations ORDER BY version"
+        ).fetchall()
+    ] == timestamps
+
+
+@pytest.mark.parametrize(
+    ("rows", "message"),
+    [
+        ([(1, "wrong_name")], "expected 'baseline_schema'"),
+        ([(2, "constrain_arxiv_job_types")], "gaps at version"),
+        ([(999, "future_schema")], "newer than supported"),
+    ],
+)
+def test_schema_migration_history_rejects_unsafe_ledgers(rows, message):
+    """A drifted, gapped, or future migration ledger fails closed."""
+    from researchfs import db
+
+    conn = _memory_conn()
+    conn.execute(
+        """
+        CREATE TABLE schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.executemany(
+        "INSERT INTO schema_migrations (version, name) VALUES (?, ?)", rows
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        db.get_pending_migrations(conn)
+
+
+def test_migrations_cli_reports_checks_and_upgrades_database(tmp_path):
+    """The migration CLI distinguishes pending schemas and upgrades them."""
+    from researchfs import db
+    from researchfs.migrations import main
+
+    db_path = tmp_path / "migration-cli.db"
+    stdout = io.StringIO()
+    assert main(["status", "--db-path", str(db_path)], stdout=stdout) == 0
+    status = json.loads(stdout.getvalue())
+    assert status["ok"] is True
+    assert status["up_to_date"] is False
+    assert status["current_version"] == 0
+    assert status["latest_version"] == db.CURRENT_SCHEMA_VERSION
+    assert len(status["pending"]) == len(db.MIGRATIONS)
+
+    stdout = io.StringIO()
+    assert main(["check", "--db-path", str(db_path)], stdout=stdout) == 1
+    assert json.loads(stdout.getvalue())["ok"] is False
+
+    stdout = io.StringIO()
+    assert main(["upgrade", "--db-path", str(db_path)], stdout=stdout) == 0
+    upgrade = json.loads(stdout.getvalue())
+    assert upgrade["from_version"] == 0
+    assert upgrade["to_version"] == db.CURRENT_SCHEMA_VERSION
+    assert len(upgrade["applied"]) == len(db.MIGRATIONS)
+
+    stdout = io.StringIO()
+    assert main(["check", "--db-path", str(db_path)], stdout=stdout) == 0
+    assert json.loads(stdout.getvalue()) == {
+        "command": "check",
+        "current_version": db.CURRENT_SCHEMA_VERSION,
+        "latest_version": db.CURRENT_SCHEMA_VERSION,
+        "ok": True,
+        "pending": [],
+        "up_to_date": True,
+    }
+
+
 
 @pytest.mark.parametrize("invalid_run_id", [True, "7", 7.5, 0, -1])
 def test_start_session_rejects_invalid_explicit_run_id_before_side_effects(
