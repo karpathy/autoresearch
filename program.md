@@ -1,46 +1,46 @@
 # autoresearch
 
-This is an experiment to have the LLM do its own research.
+This experiment lets the LLM do its own research.
 
 ## Setup
 
-To set up a new experiment, work with the user to:
+To set up a new experiment, do these steps with the user:
 
-1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar5`). The branch `autoresearch/<tag>` must not already exist — this is a fresh run.
-2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
-3. **Read the in-scope files**: The repo is small. Read these files for full context:
+1. **Agree on a run tag**: Propose a tag based on today's date (for example, `mar5`). Make sure the branch `autoresearch/<tag>` does not already exist. This is a new run.
+2. **Create the branch**: Run `git checkout -b autoresearch/<tag>` from current master.
+3. **Read the in-scope files**: The repository is small. Read these files for full context:
    - `README.md` — repository context.
    - `prepare.py` — fixed constants, data prep, tokenizer, dataloader, evaluation. Do not modify.
    - `train.py` — the file you modify. Model architecture, optimizer, training loop.
-4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
-5. **Initialize results.tsv**: Create `results.tsv` with just the header row. The baseline will be recorded after the first run.
-6. **Confirm and go**: Confirm setup looks good.
+4. **Verify data exists**: Make sure `~/.cache/autoresearch/` contains data shards and a tokenizer. If it does not, tell the human to run `uv run prepare.py`.
+5. **Initialize results.tsv**: Create `results.tsv` with only the header row. Record the baseline after the first run.
+6. **Confirm and go**: Confirm that the setup is correct. Then continue.
 
-Once you get confirmation, kick off the experimentation.
+After the user confirms, start the experiments.
 
 ## Experimentation
 
-Each experiment runs on a single GPU. The training script runs for a **fixed time budget of 5 minutes** (wall clock training time, excluding startup/compilation). You launch it simply as: `uv run train.py`.
+Each experiment uses one GPU. The training script runs for a **fixed time budget of 5 minutes**. This is wall clock training time and excludes startup or compilation. Start it with: `uv run train.py`.
 
 **What you CAN do:**
-- Modify `train.py` — this is the only file you edit. Everything is fair game: model architecture, optimizer, hyperparameters, training loop, batch size, model size, etc.
+- Modify `train.py` — this is the only file you edit. You can change the model architecture, optimizer, hyperparameters, training loop, batch size, model size, and related code.
 
 **What you CANNOT do:**
-- Modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, tokenizer, and training constants (time budget, sequence length, etc).
-- Install new packages or add dependencies. You can only use what's already in `pyproject.toml`.
-- Modify the evaluation harness. The `evaluate_bpb` function in `prepare.py` is the ground truth metric.
+- Do not modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, tokenizer, and training constants. These include the time budget and sequence length.
+- Do not install new packages or add dependencies. Use only what is already in `pyproject.toml`.
+- Do not modify the evaluation harness. The `evaluate_bpb` function in `prepare.py` is the ground truth metric.
 
-**The goal is simple: get the lowest val_bpb.** Since the time budget is fixed, you don't need to worry about training time — it's always 5 minutes. Everything is fair game: change the architecture, the optimizer, the hyperparameters, the batch size, the model size. The only constraint is that the code runs without crashing and finishes within the time budget.
+**The goal is simple: get the lowest val_bpb.** The fixed time budget removes training time as a variable. You do not need to optimize training time. Each run is always 5 minutes. You can change the architecture, optimizer, hyperparameters, batch size, and model size. The code must run without a crash. It must finish within the time budget.
 
-**VRAM** is a soft constraint. Some increase is acceptable for meaningful val_bpb gains, but it should not blow up dramatically.
+**VRAM** is a soft constraint. Some increase is acceptable for meaningful val_bpb gains. Do not let VRAM increase by a large amount.
 
-**Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome — that's a simplification win. When evaluating whether to keep a change, weigh the complexity cost against the improvement magnitude. A 0.001 val_bpb improvement that adds 20 lines of hacky code? Probably not worth it. A 0.001 val_bpb improvement from deleting code? Definitely keep. An improvement of ~0 but much simpler code? Keep.
+**Simplicity criterion**: When all other results are equal, simple code is better. Do not keep a small improvement if it adds unnecessary complexity. Keep a change that removes code and gives equal or better results. When you evaluate a change, compare the complexity cost with the improvement size. For example, do not keep a 0.001 val_bpb improvement if it adds 20 lines of bad code. Keep a 0.001 val_bpb improvement if it deletes code. Keep a change with approximately no improvement if it makes the code much simpler.
 
-**The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
+**The first run**: For your first run, establish the baseline. Run the training script without changes.
 
 ## Output format
 
-Once the script finishes it prints a summary like this:
+After the script finishes, it prints a summary like this:
 
 ```
 ---
@@ -55,7 +55,7 @@ num_params_M:     50.3
 depth:            8
 ```
 
-Note that the script is configured to always stop after 5 minutes, so depending on the computing platform of this computer the numbers might look different. You can extract the key metric from the log file:
+The script always stops after 5 minutes. Thus, numbers can differ by computing platform. Use this command to extract the key metric from the log file:
 
 ```
 grep "^val_bpb:" run.log
@@ -63,7 +63,7 @@ grep "^val_bpb:" run.log
 
 ## Logging results
 
-When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated — commas break in descriptions).
+When an experiment is done, log it to `results.tsv`. Use tabs, not commas. Commas break descriptions.
 
 The TSV has a header row and 5 columns:
 
@@ -72,8 +72,8 @@ commit	val_bpb	memory_gb	status	description
 ```
 
 1. git commit hash (short, 7 chars)
-2. val_bpb achieved (e.g. 1.234567) — use 0.000000 for crashes
-3. peak memory in GB, round to .1f (e.g. 12.3 — divide peak_vram_mb by 1024) — use 0.0 for crashes
+2. val_bpb result (for example, 1.234567). Use 0.000000 for crashes.
+3. peak memory in GB, rounded to .1f (for example, 12.3). Divide peak_vram_mb by 1024. Use 0.0 for crashes.
 4. status: `keep`, `discard`, or `crash`
 5. short text description of what this experiment tried
 
@@ -89,26 +89,26 @@ d4e5f6g	0.000000	0.0	crash	double model width (OOM)
 
 ## The experiment loop
 
-The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
+The experiment runs on a dedicated branch (for example, `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
 
 LOOP FOREVER:
 
-1. Look at the git state: the current branch/commit we're on
-2. Tune `train.py` with an experimental idea by directly hacking the code.
-3. git commit
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
+1. Look at the git state: the current branch and commit.
+2. Tune `train.py` with an experimental idea. Edit the code directly.
+3. Create a git commit.
+4. Run the experiment: `uv run train.py > run.log 2>&1` (Redirect all output. Do not use tee. Do not let output fill your context.)
 5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
-8. If val_bpb improved (lower), you "advance" the branch, keeping the git commit
-9. If val_bpb is equal or worse, you git reset back to where you started
+6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log`. Read the Python stack trace. Try to fix the problem. If you cannot fix it after more than a few attempts, stop that idea.
+7. Record the results in the tsv. Do not commit the results.tsv file. Leave it untracked by git.
+8. If val_bpb improved (lower), advance the branch. Keep the git commit.
+9. If val_bpb is equal or worse, reset git to where you started.
 
-The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
+Act as an autonomous researcher. Try changes. Keep changes that work. Discard changes that do not work. Advance the branch so that you can iterate. If you get stuck, you can rewind. Use this option very sparingly, if ever.
 
-**Timeout**: Each experiment should take ~5 minutes total (+ a few seconds for startup and eval overhead). If a run exceeds 10 minutes, kill it and treat it as a failure (discard and revert).
+**Timeout**: Each experiment should take approximately 5 minutes total. Startup and eval overhead can add a few seconds. If a run exceeds 10 minutes, kill it. Treat it as a failure. Discard it and revert.
 
-**Crashes**: If a run crashes (OOM, or a bug, or etc.), use your judgment: If it's something dumb and easy to fix (e.g. a typo, a missing import), fix it and re-run. If the idea itself is fundamentally broken, just skip it, log "crash" as the status in the tsv, and move on.
+**Crashes**: If a run crashes because of OOM, a bug, or another issue, use your judgment. If the fix is simple, fix it. Then run it again. For example, fix a typo or add a missing import. If the idea itself is broken, skip it. Log `crash` as the status in the tsv. Then continue.
 
-**NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
+**NEVER STOP**: After the experiment loop starts, do not pause to ask the human if you should continue. Do not ask "should I keep going?" Do not ask "is this a good stopping point?". The human might be asleep or away from the computer. The human expects you to continue working indefinitely until you are manually stopped. You are autonomous. If you run out of ideas, think harder. Read papers referenced in the code. Read the in-scope files again for new angles. Try combinations of previous near-misses. Try more radical architectural changes. The loop runs until the human interrupts you. No other stop condition applies.
 
-As an example use case, a user might leave you running while they sleep. If each experiment takes you ~5 minutes then you can run approx 12/hour, for a total of about 100 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
+For example, a user might let you run while they sleep. If each experiment takes approximately 5 minutes, you can run approximately 12 per hour. That is approximately 100 experiments during average human sleep. The user then wakes up to experimental results. You completed all experiments while they slept!
