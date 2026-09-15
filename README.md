@@ -37,6 +37,25 @@ uv run prepare.py
 uv run train.py
 ```
 
+### Windows / 4 GB NVIDIA setup
+
+This checkout uses a smaller profile by default on Windows: 512-token context, depth 4, device batch size 8, 32K total batch size, full causal SDPA, and a 1M-token evaluation. It also disables `torch.compile`, which is not required for the Windows path. The Linux defaults are unchanged.
+
+In PowerShell, use the Windows `uv` executable directly if a newly installed `uv` is not yet on `PATH`:
+
+```powershell
+$uv = "$HOME\.local\bin\uv.exe"
+
+# The Microsoft package mirror avoids direct-PyPI TLS failures on this machine.
+& $uv --system-certs sync --default-index "https://packagefeedproxy.microsoft.io/pypi/simple/"
+
+# Minimal useful local dataset: two training shards plus the pinned validation shard.
+& $uv run prepare.py --num-shards 2
+& $uv run train.py
+```
+
+The Windows profile can be adjusted with the `AUTORESEARCH_MAX_SEQ_LEN`, `AUTORESEARCH_EVAL_TOKENS`, `AUTORESEARCH_DEPTH`, `AUTORESEARCH_DEVICE_BATCH_SIZE`, `AUTORESEARCH_TOTAL_BATCH_SIZE`, `AUTORESEARCH_WINDOW_PATTERN`, `AUTORESEARCH_TIME_BUDGET`, and `AUTORESEARCH_COMPILE` environment variables.
+
 If the above commands all work ok, your setup is working and you can go into autonomous research mode.
 
 ## Running the agent

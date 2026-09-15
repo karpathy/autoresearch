@@ -21,3 +21,13 @@ dev/
 
 # Results file
 results.tsv
+
+# Local datasets and model artifacts
+*.csv
+*.jsonl
+*.onnx
+*.parquet
+*.pkl
+*.pt
+*.pth
+*.safetensors
