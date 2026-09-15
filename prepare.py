@@ -24,12 +24,15 @@ import tiktoken
 import torch
 
 # ---------------------------------------------------------------------------
-# Constants (fixed, do not modify)
+# Constants (fixed within an experiment)
 # ---------------------------------------------------------------------------
 
-MAX_SEQ_LEN = 2048       # context length
-TIME_BUDGET = 300        # training time budget in seconds (5 minutes)
-EVAL_TOKENS = 40 * 524288  # number of tokens for val eval
+WINDOWS_PROFILE = os.name == "nt"
+MAX_SEQ_LEN = int(os.environ.get("AUTORESEARCH_MAX_SEQ_LEN", 512 if WINDOWS_PROFILE else 2048))
+TIME_BUDGET = int(os.environ.get("AUTORESEARCH_TIME_BUDGET", 300))
+EVAL_TOKENS = int(os.environ.get(
+    "AUTORESEARCH_EVAL_TOKENS", 2**20 if WINDOWS_PROFILE else 40 * 524288
+))
 
 # ---------------------------------------------------------------------------
 # Configuration
