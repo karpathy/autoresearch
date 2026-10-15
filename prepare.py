@@ -301,8 +301,12 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
     cpu_targets = cpu_buffer[B * T:].view(B, T)
     inputs = gpu_buffer[:B * T].view(B, T)
     targets = gpu_buffer[B * T:].view(B, T)
+    # The host-to-device copy is asynchronous and reads cpu_buffer when the GPU reaches
+    # it, so cpu_buffer is refilled only after the previous copy has completed.
+    copy_done = torch.cuda.Event()
 
     while True:
+        copy_done.synchronize()
         for row_idx in range(B):
             pos = 0
             while pos < row_capacity:
@@ -334,6 +338,7 @@ def make_dataloader(tokenizer, B, T, split, buffer_size=1000):
         cpu_inputs.copy_(row_buffer[:, :-1])
         cpu_targets.copy_(row_buffer[:, 1:])
         gpu_buffer.copy_(cpu_buffer, non_blocking=True)
+        copy_done.record()
         yield inputs, targets, epoch
 
 # ---------------------------------------------------------------------------
