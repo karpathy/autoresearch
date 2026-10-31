@@ -1,23 +1,19 @@
-# Python-generated files
 __pycache__/
 *.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-worktrees/
-results/
-queue/
-
-# Agent prompt files (generated per-session by launchers)
-CLAUDE.md
+.venv/
+*.egg-info/
+.lab/
+.labs/
+.tests/
+.private/
+.gitnexus/
+.cursor/
+.claude/
+.agents/skills/gitnexus-*/
 AGENTS.md
+CLAUDE.md
 
-# Experimental code/artifacts
-dev/
+.worktrees/
 
-# Results file
-results.tsv
+.agents/skills/autoresearch/skill.manifest.json
+

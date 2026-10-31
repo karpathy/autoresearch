@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoResearch</title>
+<script>
+try {
+  var savedTheme = localStorage.getItem("autoresearch:theme");
+  if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+} catch (error) {}
+</script>
+__STYLE__
+</head>
+<body>
+<header class="topbar">
+  <button type="button" class="icon-btn" id="nav-toggle" aria-label="Открыть список лабораторий" aria-expanded="false">
+    <span class="burger" aria-hidden="true"></span>
+  </button>
+  <div class="brand">
+    <span class="logo" aria-hidden="true"></span>
+    <div>
+      <strong>AutoResearch</strong>
+      <nav class="crumbs" id="crumbs" aria-label="Навигация"></nav>
+    </div>
+  </div>
+  <div class="top-lab-selector">
+    <select id="top-lab-select" aria-label="Выбрать лабораторию"></select>
+  </div>
+  <div class="top-actions">
+    <p class="mode" id="updated"><span class="live-dot" aria-hidden="true"></span><span id="mode-text">__MODE_LABEL__</span></p>
+    <button type="button" class="icon-btn" id="theme-toggle" aria-label="Переключить тему"></button>
+  </div>
+</header>
+<div class="backdrop" id="backdrop" hidden></div>
+<div class="layout">
+  <aside id="sidebar">
+    <div class="side-head">
+      <h2>Проекты и лаборатории</h2>
+      <input id="lab-search" type="search" placeholder="Поиск лаборатории" aria-label="Поиск лаборатории">
+      <div class="filters" id="status-filters" role="group" aria-label="Жизненный цикл лабораторий"></div>
+    </div>
+    <div id="navigation"></div>
+  </aside>
+  <main id="main">
+    <div id="connection" class="banner bad" hidden></div>
+    <div id="detail">
+      <div class="empty">Обзор активных лабораторий</div>
+      <h3 class="sr-only">Обзор лабораторий</h3>
+    </div>
+  </main>
+</div>
+<script id="snapshot" type="application/json">__PAYLOAD__</script>
+__APP__
+</body>
+</html>

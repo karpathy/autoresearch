@@ -1,92 +1,59 @@
-# autoresearch
+# AutoResearch Lab
 
-![teaser](progress.png)
+Based on [karpathy/autoresearch](https://github.com/karpathy/autoresearch) by Andrej Karpathy.
 
-*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
+AutoResearch is a local lab for testing one measurable code or prompt hypothesis at a time. An AI agent scouts the project, prepares an isolated candidate, runs the evaluator, and records each decision in a lab outside the source project. The workflow helps preserve evidence; it does not guarantee a quality improvement or replace the evaluator's goal criteria.
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069) and [this tweet](https://x.com/karpathy/status/2031135152349524125).
+The agent interface is a Markdown skill plus ordinary command-line tools. Python 3.10+ and Git are required. No agent-specific API is required; an agent may use the skill only when its host harness can satisfy the documented capability profile. The skill lives in [`.agents/skills/autoresearch/SKILL.md`](.agents/skills/autoresearch/SKILL.md). If a harness does not discover the project-local skill, open or point it to that file directly.
 
-## How it works
+The current source version is 0.7.0. See the [0.7.0 migration notes](docs/v07-migration.md) before upgrading from 0.6.x, and the [0.6.0 migration notes](docs/v06-migration.md) before upgrading from 0.5.x.
 
-The repo is deliberately kept small and only really has three files that matter:
+## Start a lab
 
-- **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
-- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+Give the agent a goal, such as “reduce the evaluator's false negatives.” The agent reads the project before asking for missing facts and shows a short passport with the project, goal, metric, evaluation method, constraints, and limits. Confirm that passport before the first measurement. An existing `program.md` or user-provided brief can supply the task; the agent never creates one in the measured project.
 
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
+The basic command path is:
 
-If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/status/2030720614752039185) looks pretty good for a lot more context.
-
-## Quick start
-
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
-
-```bash
-
-# 1. Install uv project manager (if you don't already have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Install dependencies
-uv sync
-
-# 3. Download data and train tokenizer (one-time, ~2 min)
-uv run prepare.py
-
-# 4. Manually run a single training experiment (~5 min)
-uv run train.py
+```text
+python .agents/skills/autoresearch/scripts/autoresearch.py doctor
+python .agents/skills/autoresearch/scripts/lab.py preflight --spec <spec.json>
+python .agents/skills/autoresearch/scripts/prepare.py --project <project> --brief-text - --spec <spec.json> --confirmed
+python .agents/skills/autoresearch/scripts/lab.py --config <lab.json> guide --json
+python .agents/skills/autoresearch/scripts/lab.py --config <lab.json> --confirmed baseline
+python .agents/skills/autoresearch/scripts/lab.py --config <lab.json> guide --json
+python .agents/skills/autoresearch/scripts/lab.py --config <lab.json> step
+python .agents/skills/autoresearch/scripts/lab.py --config <lab.json> --confirmed trial start --hypothesis <hypothesis.json>
+python .agents/skills/autoresearch/scripts/lab.py --config <lab.json> status
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
+After the first guide call, copy its `contract_fingerprint` into a host-managed profile outside the project and lab state, set `AUTORESEARCH_HARNESS_PROFILE` to that profile, and only then start an evaluator operation. See [the harness profile contract](.agents/skills/autoresearch/references/harness-profile.md) for the exact schema and an offline example. `preflight` checks the proposed contract and optional saved result without evaluating the project or making network requests. It does not sandbox arbitrary evaluator code. The profile is a host attestation; the host harness must actually enforce approval, sandbox isolation, network policy, and any external provider cap. Passport `max_requests` and `max_cost_usd` are recorded and measured, but do not stop arbitrary subprocess network requests. The skill never checks an API-key balance.
 
-## Running the agent
+The guide is the canonical compact view of the baseline, best run, explicit goal criteria, parent-relative changes, and next action. The agent should inspect only the history or run artifacts that the guide identifies as relevant. It uses past errors and metric deltas to propose a small number of testable ideas, records one hypothesis, then runs one change per trial.
 
-Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
+## Read the result correctly
 
+Framework acceptance means a trial passed the lab's configured comparison with its parent and guards. Goal success means the declared goal thresholds and confirmation repeats passed. Assess any separate external gate on its own before reporting broader goal success. If goal criteria are missing or incomplete, report an exploratory result; do not infer a gate from report prose or call `best_id` a quality success.
+
+Keep evidence origins separate. `historical` is an earlier result; `fresh` and `replay` run the evaluator and may make model calls; `offline_rescore` uses stored responses; `case_resume` continues pending IDs when supported; `prepare --resume` reuses a matching lab contract. For SQLite labs, inspect saved results, checkpoints, and attempts through the guide and API-backed views. For legacy labs, use read-only guide/status and preserve the folder with ZIP export; do not continue or import its runs into a new lab. Use `resume <run_id>` only when the CLI confirms support and fingerprints still match.
+
+State is stored under `AUTORESEARCH_HOME` (default `~/.autoresearch`), not in the measured project. Previous lab roots remain discoverable. Legacy labs are read-only: inspect their saved status and history, then export a byte-indexed ZIP before starting a new lab. Historical runs and fingerprints stay in that archive and cannot be imported into a working lab or used as its baseline. See [CLI contracts](.agents/skills/autoresearch/references/cli.md), [measurement semantics](.agents/skills/autoresearch/references/measurement.md), and [project safety](.agents/skills/autoresearch/references/safety.md).
+
+The local dashboard binds to `127.0.0.1` and starts as a background service on the first regular lab CLI command. Startup does not open or focus a browser; on Windows the service runs without a console window. Open a browser only with an explicit `--open-browser` request, such as `python .agents/skills/autoresearch/scripts/lab.py dashboard ensure --open-browser`. Use global `--headless` or `AUTORESEARCH_NO_DASHBOARD=1` to skip service startup. Before the first confirmed lab, the service shows an empty preparation state and does not create the SQLite database.
+
+SQLite-backed labs use their existing authenticated lifecycle routes. Legacy archive, restore, and delete actions are read-only; preserve an old lab with the explicit ZIP export. Promote only when the user asked for it. By default, experiments stay in the lab's candidate snapshot.
+
+## Install and update
+
+Run [the package installer](.agents/skills/autoresearch/references/installation.md) from a source package obtained through a trusted channel. The installer records file hashes in the target and refuses to overwrite modified managed files; the hashes are not signed. Updates stop before writing if an existing target has modified managed files, unknown content, or an unverifiable schema 1 manifest. Back up that target and use a clean destination; installation never removes or adopts unknown files automatically.
+
+## Verify the project
+
+Run the offline suite with:
+
+```text
+python -m unittest discover -s tests -v
 ```
-Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
-```
-
-The `program.md` file is essentially a super lightweight "skill".
-
-## Project structure
-
-```
-prepare.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
-```
-
-## Design choices
-
-- **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
-- **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
-
-## Platform support
-
-This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
-
-Seeing as there seems to be a lot of interest in tinkering with autoresearch on much smaller compute platforms than an H100, a few extra words. If you're going to try running autoresearch on smaller computers (Macbooks etc.), I'd recommend one of the forks below. On top of this, here are some recommendations for how to tune the defaults for much smaller models for aspiring forks:
-
-1. To get half-decent results I'd use a dataset with a lot less entropy, e.g. this [TinyStories dataset](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean). These are GPT-4 generated short stories. Because the data is a lot narrower in scope, you will see reasonable results with a lot smaller models (if you try to sample from them after training).
-2. You might experiment with decreasing `vocab_size`, e.g. from 8192 down to 4096, 2048, 1024, or even - simply byte-level tokenizer with 256 possibly bytes after utf-8 encoding.
-3. In `prepare.py`, you'll want to lower `MAX_SEQ_LEN` a lot, depending on the computer even down to 256 etc. As you lower `MAX_SEQ_LEN`, you may want to experiment with increasing `DEVICE_BATCH_SIZE` in `train.py` slightly to compensate. The number of tokens per fwd/bwd pass is the product of these two.
-4. Also in `prepare.py`, you'll want to decrease `EVAL_TOKENS` so that your validation loss is evaluated on a lot less data.
-5. In `train.py`, the primary single knob that controls model complexity is the `DEPTH` (default 8, here). A lot of variables are just functions of this, so e.g. lower it down to e.g. 4.
-6. You'll want to most likely use `WINDOW_PATTERN` of just "L", because "SSSL" uses alternating banded attention pattern that may be very inefficient for you. Try it.
-7. You'll want to lower `TOTAL_BATCH_SIZE` a lot, but keep it powers of 2, e.g. down to `2**14` (~16K) or so even, hard to tell.
-
-I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
-
-## Notable forks
-
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
-- [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
-- [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
 
 ## License
 
-MIT
+AutoResearch is released under the MIT License; see [LICENSE](LICENSE). The license names nightwishrus as the copyright holder. The upstream [karpathy/autoresearch](https://github.com/karpathy/autoresearch) README declares the MIT license; that repository has no separate LICENSE file. The bundled [`openresearch`](.agents/skills/openresearch) skill comes from alphaXiv and keeps its own MIT notice in [its LICENSE](.agents/skills/openresearch/LICENSE).
