@@ -59,6 +59,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--binary", help="agent executable (default: the one found on PATH)")
     parser.add_argument("--timeout", type=int, default=900,
                         help="seconds before the agent process tree is killed (default: %(default)s)")
+    parser.add_argument("--model", help="agent model (default: haiku for claude, the agent's own setting for codex)")
     parser.add_argument("--keep", action="store_true", help="keep the temporary workspace")
     return parser.parse_args(argv)
 
@@ -69,11 +70,12 @@ def resolve_binary(agent: str, requested: str | None) -> str | None:
     return shutil.which(requested or agent)
 
 
-def agent_command(agent: str, binary: str, prompt: str, workspace: Path) -> list[str]:
+def agent_command(agent: str, binary: str, prompt: str, workspace: Path, model: str | None = None) -> list[str]:
     if agent == "codex":
-        return [binary, "exec", "--sandbox", "workspace-write", "--skip-git-repo-check",
+        selected = ["--model", model] if model else []
+        return [binary, "exec", *selected, "--sandbox", "workspace-write", "--skip-git-repo-check",
                 "-C", str(workspace), prompt]
-    return [binary, "-p", prompt, "--model", "haiku", "--max-budget-usd", "1",
+    return [binary, "-p", prompt, "--model", model or "haiku", "--max-budget-usd", "1",
             "--allowedTools", "Bash", "Read", "Edit", "Write", "Glob", "Grep",
             "--permission-mode", "acceptEdits"]
 
@@ -258,7 +260,7 @@ def run_smoke(args: argparse.Namespace, binary: str, workspace: Path, run_dir: P
     })
     version = agent_version(binary, workspace)
     began = time.monotonic()
-    exit_code, timed_out = launch(agent_command(args.agent, binary, prompt, workspace), workspace,
+    exit_code, timed_out = launch(agent_command(args.agent, binary, prompt, workspace, args.model), workspace,
                                   env, run_dir / "agent.stdout.txt", run_dir / "agent.stderr.txt",
                                   args.timeout)
     seconds = round(time.monotonic() - began, 1)
