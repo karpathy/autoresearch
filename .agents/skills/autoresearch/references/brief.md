@@ -60,6 +60,42 @@ Show this and wait for one confirmation before `prepare`:
 <exact user wording, or "no paid requests; no time or trial cap">
 ```
 
+## Spec
+
+`preflight` and `prepare` read a JSON spec. A minimal one:
+
+```json
+{
+  "project": "<project path>",
+  "evaluator": ["{python}", "<evaluator.py>", "{candidate}", "{run_dir}"],
+  "metrics": {"primary": "mean_error", "direction": "min",
+              "guards": [{"name": "coverage", "direction": "max"}]},
+  "repeats": 1,
+  "timeout_seconds": 30,
+  "budget": {"max_trials": 3},
+  "budget_sources": {"max_trials": "at most 3 trials"},
+  "baseline_validation": {"mode": "fresh",
+                          "known_case": {"path": "<known_case.json>", "sha256": "<its sha256>"}}
+}
+```
+
+The goal comes from the spec's optional `goal`, a `Goal: ...` line, or the passport's `## Goal` section. `{python}`, `{candidate}` and `{run_dir}` are filled in at run time.
+
+`known_case` pins what a fresh baseline must reproduce. Write the record outside the project and the lab, then put its SHA-256 in the spec:
+
+```json
+{
+  "schema": 1,
+  "id": "my-baseline-v1",
+  "reproducible": true,
+  "evaluator_sha256": "<sha256 of the evaluator script>",
+  "input_hashes": {},
+  "expected_metrics": {"mean_error": 2.0, "coverage": 3.0}
+}
+```
+
+Take `expected_metrics` from a real earlier run or from values you can derive from the evaluator, and tell the user which. If the baseline does not reproduce them, it is recorded as incomparable and trials cannot start.
+
 ## Paths
 
 Write absolute paths in `spec.json` for the project, the evaluator script, `input_files`, and `known_case.path`. Relative paths are resolved from the brief file's directory. After `--brief-text`, that directory is `AUTORESEARCH_HOME/briefs/<project-id>/`.
