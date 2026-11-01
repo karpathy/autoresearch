@@ -68,6 +68,6 @@ Write absolute paths in `spec.json` for the project, the evaluator script, `inpu
 
 `max_seconds` and `max_trials` are enforced only when the spec's `budget_sources` value is an exact substring of the saved brief. Copy the user's limit into the Limits section word for word. A limit you invent is rejected.
 
-Paid calls stay off unless the brief allows them and the host harness profile attests an externally enforced provider cap. Request and cost numbers in the brief are recorded and measured; they do not cap arbitrary evaluator subprocesses or check an API-key balance. See [the harness profile contract](harness-profile.md).
+Paid calls stay off unless the brief allows them. AutoResearch does not limit spending and never checks an API-key balance: the user sets a spending limit on each API key, and request and cost numbers are recorded as measurements only. See [the harness profile contract](harness-profile.md).
 
 When criteria come from an artifact, record its path and hash as provenance. The lab goal_criteria block supports thresholds and confirmation repeats; assess any additional external gate separately. Keep framework trial acceptance separate from passing the goal.

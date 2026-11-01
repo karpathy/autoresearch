@@ -408,8 +408,8 @@ def _load_config(path: Path | str, *, allow_pending: bool = False, read_only: bo
         budget = raw["budget"]
         if not isinstance(budget, dict):
             raise LabError("Invalid budget")
-        # Legacy spend keys stay in lab.json so an existing contract hash still
-        # matches. They are ignored: a missing or zero cap must not block a run.
+        # Retired spend keys (max_requests, max_cost_usd) may remain in stored labs.
+        # They are never validated or enforced.
         for key in ("max_seconds", "max_trials"):
             value = budget.get(key)
             if value is None:
@@ -506,8 +506,7 @@ def _load_config(path: Path | str, *, allow_pending: bool = False, read_only: bo
             except OSError as error:
                 raise LabError("Strict lab is missing program.snapshot.md") from error
             for key in declared_budget:
-                # Spend caps are no longer enforced, but an old lab that quoted
-                # them must still match its frozen program snapshot.
+                # Retired spend keys need no quote and are not checked; loading ignores them.
                 if key in {"max_requests", "max_cost_usd"} or budget.get(key) is None:
                     continue
                 quote = budget_sources.get(key)

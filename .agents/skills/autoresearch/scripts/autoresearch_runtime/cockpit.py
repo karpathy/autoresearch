@@ -333,22 +333,10 @@ def get_state_card(config: LabConfig, state: dict[str, Any]) -> dict[str, Any]:
         from .state import _runs
 
         spent = _spent(_runs(config), config.state_dir)
-    budget_card = {
-        "requests_remaining": None,
-        "cost_usd_remaining": None,
-        "time_remaining_seconds": None,
-    }
+    budget_card = {"time_remaining_seconds": None}
     budget = config.budget
     if budget:
-        max_req = budget.get("max_requests") if isinstance(budget, dict) else getattr(budget, "max_requests", None)
-        max_cost = budget.get("max_cost_usd") if isinstance(budget, dict) else getattr(budget, "max_cost_usd", None)
         max_seconds = budget.get("max_seconds") if isinstance(budget, dict) else getattr(budget, "max_seconds", None)
-        if max_req is not None:
-            budget_card["requests_remaining"] = max(0, max_req - spent["requests"])
-        if max_cost is not None:
-            if not (spent.get("unknown_requests") or spent.get("unknown_costs") or spent.get("unknown_cost_usd")):
-                confirmed_cost = spent.get("confirmed_cost_usd", spent.get("cost_usd", 0.0))
-                budget_card["cost_usd_remaining"] = max(0.0, max_cost - confirmed_cost)
         if max_seconds is not None:
             budget_card["time_remaining_seconds"] = max(0.0, max_seconds - spent["seconds"])
 

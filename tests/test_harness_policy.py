@@ -33,6 +33,9 @@ from autoresearch_runtime.probe import run_probe
 from autoresearch_runtime.replay import run_replay
 
 
+_ABSENT = object()
+
+
 class HarnessPolicyTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -51,8 +54,8 @@ class HarnessPolicyTest(unittest.TestCase):
         )
         self.fingerprint = "a" * 64
 
-    def profile(self, *, network="disabled", spend=None, fingerprint=None):
-        return {
+    def profile(self, *, network="disabled", fingerprint=None, legacy_spend=_ABSENT):
+        value = {
             "schema_version": 1,
             "harness": {"id": "trusted-test-harness", "version": "1.2.0"},
             "approval": {
@@ -62,8 +65,10 @@ class HarnessPolicyTest(unittest.TestCase):
             "sandbox": {"enabled": True, "scope": "workspace"},
             "network": ({"mode": network, "allowed_hosts": ["api.example.test"]}
                         if network == "allowlisted" else {"mode": network}),
-            "spend": spend,
         }
+        if legacy_spend is not _ABSENT:
+            value["spend"] = legacy_spend  # a profile written before 0.8.0
+        return value
 
     def write_profile(self, value):
         self.profile_path.write_text(json.dumps(value), encoding="utf-8")
@@ -101,17 +106,29 @@ class HarnessPolicyTest(unittest.TestCase):
                     self.authorize(True)
                 self.assertEqual(error.exception.code, "E_HARNESS_POLICY_REJECTED")
 
-    def test_allowlisted_network_requires_a_provider_bound_external_cap(self):
+    def test_allowlisted_network_needs_no_spend_cap(self):
         self.write_profile(self.profile(network="allowlisted"))
-        with self.assertRaises(LabError) as no_cap:
-            self.authorize(True)
-        self.assertEqual(no_cap.exception.code, "E_HARNESS_POLICY_REJECTED")
+        policy = self.authorize(True)
+        self.assertEqual(policy["decision"], "allow")
+        self.assertEqual(policy["profile"]["network"],
+                         {"mode": "allowlisted", "allowed_hosts": ["api.example.test"]})
+        self.assertNotIn("spend", policy["profile"])
 
-        self.write_profile(self.profile(
-            network="allowlisted",
-            spend={"provider": "local-evaluator", "scope": "per_run", "max_cost_usd": 0.25},
-        ))
-        self.assertEqual(self.authorize(True)["decision"], "allow")
+    def test_legacy_spend_block_is_accepted_and_ignored(self):
+        self.write_profile(self.profile(network="allowlisted"))
+        plain = self.authorize(True)
+        for legacy in (
+            {"provider": "local-evaluator", "scope": "per_run", "max_cost_usd": 0.25},
+            {"scope": "weekly"},
+            None,
+        ):
+            with self.subTest(legacy_spend=legacy):
+                self.write_profile(self.profile(network="allowlisted", legacy_spend=legacy))
+                policy = self.authorize(True)
+                self.assertEqual(policy["decision"], "allow")
+                self.assertNotIn("spend", policy["profile"])
+                self.assertEqual(policy["profile_sha256"], plain["profile_sha256"])
+                self.assertEqual(policy["contract_fingerprint"], plain["contract_fingerprint"])
 
     def test_contract_approval_must_match_current_fingerprint(self):
         self.write_profile(self.profile(fingerprint="b" * 64))

@@ -37,6 +37,41 @@ def _hash(path: Path) -> str:
     return digest.hexdigest()
 
 
+# AutoResearch does not limit spending. New specs cannot declare the retired spend fields;
+# stored labs that still carry them are read with those fields ignored.
+SPEND_LIMIT_CODE = "E_CONTRACT_SPEND_LIMIT"
+RETIRED_SPEND_KEYS = ("max_requests", "max_cost_usd")
+
+
+def _reject_spend_limits(spec: dict[str, Any]) -> None:
+    declared = [key for key in RETIRED_SPEND_KEYS
+                if any(isinstance(spec.get(field), dict) and key in spec[field]
+                       for field in ("budget", "budget_sources"))]
+    if declared:
+        raise LabError(
+            "AutoResearch does not limit spending. Remove "
+            + " and ".join(f"budget.{key}" for key in declared)
+            + " from the spec, and set a limit on the API key that the evaluator uses.",
+            code=SPEND_LIMIT_CODE,
+            hint="max_seconds and max_trials still apply. Usage and cost are still recorded.",
+        )
+
+
+def _retired_spend_identity(budget: dict[str, Any]) -> dict[str, Any]:
+    """Historical values of the retired spend fields. They feed the lab id and are never stored."""
+    if budget.get("openrouter"):
+        return {"max_requests": None, "max_cost_usd": None}
+    return {"max_requests": 0, "max_cost_usd": 0}
+
+
+def _without_retired_spend(stored: Any) -> Any:
+    """A lab stored before 0.8.0 may still carry the retired fields. They are ignored, not compared."""
+    budget = stored.get("budget") if isinstance(stored, dict) else None
+    if not isinstance(budget, dict) or not any(key in budget for key in RETIRED_SPEND_KEYS):
+        return stored
+    return {**stored, "budget": {key: value for key, value in budget.items() if key not in RETIRED_SPEND_KEYS}}
+
+
 def _lab_root(program: Path, project: Path) -> Path:
     root = resolve_home()
     if root == project.resolve() or root.is_relative_to(project.resolve()):
@@ -263,6 +298,7 @@ def prepare_lab(
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
         if not isinstance(spec, dict):
             raise ValueError("Derived spec must be an object")
+        _reject_spend_limits(spec)
         project = _path(program.parent, spec["project"])
         if not project.is_dir():
             raise ValueError(f"Project is missing: {project}")
@@ -330,15 +366,11 @@ def prepare_lab(
         delegation = spec.get("delegation", {"required": False})
         if not isinstance(delegation, dict):
             raise ValueError("delegation must be an object when present")
-        budget = {"max_seconds": None, "max_trials": None, "max_requests": 0, "max_cost_usd": 0}
+        budget = {"max_seconds": None, "max_trials": None}
         budget.update(declared_budget)
-        # Keep the historical JSON shape so an existing contract id still matches.
-        # Request and cost numbers are stored and then ignored by the runner.
-        if budget.get("openrouter"):
-            if "max_requests" not in declared_budget:
-                budget["max_requests"] = None
-            if "max_cost_usd" not in declared_budget:
-                budget["max_cost_usd"] = None
+        # The lab id hashes the historical budget shape, so a spec that never declared the
+        # retired spend fields keeps its id. Those fields are not written to lab.json.
+        identity_budget = {**budget, **_retired_spend_identity(budget)}
         network_retry = spec.get("network_retry")
         if network_retry is not None and (
             not isinstance(network_retry, dict) or not isinstance(network_retry.get("enabled", True), bool)
@@ -350,7 +382,7 @@ def prepare_lab(
                 "path": None if spec.get("evaluator_generated", False) else str(script)}] + evaluator[script_index + 1:],
             "inputs": [{"path": str(item), "sha256": _hash(item)} for item in inputs],
             "metrics": metrics, "repeats": spec.get("repeats", 2),
-            "timeout_seconds": spec.get("timeout_seconds", 120), "budget": budget,
+            "timeout_seconds": spec.get("timeout_seconds", 120), "budget": identity_budget,
             "budget_sources": budget_sources,
             "baseline_validation": baseline_validation,
             "delegation": delegation,
@@ -383,8 +415,7 @@ def prepare_lab(
             "baseline_validation": baseline_validation,
             "delegation": delegation,
             "budget_sources": budget_sources,
-            "budget_declared": [key for key in ("max_seconds", "max_trials", "max_requests", "max_cost_usd")
-                                if key in declared_budget],
+            "budget_declared": [key for key in ("max_seconds", "max_trials") if key in declared_budget],
             "strict_contract": True,
             "setup_pending": True,
         }
@@ -445,7 +476,7 @@ def prepare_lab(
             "pins": passport_pins,
         }
         if config_path.exists():
-            if json.loads(config_path.read_text(encoding="utf-8")) != raw:
+            if _without_retired_spend(json.loads(config_path.read_text(encoding="utf-8"))) != raw:
                 raise ValueError(f"Lab configuration differs from the prepared contract: {config_path}")
             config = load_config(config_path, allow_pending=True)
             if _hash(config_path) != load_state(config)["config_sha256"]:
@@ -471,7 +502,7 @@ def prepare_lab(
                     existing_db_id = None
         if existing_db_id is not None:
             existing_bytes = database.load_config_bytes(existing_db_id)
-            if json.loads(existing_bytes.decode("utf-8")) != raw:
+            if _without_retired_spend(json.loads(existing_bytes.decode("utf-8"))) != raw:
                 raise ValueError(f"Lab configuration differs from the prepared contract: {config_path}")
             existing_config = load_config(config_path, allow_pending=True)
             if hashlib.sha256(existing_bytes).hexdigest() != load_state(existing_config)["config_sha256"]:
@@ -529,6 +560,8 @@ def prepare_lab(
                 "dashboard": str(state_dir / "dashboard.html"), "catalog": str(root / "catalog.json"),
                 "dashboard_root": str(root), "created": True}
     except LabError as error:
+        if error.code == SPEND_LIMIT_CODE:
+            raise
         raise ValueError(str(error)) from error
     except (KeyError, TypeError, json.JSONDecodeError) as error:
         raise ValueError(f"Invalid agent-derived spec: {error}") from error

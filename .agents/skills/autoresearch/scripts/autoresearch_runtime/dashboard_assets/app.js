@@ -632,14 +632,6 @@ function renderHeroKpis(next, meta) {
   const card4Val = make("strong", "kpi-main-val", fmtMoney(costUsed));
   const card4Sub = make("div", "kpi-sub-row muted", reqUsed + " запр. · " + fmtDuration(timeUsed));
   card4.append(card4Val, card4Sub);
-  if (budget.cost && budget.cost.limit) {
-    const ratio = Number(costUsed) / Number(budget.cost.limit);
-    const meter = make("div", "meter" + (ratio > 1 ? " over" : ""));
-    const fill = document.createElement("span");
-    fill.style.width = Math.min(100, Math.max(0, ratio * 100)) + "%";
-    meter.append(fill);
-    card4.append(meter);
-  }
   grid.append(card4);
 
   return grid;
@@ -663,19 +655,6 @@ function bar(cls, value, total) {
   node.style.width = ((Number(value) || 0) / total * 100) + "%";
   return node;
 }
-function meterKpi(label, bucket, format) {
-  const card = kpi(label, format(bucket.used));
-  if (bucket.limit) {
-    const ratio = Number(bucket.used) / Number(bucket.limit);
-    const meter = make("div", "meter" + (ratio > 1 ? " over" : ""));
-    const fill = document.createElement("span");
-    fill.style.width = Math.min(100, Math.max(0, ratio * 100)) + "%";
-    meter.append(fill);
-    card.append(meter, make("span", "muted", format(bucket.used) + " из " + format(bucket.limit)));
-  }
-  return card;
-}
-
 function renderChart(next, meta) {
   const card = make("section", "chart-card");
   card.id = "detail-chart-card";

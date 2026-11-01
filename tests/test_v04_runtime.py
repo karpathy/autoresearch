@@ -89,7 +89,6 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
                     "sha256": hashlib.sha256(self.known_case.read_bytes()).hexdigest(),
                 },
             },
-            "budget": {"max_requests": 0, "max_cost_usd": 0},
         }), encoding="utf-8")
 
     def _restore_home(self):

@@ -437,8 +437,8 @@ class SkillWorkflowTest(unittest.TestCase):
         prepared = prepare_lab(self.program, self.spec(), confirmed=True)
         config = load_config(Path(prepared["config"]))
         self.assertIsNotNone(self.store().get_lab(config.lab_id))
-        self.assertEqual(config.budget["max_requests"], 0)
-        self.assertEqual(config.budget["max_cost_usd"], 0)
+        self.assertNotIn("max_requests", config.budget)
+        self.assertNotIn("max_cost_usd", config.budget)
 
     def test_fabricated_local_limit_without_brief_source_is_rejected(self):
         from autoresearch_runtime.bootstrap import prepare_lab
@@ -450,17 +450,27 @@ class SkillWorkflowTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "budget source for max_trials"):
             prepare_lab(self.program, spec_path)
 
-    def test_stored_request_cap_does_not_block_a_paid_run(self):
+    def test_spend_limit_in_spec_is_rejected_before_any_lab_is_written(self):
         from autoresearch_runtime.bootstrap import prepare_lab
+        from autoresearch_runtime.errors import LabError
 
-        spec_path = self.spec()
-        raw = json.loads(spec_path.read_text(encoding="utf-8"))
-        raw["budget"] = {"max_requests": 5, "openrouter": True}
-        spec_path.write_text(json.dumps(raw), encoding="utf-8")
-        prepared = prepare_lab(self.program, spec_path, confirmed=True)
-        config = load_config(Path(prepared["config"]))
-        self.assertEqual(config.budget["max_requests"], 5)
-        self.assertEqual(run_baseline(config)["status"], "accepted")
+        for field, value in (
+            ("budget", {"max_requests": 5, "openrouter": True}),
+            ("budget", {"max_cost_usd": 2.0}),
+            ("budget_sources", {"max_cost_usd": "at most 2 dollars"}),
+        ):
+            with self.subTest(field=field, value=value):
+                spec_path = self.spec()
+                raw = json.loads(spec_path.read_text(encoding="utf-8"))
+                raw[field] = value
+                spec_path.write_text(json.dumps(raw), encoding="utf-8")
+                with self.assertRaises(LabError) as rejected:
+                    prepare_lab(self.program, spec_path, confirmed=True)
+                self.assertEqual(rejected.exception.code, "E_CONTRACT_SPEND_LIMIT")
+                self.assertIn("does not limit spending", str(rejected.exception))
+                self.assertIn("limit on the API key", str(rejected.exception))
+        store = self.store()
+        self.assertTrue(not store.is_initialized() or store.list_labs(limit=1)["total"] == 0)
 
     def test_trial_does_not_require_a_subagent_receipt(self):
         from autoresearch_runtime.bootstrap import prepare_lab
@@ -558,7 +568,7 @@ class SkillWorkflowTest(unittest.TestCase):
         spec_path = self.spec()
         raw = json.loads(spec_path.read_text(encoding="utf-8"))
         raw["evaluator"] = ["{python}", str(evaluator), "{candidate}", "{run_dir}"]
-        raw["budget"] = {"max_requests": 5, "max_cost_usd": 2, "openrouter": True}
+        raw["budget"] = {"openrouter": True}
         spec_path.write_text(json.dumps(raw), encoding="utf-8")
         self.update_known_case(spec_path)
         prepared = prepare_lab(self.program, spec_path, confirmed=True)
@@ -582,7 +592,7 @@ class SkillWorkflowTest(unittest.TestCase):
         self.assertTrue(config.budget["openrouter"])
         self.assertFalse(Path(prepared["config"]).exists())
 
-    def test_openrouter_flag_keeps_contract_shape_but_does_not_cap_spend(self):
+    def test_openrouter_flag_stores_no_spend_fields_and_caps_nothing(self):
         from autoresearch_runtime.bootstrap import prepare_lab
 
         evaluator = self.root / "key_capped_evaluator.py"
@@ -602,12 +612,69 @@ class SkillWorkflowTest(unittest.TestCase):
         self.update_known_case(spec_path)
         prepared = prepare_lab(self.program, spec_path, confirmed=True)
         config = load_config(Path(prepared["config"]))
-        self.assertIsNone(config.budget["max_requests"])
-        self.assertIsNone(config.budget["max_cost_usd"])
+        self.assertNotIn("max_requests", config.budget)
+        self.assertNotIn("max_cost_usd", config.budget)
         baseline = run_baseline(config)
         self.assertEqual(baseline["status"], "accepted")
         self.assertIsNone(baseline["runs"][0]["details"]["limit"])
         self.assertFalse((config.state_dir / "openrouter_budget.json").exists())
+
+    def test_lab_stored_before_0_8_resumes_under_the_same_contract(self):
+        from autoresearch_runtime.bootstrap import prepare_lab
+
+        first = prepare_lab(self.program, self.spec(), confirmed=True)
+        store = self.store()
+        lab_id = store.resolve_lab_id(Path(first["config"]))
+        # Simulate a stored contract from 0.7.x: the retired spend fields are present.
+        legacy = json.loads(store.load_config_bytes(lab_id).decode("utf-8"))
+        legacy["budget"].update(max_requests=0, max_cost_usd=0)
+        legacy_bytes = (json.dumps(legacy, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        store.save_config_bytes(lab_id, legacy, legacy_bytes)
+        state = store.load_projection(lab_id, "state")
+        state["config_sha256"] = hashlib.sha256(legacy_bytes).hexdigest()
+        store.save_projection(lab_id, "state", state)
+
+        again = prepare_lab(self.program, self.spec(), confirmed=True)
+
+        self.assertEqual(again["config"], first["config"])
+        self.assertFalse(again["created"])
+        self.assertEqual(store.load_config_bytes(lab_id), legacy_bytes)
+
+    def test_old_shape_lab_opens_with_its_contract_fingerprint_unchanged(self):
+        from autoresearch_runtime.harness_policy import contract_fingerprint
+
+        # The lab.json bytes are exactly the 0.7.x shape. Its fingerprint was recorded from
+        # the 0.7.x code. Hashing the stored bytes as stored keeps it unchanged.
+        lab = self.root / "legacy-lab"
+        (lab / "source").mkdir(parents=True)
+        (lab / "source" / "rule.txt").write_text("rule\n", encoding="utf-8")
+        (lab / "source" / "evaluator.py").write_text("print('x')\n", encoding="utf-8")
+        (lab / ".lab").mkdir()
+        stored = (json.dumps({
+            "source_root": "source",
+            "state_dir": ".lab",
+            "source_paths": ["rule.txt", "evaluator.py"],
+            "editable_files": ["rule.txt"],
+            "evaluator": ["{python}", "evaluator.py", "{candidate}", "{run_dir}", "{config_dir}"],
+            "metrics": {"primary": "mean_error", "direction": "min",
+                        "guards": [{"name": "coverage", "direction": "max"}]},
+            "repeats": 2,
+            "timeout_seconds": 5,
+            "budget": {"max_seconds": 60, "max_trials": 5, "max_requests": 0, "max_cost_usd": 0},
+        }, indent=2) + "\n").encode("utf-8")
+        (lab / "lab.json").write_bytes(stored)
+        digest = hashlib.sha256(stored).hexdigest()
+        (lab / ".lab" / "state.json").write_text(json.dumps({
+            "schema": 2, "setup_pending": False, "config_sha256": digest, "config_copy_sha256": digest,
+            "inputs": [], "current_epoch": 1, "epochs": [], "source": [],
+        }), encoding="utf-8")
+
+        config = load_config(lab / "lab.json")
+
+        self.assertEqual(config.budget["max_seconds"], 60)
+        self.assertEqual(contract_fingerprint(config),
+                         "90ae45483902cc49cd2e6df405daf43e58978de83b857eaa4fdc34125a608390")
+        self.assertEqual((lab / "lab.json").read_bytes(), stored)
 
     def test_generated_evaluator_is_copied_into_lab_and_changes_open_new_lab(self):
         from autoresearch_runtime.bootstrap import prepare_lab
@@ -637,8 +704,8 @@ class SkillWorkflowTest(unittest.TestCase):
         config = load_config(Path(first["config"]))
         self.assertIsNone(config.budget["max_trials"])
         self.assertIsNone(config.budget["max_seconds"])
-        self.assertEqual(config.budget["max_requests"], 0)
-        self.assertEqual(config.budget["max_cost_usd"], 0)
+        self.assertNotIn("max_requests", config.budget)
+        self.assertNotIn("max_cost_usd", config.budget)
         reference.write_text("second", encoding="utf-8")
         self.update_known_case(spec_path)
         second = prepare_lab(self.program, spec_path, confirmed=True)

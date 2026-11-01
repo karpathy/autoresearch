@@ -6,7 +6,7 @@ AutoResearch is a local lab for testing one measurable code or prompt hypothesis
 
 The agent interface is a Markdown skill plus ordinary command-line tools. Python 3.10+ and Git are required. No agent-specific API is required; an agent may use the skill only when its host harness can satisfy the documented capability profile. The skill lives in [`.agents/skills/autoresearch/SKILL.md`](.agents/skills/autoresearch/SKILL.md). If a harness does not discover the project-local skill, open or point it to that file directly.
 
-The current source version is 0.7.0. See the [0.7.0 migration notes](docs/v07-migration.md) before upgrading from 0.6.x, and the [0.6.0 migration notes](docs/v06-migration.md) before upgrading from 0.5.x.
+The current source version is 0.8.0. See the [0.8.0 migration notes](docs/v08-migration.md) before upgrading from 0.7.x, the [0.7.0 migration notes](docs/v07-migration.md) before upgrading from 0.6.x, and the [0.6.0 migration notes](docs/v06-migration.md) before upgrading from 0.5.x.
 
 ## Start a lab
 
@@ -26,7 +26,7 @@ python .agents/skills/autoresearch/scripts/lab.py --config <lab.json> --confirme
 python .agents/skills/autoresearch/scripts/lab.py --config <lab.json> status
 ```
 
-After the first guide call, copy its `contract_fingerprint` into a host-managed profile outside the project and lab state, set `AUTORESEARCH_HARNESS_PROFILE` to that profile, and only then start an evaluator operation. See [the harness profile contract](.agents/skills/autoresearch/references/harness-profile.md) for the exact schema and an offline example. `preflight` checks the proposed contract and optional saved result without evaluating the project or making network requests. It does not sandbox arbitrary evaluator code. The profile is a host attestation; the host harness must actually enforce approval, sandbox isolation, network policy, and any external provider cap. Passport `max_requests` and `max_cost_usd` are recorded and measured, but do not stop arbitrary subprocess network requests. The skill never checks an API-key balance.
+After the first guide call, copy its `contract_fingerprint` into a host-managed profile outside the project and lab state, set `AUTORESEARCH_HARNESS_PROFILE` to that profile, and only then start an evaluator operation. See [the harness profile contract](.agents/skills/autoresearch/references/harness-profile.md) for the exact schema and an offline example. `preflight` checks the proposed contract and optional saved result without evaluating the project or making network requests. It does not sandbox arbitrary evaluator code. The profile is a host attestation; the host harness must actually enforce approval, sandbox isolation, and network policy. AutoResearch does not limit spending. Set a spending limit on each API key your evaluator uses. Usage and cost are still recorded and reported, and the skill never checks an API-key balance.
 
 The guide is the canonical compact view of the baseline, best run, explicit goal criteria, parent-relative changes, and next action. The agent should inspect only the history or run artifacts that the guide identifies as relevant. It uses past errors and metric deltas to propose a small number of testable ideas, records one hypothesis, then runs one change per trial.
 

@@ -476,7 +476,6 @@ class ApiV1SecurityTest(unittest.TestCase):
                 "path": str(known_case),
                 "sha256": hashlib.sha256(known_case.read_bytes()).hexdigest(),
             }},
-            "budget": {"max_requests": 0, "max_cost_usd": 0},
             "repeats": 1, "timeout_seconds": 20,
         }
         body = json.dumps({

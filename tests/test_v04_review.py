@@ -84,7 +84,6 @@ class V04IndependentReviewTest(unittest.TestCase):
                     "sha256": hashlib.sha256(self.known_case.read_bytes()).hexdigest(),
                 },
             },
-            "budget": {"max_requests": 0, "max_cost_usd": 0},
         }), encoding="utf-8")
         prepared = prepare_lab(self.program, self.spec, confirmed=True)
         self.config = load_config(Path(prepared["config"]))

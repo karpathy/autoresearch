@@ -300,9 +300,11 @@ class AgentGuidanceTest(unittest.TestCase):
 
         self.assertEqual(card["unit"], "ms")
         self.assertEqual(card["baseline"]["score"], 6.0)
-        self.assertEqual(card["budget"]["requests_remaining"], 8)
-        self.assertAlmostEqual(card["budget"]["cost_usd_remaining"], 1.6)
+        self.assertNotIn("requests_remaining", card["budget"])
+        self.assertNotIn("cost_usd_remaining", card["budget"])
         self.assertEqual(card["budget"]["time_remaining_seconds"], 54)
+        self.assertEqual(card["spent"]["requests"], 2)
+        self.assertAlmostEqual(card["spent"]["cost_usd"], 0.4)
 
     def test_guide_keeps_control_f1_tradeoff_diagnostic_and_unknown_cost_unpriced(self):
         from dataclasses import replace
@@ -350,7 +352,7 @@ class AgentGuidanceTest(unittest.TestCase):
         )
         self.assertEqual(control_signal["effect"], "guard_regressed_while_primary_improved")
         self.assertFalse(control_signal["gate"])
-        self.assertEqual(guide["state"]["budget"]["cost_usd_remaining"], None)
+        self.assertNotIn("cost_usd_remaining", guide["state"]["budget"])
         self.assertEqual(guide["provider_usage"]["requests"], 1)
         self.assertEqual(guide["provider_usage"]["unknown_requests"], 1)
         self.assertEqual(guide["provider_usage"]["confirmed_cost_usd"], 0.0)

@@ -36,7 +36,7 @@ class PackageSafetyTest(unittest.TestCase):
         version = (SKILL / "VERSION").read_text(encoding="utf-8").strip()
         project_metadata = (SKILL.parents[2] / "pyproject.toml").read_text(encoding="utf-8")
 
-        self.assertEqual(version, "0.7.0")
+        self.assertEqual(version, "0.8.0")
         self.assertRegex(project_metadata, rf'(?m)^version = "{version}"$')
 
     def test_license_is_mit_and_shipped_with_the_skill(self):
@@ -66,6 +66,15 @@ class PackageSafetyTest(unittest.TestCase):
         self.assertIn("Andrej Karpathy", readme)
 
     def test_readme_points_to_current_migration_notes(self):
+        readme = (SKILL.parents[2] / "README.md").read_text(encoding="utf-8")
+        notes = SKILL.parents[2] / "docs" / "v08-migration.md"
+
+        self.assertIn("docs/v08-migration.md", readme)
+        self.assertTrue(notes.is_file())
+        for marker in ("E_CONTRACT_SPEND_LIMIT", "E_HARNESS_POLICY_STALE", "does not limit spending"):
+            self.assertIn(marker, notes.read_text(encoding="utf-8"))
+
+    def test_readme_keeps_the_0_7_migration_notes(self):
         readme = (SKILL.parents[2] / "README.md").read_text(encoding="utf-8")
         notes = SKILL.parents[2] / "docs" / "v07-migration.md"
 
