@@ -18,47 +18,6 @@ from .state import _IGNORED_CACHE_DIRS, _check_candidate_unchanged, _check_froze
 from .store import _sha256, _write_json
 
 
-def _body_field_text(body: Any) -> str:
-    if isinstance(body, str):
-        return body
-    return json.dumps(body, ensure_ascii=False, separators=(",", ":"))
-
-
-def _request_identity_digest(config: LabConfig, baseline_id: str, repeat_count: int) -> str | None:
-    chunks: list[str] = []
-    from .store import _sqlite_document
-    for index in range(repeat_count):
-        log_path = config.state_dir / "runs" / baseline_id / f"repeat_{index + 1:02d}" / "sent-requests.jsonl"
-        target = _sqlite_document(log_path)
-        if target is not None and target[2] == "wire":
-            store, lab_id, _, run_id, repeat_index_db = target
-            # SQLite exposes attempt journals newest-first; the digest is order-sensitive.
-            records = list(reversed(store.load_wire_events(lab_id, run_id, repeat_index=repeat_index_db)))
-        elif log_path.is_file():
-            records = []
-            for line in log_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                record = json.loads(line)
-                if isinstance(record, dict):
-                    records.append(record)
-        else:
-            return None
-        sequences = [record.get("wire_sequence") for record in records]
-        if (records
-                and all(type(sequence) is int and sequence > 0 for sequence in sequences)
-                and len(set(sequences)) == len(records)):
-            records = sorted(records, key=lambda record: record["wire_sequence"])
-        for record in records:
-            # Повтор 429/503 пишет то же тело ещё раз. В отпечаток входит только исходный запрос.
-            if record.get("status") in (429, 503):
-                continue
-            if "body" not in record:
-                return None
-            chunks.append(_body_field_text(record["body"]))
-    return hashlib.sha256("".join(chunks).encode("utf-8")).hexdigest()
-
-
 def _finalize_baseline_records(config: LabConfig, state: dict[str, Any], manifest: dict[str, Any]) -> None:
     """Commit baseline outcome and state pointers together for SQLite labs."""
     from .sqlite_store import SQLiteStore
@@ -126,19 +85,6 @@ def _finalize_baseline(
         if mode == "historical":
             if "evaluator_fixture" in validation:
                 block_reason = _evaluator_fixture_digest(validation)[1]
-            request_spec = validation.get("request_identity")
-            if block_reason is None and isinstance(request_spec, dict):
-                expected_hash = request_spec.get("sha256")
-                if isinstance(expected_hash, str):
-                    actual_hash = _request_identity_digest(config, baseline_id, config.repeats)
-                    if actual_hash is None:
-                        block_reason = (
-                            "request_identity: sent-requests.jsonl or captured request bodies are missing; "
-                            "set AUTORESEARCH_WIRE_LOG_BODY=1 and rerun"
-                        )
-                    elif actual_hash != expected_hash:
-                        block_reason = (f"request_identity sha256 mismatch: expected {expected_hash}, "
-                                        f"got {actual_hash}")
         if block_reason is None and mismatch is not None:
             block_reason = f"historical baseline mismatch: {mismatch}"
         if block_reason is not None:

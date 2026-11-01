@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
-import re
 import subprocess
 import sys
 import time
@@ -341,7 +339,6 @@ def _evaluate_once(config: LabConfig, run_dir: Path, timeout: float, *,
     skill_scripts = str(Path(__file__).resolve().parents[1])
     hooks_dir = str(Path(skill_scripts) / "hooks")
     path_items = [hooks_dir, skill_scripts, environment.get("PYTHONPATH", "")]
-    environment["AUTORESEARCH_WIRE_LOG"] = str(run_dir / "sent-requests.jsonl")
     environment["AUTORESEARCH_CASE_LOG"] = str(run_dir / "cases.jsonl")
     environment["AUTORESEARCH_ATTEMPTS_LOG"] = str(run_dir / "attempts.jsonl")
     environment.pop("AUTORESEARCH_HTTP_RETRY", None)
@@ -389,7 +386,6 @@ def _evaluate_once(config: LabConfig, run_dir: Path, timeout: float, *,
                 wait_for_job_worker_only(evaluator_job_handle)
         duration = time.perf_counter() - started
         (run_dir / "run.log").write_text(completed.stdout + completed.stderr, encoding="utf-8")
-        _import_sqlite_wire_log(config, run_dir, repeat_row)
         _apply_net_stats(run_dir)
         _merge_attempt_usage(run_dir)
         if completed.returncode:
@@ -414,7 +410,6 @@ def _evaluate_once(config: LabConfig, run_dir: Path, timeout: float, *,
             (run_dir / "result.json").unlink(missing_ok=True)
         return "ok", result, ""
     except subprocess.TimeoutExpired:
-        _import_sqlite_wire_log(config, run_dir, repeat_row)
         _apply_net_stats(run_dir)
         _merge_attempt_usage(run_dir)
         return "timeout", {"duration_seconds": time.perf_counter() - started, **_usage_from_file(run_dir)}, "Evaluator timed out"
@@ -426,59 +421,6 @@ def _evaluate_once(config: LabConfig, run_dir: Path, timeout: float, *,
         _merge_attempt_usage(run_dir)
         return "invalid", {"duration_seconds": time.perf_counter() - started, **_usage_from_file(run_dir)}, str(error)
 
-
-def _import_sqlite_wire_log(
-    config: LabConfig, run_dir: Path, repeat_row: tuple[Any, Any, int] | None,
-) -> None:
-    """Import evaluator-written request evidence before removing its recovery sidecar."""
-    if repeat_row is None:
-        return
-    path = Path(run_dir) / "sent-requests.jsonl"
-    if not path.is_file():
-        return
-    store, run_id, repeat_index = repeat_row
-    existing_rows = store.load_wire_events(config.lab_id, run_id, repeat_index=repeat_index)
-    existing_ids = {
-        item.get("attempt_id") for item in existing_rows
-        if isinstance(item.get("attempt_id"), str)
-    }
-    existing_sequences = [
-        item.get("wire_sequence") for item in existing_rows
-        if type(item.get("wire_sequence")) is int and item["wire_sequence"] > 0
-    ]
-    next_sequence = max(len(existing_rows), max(existing_sequences, default=0))
-    batch_items: list[tuple[dict[str, Any], str]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise LabError(f"Invalid sent-requests.jsonl at line {line_number}: {error}") from error
-        if not isinstance(payload, dict):
-            raise LabError(f"Invalid sent-requests.jsonl at line {line_number}: expected an object")
-        # Capture IDs survive sidecar line-counter resets between evaluator phases.
-        # Old sidecars have no capture_id, so retain their deterministic fallback.
-        if "capture_id" in payload:
-            capture_id = payload["capture_id"]
-            if not isinstance(capture_id, str) or re.fullmatch(r"[0-9a-f]{32}", capture_id) is None:
-                raise LabError(f"Invalid sent-requests.jsonl at line {line_number}: invalid capture_id")
-            event_id = "wire-capture-" + capture_id
-        else:
-            event_id = "wire-evaluator-" + hashlib.sha256(
-                f"{line_number}:{line}".encode("utf-8")
-            ).hexdigest()
-        if event_id in existing_ids:
-            continue
-        next_sequence += 1
-        payload = {**payload, "repeat_index": repeat_index, "wire_sequence": next_sequence}
-        batch_items.append((payload, event_id))
-    if hasattr(store, "append_wire_events_batch"):
-        store.append_wire_events_batch(config.lab_id, run_id, repeat_index, batch_items)
-    else:
-        for payload, event_id in batch_items:
-            store.append_wire_event(config.lab_id, run_id, repeat_index, payload, event_id=event_id)
-    path.unlink()
 
 def _apply_net_stats(run_dir: Path) -> None:
     """Copy retry counts onto usage.json without replacing a confirmed cost."""

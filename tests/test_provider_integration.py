@@ -53,8 +53,7 @@ append_case(run/'cases.jsonl', {'id':'known-case','status':'ok'})
             env = dict(os.environ, PYTHONPATH=str(scripts), TEST_PROVIDER_RUN=str(run),
                        TEST_PROVIDER_HOOK=str(scripts / "hooks/sitecustomize.py"),
                        AUTORESEARCH_ATTEMPTS_LOG=str(run / "attempts.jsonl"),
-                       AUTORESEARCH_WIRE_LOG=str(run / "sent-requests.jsonl"),
-                       AUTORESEARCH_WIRE_LOG_BODY="1",
+                       AUTORESEARCH_NET_STATS=str(run / "net-stats.json"),
                        AUTORESEARCH_CASE_SCOPE_REQUIRED="1")
             for name in ("AUTORESEARCH_HTTP_RETRY", "AUTORESEARCH_RESUME_OFFLINE", "AUTORESEARCH_USAGE_FILE"):
                 env.pop(name, None)
@@ -62,10 +61,13 @@ append_case(run/'cases.jsonl', {'id':'known-case','status':'ok'})
             self.assertEqual(completed.returncode, 0, completed.stderr)
             events = [json.loads(x) for x in (run / "attempts.jsonl").read_text().splitlines()]
             self.assertEqual([x["event"] for x in events], ["started", "finished"])
-            wire = json.loads((run / "sent-requests.jsonl").read_text())
-            self.assertEqual(wire["url"], "https://sandbox.example.invalid/v1/chat/completions")
-            self.assertEqual(json.loads(wire["body"])["model"], "sandbox/deepseek-v4-flash")
-            self.assertNotIn("test-secret", json.dumps(wire))
+            self.assertFalse((run / "sent-requests.jsonl").exists())
+            for path in run.rglob("*"):
+                if path.is_file():
+                    self.assertNotIn("test-secret", path.read_text(encoding="utf-8"), path.name)
+            stats = json.loads((run / "net-stats.json").read_text(encoding="utf-8"))
+            self.assertEqual(stats["attempts"], 1)
+            self.assertEqual(stats["rate_limited_responses"], 0)
             # An HTTP status alone cannot establish its cost; retain that uncertainty.
             usage = summarize_usage(run / "attempts.jsonl")
             self.assertEqual(usage["requests"], 1)

@@ -16,7 +16,6 @@ from tests.support import tree_digest
 from autoresearch_runtime.cli import main
 from autoresearch_runtime.config import load_config
 from autoresearch_runtime.errors import LabError
-from autoresearch_runtime.probe import adopt_probe
 
 
 class PreflightContractTest(unittest.TestCase):
@@ -92,6 +91,20 @@ class PreflightContractTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("exact quote", payload["error"]["message"])
 
+    def test_preflight_rejects_retired_spec_fields(self):
+        for field, value in (
+            ("baseline_validation", {"mode": "fresh", "request_identity": {"sha256": "0" * 64}}),
+            ("budget", {"openrouter": True}),
+        ):
+            with self.subTest(field=field):
+                spec = self.spec()
+                raw = json.loads(spec.read_text())
+                raw[field] = {**raw.get(field, {}), **value}
+                spec.write_text(json.dumps(raw))
+                code, payload = self.invoke("preflight", "--spec", str(spec), "--program", str(self.program))
+                self.assertEqual(code, 2, payload)
+                self.assertIn("no longer supported", payload["error"]["message"])
+
     def test_preflight_and_prepare_reject_spend_limits_with_a_coded_error(self):
         from autoresearch_runtime.bootstrap import main as prepare_main
 
@@ -146,29 +159,6 @@ class PreflightContractTest(unittest.TestCase):
         code, payload = self.invoke("preflight", "--spec", str(spec), "--program", str(self.program), "--result", str(result))
         self.assertEqual(code, 2, payload)
         self.assertIn("attestation mismatch", payload["error"]["message"])
-
-
-    def test_ingest_cli_records_type_without_setting_baseline(self):
-        from autoresearch_runtime.bootstrap import prepare_lab
-        from autoresearch_runtime.sqlite_store import SQLiteStore
-
-        prepared = prepare_lab(self.program, self.spec(), confirmed=True)
-        config = load_config(Path(prepared["config"]))
-        lab_id = prepared["lab_id"]
-        store = SQLiteStore()
-        report = self.root / "saved-report.json"
-        report.write_text(json.dumps({"metrics": {config.primary: 0.5}}))
-        code, payload = self.invoke("--config", str(config.path), "ingest", "--source", str(report), "--as-type", "baseline")
-        self.assertEqual(code, 0, payload)
-        runs = store.list_runs(lab_id, limit=10)["items"]
-        probes = [run for run in runs if run["kind"] == "probe"]
-        self.assertEqual(len(probes), 1)
-        imported = store.get_run(lab_id, probes[0]["run_id"])
-        self.assertEqual(imported["manifest"]["status"], "non_adoptable")
-        self.assertFalse(imported["manifest"]["adoptable"])
-        self.assertEqual(imported["manifest"]["runs"][0]["metrics"][config.primary], 0.5)
-        state = store.load_projection(lab_id, "state")
-        self.assertIsNone(state["baseline_id"])
 
 
 if __name__ == "__main__":

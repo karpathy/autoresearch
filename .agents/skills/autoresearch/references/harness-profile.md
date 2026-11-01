@@ -54,7 +54,7 @@ Profiles written for earlier versions may still contain a `spend` block. It is a
 
 ## Run an approved operation
 
-Set `AUTORESEARCH_HARNESS_PROFILE` to the absolute path of the host-managed profile. The durable `baseline`, `trial`, `resume`, `recover`, `epoch`, `probe`, and `replay` operations all require the profile and a fresh `--confirmed` for that operation. Confirm an evaluator run, for example:
+Set `AUTORESEARCH_HARNESS_PROFILE` to the absolute path of the host-managed profile. The durable `baseline`, `trial`, `resume`, `recover`, and `epoch` operations all require the profile and a fresh `--confirmed` for that operation. Confirm an evaluator run, for example:
 
 ```text
 python SKILL_DIR/scripts/lab.py --config <lab-config> --confirmed baseline

@@ -82,24 +82,3 @@ def run_baseline(config: Any, *, supersede: bool = False, reason: str = "") -> d
 
 def run_trial(config: Any, hypothesis: dict[str, Any]) -> dict[str, Any]:
     return run_durable_operation(config, "trial", {"hypothesis": hypothesis})
-
-
-def run_probe(
-    config: Any,
-    commit: str,
-    env: dict[str, str],
-    group: str,
-    label: str,
-    repeats: int,
-) -> dict[str, Any]:
-    return run_durable_operation(config, "probe", {
-        "commit": commit,
-        "env": env,
-        "group": group,
-        "label": label,
-        "repeats": repeats,
-    })
-
-
-def run_replay(config: Any, trial_id: str) -> dict[str, Any]:
-    return run_durable_operation(config, "replay", {"trial_id": trial_id})

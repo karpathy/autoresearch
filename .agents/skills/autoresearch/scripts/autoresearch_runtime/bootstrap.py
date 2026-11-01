@@ -56,10 +56,18 @@ def _reject_spend_limits(spec: dict[str, Any]) -> None:
         )
 
 
-def _retired_spend_identity(budget: dict[str, Any]) -> dict[str, Any]:
+def _reject_retired_fields(spec: dict[str, Any]) -> None:
+    """A declared gate that no longer runs must fail loudly, not pass silently."""
+    validation = spec.get("baseline_validation")
+    if isinstance(validation, dict) and "request_identity" in validation:
+        raise ValueError("baseline_validation.request_identity is no longer supported; remove it from the spec")
+    budget = spec.get("budget")
+    if isinstance(budget, dict) and "openrouter" in budget:
+        raise ValueError("budget.openrouter is no longer supported; remove it from the spec")
+
+
+def _retired_spend_identity() -> dict[str, Any]:
     """Historical values of the retired spend fields. They feed the lab id and are never stored."""
-    if budget.get("openrouter"):
-        return {"max_requests": None, "max_cost_usd": None}
     return {"max_requests": 0, "max_cost_usd": 0}
 
 
@@ -218,6 +226,7 @@ def prepare_lab(
         if not isinstance(spec, dict):
             raise ValueError("Derived spec must be an object")
         _reject_spend_limits(spec)
+        _reject_retired_fields(spec)
         project = _path(program.parent, spec["project"])
         if not project.is_dir():
             raise ValueError(f"Project is missing: {project}")
@@ -289,7 +298,7 @@ def prepare_lab(
         budget.update(declared_budget)
         # The lab id hashes the historical budget shape, so a spec that never declared the
         # retired spend fields keeps its id. Those fields are not written to lab.json.
-        identity_budget = {**budget, **_retired_spend_identity(budget)}
+        identity_budget = {**budget, **_retired_spend_identity()}
         network_retry = spec.get("network_retry")
         if network_retry is not None and (
             not isinstance(network_retry, dict) or not isinstance(network_retry.get("enabled", True), bool)

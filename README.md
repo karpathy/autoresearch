@@ -92,4 +92,4 @@ python -m unittest discover -s tests
 
 ## License
 
-MIT; see [LICENSE](LICENSE). The license names nightwishrus as the copyright holder. The upstream [karpathy/autoresearch](https://github.com/karpathy/autoresearch) README declares the MIT license; that repository has no separate LICENSE file. The bundled [`openresearch`](.agents/skills/openresearch) skill comes from alphaXiv and keeps its own MIT notice in [its LICENSE](.agents/skills/openresearch/LICENSE).
+MIT; see [LICENSE](LICENSE). The license names nightwishrus as the copyright holder. The upstream [karpathy/autoresearch](https://github.com/karpathy/autoresearch) README declares the MIT license; that repository has no separate LICENSE file.

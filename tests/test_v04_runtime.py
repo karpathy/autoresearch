@@ -23,12 +23,8 @@ from autoresearch_runtime.runtimeops import reserve_and_launch_operation
 from autoresearch_runtime.worker import run_operation_worker
 from autoresearch_runtime.measurement import open_contract_epoch
 from autoresearch_runtime.cockpit import build_cockpit
-from autoresearch_runtime.control_import import (
-    import_control_report, load_control_manifests, promote_control_to_baseline,
-)
-from autoresearch_runtime.ingest import ingest_reports
 from tests.durable_workflow_helpers import (
-    approved_offline_profile, run_baseline, run_durable_operation, run_probe, run_replay, run_trial,
+    approved_offline_profile, run_baseline, run_durable_operation, run_trial,
 )
 
 
@@ -138,7 +134,7 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         self.assertFalse((home / ".active").exists())
         for name in ("lab.json", "state.json", "history.json", "worker.json", "dashboard.html"):
             self.assertFalse((config.state_dir / name).exists(), name)
-        for name in ("manifest.json", "result.json", "usage.json", "attempts.jsonl", "cases.jsonl", "sent-requests.jsonl"):
+        for name in ("manifest.json", "result.json", "usage.json", "attempts.jsonl", "cases.jsonl"):
             self.assertEqual(list((config.state_dir / "runs").rglob(name)), [], name)
 
         again = prepare_lab(self.program, self.spec, confirmed=True)
@@ -359,7 +355,6 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         repeat_dir = config.state_dir / "runs" / "trial-0001" / "repeat_01"
         self.assertFalse((repeat_dir / "cases.jsonl").exists())
         self.assertFalse((repeat_dir / "attempts.jsonl").exists())
-        self.assertFalse((repeat_dir / "sent-requests.jsonl").exists())
 
         resumed = resume_run(config, "trial-0001")
         self.assertEqual(resumed["status"], "accepted", resumed)
@@ -371,7 +366,6 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         )], ["case-1", "case-2"])
         attempts = store.load_attempts(config.lab_id, "trial-0001", repeat_index=1)
         self.assertEqual(sum(item.get("event") == "started" for item in attempts), 2)
-        self.assertEqual(len(store.load_wire_events(config.lab_id, "trial-0001", repeat_index=1)), 2)
 
     def test_rejected_finalizing_resume_blocks_foreign_worktree_changes(self):
         _prepared, config = self._prepare()
@@ -424,7 +418,7 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         self.assertEqual(trial["parent"], "baseline")
         self.assertEqual(load_state(config)["best_id"], "baseline")
 
-    def test_usage_and_wire_events_do_not_duplicate_lifecycle_requests(self):
+    def test_usage_and_attempt_events_do_not_duplicate_lifecycle_requests(self):
         _prepared, config = self._prepare()
         self.assertEqual(run_baseline(config)["status"], "accepted")
         store = SQLiteStore()
@@ -442,88 +436,6 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         store.append_usage(config.lab_id, "baseline", 1, {"requests": 1, "cost_usd": None})
 
         attempts = config.state_dir / "runs" / "baseline" / "repeat_01" / "attempts.jsonl"
-        wire = config.state_dir / "runs" / "baseline" / "repeat_01" / "sent-requests.jsonl"
-        from autoresearch_runtime.wire_record import record_sent_request
-        with mock.patch.dict(os.environ, {
-            "AUTORESEARCH_WIRE_LOG": str(wire), "AUTORESEARCH_WIRE_LOG_BODY": "1",
-        }):
-            record_sent_request(
-                url="https://example.test", method="POST", body='{"input":"x"}',
-                headers={"Content-Type": "application/json"}, status=200,
-                response_body='{"ok":true}', attempt=1,
-            )
-            record_sent_request(
-                url="https://example.test", method="POST", body='{"input":"y"}',
-                headers={"Content-Type": "application/json"}, status=200,
-                response_body='{"ok":true}', attempt=1,
-            )
-        first_sidecar = wire.read_bytes()
-        from autoresearch_runtime.evaluator import _import_sqlite_wire_log
-        _import_sqlite_wire_log(config, wire.parent, (store, "baseline", 1))
-        wire_rows = store.load_wire_events(config.lab_id, "baseline", repeat_index=1)
-        self.assertEqual(
-            {row["body"]: row["wire_sequence"] for row in wire_rows},
-            {'{"input":"x"}': 1, '{"input":"y"}': 2},
-        )
-        from autoresearch_runtime.baseline import _request_identity_digest
-        self.assertEqual(
-            _request_identity_digest(config, "baseline", 1),
-            hashlib.sha256(b'{"input":"x"}{"input":"y"}').hexdigest(),
-        )
-
-        # Reimporting the same recovery sidecar must preserve IDs and sequence values.
-        wire.write_bytes(first_sidecar)
-        _import_sqlite_wire_log(config, wire.parent, (store, "baseline", 1))
-        wire_rows = store.load_wire_events(config.lab_id, "baseline", repeat_index=1)
-        self.assertEqual(
-            {row["body"]: row["wire_sequence"] for row in wire_rows},
-            {'{"input":"x"}': 1, '{"input":"y"}': 2},
-        )
-
-        with mock.patch.dict(os.environ, {
-            "AUTORESEARCH_WIRE_LOG": str(wire), "AUTORESEARCH_WIRE_LOG_BODY": "1",
-        }):
-            record_sent_request(
-                url="https://example.test", method="POST", body='{"input":"z"}',
-                headers={"Content-Type": "application/json"}, status=200,
-                response_body='{"ok":true}', attempt=1,
-            )
-        _import_sqlite_wire_log(config, wire.parent, (store, "baseline", 1))
-        wire_rows = store.load_wire_events(config.lab_id, "baseline", repeat_index=1)
-        self.assertEqual(
-            {row["body"]: row["wire_sequence"] for row in wire_rows},
-            {'{"input":"x"}': 1, '{"input":"y"}': 2, '{"input":"z"}': 3},
-        )
-        self.assertEqual(
-            _request_identity_digest(config, "baseline", 1),
-            hashlib.sha256(b'{"input":"x"}{"input":"y"}{"input":"z"}').hexdigest(),
-        )
-
-        # A new evaluator phase restarts the sidecar line counter. An identical
-        # request still represents a distinct lifecycle event and must be kept.
-        with mock.patch.dict(os.environ, {
-            "AUTORESEARCH_WIRE_LOG": str(wire), "AUTORESEARCH_WIRE_LOG_BODY": "1",
-        }):
-            record_sent_request(
-                url="https://example.test", method="POST", body='{"input":"x"}',
-                headers={"Content-Type": "application/json"}, status=200,
-                response_body='{"ok":true}', attempt=1,
-            )
-        _import_sqlite_wire_log(config, wire.parent, (store, "baseline", 1))
-        wire_rows = store.load_wire_events(config.lab_id, "baseline", repeat_index=1)
-        self.assertEqual(
-            sorted((row["wire_sequence"], row["body"]) for row in wire_rows),
-            [
-                (1, '{"input":"x"}'),
-                (2, '{"input":"y"}'),
-                (3, '{"input":"z"}'),
-                (4, '{"input":"x"}'),
-            ],
-        )
-        self.assertEqual(
-            _request_identity_digest(config, "baseline", 1),
-            hashlib.sha256(b'{"input":"x"}{"input":"y"}{"input":"z"}{"input":"x"}').hexdigest(),
-        )
         stats = config.state_dir / "runs" / "baseline" / "repeat_01" / "net-stats.json"
         usage = config.state_dir / "runs" / "baseline" / "repeat_01" / "usage.json"
         store.set_document(config.lab_id, stats, {"rate_limited_responses": 1})
@@ -535,11 +447,9 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
             "requests": 2, "unknown_requests": 1, "cost_usd": None,
             "confirmed_cost_usd": 0.25,
         })
-        self.assertEqual(len(store.load_wire_events(config.lab_id, "baseline", repeat_index=1)), 4)
         usage_events = [item for item in store.load_attempts(config.lab_id, "baseline", repeat_index=1)
                         if item.get("event") == "usage"]
         self.assertEqual(len(usage_events), 2)
-        self.assertFalse(wire.exists())
 
     def test_evaluator_clears_inherited_unbounded_retry_flag(self):
         _prepared, config = self._prepare()
@@ -680,72 +590,6 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         })
         self.assertEqual(trial["status"], "accepted")
         self.assertEqual(trial["parent"], "baseline-0002")
-
-    def test_imported_controls_are_sqlite_probes_and_never_adopted_as_baseline(self):
-        _prepared, config = self._prepare()
-        before = load_state(config)
-        manifest = import_control_report(
-            config.state_dir, self.root / "control-report.json", result_type="provider_check",
-            label="Provider check", entries=[{"metrics": {"score": 4}}, {"metrics": {"score": 5}}],
-        )
-        self.assertEqual(manifest["id"], "control-0001")
-        self.assertEqual(manifest["status"], "non_adoptable")
-        self.assertFalse(manifest["adoptable"])
-        self.assertFalse((config.state_dir / "controls").exists())
-        stored = load_control_manifests(config.state_dir)
-        self.assertEqual(len(stored), 1)
-        self.assertEqual([item["metrics"]["score"] for item in stored[0]["runs"]], [4, 5])
-        run = SQLiteStore().get_run(config.lab_id, "control-0001")
-        self.assertEqual(run["kind"], "probe")
-        self.assertEqual(load_state(config)["baseline_id"], before["baseline_id"])
-        with self.assertRaisesRegex(LabError, "non-adoptable"):
-            promote_control_to_baseline(config.state_dir, "control-0001")
-
-    def test_probe_and_ingest_store_measurements_under_runs_without_json_shadows(self):
-        _prepared, config = self._prepare()
-        self.assertEqual(run_baseline(config)["status"], "accepted")
-        state_before = load_state(config)
-        probe = run_probe(config, "best", {}, "runtime", "candidate check", 1)
-        self.assertEqual(probe["status"], "complete")
-        self.assertFalse(probe["adoptable"])
-        store = SQLiteStore()
-        probe_manifest = store.load_manifest(config.lab_id, "probe-0001")
-        self.assertEqual(probe_manifest["runs"][0]["metrics"]["score"], 1)
-        self.assertEqual(load_state(config)["best_id"], state_before["best_id"])
-        self.assertFalse((config.state_dir / "probes" / "probe-0001" / "summary.json").exists())
-        self.assertEqual(list((config.state_dir / "runs" / "probe-0001").rglob("result.json")), [])
-
-        source = self.root / "imported.json"
-        source.write_text(json.dumps({"metrics": {"score": 7}, "commit": "external"}), encoding="utf-8")
-        imported = ingest_reports(config.state_dir, source, result_type="experiment")
-        self.assertEqual(len(imported), 1)
-        imported_manifest = store.load_manifest(config.lab_id, "probe-0002")
-        self.assertEqual(imported_manifest["status"], "non_adoptable")
-        self.assertEqual(imported_manifest["runs"][0]["metrics"]["score"], 7)
-        self.assertFalse(imported[0].exists())
-        self.assertEqual(load_state(config)["best_id"], state_before["best_id"])
-
-    def test_replay_stores_results_and_proof_in_sqlite(self):
-        _prepared, config = self._prepare()
-        self.assertEqual(run_baseline(config)["status"], "accepted")
-        (config.state_dir / "candidate" / "score.txt").write_text("2", encoding="utf-8")
-        self.assertEqual(run_trial(config, {
-            "title": "Increase score", "observation": "Candidate score rises",
-            "expected_effect": "Replay confirms the accepted measurement",
-        })["status"], "accepted")
-
-        proof = run_replay(config, "trial-0001")
-        self.assertEqual(proof["status"], "complete")
-        self.assertFalse(proof["adoptable"])
-        store = SQLiteStore()
-        replay = store.get_run(config.lab_id, "replay-0001")
-        self.assertEqual(replay["kind"], "replay")
-        self.assertEqual(replay["manifest"]["runs"][0]["metrics"]["score"], 2)
-        replay_dir = config.state_dir / "runs" / "replay-0001"
-        self.assertFalse((replay_dir / "manifest.json").exists())
-        for name in ("result.json", "usage.json", "attempts.jsonl", "cases.jsonl", "sent-requests.jsonl"):
-            self.assertEqual(list(replay_dir.rglob(name)), [], name)
-        self.assertFalse((config.state_dir / "runs" / "trial-0001" / "rechecks").exists())
 
 
 if __name__ == "__main__":

@@ -1,14 +1,12 @@
-"""Measurement epochs, probe ids, and manifest migrations (in memory only)."""
+"""Measurement epochs and manifest migrations (in memory only)."""
 
 from __future__ import annotations
 
 import json
 import hashlib
 import math
-import os
 import shutil
 import tempfile
-import time
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -316,58 +314,6 @@ def incomparable_with_current(manifest: dict[str, Any], state: dict[str, Any], c
     if list(snapshot.get("evaluator") or []) != list(current.get("evaluator") or []):
         return "incomparable_with_current: evaluator differs from the current epoch"
     return None
-
-
-def next_sequence_id(storage_dir: os.PathLike[str] | str, prefix: str) -> str:
-    directory = os.fspath(storage_dir)
-    os.makedirs(directory, exist_ok=True)
-    counter_path = os.path.join(directory, f".{prefix}.counter")
-    lock_path = os.path.join(directory, f".{prefix}.counter.lock")
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.close(fd)
-            break
-        except FileExistsError:
-            try:
-                stale = time.time() - os.path.getmtime(lock_path) > 30
-            except OSError:
-                stale = True
-            if stale:
-                try:
-                    os.unlink(lock_path)
-                except OSError:
-                    pass
-            else:
-                time.sleep(0.01)
-    else:
-        raise LabError(f"Could not allocate {prefix} id: counter lock busy")
-    try:
-        value = 0
-        if os.path.isfile(counter_path):
-            with open(counter_path, encoding="utf-8") as stream:
-                text = stream.read().strip()
-                if text.isdigit():
-                    value = int(text)
-        # Imported probe directories exist before the counter file does.
-        if os.path.isdir(directory):
-            head = prefix + "-"
-            for name in os.listdir(directory):
-                if not name.startswith(head):
-                    continue
-                suffix = name[len(head):]
-                if suffix.isdigit():
-                    value = max(value, int(suffix))
-        value += 1
-        with open(counter_path, "w", encoding="utf-8") as stream:
-            stream.write(str(value))
-        return f"{prefix}-{value:04d}"
-    finally:
-        try:
-            os.unlink(lock_path)
-        except OSError:
-            pass
 
 
 def check_guard_thresholds(

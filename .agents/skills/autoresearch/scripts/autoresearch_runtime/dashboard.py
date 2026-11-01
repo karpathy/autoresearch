@@ -57,7 +57,7 @@ def plural_ru(count: int, one: str, few: str, many: str) -> str:
 
 def is_config_error(reason: str) -> bool:
     text = str(reason or "").lower()
-    return "api_key" in text or "api key" in text or "openrouter_api_key" in text
+    return "api_key" in text or "api key" in text
 
 
 def metric_label(name: str) -> str:

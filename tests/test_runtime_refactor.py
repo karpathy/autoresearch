@@ -166,24 +166,6 @@ class SQLiteStoreRefactorTest(unittest.TestCase):
         else:
             os.environ["AUTORESEARCH_HOME"] = self.prev_home
 
-    def test_append_wire_events_batch_single_transaction(self):
-        run_id = self.store.create_run(self.lab_id, "trial", "R1", 1)
-        events = [
-            ({"url": "http://api.local/v1", "method": "POST", "status": 200, "cost_usd": 0.01}, "ev-1"),
-            ({"url": "http://api.local/v2", "method": "GET", "status": 200, "cost_usd": 0.02}, None),
-        ]
-        event_ids = self.store.append_wire_events_batch(self.lab_id, run_id, 1, events)
-        self.assertEqual(len(event_ids), 2)
-        self.assertEqual(event_ids[0], "ev-1")
-
-        loaded = self.store.load_wire_events(self.lab_id, run_id, repeat_index=1)
-        self.assertEqual(len(loaded), 2)
-        loaded_ids = {item["attempt_id"] for item in loaded}
-        self.assertEqual(loaded_ids, set(event_ids))
-        self.assertIn("ev-1", loaded_ids)
-        loaded_urls = {item["url"] for item in loaded}
-        self.assertEqual(loaded_urls, {"http://api.local/v1", "http://api.local/v2"})
-
     def test_document_key_routes_run_repeat_usage_json(self):
         doc_key = self.store._document_key(str(self.lab_id), "runs/R1/repeat_01/usage.json")
         self.assertEqual(doc_key, "run:R1:usage:repeat_01")
@@ -428,8 +410,8 @@ class SignalsRefactorTest(unittest.TestCase):
         reg_sig = next(s for s in signals if s["kind"] == "case_regression")
         self.assertIn("case_beta", reg_sig["regressed_case_ids"])
 
-    def test_repeated_rejection_openresearch_hint_threshold(self):
-        # 3 rejections with the same reason trigger the openresearch / orx discover hint
+    def test_repeated_rejection_literature_hint_threshold(self):
+        # 3 rejections with the same reason trigger the external literature hint
         candidate = {
             "id": "cand-rep-3",
             "status": "rejected",
@@ -443,16 +425,16 @@ class SignalsRefactorTest(unittest.TestCase):
         signals = build_research_signals(Mock(repeats=1), candidate, parent=None, history=history_3)
         rep_sig = next(s for s in signals if s["kind"] == "repeated_rejection")
         self.assertEqual(rep_sig["count"], 3)
-        self.assertIn("openresearch (orx discover)", rep_sig["note"])
+        self.assertIn("explore external literature approaches", rep_sig["note"])
 
-        # 2 rejections with the same reason do not include the openresearch hint
+        # 2 rejections with the same reason do not include the literature hint
         history_2 = [
             {"id": "h-1", "status": "rejected", "reason": "timeout exceeded in evaluator", **self.contract},
         ]
         signals_2 = build_research_signals(Mock(repeats=1), candidate, parent=None, history=history_2)
         rep_sig_2 = next(s for s in signals_2 if s["kind"] == "repeated_rejection")
         self.assertEqual(rep_sig_2["count"], 2)
-        self.assertNotIn("openresearch (orx discover)", rep_sig_2["note"])
+        self.assertNotIn("explore external literature approaches", rep_sig_2["note"])
 
 
 class DashboardRefactorTest(unittest.TestCase):

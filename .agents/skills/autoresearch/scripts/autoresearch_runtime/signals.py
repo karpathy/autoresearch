@@ -382,7 +382,7 @@ def build_research_signals(
     for reason, items in sorted(by_reason.items(), key=lambda item: (-len(item[1]), item[0])):
         if len(items) >= 2:
             note = (
-                "The same decision reason recurred 3+ times; inspect run evidence or use openresearch (orx discover) to explore external literature approaches."
+                "The same decision reason recurred 3+ times; inspect run evidence or explore external literature approaches."
                 if len(items) >= 3
                 else "The same decision reason recurred; inspect the hypothesis and run evidence."
             )

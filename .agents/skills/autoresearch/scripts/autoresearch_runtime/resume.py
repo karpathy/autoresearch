@@ -29,7 +29,7 @@ from .trial import _finalize_trial, _first_repeat_rejection, recover_lab
 
 
 _RESUMABLE_STATUSES = {"interrupted", "crash", "timeout"}
-_JSONL_FILES = ("cases.jsonl", "attempts.jsonl", "sent-requests.jsonl")
+_JSONL_FILES = ("cases.jsonl", "attempts.jsonl")
 
 
 def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], bool]:
@@ -46,8 +46,6 @@ def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], bool]:
                 0 if item.get("event") == "started" else 1 if item.get("event") == "finished" else 2,
             ))
             return records, False
-        if kind == "wire":
-            return store.load_wire_events(lab_id, run_id, repeat_index=repeat_index), False
     if not path.is_file():
         return [], False
     raw = path.read_bytes()
@@ -86,6 +84,7 @@ def _validate_attempt_events(records: list[dict[str, Any]], path: Path) -> None:
         if event in {"attempt", "usage", "wire"}:
             # SQLite keeps these indexed events beside the lifecycle journal;
             # only started/finished rows participate in resume certainty checks.
+            # "wire" rows were written by an earlier release and may still be stored.
             continue
         if event not in {"started", "finished"}:
             raise LabError(f"Unknown HTTP attempt event in {path.name}:{index}")
@@ -349,13 +348,9 @@ def resume_run(config: LabConfig, run_id: str) -> dict[str, Any]:
     if matching.get("status") == "budget":
         raise LabError("Budget-exhausted runs cannot be resumed")
     repair_saved_result = (
-        isinstance(matching.get("reason"), str)
-        and (
-            (matching.get("status") == "invalid"
-             and matching["reason"].startswith("Invalid result.json:"))
-            or (matching.get("status") == "incomparable"
-                and matching["reason"].startswith("request_identity sha256 mismatch:"))
-        )
+        matching.get("status") == "invalid"
+        and isinstance(matching.get("reason"), str)
+        and matching["reason"].startswith("Invalid result.json:")
     )
     if matching.get("status") not in _RESUMABLE_STATUSES and not repair_saved_result:
         raise LabError(f"Run status {matching.get('status')} is not resumable")

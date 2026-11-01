@@ -106,7 +106,7 @@ def init_lab(config: LabConfig) -> dict[str, Any]:
         shutil.copy2(config.source_root / name, destination)
     _git(candidate, "init", "-q")
     # Keep snapshot bytes identical to the source tree. Windows autocrlf would
-    # rewrite text and make a later historical replay fail its hash check.
+    # rewrite text and make a later historical hash check fail.
     _git(candidate, "config", "core.autocrlf", "false")
     _git(candidate, "config", "core.safecrlf", "false")
     _git(candidate, "add", "-A", "-f", "--", ".")

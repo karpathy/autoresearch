@@ -25,10 +25,10 @@ def _sqlite_document(path: Path) -> tuple[Any, Any, str, str | None, int | None]
             return candidate.parent, {"state.json": "state", "history.json": "history", "worker.json": "worker"}[name], None, None
         if name == "index.json" and candidate.parent.name == "vault":
             return candidate.parent.parent, "vault_index", None, None
-        if name == "manifest.json" and candidate.parent.parent.name in {"runs", "controls"}:
+        if name == "manifest.json" and candidate.parent.parent.name == "runs":
             state_dir = candidate.parent.parent.parent
             return state_dir, "manifest", candidate.parent.name, None
-        if name in {"result.json", "attempts.jsonl", "cases.jsonl", "usage.json", "sent-requests.jsonl", "net-stats.json"}:
+        if name in {"result.json", "attempts.jsonl", "cases.jsonl", "usage.json", "net-stats.json"}:
             repeat_name = candidate.parent.name
             if candidate.parent.parent.parent.name == "runs" and repeat_name.startswith("repeat_"):
                 try:
@@ -39,7 +39,7 @@ def _sqlite_document(path: Path) -> tuple[Any, Any, str, str | None, int | None]
                 kinds = {
                     "result.json": "result", "attempts.jsonl": "attempts",
                     "cases.jsonl": "cases", "usage.json": "usage",
-                    "sent-requests.jsonl": "wire", "net-stats.json": "net_stats",
+                    "net-stats.json": "net_stats",
                 }
                 return state_dir, kinds[name], candidate.parent.parent.name, repeat_index
         return None
@@ -170,8 +170,6 @@ def _sqlite_read(path: Path, fallback: Any = None) -> tuple[bool, Any]:
         return True, result
     if kind == "net_stats":
         return True, store.get_document(lab_id, path, fallback)
-    if kind == "wire":
-        return True, store.load_wire_events(lab_id, run_id, repeat_index=repeat_index)
     return False, fallback
 
 
@@ -206,10 +204,6 @@ def _sqlite_write(path: Path, value: Any) -> bool:
         store.set_document(lab_id, path, value)
     elif kind == "net_stats":
         store.set_document(lab_id, path, value)
-    elif kind == "wire":
-        for item in value if isinstance(value, list) else []:
-            if isinstance(item, dict):
-                store.append_wire_event(lab_id, run_id, {**item, "repeat_index": repeat_index})
     return True
 
 

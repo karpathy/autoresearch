@@ -76,7 +76,7 @@ def parse_documented(parser, where, argv):
 
 
 def runs_evaluator(args):
-    """Mirror the runtime: baseline/trial/resume/recover/epoch/probe/replay, plus step --run and trial start."""
+    """Mirror the runtime: baseline/trial/resume/recover/epoch, plus step --run and trial start."""
     if args.command == "step":
         return bool(getattr(args, "run", False))
     if args.command == "trial":
