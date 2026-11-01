@@ -78,6 +78,31 @@ class LabTest(unittest.TestCase):
         self.assertEqual(spent["unknown_cost_usd"], 0.0)
         self.assertEqual(spent["unknown_costs"], 1.0)
 
+    def test_failed_repeat_usage_is_saved_and_unknown_reservation_blocks_next_run(self):
+        self.install_evaluator()
+        evaluator = Path(self.config["evaluator"][1])
+        evaluator.write_text(
+            "import json,sys\nfrom pathlib import Path\n"
+            "run=Path(sys.argv[2]);run.mkdir(parents=True,exist_ok=True)\n"
+            "(run/'usage.json').write_text(json.dumps({'requests':50,'cost_usd':0.0176445324}))\n"
+            "raise SystemExit(1)\n", encoding="utf-8")
+        config = load_config(self.config_path)
+        init_lab(config)
+        with self.assertRaisesRegex(LabError, "Evaluator exited 1"):
+            run_baseline(config)
+        manifest = _read_json(config.state_dir / "runs" / "baseline" / "manifest.json")
+        self.assertEqual(manifest["runs"][0]["usage"]["requests"], 50)
+        self.assertAlmostEqual(status_lab(config)["spent"]["cost_usd"], 0.0176445324)
+
+        usage_path = config.state_dir / "runs" / "baseline" / "repeat_01" / "usage.json"
+        _write_json(usage_path, {"requests": 1, "cost_usd": 0.02, "unknown_requests": 1,
+                                 "unknown_cost_usd": 0.02})
+        unresolved = {"id": "baseline", "runs": [{"duration_seconds": 1}]}
+        manifest_path = config.state_dir / "runs" / "baseline" / "manifest.json"
+        _write_json(manifest_path, unresolved)
+        self.assertEqual(_spent([unresolved], config.state_dir)["unknown_requests"], 1)
+        self.assertGreater(_remaining(config), 0)
+
     def install_evaluator(self):
         evaluator = self.root / "evaluator.py"
         evaluator.write_text(

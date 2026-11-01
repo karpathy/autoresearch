@@ -140,7 +140,206 @@ class NativeResumeTest(unittest.TestCase):
         _write_json(manifest_path, manifest)
         return result_path
 
+    def test_saved_result_finalizes_without_rerun_and_preserves_provenance(self):
+        config, counter = self.make_lab(repeats=1, capabilities=False)
+        run_baseline(config)
+        trial = self.trial_that_crashes_after_writing_repeat_one(config)
+        calls_before = counter.read_text(encoding="utf-8").splitlines()
+        attempts = config.state_dir / "runs" / trial["id"] / "repeat_01" / "attempts.jsonl"
+        _write_json(attempts, [
+            {"event": "started", "attempt_id": "saved-result", "case_id": "case-saved"},
+            {
+                "event": "finished", "attempt_id": "saved-result", "case_id": "case-saved",
+                "http_status": 200, "cost_usd": None,
+            },
+        ])
+        saved_result = config.state_dir / "runs" / trial["id"] / "repeat_01" / "result.json"
+        self.assertEqual(_read_json(saved_result)["details"]["evidence_origin"],
+                         "offline_recompute")
 
+        resumed = resume_run(config, trial["id"])
+
+        self.assertEqual(resumed["status"], "accepted", resumed)
+        self.assertEqual(counter.read_text(encoding="utf-8").splitlines(), calls_before)
+        self.assertEqual(resumed["runs"][0]["details"]["evidence_origin"], "offline_recompute")
+        self.assertTrue(resumed.get("resume_id"))
+        self.assertEqual(resumed["evidence"], ["baseline/repeat_01"])
+        self.assertEqual(resumed["falsification"], "Score does not improve on repeat.")
+        self.assertEqual(resumed["runs"][0]["usage"]["requests"], 1)
+        self.assertEqual(resumed["runs"][0]["usage"]["unknown_requests"], 1)
+
+    def test_invalid_result_can_finalize_from_a_saved_valid_result_without_rerun(self):
+        config, counter = self.make_lab(repeats=1, capabilities=False)
+        run_baseline(config)
+        trial = self.trial_that_crashes_after_writing_repeat_one(config)
+        run_dir = config.state_dir / "runs" / trial["id"]
+        result_path = run_dir / "repeat_01" / "result.json"
+        result = _read_json(result_path)
+        result["usage"] = {"requests": 1, "cost_usd": None, "unknown_requests": 1}
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+        manifest_path = run_dir / "manifest.json"
+        manifest = _read_json(manifest_path)
+        manifest.update(status="invalid", reason="Invalid result.json: Invalid usage")
+        _write_json(manifest_path, manifest)
+        calls_before = counter.read_text(encoding="utf-8").splitlines()
+
+        resumed = resume_run(config, trial["id"])
+
+        self.assertEqual(resumed["status"], "accepted")
+        self.assertEqual(resumed["runs"][0]["usage"], {
+            "requests": 1, "cost_usd": None, "unknown_requests": 1,
+        })
+        self.assertEqual(counter.read_text(encoding="utf-8").splitlines(), calls_before)
+
+    def test_saved_manifest_origin_is_restored_when_original_file_omitted_it(self):
+        config, _counter = self.make_lab(repeats=1, capabilities=False)
+        run_baseline(config)
+        trial = self.trial_that_crashes_after_writing_repeat_one(config)
+        result_path = self.mark_first_repeat_completed(config, trial)
+        result = _read_json(result_path)
+        result.pop("details", None)
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+        manifest_path = config.state_dir / "runs" / trial["id"] / "manifest.json"
+        manifest = _read_json(manifest_path)
+        manifest["runs"][0]["result_sha256"] = hashlib.sha256(result_path.read_bytes()).hexdigest()
+        manifest["runs"][0]["details"] = {"evidence_origin": "fresh"}
+        _write_json(manifest_path, manifest)
+
+        resumed = resume_run(config, trial["id"])
+
+        self.assertEqual(resumed["runs"][0]["details"]["evidence_origin"], "fresh")
+
+    def test_trial_resume_skips_completed_case_and_calls_only_pending_case(self):
+        hits = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                hits.append(parse_qs(urlparse(self.path).query)["case"][0])
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"cached-response")
+
+            def log_message(self, *_args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (server.shutdown(), server.server_close(), thread.join(timeout=2)))
+        url = f"http://127.0.0.1:{server.server_port}/case"
+        config, counter = self.make_lab(repeats=1, capabilities=True, cases_url=url)
+        run_baseline(config)
+        trial = self.trial_that_crashes_after_writing_repeat_one(config)
+        first_repeat = config.state_dir / "runs" / trial["id"] / "repeat_01" / "result.json"
+        self.assertFalse(first_repeat.exists())
+        spent_after_crash = _spent(_runs(config), config.state_dir)
+        self.assertEqual(spent_after_crash["requests"], 1)
+        self.assertEqual(spent_after_crash["unknown_requests"], 1)
+        calls_before = counter.read_text(encoding="utf-8").splitlines()
+
+        resumed = resume_run(config, trial["id"])
+
+        calls_after = counter.read_text(encoding="utf-8").splitlines()
+        run_log = config.state_dir / "runs" / trial["id"] / "repeat_01" / "run.log"
+        self.assertEqual(resumed["status"], "accepted", (
+            resumed, run_log.read_text(encoding="utf-8"), counter.read_text(encoding="utf-8"),
+        ))
+        self.assertEqual(calls_after.count("2 repeat_01 resume=0"), 1)
+        self.assertEqual(calls_after.count("2 repeat_01 resume=1"), 1)
+        self.assertEqual(len(calls_after), len(calls_before) + 1)
+        self.assertEqual(hits, ["case-1", "case-2"])
+        cases = config.state_dir / "runs" / trial["id"] / "repeat_01" / "cases.jsonl"
+        self.assertEqual([item["id"] for item in _read_json(cases)],
+                         ["case-1", "case-2"])
+        self.assertEqual(resumed["runs"][0]["metrics"]["score"], 2)
+        self.assertEqual(resumed["runs"][0]["usage"]["requests"], 2)
+        self.assertEqual(resumed["runs"][0]["usage"]["unknown_requests"], 2)
+        spent_after_resume = _spent(_runs(config), config.state_dir)
+        self.assertEqual(spent_after_resume["requests"], 2)
+        self.assertEqual(spent_after_resume["unknown_requests"], 2)
+
+    def test_redirect_and_informational_responses_require_reconciliation(self):
+        for status in (302, 103):
+            with self.subTest(status=status):
+                config, counter = self.make_lab(repeats=1, capabilities=True)
+                run_baseline(config)
+                trial = self.trial_that_crashes_after_writing_repeat_one(config)
+                repeat_dir = config.state_dir / "runs" / trial["id"] / "repeat_01"
+                (repeat_dir / "result.json").unlink()
+                attempt_id = f"http-{status}"
+                rows = [
+                    {"event": "started", "attempt_id": attempt_id, "case_id": "case-redirect"},
+                    {"event": "finished", "attempt_id": attempt_id, "case_id": "case-redirect",
+                     "http_status": status, "cost_usd": None},
+                ]
+                _write_json(repeat_dir / "attempts.jsonl", rows)
+                calls_before = counter.read_text(encoding="utf-8").splitlines()
+
+                with self.assertRaises(LabError) as caught:
+                    resume_run(config, trial["id"])
+
+                self.assertEqual(caught.exception.code, "E_RESUME_RECONCILE")
+                self.assertEqual(counter.read_text(encoding="utf-8").splitlines(), calls_before)
+
+    def test_http_503_can_resume_and_remains_unknown_cost(self):
+        config, counter = self.make_lab(repeats=1, capabilities=True)
+        run_baseline(config)
+        trial = self.trial_that_crashes_after_writing_repeat_one(config)
+        repeat_dir = config.state_dir / "runs" / trial["id"] / "repeat_01"
+        (repeat_dir / "result.json").unlink()
+        rows = [
+            {"event": "started", "attempt_id": "http-503", "case_id": "case-retry"},
+            {"event": "finished", "attempt_id": "http-503", "case_id": "case-retry",
+             "http_status": 503, "cost_usd": None},
+        ]
+        _write_json(repeat_dir / "attempts.jsonl", rows)
+        calls_before = counter.read_text(encoding="utf-8").splitlines()
+
+        resumed = resume_run(config, trial["id"])
+
+        self.assertEqual(resumed["status"], "accepted")
+        self.assertEqual(len(counter.read_text(encoding="utf-8").splitlines()), len(calls_before) + 1)
+        self.assertEqual(resumed["runs"][0]["usage"]["unknown_requests"], 1)
+
+    def test_unknown_finished_http_outcome_requires_case_reconciliation(self):
+        config, counter = self.make_lab(repeats=1, capabilities=True)
+        run_baseline(config)
+        trial = self.trial_that_crashes_after_writing_repeat_one(config)
+        repeat_dir = config.state_dir / "runs" / trial["id"] / "repeat_01"
+        (repeat_dir / "result.json").unlink()
+        attempt_id = "unknown-status"
+        rows = [
+            {"event": "started", "attempt_id": attempt_id, "case_id": "case-unknown"},
+            {"event": "finished", "attempt_id": attempt_id, "case_id": "case-unknown"},
+        ]
+        _write_json(repeat_dir / "attempts.jsonl", rows)
+        calls_before = counter.read_text(encoding="utf-8").splitlines()
+
+        with self.assertRaisesRegex(LabError, "uncertain|checkpoint|reconcil"):
+            resume_run(config, trial["id"])
+
+        self.assertEqual(counter.read_text(encoding="utf-8").splitlines(), calls_before)
+
+    def test_resume_accumulates_time_from_failed_evaluator_attempts(self):
+        config, _counter = self.make_lab(repeats=1, capabilities=True)
+        run_baseline(config)
+        trial = self.trial_that_crashes_after_writing_repeat_one(config)
+        repeat_dir = config.state_dir / "runs" / trial["id"] / "repeat_01"
+        (repeat_dir / "result.json").unlink()
+        manifest_path = config.state_dir / "runs" / trial["id"] / "manifest.json"
+        manifest = _read_json(manifest_path)
+        manifest["runs"][0]["duration_seconds"] = 5.0
+        manifest["status"] = "interrupted"
+        _write_json(manifest_path, manifest)
+
+        with patch(
+            "autoresearch_runtime.resume._evaluate_once",
+            return_value=("crash", {"duration_seconds": 2.0, "usage": {"requests": 0}}, "timed out"),
+        ) as evaluate:
+            resumed = resume_run(config, trial["id"])
+
+        self.assertEqual(evaluate.call_count, 1)
+        self.assertEqual(resumed["runs"][0]["duration_seconds"], 7.0)
 
     def test_request_identity_incomparable_run_rechecks_saved_result_without_rerun(self):
         config, counter = self.make_lab(repeats=1, capabilities=False)

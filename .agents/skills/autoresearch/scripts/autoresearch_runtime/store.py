@@ -155,12 +155,18 @@ def _sqlite_read(path: Path, fallback: Any = None) -> tuple[bool, Any]:
         totals = store.usage_totals(lab_id, run_id, repeat_index=repeat_index)
         saved = store.get_document(lab_id, path, None)
         result = dict(saved) if isinstance(saved, dict) else {}
+        if not totals.get("requests") and not result:
+            return True, fallback
+        # A request whose cost was never reported is unknown, not free.
+        unknown_costs = totals.get("unknown_costs", 0)
         result.update({
             "requests": totals.get("requests", 0),
-            "unknown_requests": totals.get("unknown_requests", 0),
-            "cost_usd": totals.get("cost_usd", 0.0),
+            "unknown_requests": max(totals.get("unknown_requests", 0), int(result.get("unknown_requests") or 0)),
+            "cost_usd": None if unknown_costs else totals.get("cost_usd", 0.0),
             "confirmed_cost_usd": totals.get("cost_usd", 0.0),
         })
+        if unknown_costs:
+            result["unknown_costs"] = unknown_costs
         return True, result
     if kind == "net_stats":
         return True, store.get_document(lab_id, path, fallback)
