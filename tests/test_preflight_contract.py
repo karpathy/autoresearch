@@ -91,6 +91,20 @@ class PreflightContractTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("exact quote", payload["error"]["message"])
 
+    def test_preflight_rejects_retired_spec_fields(self):
+        for field, value in (
+            ("baseline_validation", {"mode": "fresh", "request_identity": {"sha256": "0" * 64}}),
+            ("budget", {"openrouter": True}),
+        ):
+            with self.subTest(field=field):
+                spec = self.spec()
+                raw = json.loads(spec.read_text())
+                raw[field] = {**raw.get(field, {}), **value}
+                spec.write_text(json.dumps(raw))
+                code, payload = self.invoke("preflight", "--spec", str(spec), "--program", str(self.program))
+                self.assertEqual(code, 2, payload)
+                self.assertIn("no longer supported", payload["error"]["message"])
+
     def test_preflight_and_prepare_reject_spend_limits_with_a_coded_error(self):
         from autoresearch_runtime.bootstrap import main as prepare_main
 
