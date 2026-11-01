@@ -1,6 +1,6 @@
 # Agent compatibility
 
-Each row is one real run of [`tests/harness_smoke/run.py`](../tests/harness_smoke/run.py). The driver prepares the toy lab as the host, tells the agent to run a baseline and one trial, then checks the result itself instead of trusting the agent's report.
+Each row is one real run of [`tests/harness_smoke/run.py`](../tests/harness_smoke/run.py), in two phases. In phase 1 the agent gets only the toy project and evaluator, writes the lab spec from the skill's documentation and prepares the lab. The host then finds the lab config itself and writes the offline harness profile. In phase 2 the same agent session resumes and runs a baseline and one trial. The driver checks the result itself instead of trusting the agent's report.
 
 | Agent | Version | Model | Date | Result |
 | --- | --- | --- | --- | --- |
@@ -11,12 +11,11 @@ Each row is one real run of [`tests/harness_smoke/run.py`](../tests/harness_smok
 
 ## What a pass does and does not show
 
-- The host prepared the lab and wrote the harness profile. A pass does not cover the agent preparing a lab from a goal.
 - A pass covers one short offline evaluator on one machine.
 
 ## Run it yourself
 
-Each run spends your agent's quota, so the driver is not part of the test suite or CI.
+Each run spends your agent's quota, so the driver is not part of the test suite or CI. Each phase has its own timeout (`--timeout`, default 900 seconds). Codex needs `--model`, since it has no default model; Claude defaults to Haiku. Output goes to `.tests/harness_smoke/<agent>-<timestamp>/`: per-phase stdout and stderr, and `result.json` with the exit code and seconds of each phase.
 
 ```text
 python tests/harness_smoke/run.py claude
