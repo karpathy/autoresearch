@@ -410,8 +410,8 @@ class SignalsRefactorTest(unittest.TestCase):
         reg_sig = next(s for s in signals if s["kind"] == "case_regression")
         self.assertIn("case_beta", reg_sig["regressed_case_ids"])
 
-    def test_repeated_rejection_openresearch_hint_threshold(self):
-        # 3 rejections with the same reason trigger the openresearch / orx discover hint
+    def test_repeated_rejection_literature_hint_threshold(self):
+        # 3 rejections with the same reason trigger the external literature hint
         candidate = {
             "id": "cand-rep-3",
             "status": "rejected",
@@ -425,16 +425,16 @@ class SignalsRefactorTest(unittest.TestCase):
         signals = build_research_signals(Mock(repeats=1), candidate, parent=None, history=history_3)
         rep_sig = next(s for s in signals if s["kind"] == "repeated_rejection")
         self.assertEqual(rep_sig["count"], 3)
-        self.assertIn("openresearch (orx discover)", rep_sig["note"])
+        self.assertIn("explore external literature approaches", rep_sig["note"])
 
-        # 2 rejections with the same reason do not include the openresearch hint
+        # 2 rejections with the same reason do not include the literature hint
         history_2 = [
             {"id": "h-1", "status": "rejected", "reason": "timeout exceeded in evaluator", **self.contract},
         ]
         signals_2 = build_research_signals(Mock(repeats=1), candidate, parent=None, history=history_2)
         rep_sig_2 = next(s for s in signals_2 if s["kind"] == "repeated_rejection")
         self.assertEqual(rep_sig_2["count"], 2)
-        self.assertNotIn("openresearch (orx discover)", rep_sig_2["note"])
+        self.assertNotIn("explore external literature approaches", rep_sig_2["note"])
 
 
 class DashboardRefactorTest(unittest.TestCase):

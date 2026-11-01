@@ -102,4 +102,4 @@ If a trial regresses on test cases that previously passed in the parent run:
 ### On Long-Horizon Memory & Plateau (`dead_ends`)
 - `cockpit.dead_ends` tracks up to 8 unique failed candidate hashes/titles from the current epoch.
 - Signal history tracks up to 100 runs (expanded from 15), correctly identifying `same_candidate_rejected` and `similar_hypothesis_rejected` across long-running experiments.
-- If `repeated_rejection` occurs (3+ consecutive rejected trials), consult the `openresearch` skill (`orx discover`) for external literature retrieval rather than continuing local permutations.
+- If `repeated_rejection` occurs (3+ consecutive rejected trials), consult read-only external literature retrieval rather than continuing local permutations.

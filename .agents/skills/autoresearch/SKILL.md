@@ -37,7 +37,7 @@ Use the automatic diagnostics surfaced directly in the cockpit envelope instead 
 - `case_samples` inside `case_regression` signal: up to 3 compact regressed case diagnostics (`id`, `status`, `error`, `metrics`), eliminating the need to read `cases.jsonl`.
 - `dead_ends` in cockpit summary: up to 8 unique rejected/crashed hypotheses from the current epoch (backed by 100-run duplicate/similarity memory), protecting agents from repeating failed ideas after context compaction.
 
-Keep improvements only when accepted; report goal criteria and confirmation repeats separately. For SQLite labs, use guide/run/job projections, not sidecar files. A missing CLI response does not prove an operation failed. When local iterations plateau or `repeated_rejection` occurs (3+ times), use the `openresearch` skill strictly for read-only literature retrieval (`orx discover keyword/embedding/openalex/biorxiv/pubmed` and `orx paper <id> [--full]`) and test the resulting idea inside `candidate/` via `lab.py` without running `orx` experiment/branch commands. See [autonomous-loop-protocol.md](references/autonomous-loop-protocol.md) for the complete protocol.
+Keep improvements only when accepted; report goal criteria and confirmation repeats separately. For SQLite labs, use guide/run/job projections, not sidecar files. A missing CLI response does not prove an operation failed. When local iterations plateau or `repeated_rejection` occurs (3+ times), use read-only external literature retrieval and test the resulting idea inside `candidate/` via `lab.py`. See [autonomous-loop-protocol.md](references/autonomous-loop-protocol.md) for the complete protocol.
 
 ## Recover and report
 

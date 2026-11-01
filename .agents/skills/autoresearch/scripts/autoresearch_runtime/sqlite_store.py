@@ -1663,7 +1663,7 @@ class SQLiteStore:
                     break
             if rejected_streak >= 2:
                 action = (
-                    "Consult the openresearch skill (`orx discover` / `orx paper`) for new algorithmic framing before the next trial."
+                    "Consult external literature for new algorithmic framing before the next trial."
                     if rejected_streak >= 3
                     else "Change the mechanism or narrow the hypothesis scope."
                 )
