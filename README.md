@@ -75,7 +75,7 @@ python .agents/skills/autoresearch/scripts/lab.py --config <lab.json> status
 
 ## Compatibility
 
-Works through a Markdown skill and ordinary command-line tools, with no agent-specific API. Confirmed end to end in Claude Code on Windows. Codex, Cursor and Gemini CLI are not verified yet; see [agent compatibility](docs/compatibility.md). CI runs the test suite on Ubuntu and Windows with Python 3.10 and 3.12. macOS is not tested.
+Works through a Markdown skill and ordinary command-line tools, with no agent-specific API. Confirmed end to end in Claude Code and Codex on Windows, from writing the spec to an accepted trial. Cursor and Gemini CLI are not verified yet; see [agent compatibility](docs/compatibility.md). CI runs the test suite on Ubuntu and Windows with Python 3.10 and 3.12. macOS is not tested.
 
 ## Documentation
 

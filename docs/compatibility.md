@@ -4,8 +4,8 @@ Each row is one real run of [`tests/harness_smoke/run.py`](../tests/harness_smok
 
 | Agent | Version | Model | Date | Result |
 | --- | --- | --- | --- | --- |
-| Claude Code | 2.1.316 | Haiku | 2026-11-01 | Passed on Windows: baseline and one accepted trial, `mean_error` 2.000 to 0.000, measured project unchanged, 66 s |
-| Codex CLI | 0.139.0 | | 2026-11-01 | Not verified: the provider rejected the request before the agent started, because this CLI version does not support the models available to the account. The skill never ran |
+| Claude Code | 2.1.316 | Haiku | 2026-11-01 | Passed on Windows: the agent wrote the spec and prepared the lab, then ran a baseline and one accepted trial; `mean_error` 2.000 to 0.000, measured project unchanged, 114 s |
+| Codex CLI | 0.166.0-alpha.5.1 | gpt-6-luna | 2026-11-01 | Passed on Windows: same scenario and result, 122 s |
 | Cursor | | | | Not verified |
 | Gemini CLI | | | | Not verified |
 
