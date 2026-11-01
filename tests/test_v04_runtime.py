@@ -22,9 +22,7 @@ from autoresearch_runtime.case_checkpoint import summarize_usage
 from autoresearch_runtime.runtimeops import reserve_and_launch_operation
 from autoresearch_runtime.worker import run_operation_worker
 from autoresearch_runtime.measurement import open_contract_epoch
-from autoresearch_runtime.paths import add_root, all_roots
 from autoresearch_runtime.cockpit import build_cockpit
-from autoresearch_runtime.archive import archive_idle_labs, inspect_archive_candidates
 from autoresearch_runtime.control_import import (
     import_control_report, load_control_manifests, promote_control_to_baseline,
 )
@@ -608,29 +606,7 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         self.assertFalse(config.path.exists())
         self.assertFalse((config.state_dir / "lab.json").exists())
 
-    def test_sqlite_root_registration_keeps_same_basename_roots_distinct(self):
-        self._prepare()
-        left = self.root / "left-project" / ".labs"
-        right = self.root / "right-project" / ".labs"
-        left.mkdir(parents=True)
-        right.mkdir(parents=True)
 
-        left_record = add_root(left)
-        right_record = add_root(right)
-        self.assertNotEqual(left_record["id"], right_record["id"])
-        self.assertIn(left.resolve(), all_roots())
-        self.assertIn(right.resolve(), all_roots())
-        with self.assertRaisesRegex(ValueError, "already registered"):
-            add_root(self.root / "third-project" / ".labs", root_id=left_record["id"])
-
-    def test_sqlite_labs_are_explicitly_blocked_from_legacy_archive_moves(self):
-        _prepared, config = self._prepare()
-        plan = inspect_archive_candidates(self.root / ".labs")
-        self.assertIn("SQLite-backed labs", plan["blocked"])
-        with self.assertRaises(LabError) as raised:
-            archive_idle_labs(self.root / ".labs", apply=True)
-        self.assertEqual(raised.exception.code, "E_LEGACY_READ_ONLY")
-        self.assertTrue(config.state_dir.exists())
 
     def test_unverified_migrated_baseline_cannot_be_used_for_trial(self):
         _prepared, config = self._prepare()

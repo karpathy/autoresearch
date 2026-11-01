@@ -20,7 +20,7 @@ def register(subparsers: Any) -> None:
 
 
 def run(args: Any, labs_root: Path | None) -> dict[str, Any]:
-    config = resolve_config(args, labs_root, pending_ok=True, mutating_action="ingest")
+    config = resolve_config(args, labs_root, pending_ok=True)
     return ingest_reports(
         state_dir=config.state_dir,
         source_path=args.source,

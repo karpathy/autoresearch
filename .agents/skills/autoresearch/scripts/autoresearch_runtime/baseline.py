@@ -61,16 +61,10 @@ def _request_identity_digest(config: LabConfig, baseline_id: str, repeat_count: 
 
 def _finalize_baseline_records(config: LabConfig, state: dict[str, Any], manifest: dict[str, Any]) -> None:
     """Commit baseline outcome and state pointers together for SQLite labs."""
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
-        from .runtimeops import mark_operation_finalizing
-        mark_operation_finalizing()
-        SQLiteStore().finalize_run(config.lab_id, manifest["id"], state, manifest)
-    else:
-        _write_json(config.state_dir / "state.json", state)
-        _save_manifest(config, manifest)
-
-
+    from .sqlite_store import SQLiteStore
+    from .runtimeops import mark_operation_finalizing
+    mark_operation_finalizing()
+    SQLiteStore().finalize_run(config.lab_id, manifest["id"], state, manifest)
 def _evaluator_fixture_digest(spec: dict[str, Any]) -> tuple[str | None, str | None]:
     fixture = spec.get("evaluator_fixture")
     if not isinstance(fixture, dict):
@@ -201,18 +195,15 @@ def run_baseline(config: LabConfig, *, supersede: bool = False, reason: str | No
         state["best_id"] = None
         state["baseline_verified"] = False
     epoch_id = ensure_epoch(state, config)
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
-        store = SQLiteStore()
-        raw_config_bytes = store.load_config_bytes(config.lab_id)
-        store.save_config_and_state(
-            config.lab_id,
-            json.loads(raw_config_bytes.decode("utf-8")),
-            state,
-            raw_config_bytes=raw_config_bytes,
-        )
-    else:
-        _write_json(config.state_dir / "state.json", state)
+    from .sqlite_store import SQLiteStore
+    store = SQLiteStore()
+    raw_config_bytes = store.load_config_bytes(config.lab_id)
+    store.save_config_and_state(
+        config.lab_id,
+        json.loads(raw_config_bytes.decode("utf-8")),
+        state,
+        raw_config_bytes=raw_config_bytes,
+    )
     _finalize_setup(config, state)
     _check_frozen(config, state)
     previous = [item for item in _runs(config) if item["id"] == "baseline" or item["id"].startswith("baseline-")]

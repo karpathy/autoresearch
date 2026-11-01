@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 from .history import read_history
-from .catalog import update_lab_status
 
 from .config import LabConfig
 from .errors import LabError
@@ -237,12 +236,7 @@ def _complete_trial_finalization(
 
     manifest["status"] = decision
     finalization["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        SQLiteStore().finalize_run(config.lab_id, manifest["id"], state, manifest)
-    else:
-        if decision == "accepted":
-            _write_json(config.state_dir / "state.json", state)
-        _save_manifest(config, manifest)
+    SQLiteStore().finalize_run(config.lab_id, manifest["id"], state, manifest)
     return manifest
 
 
@@ -474,13 +468,6 @@ def run_trial(config: LabConfig, hypothesis: dict[str, Any] | None = None, *, ex
 
 def recover_lab(config: LabConfig, *, restore_candidate: bool = True) -> list[str]:
     """Mark unfinished experiments and restore the last accepted snapshot."""
-    if getattr(config, "storage_mode", "legacy") != "sqlite":
-        raise LabError(
-            "Legacy labs are read-only and cannot be recovered in place",
-            code="E_LEGACY_READ_ONLY",
-            hint=("Export the legacy lab with `storage export --config <legacy lab.json> --output <archive.zip>`, "
-                  "then create a fresh SQLite lab with `prepare` under a dedicated AUTORESEARCH_HOME."),
-        )
     from .sqlite_store import SQLiteStore
 
     state = load_state(config)
@@ -489,7 +476,7 @@ def recover_lab(config: LabConfig, *, restore_candidate: bool = True) -> list[st
     interrupted = [item for item in _runs(config) if item.get("status") in {"created", "queued", "running"}]
     if not interrupted:
         return []
-    store = SQLiteStore() if config.storage_mode == "sqlite" else None
+    store = SQLiteStore()
     for item in interrupted:
         if state["best_id"] == item["id"]:
             state["best_id"] = item.get("parent")
@@ -497,13 +484,10 @@ def recover_lab(config: LabConfig, *, restore_candidate: bool = True) -> list[st
         if state["baseline_id"] == item["id"]:
             state["baseline_id"] = None
         item.update(status="interrupted", reason="Run interrupted before a decision")
-        if store is not None:
-            # Persist the manifest and recovered state together; a later reconcile
-            # can safely close repeats if the process stops before the next write.
-            store.finalize_run(config.lab_id, item["id"], state, item)
-            store.interrupt_running_repeats(config.lab_id, item["id"])
-        else:
-            _write_json(config.state_dir / "runs" / item["id"] / "manifest.json", item)
+        # Persist the manifest and recovered state together; a later reconcile
+        # can safely close repeats if the process stops before the next write.
+        store.finalize_run(config.lab_id, item["id"], state, item)
+        store.interrupt_running_repeats(config.lab_id, item["id"])
     if restore_candidate:
         _restore_candidate(config, state["best_commit"])
     else:
@@ -512,9 +496,6 @@ def recover_lab(config: LabConfig, *, restore_candidate: bool = True) -> list[st
             _git(candidate, "reset", "--mixed", state["best_commit"])
         except Exception:
             pass
-    if store is None:
-        _write_json(config.state_dir / "state.json", state)
-    update_lab_status(config.state_dir)
     return [item["id"] for item in interrupted]
 
 def status_lab(config: LabConfig) -> dict[str, Any]:
@@ -538,5 +519,4 @@ def status_lab(config: LabConfig) -> dict[str, Any]:
         "runs": [{"id": item["id"], "status": item["status"]} for item in manifests],
         "historical_hypotheses": len(history["hypotheses"]),
         "history_documents": len(history["documents"]),
-        "dashboard": str(config.state_dir / "dashboard.html"),
     }

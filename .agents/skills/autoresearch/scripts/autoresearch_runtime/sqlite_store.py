@@ -3723,18 +3723,6 @@ class SQLiteStore:
             (root_ref, _path_alias(path), _now(), _json(payload)),
         )
 
-    def register_root(self, root_ref: str, path: str | Path, payload: dict[str, Any] | None = None) -> None:
-        if not root_ref:
-            raise ValueError("root_ref is required")
-        with self._writer() as conn:
-            self._register_root_in_conn(conn, root_ref, str(path), payload or {})
-            self._bump_revision(conn)
-
-    def load_roots(self) -> list[dict[str, Any]]:
-        with self._reader() as conn:
-            rows = conn.execute("SELECT root_ref,path,created_at,payload_json FROM roots ORDER BY root_ref").fetchall()
-        return [{"id": row[0], "path": row[1], "created_at": row[2], "metadata": _loads(row[3], {})} for row in rows]
-
     @staticmethod
     def _resolve_lab_in_conn(conn: sqlite3.Connection, value: uuid.UUID | str | Path) -> str:
         text = str(value)

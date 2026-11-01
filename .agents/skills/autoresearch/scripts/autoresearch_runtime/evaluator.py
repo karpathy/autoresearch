@@ -325,14 +325,13 @@ def _evaluate_once(config: LabConfig, run_dir: Path, timeout: float, *,
     command = [replacements.get(arg, arg) for arg in (evaluator or config.evaluator)]
     run_dir.mkdir(parents=True, exist_ok=True)
     repeat_row: tuple[Any, Any, int] | None = None
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
-        from .store import _sqlite_document
-        target = _sqlite_document(run_dir / "result.json")
-        if target is not None and target[2] == "result":
-            store, lab_id, _, run_id, repeat_index = target
-            store.ensure_repeat_started(lab_id, run_id, repeat_index)
-            repeat_row = (store, run_id, repeat_index)
+    from .sqlite_store import SQLiteStore
+    from .store import _sqlite_document
+    target = _sqlite_document(run_dir / "result.json")
+    if target is not None and target[2] == "result":
+        store, lab_id, _, run_id, repeat_index = target
+        store.ensure_repeat_started(lab_id, run_id, repeat_index)
+        repeat_row = (store, run_id, repeat_index)
     environment = os.environ.copy()
     skill_scripts = str(Path(__file__).resolve().parents[1])
     hooks_dir = str(Path(skill_scripts) / "hooks")
@@ -427,7 +426,7 @@ def _import_sqlite_wire_log(
     config: LabConfig, run_dir: Path, repeat_row: tuple[Any, Any, int] | None,
 ) -> None:
     """Import evaluator-written request evidence before removing its recovery sidecar."""
-    if repeat_row is None or getattr(config, "storage_mode", "legacy") != "sqlite":
+    if repeat_row is None:
         return
     path = Path(run_dir) / "sent-requests.jsonl"
     if not path.is_file():
@@ -558,7 +557,7 @@ def _attach_case_log(
                     break
         except OSError:
             pass
-    if not cases and repeat_row is not None and getattr(config, "storage_mode", "legacy") == "sqlite":
+    if not cases and repeat_row is not None:
         store, run_id, repeat_index = repeat_row
         try:
             loaded = store.load_checkpoints(config.lab_id, run_id, repeat_index=repeat_index)

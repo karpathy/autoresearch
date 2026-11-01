@@ -228,23 +228,5 @@ class TrialCliTest(unittest.TestCase):
         data = self._assert_ok(self._run(["--config", config, "promote"]), "promote")
         self.assertTrue(Path(data["patch"]).is_file())
 
-    def test_roots_list_and_add(self):
-        listed = self._assert_ok(self._run(["roots", "list"]), "roots")
-        self.assertTrue(listed["roots"])
-        extra = self.work / "extra-root"
-        extra.mkdir()
-        added = self._assert_ok(self._run(["roots", "add", str(extra)]), "roots")
-        paths = {item["path"] for item in added["roots"]}
-        self.assertIn(str(extra.resolve()), paths)
-
-    def test_catalog_archive_recover(self):
-        config = self._prepare_baseline()
-        self._assert_ok(self._run(["catalog", "repair"]), "catalog")
-        self._assert_ok(self._run(["archive"]), "archive")
-        self._assert_ok(self._run_approved(
-            config, ["--confirmed", "--config", config, "recover"],
-        ), "recover")
-
-
 if __name__ == "__main__":
     unittest.main()

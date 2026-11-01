@@ -79,7 +79,7 @@ class PublicStoreReadersTest(unittest.TestCase):
                 store.save_manifest(lab_id, run_id, {"id": alias, "epoch": 1, "runs": []})
                 runs.append((run_id, alias))
             _set_run_tie(store, lab_id, [run_id for run_id, _ in runs])
-            config = SimpleNamespace(storage_mode="sqlite", lab_id=lab_id, state_dir=state_dir)
+            config = SimpleNamespace(lab_id=lab_id, state_dir=state_dir)
 
             public_calls = []
             original_reader = getattr(SQLiteStore, "list_recent_manifests", None)

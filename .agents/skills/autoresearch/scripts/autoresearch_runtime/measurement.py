@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import LabConfig, load_config
+from .config import LabConfig, load_config, validate_config_file
 from .errors import LabError
 from .store import _sha256, _write_json
 
@@ -198,11 +198,8 @@ def open_contract_epoch(config_path: Path, spec: dict[str, Any], *, reason: str)
     if any(item.get("status") == "running" for item in _runs(config)):
         raise LabError("Interrupted run exists; run recover first")
 
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
-        raw = json.loads(SQLiteStore().load_config_bytes(config.lab_id).decode("utf-8"))
-    else:
-        raw = json.loads(resolved.read_text(encoding="utf-8"))
+    from .sqlite_store import SQLiteStore
+    raw = json.loads(SQLiteStore().load_config_bytes(config.lab_id).decode("utf-8"))
     for key, value in spec.items():
         raw[key] = value
     raw_config_bytes = (json.dumps(raw, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
@@ -211,38 +208,27 @@ def open_contract_epoch(config_path: Path, spec: dict[str, Any], *, reason: str)
         proposed = Path(temporary.name)
     try:
         proposed.write_bytes(raw_config_bytes)
-        validated_config = load_config(proposed, read_only=True)
+        validated_config = validate_config_file(proposed)
     finally:
         proposed.unlink(missing_ok=True)
     from .runtimeops import mark_operation_finalizing
     mark_operation_finalizing()
-    sqlite_mode = getattr(config, "storage_mode", "legacy") == "sqlite"
-    if not sqlite_mode:
-        _write_json(resolved, raw)
-        config = load_config(resolved)
-    else:
-        # Validation uses a temporary file so relative paths are resolved normally,
-        # then retain the SQLite lab identity and virtual config location.
-        config = replace(
-            validated_config,
-            path=config.path,
-            source_root=config.source_root,
-            state_dir=config.state_dir,
-            storage_mode="sqlite",
-            lab_id=config.lab_id,
-            config_bytes=raw_config_bytes,
-            passport=config.passport,
-        )
-    updated_hash = hashlib.sha256(raw_config_bytes).hexdigest() if sqlite_mode else _sha256(resolved)
+    # Validation uses a temporary file so relative paths are resolved normally,
+    # then retain the SQLite lab identity and virtual config location.
+    config = replace(
+        validated_config,
+        path=config.path,
+        source_root=config.source_root,
+        state_dir=config.state_dir,
+        lab_id=config.lab_id,
+        config_bytes=raw_config_bytes,
+        passport=config.passport,
+    )
+    updated_hash = hashlib.sha256(raw_config_bytes).hexdigest()
     _resnapshot_candidate_source(config, state, reason=reason)
-    # Дашборд читает копию внутри лаборатории и сверяет config_copy_sha256.
-    copy_path = config.state_dir / "lab.json"
-    if not sqlite_mode and resolved != copy_path.resolve():
-        copy_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(resolved, copy_path)
     state["inputs"] = [{"path": str(item), "sha256": _sha256(item)} for item in config.input_files]
     state["config_sha256"] = updated_hash
-    state["config_copy_sha256"] = updated_hash if sqlite_mode else _sha256(copy_path)
+    state["config_copy_sha256"] = updated_hash
     epoch_id = open_epoch(
         state,
         config,
@@ -253,11 +239,8 @@ def open_contract_epoch(config_path: Path, spec: dict[str, Any], *, reason: str)
     state["baseline_id"] = None
     state["best_id"] = None
     state["baseline_verified"] = False
-    if sqlite_mode:
-        from .sqlite_store import SQLiteStore
-        SQLiteStore().save_config_and_state(config.lab_id, raw, state, raw_config_bytes=raw_config_bytes)
-    else:
-        _write_json(config.state_dir / "state.json", state)
+    from .sqlite_store import SQLiteStore
+    SQLiteStore().save_config_and_state(config.lab_id, raw, state, raw_config_bytes=raw_config_bytes)
     epoch_record = state["epochs"][-1]
     return {
         "epoch_id": epoch_id,

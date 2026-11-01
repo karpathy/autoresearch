@@ -14,7 +14,6 @@ from typing import Any
 
 from ..config import load_config
 from ..errors import LabError
-from ..history import read_history
 from ..resolve import resolve_config_ref
 from ..runtime_env import hardened_env, hidden_process_kwargs
 from ..sqlite_store import SQLiteStore, StoreBusyError
@@ -98,7 +97,6 @@ def resolve_config(
     labs_root: Path | None,
     *,
     pending_ok: bool,
-    mutating_action: str | None = None,
 ) -> Any:
     lab = getattr(args, "lab", None)
     config_ref = resolve_config_ref(
@@ -108,177 +106,14 @@ def resolve_config(
         labs_root=labs_root,
     )
     config = load_config(config_ref, allow_pending=pending_ok)
-    if mutating_action is not None:
-        require_sqlite_mutation(config, mutating_action)
     if pending_ok and not load_state(config).get("setup_pending"):
         config = load_config(config_ref)
     return config
 
 
-def resolve_legacy_metadata(args: Any, labs_root: Path | None) -> dict[str, Any] | None:
-    """Read a legacy lab without strict runtime config validation or repair."""
-    config_ref = resolve_config_ref(
-        config=getattr(args, "config", None),
-        lab=getattr(args, "lab", None),
-        project=getattr(args, "project", None),
-        labs_root=labs_root,
-    )
-    if not isinstance(config_ref, Path):
-        return None
-    store = SQLiteStore()
-    if store.is_initialized():
-        from ..sqlite_store import AmbiguousAliasError, EntityNotFoundError
-
-        try:
-            store.resolve_lab_id(config_ref)
-        except EntityNotFoundError:
-            pass
-        except AmbiguousAliasError as error:
-            raise LabError(
-                "The lab path matches more than one SQLite lab",
-                code="E_LAB_AMBIGUOUS",
-                hint="Use an unambiguous `--lab` reference or explicit `--config` path.",
-            ) from error
-        else:
-            return None
-    from ..legacy_archive import read_legacy_lab
-
-    return read_legacy_lab(config_ref)
-
-
-def legacy_read_only_status(lab: dict[str, Any]) -> dict[str, Any]:
-    """Build bounded status and safe next steps from legacy metadata only."""
-    state = lab.get("state") if isinstance(lab.get("state"), dict) else {}
-    runs = lab.get("runs") if isinstance(lab.get("runs"), list) else []
-    runs = runs[:100]
-    history: dict[str, Any] | None
-    try:
-        history = read_history(lab["state_dir"])
-        if not isinstance(history, dict):
-            history = None
-        history_error = None
-    except (OSError, ValueError, KeyError):
-        history = None
-        history_error = "Historical catalog is unreadable"
-    if history is None and history_error is None:
-        history_error = "Historical catalog is unreadable"
-
-    hypotheses = history.get("hypotheses", []) if history else []
-    documents = history.get("documents", []) if history else []
-    if not isinstance(hypotheses, list):
-        hypotheses = []
-    if not isinstance(documents, list):
-        documents = []
-
-    run_manifest_warning_count = lab.get("run_manifest_warning_count", 0)
-    if (isinstance(run_manifest_warning_count, bool)
-            or not isinstance(run_manifest_warning_count, int)
-            or run_manifest_warning_count < 0):
-        run_manifest_warning_count = 0
-    run_count = lab.get("run_count", len(runs))
-    if isinstance(run_count, bool) or not isinstance(run_count, int) or run_count < len(runs):
-        run_count = len(runs)
-    truncated_run_count = lab.get("truncated_run_count", max(0, run_count - len(runs)))
-    if (isinstance(truncated_run_count, bool) or not isinstance(truncated_run_count, int)
-            or truncated_run_count < 0):
-        truncated_run_count = max(0, run_count - len(runs))
-    trial_count = lab.get("trial_count")
-    if isinstance(trial_count, bool) or not isinstance(trial_count, int) or trial_count < 0:
-        trial_count = sum(item.get("kind") == "trial" for item in runs if isinstance(item, dict))
-    running_run_count = lab.get("running_run_count")
-    if (isinstance(running_run_count, bool) or not isinstance(running_run_count, int)
-            or running_run_count < 0):
-        running_run_count = sum(item.get("status") == "running" for item in runs if isinstance(item, dict))
-    run_manifest_warning = (
-        "One or more legacy run manifests are unreadable or unsupported; details are omitted."
-        if run_manifest_warning_count else None
-    )
-
-    root: Path = lab["root"]
-    output = root.parent / f"{root.name}-legacy-archive.zip"
-    suffix = 2
-    while output.exists():
-        output = root.parent / f"{root.name}-legacy-archive-{suffix}.zip"
-        suffix += 1
-    scripts = Path(__file__).resolve().parents[2]
-    argv = [
-        sys.executable, str(scripts / "lab.py"), "--config", str(lab["config_path"]),
-        "storage", "export", "--output", str(output),
-    ]
-    command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
-    current_epoch = state.get("current_epoch")
-    if isinstance(current_epoch, bool) or not isinstance(current_epoch, int) or current_epoch < 1:
-        current_epoch = None
-    missing: list[str] = []
-    if state.get("setup_pending"):
-        config = lab.get("config") if isinstance(lab.get("config"), dict) else {}
-        metrics = config.get("metrics") if isinstance(config.get("metrics"), dict) else {}
-        if not config.get("evaluator"):
-            missing.append("evaluator")
-        if not metrics.get("primary"):
-            missing.append("metrics.primary")
-
-    summary: dict[str, Any] = {
-        "storage_mode": "legacy",
-        "read_only": True,
-        "goal_status": "ARCHIVE_ONLY",
-        "measurement_eligible": False,
-        "baseline_available": False,
-        "setup_pending": bool(state.get("setup_pending")),
-        "missing": missing,
-        "current_epoch": current_epoch,
-        "run_count": run_count,
-        "truncated_run_count": truncated_run_count,
-        "trials": trial_count,
-        "running_run_count": running_run_count,
-        "runs": runs,
-        "run_manifest_warning_count": run_manifest_warning_count,
-        "run_manifest_warning": run_manifest_warning,
-        "recorded_running_runs": [
-            item["id"] for item in runs
-            if isinstance(item, dict) and item.get("status") == "running"
-        ],
-        "historical_hypotheses": len(hypotheses) if history else None,
-        "history_documents": len(documents) if history else None,
-        "history_warning": history_error,
-        "source_root_configured": isinstance(lab.get("config", {}).get("source_root"), str),
-        "next_steps": [
-            {
-                "action": "EXPORT_LEGACY_ARCHIVE",
-                "argv": argv,
-                "command": command,
-                "reason": "Preserve the legacy folder as a byte-indexed ZIP; this command does not run an evaluator.",
-            },
-            {
-                "action": "START_NEW_LAB",
-                "argv": [],
-                "command": "",
-                "requires_user_input": ["new project path", "new goal", "dedicated AUTORESEARCH_HOME outside the project"],
-                "requirements": ["explicit prepare confirmation", "trusted harness profile before a baseline"],
-                "reason": "Legacy run history cannot become the new lab baseline.",
-            },
-        ],
-    }
-    return summary
-
-
 def explicit_confirmation(args: Any) -> dict[str, bool]:
     """Pass only an explicit CLI true value to the shared durable policy gate."""
     return {"confirmed": True} if getattr(args, "confirmed", None) is True else {}
-
-
-def require_sqlite_mutation(config: Any, action: str) -> None:
-    """Stop a legacy lab write before it touches files or launches an evaluator."""
-    if getattr(config, "storage_mode", "legacy") == "sqlite" and getattr(config, "lab_id", None):
-        return
-    raise LabError(
-        f"Legacy lab mutation is disabled for {action}; legacy labs are read-only",
-        code="E_LEGACY_READ_ONLY",
-        hint=(
-            "Export a legacy lab with `--config <legacy-lab.json> storage export --output archive.zip`, "
-            "then start fresh with `prepare` and a new AUTORESEARCH_HOME."
-        ),
-    )
 
 
 def spawn_operation_worker(operation_id: uuid.UUID | str) -> dict[str, Any]:

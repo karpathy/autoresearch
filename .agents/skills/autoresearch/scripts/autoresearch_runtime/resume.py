@@ -298,17 +298,16 @@ def resume_run(config: LabConfig, run_id: str) -> dict[str, Any]:
     """Continue one incomplete baseline/trial under the caller's lab lock."""
     if not isinstance(run_id, str) or not run_id or "/" in run_id or "\\" in run_id:
         raise LabError("Resume requires an exact run id")
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import EntityNotFoundError, SQLiteStore
-        store = SQLiteStore()
-        try:
-            canonical_run_id = store.resolve_run_id(config.lab_id, run_id)
-        except EntityNotFoundError as error:
-            raise LabError(f"Unknown run id: {run_id}") from error
-        manifest = store.load_manifest(config.lab_id, canonical_run_id)
-        if not isinstance(manifest, dict) or not isinstance(manifest.get("id"), str):
-            raise LabError(f"Run manifest is unavailable: {run_id}")
-        run_id = manifest["id"]
+    from .sqlite_store import EntityNotFoundError, SQLiteStore
+    store = SQLiteStore()
+    try:
+        canonical_run_id = store.resolve_run_id(config.lab_id, run_id)
+    except EntityNotFoundError as error:
+        raise LabError(f"Unknown run id: {run_id}") from error
+    manifest = store.load_manifest(config.lab_id, canonical_run_id)
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("id"), str):
+        raise LabError(f"Run manifest is unavailable: {run_id}")
+    run_id = manifest["id"]
     state = load_state(config)
     manifests = _runs(config)
     matching = next((item for item in manifests if item.get("id") == run_id), None)
@@ -327,8 +326,6 @@ def resume_run(config: LabConfig, run_id: str) -> dict[str, Any]:
         if _pid_alive(worker_pid) and str(worker.get("operation_id") or "") != current_operation_id():
             raise LabError("A live background worker still owns this lab")
     if matching.get("status") == "finalizing":
-        if getattr(config, "storage_mode", "legacy") != "sqlite":
-            raise LabError("Only SQLite-backed runs support native finalization recovery")
         active = [item for item in manifests if item.get("status") in {"running", "finalizing"}]
         if len(active) != 1 or active[0].get("id") != run_id:
             raise LabError("Another run is active; refusing finalization recovery")

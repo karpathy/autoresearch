@@ -26,7 +26,7 @@ Wire logs omit request and response bodies by default. They retain safe request 
 
 For each provider attempt, record a durable `started` event with a unique `attempt_id` and `case_id` before sending; append `finished` with the same IDs and observed status afterward. Use `AUTORESEARCH_ATTEMPTS_LOG` or the runtime wire log. A 429 is a failed attempt, not a completed case; a later retry gets a new attempt ID. An unmatched `started` event means outcome and spend are uncertain, not free or failed. Do not issue a replacement request until the attempt is reconciled.
 
-When native `resume <run_id>` must run the evaluator for missing repeats, it validates case, attempt, and wire records before making calls. For SQLite labs it reads typed database projections; an unfinished `started` attempt blocks resume before a replacement request. For legacy file-backed labs it strictly parses the JSONL journals, and a corrupt row or unterminated tail blocks resume without repair. Review SQLite evidence through an explicit `storage export`; inspect legacy logs directly before choosing a recovery path.
+When native `resume <run_id>` must run the evaluator for missing repeats, it validates case, attempt, and wire records before making calls. For SQLite labs it reads typed database projections; an unfinished `started` attempt blocks resume before a replacement request. Review evidence through an explicit `storage export`.
 
 ## Capability proof
 

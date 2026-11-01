@@ -7,8 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import LabError
-from ..locking import lab_lock
-from ..measurement import open_contract_epoch
 from .common import explicit_confirmation, resolve_config, run_durable_operation
 
 
@@ -27,15 +25,10 @@ def run(args: Any, labs_root: Path | None) -> dict[str, Any]:
         spec = json.loads(args.spec.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         raise LabError(f"Invalid epoch spec: {error}") from error
-    config = resolve_config(args, labs_root, pending_ok=True, mutating_action="epoch open")
+    config = resolve_config(args, labs_root, pending_ok=True)
     reason = str(getattr(args, "reason", "") or "")
-    if config.storage_mode == "sqlite":
-        params = {"action": "open", "spec": spec}
-        if reason:
-            params["reason"] = reason
-        params.update(explicit_confirmation(args))
-        return run_durable_operation(
-            config, "epoch", params
-        )
-    with lab_lock(config.state_dir):
-        return open_contract_epoch(config.path, spec, reason=reason)
+    params = {"action": "open", "spec": spec}
+    if reason:
+        params["reason"] = reason
+    params.update(explicit_confirmation(args))
+    return run_durable_operation(config, "epoch", params)

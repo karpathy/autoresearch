@@ -9,7 +9,6 @@ const UNAVAILABLE = "Недоступно";
 const LAB_PAGE_SIZE = 100;
 
 let labs = [];
-let legacyLabs = [];
 let sqliteLabs = [];
 let lifecycleMode = "active";
 let selected = "";
@@ -25,9 +24,6 @@ let runOffset = 0;
 let runPage = {items: [], next_offset: null, offset: 0, loading: false, error: ""};
 let runMetrics = [];
 let evidence = [];
-let legacyDetail = null;
-let legacyRunItems = [];
-let legacySeries = [];
 let revision = null;
 let timer = 0;
 let events = null;
@@ -44,88 +40,23 @@ function node(tag, cls, value) {
 
 function labId(lab) {
   if (!lab) return "";
-  return String(lab.source === "legacy"
-    ? (lab.id || lab.lab_id || lab.uid || "")
-    : (lab.uid || lab.lab_id || lab.id || ""));
+  return String(lab.uid || lab.lab_id || lab.id || "");
 }
 
 function labKey(lab) {
-  return lab && lab.source === "legacy"
-    ? "legacy:" + String(lab.root_id || "") + ":" + String(lab.project_id || "") + ":" + labId(lab)
-    : labId(lab);
-}
-
-function oldLegacyLabKey(lab) {
-  return lab && lab.source === "legacy" ? String(lab.project_id || "") + "::" + labId(lab) : "";
+  return labId(lab);
 }
 
 function selectedLab() {
-  return labs.find(item => labKey(item) === selected || oldLegacyLabKey(item) === selected) || null;
+  return labs.find(item => labKey(item) === selected) || null;
 }
 
 function summaryFor(lab = selectedLab()) {
   if (!lab) return {};
   if (lab.dashboard_summary && typeof lab.dashboard_summary === "object") return lab.dashboard_summary;
-  if (lab.source !== "legacy") return {};
-
-  const detailLab = legacyDetail && legacyDetail.lab;
-  const detailMatches = Boolean(detailLab && String(detailLab.id || detailLab.lab_id || "") === labId(lab) &&
-    String(detailLab.project_id || lab.project_id || "") === String(lab.project_id || "") &&
-    (!detailLab.root_id || !lab.root_id || String(detailLab.root_id) === String(lab.root_id)));
-  const model = detailMatches ? legacyDetail.lab : lab;
-  const metric = String(model.metric || model.primary_metric || lab.metric || lab.primary_metric ||
-    (detailMatches && legacyDetail.metrics && legacyDetail.metrics.primary && legacyDetail.metrics.primary.name) || "");
-  const guardDefinitions = (detailMatches && legacyDetail.metrics && Array.isArray(legacyDetail.metrics.guards)
-    ? legacyDetail.metrics.guards : model.guards || []).map(item => typeof item === "string" ? {name: item} : item)
-    .filter(item => item && (item.name || item.metric_name))
-    .map(item => ({name: String(item.name || item.metric_name), role: "guard"}));
-  const definitions = (metric ? [{name: metric, role: "primary"}] : []).concat(guardDefinitions);
-  const record = (item, fallback) => {
-    if (item && typeof item === "object") return item;
-    return fallback === null || fallback === undefined ? null : {metrics: {[metric]: fallback}};
-  };
-  const baseline = detailMatches ? legacyDetail.baseline : null;
-  const best = detailMatches ? legacyDetail.best : null;
-  const series = detailMatches && Array.isArray(legacyDetail.series) ? legacyDetail.series : [];
-  const sparkline = Array.isArray(model.sparkline) ? model.sparkline : [];
-  const trendSource = series.length ? series : sparkline;
-  const trend = trendSource.map((point, index) => {
-    const row = point && typeof point === "object" ? point : {worst: point};
-    const metrics = {};
-    if (metric && row.worst !== null && row.worst !== undefined) metrics[metric] = row.worst;
-    for (const guard of guardDefinitions) {
-      const guardValue = row.guards && row.guards[guard.name] && row.guards[guard.name].worst;
-      if (guardValue !== undefined) metrics[guard.name] = guardValue;
-    }
-    return {run_id: row.id || "legacy-trend-" + index, status: row.status || "accepted", metrics};
-  });
-  const latestPoint = series.length ? series[series.length - 1] : null;
-  const latestValue = model.latest_score !== undefined ? model.latest_score :
-    (latestPoint && latestPoint.worst !== undefined ? latestPoint.worst :
-      (sparkline.length ? sparkline[sparkline.length - 1] : undefined));
-  const current = detailMatches && legacyDetail.current ? legacyDetail.current : null;
-  const currentRun = model.current_run || (current && current.id);
-  const activeRun = currentRun ? {
-    run_id: typeof currentRun === "string" ? currentRun : currentRun.id,
-    alias: current && current.title,
-    status: model.status === "running" || current ? "running" : model.status,
-    progress: {
-      phase: model.stage || "",
-      current_repeat: model.current_repeat || "",
-      completed_repeats: model.repeats_completed,
-    },
-  } : null;
-  const latest = latestValue === undefined ? null : {metrics: {[metric]: latestValue}};
-  return {
-    current_epoch_id: null,
-    metric_definitions: definitions,
-    baseline: record(baseline, model.baseline_score),
-    best: record(best, model.best_score),
-    latest,
-    active_run: activeRun,
-    trend,
-  };
+  return {};
 }
+
 
 function setMessage(text, kind = "info") {
   banner.hidden = !text;
@@ -151,29 +82,6 @@ async function request(path, options = {}) {
       "Локальный API вернул ошибку (HTTP " + response.status + ")");
   }
   return payload.data;
-}
-
-async function requestLegacy(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: new Headers(options.headers || {}),
-    credentials: "same-origin",
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    let payload = null;
-    try { payload = await response.json(); } catch (error) {}
-    throw new Error((payload && (payload.message || payload.error)) ||
-      "Legacy API вернул ошибку (HTTP " + response.status + ")");
-  }
-  if (response.status === 204) return {};
-  return options.responseType === "text" ? response.text() : response.json();
-}
-
-function legacyLabUrl(lab, suffix = "") {
-  const root = lab && lab.root_id ? "?root=" + encodeURIComponent(lab.root_id) : "";
-  return "/api/labs/" + encodeURIComponent(lab.project_id || "") + "/" +
-    encodeURIComponent(labId(lab)) + (suffix ? "/" + suffix : "") + root;
 }
 
 function metricDefinitions(summary, lab) {
@@ -493,7 +401,7 @@ function renderLabs() {
     button.type = "button";
     button.append(node("span", "lab-name", name));
     button.append(node("span", "lab-meta", [lab.status || lifecycleMode,
-      lab.source === "legacy" ? "Файловая" : "SQLite", primary && primary.name].filter(Boolean).join(" · ")));
+      "SQLite", primary && primary.name].filter(Boolean).join(" · ")));
     button.addEventListener("click", () => selectLab(key));
     nav.append(button);
   }
@@ -526,7 +434,7 @@ function renderPortfolio() {
     const heading = node("div", "v04-lab-card-head");
     heading.append(node("strong", "v04-lab-title", lab.goal || lab.name || UNAVAILABLE));
     heading.append(node("span", "v04-status", [lab.status || lifecycleMode,
-      lab.source === "legacy" ? "Файловая" : "SQLite"].join(" · ")));
+      "SQLite"].join(" · ")));
     card.append(heading);
     card.append(node("p", "v04-muted", "Эпоха " + formatValue(summary.current_epoch_id ?? summary.current_epoch)));
     const metricGrid = node("div", "v04-mini-grid");
@@ -634,7 +542,7 @@ function renderOverview(summary, lab) {
     : [];
   const signals = (Array.isArray(summary.signals) && summary.signals.length ? summary.signals : [])
     .concat(derivedCaseSignals)
-    .concat(legacyDetail && Array.isArray(legacyDetail.problems) ? legacyDetail.problems : []);
+;
   if (signals.length) {
     const diagSection = section("Сигналы и диагностика", "Диагностические сигналы и предупреждения.");
     for (const item of signals) {
@@ -785,12 +693,6 @@ function renderRunList() {
     button.type = "button";
     button.addEventListener("click", () => showRun(run));
     row.append(button);
-    if (legacy && run.diff_available) {
-      const diff = node("button", "ghost", "Показать diff");
-      diff.type = "button";
-      diff.addEventListener("click", () => loadLegacyDiff(run));
-      row.append(diff);
-    }
     if (!legacy && typeof findSqliteDiffArtifact === "function") {
       const diffArtifact = findSqliteDiffArtifact(run);
       if (diffArtifact) {
@@ -881,16 +783,10 @@ async function changeLifecycle(lab, action) {
   if (!id) return;
   if (action === "delete" && !window.confirm("Удалить лабораторию «" + (lab.goal || id) + "» без возможности восстановления?")) return;
   try {
-    if (lab.source === "legacy") {
-      await requestLegacy(legacyLabUrl(lab, action), {
-        method: "POST", headers: {"X-AutoResearch-Confirm": id},
-      });
-    } else {
-      await request("/api/v1/labs/" + encodeURIComponent(id) + "/lifecycle", {
-        method: "POST",
-        body: JSON.stringify({action, confirm_lab_id: id}),
-      });
-    }
+    await request("/api/v1/labs/" + encodeURIComponent(id) + "/lifecycle", {
+      method: "POST",
+      body: JSON.stringify({action, confirm_lab_id: id}),
+    });
     setMessage(action === "delete" ? "Лаборатория удалена." : "Состояние лаборатории обновлено.", "info");
     selected = "";
     localStorage.removeItem(selectedKey);
@@ -952,75 +848,6 @@ function renderEvidenceDialog(item, value) {
     if (trigger && typeof trigger.focus === "function") trigger.focus();
   }, {once: true});
   dialog.showModal();
-}
-
-function legacyRunsFromDetail(source) {
-  const rows = source && Array.isArray(source.hypotheses) ? source.hypotheses : [];
-  return rows.map(item => ({
-    ...item,
-    run_id: String(item.id || item.run_id || ""),
-    alias: item.title || item.id || item.run_id || UNAVAILABLE,
-    status: item.status || UNAVAILABLE,
-    parent_run_id: item.parent_run_id || item.parent || "",
-    epoch_id: null,
-  }));
-}
-
-function legacyEvidenceFromDetail(source) {
-  if (source && Array.isArray(source.evidence)) return source.evidence;
-  const items = [];
-  for (const [kind, rows] of [["Историческое свидетельство", source && source.historical_hypotheses],
-    ["Свидетельство запуска", source && source.hypotheses]]) {
-    for (const item of Array.isArray(rows) ? rows : []) {
-      const value = item.artifact || item.observation || item.conclusion || item.expected_effect || item.reason;
-      if (value) items.push({name: item.title || item.id || kind, artifact: item.artifact || "",
-        conclusion: item.conclusion || item.observation || item.expected_effect || item.reason || ""});
-    }
-  }
-  return items;
-}
-
-function legacyRunMetrics(rows, source) {
-  const series = Array.isArray(source && source.series) ? source.series : [];
-  const byId = new Map(series.map(item => [String(item.id || ""), item]));
-  const lab = selectedLab();
-  const definitions = metricDefinitions(summaryFor(lab), lab);
-  const primary = definitions.find(item => item.role === "primary") || definitions[0];
-  return rows.map(run => {
-    const item = byId.get(String(run.id || run.run_id || "")) || {};
-    const metrics = {};
-    if (primary && item.worst !== null && item.worst !== undefined) metrics[primary.name] = item.worst;
-    for (const guard of definitions.filter(definition => definition.role === "guard")) {
-      const value = item.guards && item.guards[guard.name] && item.guards[guard.name].worst;
-      if (value !== null && value !== undefined) metrics[guard.name] = value;
-    }
-    return {...run, metrics, data: {metrics}};
-  });
-}
-
-function populateLegacyRunPage(offset) {
-  const start = Math.max(0, Number(offset) || 0);
-  const items = legacyRunItems.slice(start, start + 20);
-  runOffset = start;
-  runPage = {
-    items, offset: start, total: legacyRunItems.length, loading: false, error: "",
-    next_offset: start + items.length < legacyRunItems.length ? start + items.length : null,
-  };
-  runMetrics = legacyRunMetrics(items, legacyDetail || {});
-  renderLabDetail();
-}
-
-async function loadLegacyDiff(run) {
-  const lab = selectedLab();
-  const runId = run && (run.id || run.run_id);
-  if (!lab || lab.source !== "legacy" || !runId) return;
-  try {
-    const value = await requestLegacy(legacyLabUrl(lab,
-      "runs/" + encodeURIComponent(runId) + "/diff"), {responseType: "text"});
-    renderEvidenceDialog({name: "Diff · " + (run.title || run.alias || runId)}, value);
-  } catch (error) {
-    setMessage("Diff недоступен: " + error.message, "warn");
-  }
 }
 
 async function loadEvidence(item) {
@@ -1130,16 +957,6 @@ function renderRunInspectorCard(info) {
 async function showRun(run) {
   try {
     const lab = selectedLab();
-    if (lab && lab.source === "legacy") {
-      const raw = legacyRunItems.find(item => String(item.run_id) === String(run.run_id)) || run;
-      inspectedRun = {run, data: raw};
-      const existing = detail.querySelector(".v04-inspector");
-      const card = renderRunInspectorCard(inspectedRun);
-      if (existing) existing.replaceWith(card);
-      else detail.append(card);
-      card.scrollIntoView?.({behavior: "smooth", block: "nearest"});
-      return;
-    }
     const cached = runMetrics.find(item => String(item.run_id) === String(run.run_id));
     const data = cached && cached.data ? cached.data : await request("/api/v1/labs/" + encodeURIComponent(selected) +
       "/runs/" + encodeURIComponent(run.run_id));
@@ -1173,11 +990,6 @@ async function loadRunPage(epoch, offset = 0) {
   const lab = selectedLab();
   if (!lab) return;
   const id = labId(lab);
-  if (lab.source === "legacy") {
-    selectedEpoch = null;
-    populateLegacyRunPage(offset);
-    return;
-  }
   selectedEpoch = Number(epoch);
   runOffset = Number(offset) || 0;
   const requestedEpoch = selectedEpoch;
@@ -1210,7 +1022,7 @@ async function loadRunPage(epoch, offset = 0) {
 }
 
 async function selectLab(id) {
-  const lab = labs.find(item => labKey(item) === String(id) || oldLegacyLabKey(item) === String(id) || labId(item) === String(id));
+  const lab = labs.find(item => labKey(item) === String(id) || labId(item) === String(id));
   detailRequest++;
   selected = lab ? labKey(lab) : String(id || "");
   activeTab = "overview";
@@ -1221,9 +1033,6 @@ async function selectLab(id) {
   runPage = {items: [], next_offset: null, offset: 0, loading: false, error: ""};
   runMetrics = [];
   evidence = [];
-  legacyDetail = null;
-  legacyRunItems = [];
-  legacySeries = [];
   localStorage.setItem(selectedKey, selected);
   renderLabs();
   await reloadLab();
@@ -1243,37 +1052,6 @@ async function reloadLab() {
   if (!lab) { renderPortfolio(); return; }
   const requestId = ++detailRequest;
   const id = labId(lab);
-  if (lab.source === "legacy") {
-    selectedEpoch = null;
-    epochIds = [];
-    runOffset = 0;
-    runPage = {items: [], next_offset: null, offset: 0, loading: true, error: ""};
-    runMetrics = [];
-    evidence = [];
-    legacyDetail = null;
-    legacyRunItems = [];
-    legacySeries = [];
-    renderLabDetail();
-    try {
-      const next = await requestLegacy(legacyLabUrl(lab));
-      if (selected !== labKey(lab) || requestId !== detailRequest) return;
-      if (!next || next.error) throw new Error(next && next.error || "Legacy detail недоступен");
-      legacyDetail = next;
-      legacyRunItems = legacyRunsFromDetail(next);
-      legacySeries = Array.isArray(next.series) ? next.series : [];
-      evidence = legacyEvidenceFromDetail(next);
-      populateLegacyRunPage(0);
-    } catch (error) {
-      if (selected === labKey(lab) && requestId === detailRequest) {
-        runPage = {items: [], next_offset: null, offset: 0, loading: false, error: error.message};
-        runMetrics = [];
-        evidence = [];
-        renderLabDetail();
-        setMessage(error.message, "warn");
-      }
-    }
-    return;
-  }
   const summary = summaryFor(lab);
   const hasExistingRuns = Boolean(runPage && Array.isArray(runPage.items) && runPage.items.length > 0);
   const defaultEpoch = Number(summary.current_epoch_id ?? summary.current_epoch) || null;
@@ -1346,9 +1124,7 @@ async function reloadLabs(options = {}) {
   const sourceOffset = pageNumber * sourcePageSize;
   const requestId = ++labRequestVersion;
   const path = "/api/v1/labs?limit=" + sourcePageSize + "&lifecycle=" + mode + "&offset=" + sourceOffset;
-  const [sqliteResult, legacyResult] = await Promise.allSettled([
-    request(path), requestLegacy("/api/status"),
-  ]);
+  const [sqliteResult] = await Promise.allSettled([request(path)]);
   if (requestId !== labRequestVersion) return;
 
   const errors = [];
@@ -1370,50 +1146,24 @@ async function reloadLabs(options = {}) {
     errors.push("SQLite API: " + (sqliteResult.reason && sqliteResult.reason.message || "недоступен"));
   }
 
-  if (legacyResult.status === "fulfilled") {
-    const status = legacyResult.value || {};
-    const rawLegacy = mode === "archived"
-      ? (Array.isArray(status.archived) ? status.archived : [])
-      : (Array.isArray(status.projects) ? status.projects.flatMap(project =>
-        Array.isArray(project && project.labs) ? project.labs.map(lab => ({
-          ...lab,
-          project_id: lab.project_id || project.id || "",
-          project_name: project.name || "",
-          root_id: lab.root_id || project.root_id || status.root_id || boot.root_id,
-        })) : []) : []);
-    legacyLabs = rawLegacy.map(lab => ({
-      ...lab,
-      id: lab.id || lab.lab_id || lab.uid || "",
-      project_id: lab.project_id || lab.projectId || "",
-      root_id: lab.root_id || status.root_id || boot.root_id,
-      goal: lab.goal || lab.name || "",
-      source: "legacy",
-    }));
-  } else {
-    legacyLabs = [];
-    errors.push("Legacy API: " + (legacyResult.reason && legacyResult.reason.message || "недоступен"));
-  }
 
   lifecycleMode = mode;
   labOffset = offset;
-  const legacyPage = legacyLabs.slice(sourceOffset, sourceOffset + sourcePageSize);
-  labs = [...sqliteLabs, ...legacyPage];
-  const total = sqliteTotal + legacyLabs.length;
+  labs = [...sqliteLabs];
+  const total = sqliteTotal;
   const sqliteHasNext = Number.isFinite(sqliteNextOffset) && sqliteNextOffset > sourceOffset;
-  const legacyHasNext = legacyLabs.length > sourceOffset + legacyPage.length;
   labPage = {offset: labOffset, total,
-    next_offset: sqliteHasNext || legacyHasNext ? labOffset + LAB_PAGE_SIZE : null};
-  sourcesUnavailable = errors.length === 2;
+    next_offset: sqliteHasNext ? labOffset + LAB_PAGE_SIZE : null};
+  sourcesUnavailable = errors.length >= 1;
   sourceWarning = errors.length
     ? (sourcesUnavailable ? "Источники лабораторий недоступны: " : "Часть источников недоступна: ") + errors.join(" · ")
     : "";
   if (sourceWarning) setMessage(sourceWarning, "warn");
   else setMessage("", "info");
 
-  if (options.clearSelection || !labs.some(item => labKey(item) === selected || oldLegacyLabKey(item) === selected)) {
+  if (options.clearSelection || !labs.some(item => labKey(item) === selected)) {
     selected = "";
     localStorage.removeItem(selectedKey);
-    legacyDetail = null;
     detailRequest++;
   }
   renderLabs();
@@ -1447,7 +1197,7 @@ async function refreshRevision() {
       revision = String(payload.data.revision);
     }
   } catch (error) {
-    // Legacy labs remain readable when the SQLite revision endpoint is unavailable.
+    // The next lab list request reports an unavailable API.
   }
   try {
     await reloadLabs();

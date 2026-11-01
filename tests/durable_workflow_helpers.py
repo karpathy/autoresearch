@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterator
 from unittest.mock import patch
 
+from autoresearch_runtime.errors import LabError
 from autoresearch_runtime.harness_policy import contract_fingerprint
 from autoresearch_runtime.runtimeops import reserve_and_launch_operation
 from autoresearch_runtime.sqlite_store import SQLiteStore
@@ -61,6 +62,9 @@ def run_durable_operation(config: Any, command: str, params: dict[str, Any]) -> 
         result = run_operation_worker(str(operation["operation_id"]))
         stored = SQLiteStore().get_operation(operation["operation_id"])
         if stored.get("status") != "succeeded":
+            error = stored.get("error")
+            if isinstance(error, dict) and error.get("message"):
+                raise LabError(str(error["message"]), code=error.get("code"))
             raise AssertionError(f"Durable {command} operation did not succeed: {stored!r}")
         if not isinstance(result, dict):
             raise AssertionError(f"Durable {command} operation returned a non-object result: {result!r}")
