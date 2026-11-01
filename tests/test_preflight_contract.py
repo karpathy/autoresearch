@@ -1,4 +1,9 @@
 """Offline contract checks must catch adapter mistakes before evaluation."""
+try:
+    import support  # noqa: F401
+except ImportError:
+    from tests import support  # noqa: F401
+
 import contextlib
 import io
 import json

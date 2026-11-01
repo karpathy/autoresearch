@@ -48,6 +48,13 @@ class RepoPolicyTest(unittest.TestCase):
         )
         self.assertLessEqual(total, RUNTIME_LINE_BUDGET)
 
+    def test_tests_using_the_runtime_get_the_isolated_home(self):
+        """tests/support.py gives the process a temporary home; a module that skips it can write to the real one."""
+        missing = [path.name for path in sorted((REPO / "tests").glob("test_*.py"))
+                   if "autoresearch_runtime" in path.read_text(encoding="utf-8")
+                   and "import support" not in path.read_text(encoding="utf-8")]
+        self.assertEqual(missing, [])
+
     def test_fixtures_are_stored_as_exact_bytes(self):
         fixtures = [
             path for path in repo_policy.tracked_paths(REPO)

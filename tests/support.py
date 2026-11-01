@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+# Tests must never touch the real lab home: a store opened without an explicit home uses this one.
+_TEST_HOME = tempfile.mkdtemp(prefix="autoresearch-tests-")
+os.environ["AUTORESEARCH_HOME"] = _TEST_HOME
+atexit.register(shutil.rmtree, _TEST_HOME, ignore_errors=True)
 
 _SCRIPTS = Path(__file__).resolve().parents[1] / ".agents" / "skills" / "autoresearch" / "scripts"
 if str(_SCRIPTS) not in sys.path:
