@@ -515,28 +515,6 @@ class SQLiteStore:
         """Return whether a database file exists; never creates the home directory."""
         return self.db_path.is_file()
 
-    def migrate_schema(self) -> None:
-        """Apply a supported additive migration to an existing database only."""
-        if not self.is_initialized():
-            return
-        uri = self.db_path.as_uri() + "?mode=ro"
-        try:
-            conn = sqlite3.connect(uri, uri=True, timeout=5.0)
-            try:
-                version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-            finally:
-                conn.close()
-            if version == 1:
-                self._ensure_schema()
-            elif version > SCHEMA_VERSION:
-                raise StoreVersionError(
-                    f"SQLite schema version {version} is newer than supported {SCHEMA_VERSION}"
-                )
-        except StoreError:
-            raise
-        except sqlite3.DatabaseError as exc:
-            self._raise_database_error(exc)
-
     def get_revision(self) -> int:
         """Return the database-wide mutation revision, or zero before initialization."""
         if not self.is_initialized():
@@ -1861,12 +1839,6 @@ class SQLiteStore:
                     except OSError:
                         # The database deletion is already durable; a locked object can be collected later.
                         continue
-
-    def find_lab_by_source(self, source_root: str | Path) -> uuid.UUID | None:
-        source = _path_alias(source_root)
-        with self._reader() as conn:
-            rows = conn.execute("SELECT lab_id FROM labs WHERE source_root=? ORDER BY created_at DESC", (source,)).fetchall()
-        return uuid.UUID(rows[0][0]) if rows else None
 
     def load_config(self, lab_id: uuid.UUID | str) -> dict[str, Any]:
         return self.load_projection(lab_id, "config")
@@ -3861,22 +3833,6 @@ class SQLiteStore:
                 "size_bytes": len(content), "object_path": object_rel, "created_at": now,
                 "metadata": metadata}
 
-    def find_evidence(self, lab_id: uuid.UUID | str, evidence_key: str, limit: int = 20) -> list[dict[str, Any]]:
-        lab_text = self._lab_text(lab_id)
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
-            raise ValueError("limit must be positive")
-        limit = min(limit, MAX_PAGE_SIZE)
-        with self._reader() as conn:
-            rows = conn.execute(
-                "SELECT artifact_id,run_id,name,evidence_key,media_type,sha256,size_bytes,object_path,metadata_json,created_at "
-                "FROM artifacts WHERE lab_id=? AND evidence_key=? ORDER BY created_at DESC,artifact_id DESC LIMIT ?",
-                (lab_text, evidence_key, limit),
-            ).fetchall()
-        return [{"artifact_id": uuid.UUID(row[0]), "lab_id": uuid.UUID(lab_text),
-                 "run_id": uuid.UUID(row[1]) if row[1] else None, "name": row[2], "evidence_key": row[3],
-                 "media_type": row[4], "sha256": row[5], "size_bytes": row[6], "object_path": row[7],
-                 "metadata": _loads(row[8], {}), "created_at": row[9]} for row in rows]
-
     def load_artifact(self, artifact_id: uuid.UUID | str) -> bytes:
         artifact_text = _uuid_text(artifact_id, label="artifact_id")
         with self._reader() as conn:
@@ -3957,14 +3913,6 @@ class SQLiteStore:
              "metadata": _loads(row[9], {}), "created_at": row[10]}
             for row in rows
         ]
-
-    def integrity_check(self) -> list[str]:
-        """Explicit, potentially expensive SQLite integrity check for diagnostics."""
-        with self._reader() as conn:
-            integrity = [str(row[0]) for row in conn.execute("PRAGMA integrity_check")]
-            foreign = [str(row[0]) for row in conn.execute("PRAGMA foreign_key_check")]
-        return integrity + [f"foreign key violation: {item}" for item in foreign]
-
 
 __all__ = [
     "SQLiteStore", "StoreError", "StoreNotInitializedError", "StoreCorruptError", "StoreVersionError",

@@ -18,12 +18,6 @@ from .errors import LabError
 from .signals import build_research_signals, evaluate_goal_status
 
 
-def _get_metric_val(run: dict[str, Any], metric_name: str) -> float | None:
-    """Compatibility helper: return the arithmetic mean for a metric."""
-    summary = _metric_summary(run, metric_name, "min")
-    return summary["mean"]
-
-
 def _metric_summary(run: dict[str, Any] | None, metric: str, direction: str) -> dict[str, Any]:
     values: list[float] = []
     if isinstance(run, dict):

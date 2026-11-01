@@ -245,19 +245,6 @@ def read_worker(state_dir: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _heartbeat_loop(state_dir: Path, stop: threading.Event) -> None:
-    while not stop.wait(5):
-        payload = read_worker(state_dir)
-        if payload is None:
-            return
-        payload["heartbeat"] = time.time()
-        payload["pid"] = os.getpid()
-        try:
-            _write_worker(state_dir, payload)
-        except OSError:
-            return
-
-
 def run_worker(config_path: Path, hypothesis_path: Path) -> dict[str, Any]:
     config = load_config(config_path, allow_pending=False)
     if config.storage_mode != "sqlite":
