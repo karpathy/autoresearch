@@ -17,11 +17,48 @@ _SCRIPTS = Path(__file__).resolve().parents[1] / ".agents" / "skills" / "autores
 _HOOKS = _SCRIPTS / "hooks"
 
 
+def run_hook(code, env):
+    return subprocess.run(
+        [sys.executable, "-c", code], env=env, capture_output=True, text=True,
+        **support.hidden_process_kwargs(),
+    )
+
+
 class ProviderHookTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+
+    def hook_env(self, attempts, *extra_paths, **variables):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(_HOOKS), *map(str, extra_paths), str(_SCRIPTS), env.get("PYTHONPATH", "")]
+        )
+        env["AUTORESEARCH_ATTEMPTS_LOG"] = str(attempts)
+        env.pop("AUTORESEARCH_CASE_SCOPE_REQUIRED", None)
+        env.pop("AUTORESEARCH_RESUME_OFFLINE", None)
+        env.update(variables)
+        return env
+
+    def counting_server(self):
+        """Start a local server; the returned list grows by one for each request it receives."""
+        hits = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                hits.append(True)
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *_args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (server.shutdown(), server.server_close(), thread.join(timeout=2)))
+        return hits, f"http://127.0.0.1:{server.server_port}/"
 
     def test_scoped_hook_persists_attempt_before_network_and_finishes_it(self):
         hits = []
@@ -51,13 +88,7 @@ class ProviderHookTest(unittest.TestCase):
             "from autoresearch_runtime.case_checkpoint import case_scope\n"
             f"with case_scope('case-alpha'): urlopen({url!r}, timeout=2).read()\n"
         )
-        env = os.environ.copy()
-        env["PYTHONPATH"] = os.pathsep.join([str(_HOOKS), str(_SCRIPTS), env.get("PYTHONPATH", "")])
-        env["AUTORESEARCH_ATTEMPTS_LOG"] = str(log_path)
-        env["AUTORESEARCH_CASE_SCOPE_REQUIRED"] = "1"
-        env.pop("AUTORESEARCH_RESUME_OFFLINE", None)
-
-        completed = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, **support.hidden_process_kwargs())
+        completed = run_hook(code, self.hook_env(log_path, AUTORESEARCH_CASE_SCOPE_REQUIRED="1"))
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(hits, [True])
@@ -89,20 +120,9 @@ class ProviderHookTest(unittest.TestCase):
             "try: urlopen(Request('https://provider.invalid/v1/chat', data=b'{}'))\n"
             "except OSError: print('unknown-outcome')\n"
         )
-        env = os.environ.copy()
-        env["PYTHONPATH"] = os.pathsep.join(
-            [str(_HOOKS), str(transport_dir), str(_SCRIPTS), env.get("PYTHONPATH", "")]
-        )
-        env["AUTORESEARCH_ATTEMPTS_LOG"] = str(attempts)
-        env["AUTORESEARCH_TEST_OBSERVATION"] = str(observation)
-        env["AUTORESEARCH_HTTP_RETRY"] = "1"
-        env.pop("AUTORESEARCH_CASE_SCOPE_REQUIRED", None)
-        env.pop("AUTORESEARCH_RESUME_OFFLINE", None)
-
-        completed = subprocess.run(
-            [sys.executable, "-c", code], env=env, capture_output=True, text=True,
-            **support.hidden_process_kwargs(),
-        )
+        completed = run_hook(code, self.hook_env(
+            attempts, transport_dir, AUTORESEARCH_TEST_OBSERVATION=str(observation), AUTORESEARCH_HTTP_RETRY="1",
+        ))
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout.strip(), "unknown-outcome")
@@ -155,19 +175,9 @@ class ProviderHookTest(unittest.TestCase):
             "httpx.Client().send(request)\n"
             "print('sent')\n"
         )
-        env = os.environ.copy()
-        env["PYTHONPATH"] = os.pathsep.join(
-            [str(_HOOKS), str(transport_dir), str(_SCRIPTS), env.get("PYTHONPATH", "")]
-        )
-        env["AUTORESEARCH_ATTEMPTS_LOG"] = str(attempts)
-        env["AUTORESEARCH_TEST_OBSERVATION"] = str(observation)
-        env.pop("AUTORESEARCH_CASE_SCOPE_REQUIRED", None)
-        env.pop("AUTORESEARCH_RESUME_OFFLINE", None)
-
-        completed = subprocess.run(
-            [sys.executable, "-c", code], env=env, capture_output=True, text=True,
-            **support.hidden_process_kwargs(),
-        )
+        completed = run_hook(code, self.hook_env(
+            attempts, transport_dir, AUTORESEARCH_TEST_OBSERVATION=str(observation),
+        ))
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout.strip(), "sent")
@@ -212,20 +222,9 @@ class ProviderHookTest(unittest.TestCase):
             "try: urlopen(Request('https://provider.invalid/v1/chat', data=b'{}'))\n"
             "except BaseException as error: print(type(error).__name__)\n"
         )
-        env = os.environ.copy()
-        env["PYTHONPATH"] = os.pathsep.join(
-            [str(_HOOKS), str(transport_dir), str(_SCRIPTS), env.get("PYTHONPATH", "")]
-        )
-        env["AUTORESEARCH_ATTEMPTS_LOG"] = str(attempts)
-        env["AUTORESEARCH_TEST_OBSERVATION"] = str(observation)
-        env["AUTORESEARCH_HTTP_RETRY"] = "1"
-        env.pop("AUTORESEARCH_CASE_SCOPE_REQUIRED", None)
-        env.pop("AUTORESEARCH_RESUME_OFFLINE", None)
-
-        completed = subprocess.run(
-            [sys.executable, "-c", code], env=env, capture_output=True, text=True,
-            **support.hidden_process_kwargs(),
-        )
+        completed = run_hook(code, self.hook_env(
+            attempts, transport_dir, AUTORESEARCH_TEST_OBSERVATION=str(observation), AUTORESEARCH_HTTP_RETRY="1",
+        ))
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout.strip(), "HTTPError")
@@ -236,22 +235,7 @@ class ProviderHookTest(unittest.TestCase):
         self.assertEqual(rows[1]["http_status"], 429)
 
     def test_resume_offline_hook_refuses_network_before_attempt_start(self):
-        hits = []
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                hits.append(True)
-                self.send_response(200)
-                self.end_headers()
-
-            def log_message(self, *_args):
-                return
-
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        self.addCleanup(lambda: (server.shutdown(), server.server_close(), thread.join(timeout=2)))
-        url = f"http://127.0.0.1:{server.server_port}/"
+        hits, url = self.counting_server()
         attempts = self.root / "attempts.jsonl"
         code = (
             "from urllib.request import urlopen\n"
@@ -263,13 +247,9 @@ class ProviderHookTest(unittest.TestCase):
             "else:\n"
             "    print('sent')\n"
         )
-        env = os.environ.copy()
-        env["PYTHONPATH"] = os.pathsep.join([str(_HOOKS), str(_SCRIPTS), env.get("PYTHONPATH", "")])
-        env["AUTORESEARCH_ATTEMPTS_LOG"] = str(attempts)
-        env["AUTORESEARCH_CASE_SCOPE_REQUIRED"] = "1"
-        env["AUTORESEARCH_RESUME_OFFLINE"] = "1"
-
-        completed = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, **support.hidden_process_kwargs())
+        completed = run_hook(code, self.hook_env(
+            attempts, AUTORESEARCH_CASE_SCOPE_REQUIRED="1", AUTORESEARCH_RESUME_OFFLINE="1",
+        ))
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout.strip(), "offline")
@@ -277,22 +257,7 @@ class ProviderHookTest(unittest.TestCase):
         self.assertFalse(attempts.exists())
 
     def test_required_case_scope_fails_before_network(self):
-        hits = []
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                hits.append(True)
-                self.send_response(200)
-                self.end_headers()
-
-            def log_message(self, *_args):
-                return
-
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        self.addCleanup(lambda: (server.shutdown(), server.server_close(), thread.join(timeout=2)))
-        url = f"http://127.0.0.1:{server.server_port}/"
+        hits, url = self.counting_server()
         attempts = self.root / "attempts.jsonl"
         code = (
             "from urllib.request import urlopen\n"
@@ -303,13 +268,7 @@ class ProviderHookTest(unittest.TestCase):
             "else:\n"
             "    print('sent')\n"
         )
-        env = os.environ.copy()
-        env["PYTHONPATH"] = os.pathsep.join([str(_HOOKS), str(_SCRIPTS), env.get("PYTHONPATH", "")])
-        env["AUTORESEARCH_ATTEMPTS_LOG"] = str(attempts)
-        env["AUTORESEARCH_CASE_SCOPE_REQUIRED"] = "1"
-        env.pop("AUTORESEARCH_RESUME_OFFLINE", None)
-
-        completed = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, **support.hidden_process_kwargs())
+        completed = run_hook(code, self.hook_env(attempts, AUTORESEARCH_CASE_SCOPE_REQUIRED="1"))
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout.strip(), "scope-required")
@@ -317,22 +276,7 @@ class ProviderHookTest(unittest.TestCase):
         self.assertFalse(attempts.exists())
 
     def test_resume_hook_refuses_a_case_already_checkpointed(self):
-        hits = []
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                hits.append(True)
-                self.send_response(200)
-                self.end_headers()
-
-            def log_message(self, *_args):
-                return
-
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        self.addCleanup(lambda: (server.shutdown(), server.server_close(), thread.join(timeout=2)))
-        url = f"http://127.0.0.1:{server.server_port}/"
+        hits, url = self.counting_server()
         case_log = self.root / "cases.jsonl"
         case_log.write_text(json.dumps({"id": "case-done", "status": "ok"}) + "\n", encoding="utf-8")
         attempts = self.root / "attempts.jsonl"
@@ -346,15 +290,10 @@ class ProviderHookTest(unittest.TestCase):
             "else:\n"
             "    print('sent')\n"
         )
-        env = os.environ.copy()
-        env["PYTHONPATH"] = os.pathsep.join([str(_HOOKS), str(_SCRIPTS), env.get("PYTHONPATH", "")])
-        env["AUTORESEARCH_CASE_LOG"] = str(case_log)
-        env["AUTORESEARCH_ATTEMPTS_LOG"] = str(attempts)
-        env["AUTORESEARCH_CASE_SCOPE_REQUIRED"] = "1"
-        env["AUTORESEARCH_RESUME_ID"] = "resume-1"
-        env.pop("AUTORESEARCH_RESUME_OFFLINE", None)
-
-        completed = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, **support.hidden_process_kwargs())
+        completed = run_hook(code, self.hook_env(
+            attempts, AUTORESEARCH_CASE_LOG=str(case_log), AUTORESEARCH_CASE_SCOPE_REQUIRED="1",
+            AUTORESEARCH_RESUME_ID="resume-1",
+        ))
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout.strip(), "completed-case")
