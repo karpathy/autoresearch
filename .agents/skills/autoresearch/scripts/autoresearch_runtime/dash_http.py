@@ -1,19 +1,17 @@
-"""Loopback-only live dashboard server. Lab data and lifecycle changes go through /api/v1."""
+"""Loopback-only, read-only dashboard server. Lab data is served by the GET routes under /api/v1."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import os
-import queue
 import secrets
 import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urljoin, urlsplit
-from urllib.request import Request, urlopen
+from urllib.parse import parse_qs, unquote, urlsplit
 from typing import Any
 
 from .auth import AuthError, authenticate
@@ -22,15 +20,6 @@ from .dashboard import ASSET_TYPES, read_asset, render_unified_dashboard
 from .api_v1 import dispatch as dispatch_api_v1
 from .paths import resolve_home
 from .sqlite_store import SQLiteStore
-
-
-_SERVERS_LOCK = threading.Lock()
-_ACTIVE_SERVERS: dict[str, DashboardHTTPServer] = {}
-
-
-def get_active_server(root: Path) -> DashboardHTTPServer | None:
-    with _SERVERS_LOCK:
-        return _ACTIVE_SERVERS.get(str(root.resolve()))
 
 
 class DashboardHTTPServer(ThreadingHTTPServer):
@@ -45,44 +34,17 @@ class DashboardHTTPServer(ThreadingHTTPServer):
         self.home_id = hashlib.sha256(str(service_home).casefold().encode("utf-8")).hexdigest()[:16]
         self.pid = os.getpid()
         self.service_id = secrets.token_urlsafe(16)
-        self.clients: set[queue.Queue[str | None]] = set()
-        self._clients_lock = threading.Lock()
-        self._closed = False
+        self.closed = threading.Event()
         self.heartbeat_interval = 15.0
         self._revision_cache_lock = threading.Lock()
         self._cached_revision_payload: dict[str, Any] | None = None
         self._cached_revision_at: float = 0.0
         super().__init__(address, DashboardHandler)
-        with _SERVERS_LOCK:
-            _ACTIVE_SERVERS[str(self.root)] = self
 
     def server_bind(self) -> None:
         if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         super().server_bind()
-
-    def register_client(self, q: queue.Queue[str | None]) -> None:
-        with self._clients_lock:
-            self.clients.add(q)
-
-    def unregister_client(self, q: queue.Queue[str | None]) -> None:
-        with self._clients_lock:
-            self.clients.discard(q)
-
-    def broadcast(self, event_type: str = "update", data: dict[str, Any] | None = None) -> None:
-        # SQLite-backed pages observe the authoritative DB revision directly.
-        # Avoid sending a second, potentially duplicate event through this queue.
-        if SQLiteStore(resolve_home()).is_initialized():
-            return
-        if data is None:
-            data = self.revision_payload()
-        msg = f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-        with self._clients_lock:
-            for q in list(self.clients):
-                try:
-                    q.put_nowait(msg)
-                except Exception:
-                    pass
 
     def revision_payload(self) -> dict[str, Any]:
         store = SQLiteStore(resolve_home())
@@ -100,27 +62,11 @@ class DashboardHTTPServer(ThreadingHTTPServer):
             return payload
 
     def server_close(self) -> None:
-        self._closed = True
-        with _SERVERS_LOCK:
-            if _ACTIVE_SERVERS.get(str(self.root)) is self:
-                _ACTIVE_SERVERS.pop(str(self.root), None)
-        with self._clients_lock:
-            for q in list(self.clients):
-                try:
-                    q.put_nowait(None)
-                except Exception:
-                    pass
-            self.clients.clear()
+        self.closed.set()
         super().server_close()
 
     def shutdown(self) -> None:
-        self._closed = True
-        with self._clients_lock:
-            for q in list(self.clients):
-                try:
-                    q.put_nowait(None)
-                except Exception:
-                    pass
+        self.closed.set()
         super().shutdown()
 
 
@@ -156,7 +102,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send(200, body, ASSET_TYPES[name])
             else:
                 # The page is public, so it must contain no project or experiment snapshot.
-                page = render_unified_dashboard({}, {}, live=True, root_id=self.server.root_id)
+                page = render_unified_dashboard(root_id=self.server.root_id)
                 self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
             return
         if self.path == "/api/events" or self.path.startswith("/api/events?"):
@@ -167,41 +113,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.flush()
 
-            client_queue: queue.Queue[str | None] = queue.Queue()
-            self.server.register_client(client_queue)
             interval = getattr(self.server, "heartbeat_interval", 15.0)
-            sqlite_mode = SQLiteStore(resolve_home()).is_initialized()
-            last_revision = (str(self.server.revision_payload().get("revision") or "0")
-                             if sqlite_mode else None)
+            last_revision = str(self.server.revision_payload()["revision"])
             last_ping = time.monotonic()
             try:
-                while not getattr(self.server, "_closed", False):
-                    try:
-                        message = client_queue.get(timeout=min(interval, 1.0))
-                        if message is None:
-                            break
+                while not self.server.closed.wait(min(interval, 1.0)):
+                    now = time.monotonic()
+                    payload = self.server.cached_revision_payload(0.5)
+                    revision = str(payload["revision"])
+                    if revision != last_revision:
+                        message = f"event: update\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                         self.wfile.write(message.encode("utf-8"))
                         self.wfile.flush()
-                        last_ping = time.monotonic()
-                    except queue.Empty:
-                        now = time.monotonic()
-                        if sqlite_mode:
-                            revision_payload = self.server.cached_revision_payload(0.5)
-                            revision = str(revision_payload.get("revision") or "0")
-                            if revision != last_revision:
-                                message = f"event: update\ndata: {json.dumps(revision_payload, ensure_ascii=False)}\n\n"
-                                self.wfile.write(message.encode("utf-8"))
-                                self.wfile.flush()
-                                last_revision = revision
-                                last_ping = now
-                        if now - last_ping >= interval:
-                            self.wfile.write(b": ping\n\n")
-                            self.wfile.flush()
-                            last_ping = now
+                        last_revision = revision
+                        last_ping = now
+                    if now - last_ping >= interval:
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+                        last_ping = now
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             finally:
-                self.server.unregister_client(client_queue)
                 self.close_connection = True
         else:
             self._send(404, b"Not found", "text/plain; charset=utf-8")
@@ -214,25 +146,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except AuthError as error:
             self._legacy_auth_error(error)
             return
-        if self.path == "/api/notify":
-            try:
-                length = int(self.headers.get("Content-Length", "0") or 0)
-                body = self.rfile.read(min(length, 65536)).decode("utf-8") if length > 0 else "{}"
-                req_data = json.loads(body) if body else {}
-            except Exception:
-                req_data = {}
-            event_type = req_data.get("event") or "update"
-            event_data = req_data.get("data")
-            if not isinstance(event_data, dict) or not event_data:
-                event_data = self.server.revision_payload()
-            self.server.broadcast(event_type, event_data)
-            self._send(200, b'{"ok":true}', "application/json; charset=utf-8")
-            return
         if self.path != "/__stop":
             self._send(404, b"Not found", "text/plain; charset=utf-8")
             return
         self._send(200, b'{"stopping":true}', "application/json; charset=utf-8")
         threading.Thread(target=self.server.shutdown, daemon=True).start()
+
+    def _refuse_method(self) -> None:
+        # Only /api/v1 answers other methods, with 405 after authentication; other paths keep the default 501.
+        if not dispatch_api_v1(self):
+            self.send_error(501, f"Unsupported method ({self.command!r})")
+
+    do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _refuse_method
 
     def _legacy_auth_error(self, error: AuthError) -> None:
         body = json.dumps({"ok": False, "error": {"code": error.code, "message": str(error)}}).encode("utf-8")
@@ -251,37 +176,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args: Any) -> None:
         return
-
-
-def notify_dashboard(root: Path, data: dict[str, Any] | None = None) -> bool:
-    root = root.resolve()
-    if data is None:
-        store = SQLiteStore(resolve_home())
-        data = {"revision": str(store.get_revision()) if store.is_initialized() else "0",
-                "timestamp": time.time()}
-    server = get_active_server(root)
-    if server is not None:
-        server.broadcast("update", data)
-        return True
-
-    server_file = root / ".dashboard-server.json"
-    if server_file.is_file():
-        try:
-            from .dash_process import _server_info
-
-            info = _server_info(root)
-            if isinstance(info, dict) and info.get("url") and info.get("token"):
-                req = Request(
-                    urljoin(info["url"], "/api/notify"),
-                    data=json.dumps({"event": "update", "data": data}).encode("utf-8"),
-                    headers={"Content-Type": "application/json; charset=utf-8"},
-                    method="POST",
-                )
-                with urlopen(req, timeout=1.0) as resp:
-                    return resp.status == 200
-        except Exception:
-            pass
-    return False
 
 
 def create_server(root: Path, *, port: int = 8765, stop_token: str = "") -> DashboardHTTPServer:

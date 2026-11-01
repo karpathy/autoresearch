@@ -52,18 +52,6 @@ def _lab_config(project: Path, state_dir: Path) -> dict:
     }
 
 
-class _RequestHandler:
-    def __init__(self, path: str, body: bytes = b"{}"):
-        self.path = path
-        self.command = "POST"
-        self.headers = {"Content-Length": str(len(body)), "Content-Type": "application/json"}
-        self.rfile = io.BytesIO(body)
-        self.response = None
-
-    def _send(self, status, body, content_type, extra=None):
-        self.response = (status, body, content_type, extra or {})
-
-
 class LifecycleReconcileTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -121,7 +109,7 @@ class LifecycleReconcileTest(unittest.TestCase):
         self.assertNotIn("secret", json.dumps(recorded["progress"]).casefold())
         self.assertEqual(recorded["status"], "queued")
 
-    def test_api_can_cancel_a_queued_operation(self):
+    def test_cancel_a_queued_operation_interrupts_its_run_and_restores_the_candidate(self):
         candidate_file = self.candidate / "value.txt"
         candidate_file.write_text("uncommitted", encoding="utf-8")
         run_id = self.store.create_run(self.lab_id, "trial", "trial-0001", 1, {})
@@ -130,20 +118,9 @@ class LifecycleReconcileTest(unittest.TestCase):
             self.lab_id, "trial", "api-cancel",
             {"command": "trial", "params": {"hypothesis": {"title": "safe"}}},
         )
-        body = json.dumps({"command": "cancel", "payload": {"run_id": "trial-0001"}}).encode()
-        handler = _RequestHandler(f"/api/v1/labs/{self.lab_id}/commands", body)
-        handler.headers["Idempotency-Key"] = "cancel-run"
 
-        with patch.object(api_v1, "authenticate"), patch.object(api_v1, "resolve_home", return_value=self.home):
-            handled = api_v1.dispatch(handler)
+        runtimeops.cancel_run(str(self.lab_id), "trial-0001")
 
-        self.assertTrue(handled)
-        self.assertIsNotNone(handler.response)
-        self.assertEqual(handler.response[0], 202)
-        response = json.loads(handler.response[1])
-        self.assertTrue(response["ok"])
-        self.assertEqual(response["data"]["status"], "failed")
-        self.assertEqual(response["data"]["error"]["code"], "operation_cancelled")
         recorded = self.store.get_operation(operation["operation_id"])
         self.assertEqual(recorded["status"], "failed")
         self.assertEqual(recorded["error"]["code"], "operation_cancelled")
@@ -152,13 +129,6 @@ class LifecycleReconcileTest(unittest.TestCase):
         self.assertEqual(run["manifest"]["reason"], "Operation cancelled by request")
         self.assertEqual(run["manifest"]["cancelled_operation_id"], str(operation["operation_id"]))
         self.assertEqual(candidate_file.read_text(encoding="utf-8"), "1")
-
-        retry = _RequestHandler(f"/api/v1/labs/{self.lab_id}/commands", body)
-        retry.headers["Idempotency-Key"] = "cancel-run-retry"
-        with patch.object(api_v1, "authenticate"), patch.object(api_v1, "resolve_home", return_value=self.home):
-            api_v1.dispatch(retry)
-        self.assertEqual(retry.response[0], 202)
-        self.assertEqual(json.loads(retry.response[1])["data"]["operation_id"], str(operation["operation_id"]))
 
     def test_cancel_cli_command_is_registered(self):
         run_id = self.store.create_run(self.lab_id, "trial", "trial-0001", 1, {})
@@ -169,7 +139,7 @@ class LifecycleReconcileTest(unittest.TestCase):
         )
         output = io.StringIO()
         with patch("sys.stdout", output):
-            code = cli.main(["--headless", "--lab", str(self.lab_id), "cancel", "trial-0001"])
+            code = cli.main(["--lab", str(self.lab_id), "cancel", "trial-0001"])
 
         payload = json.loads(output.getvalue())
         self.assertEqual(code, 0)
@@ -517,7 +487,7 @@ finally:
         self.assertGreater(runtimeops._windows_job_active_processes(identity) or 0, 0)
 
         # The launcher has exited; a separate CLI process must still open and cancel its named Job.
-        args = ["--headless", "--lab", str(self.lab_id), "cancel", "trial-win-cancel"]
+        args = ["--lab", str(self.lab_id), "cancel", "trial-win-cancel"]
         code = f"from autoresearch_runtime.cli import main; raise SystemExit(main({args!r}))"
         cancelled = subprocess.run(
             [sys.executable, "-c", code], cwd=scripts, env=env,
@@ -573,25 +543,23 @@ finally:
                 worker.wait(timeout=5)
 
     def test_trial_validation_rejects_an_empty_candidate_before_enqueue(self):
+        from autoresearch_runtime.commands.common import normalize_trial_hypothesis
+        from autoresearch_runtime.config import load_config
+        from autoresearch_runtime.trial import validate_trial_request
+
         baseline_id = self.store.create_run(self.lab_id, "baseline", "baseline", 1, {})
         self.store.save_manifest(self.lab_id, baseline_id, {"id": "baseline", "status": "accepted", "runs": []})
         state = self.store.load_state(self.lab_id)
         state.update({"baseline_id": "baseline", "best_id": "baseline", "baseline_verified": True})
         self.store.save_projection(self.lab_id, "state", state)
-        body = json.dumps({"command": "trial", "payload": {"hypothesis": {
+        hypothesis = normalize_trial_hypothesis({
             "title": "No change", "observation": "Candidate is unchanged",
             "expected_effect": "Score improves",
-        }}}).encode()
-        handler = _RequestHandler(f"/api/v1/labs/{self.lab_id}/commands", body)
-        handler.headers["Idempotency-Key"] = "invalid-trial"
+        })
 
-        with patch.object(api_v1, "authenticate"), patch.object(api_v1, "resolve_home", return_value=self.home), \
-             patch("autoresearch_runtime.commands.common.enqueue_and_start_operation") as enqueue:
-            handled = api_v1.dispatch(handler)
-
-        self.assertTrue(handled)
-        self.assertEqual(handler.response[0], 400)
-        enqueue.assert_not_called()
+        with self.assertRaises(LabError) as rejected:
+            validate_trial_request(load_config(str(self.lab_id)), hypothesis)
+        self.assertIn("No candidate change", str(rejected.exception))
         with self.store._reader() as conn:
             self.assertEqual(conn.execute("SELECT count(*) FROM operations WHERE lab_id=?", (str(self.lab_id),)).fetchone()[0], 0)
 
@@ -756,7 +724,7 @@ finally:
     def test_storage_reconcile_command_is_wired_to_preview(self):
         output = io.StringIO()
         with patch("sys.stdout", output):
-            code = cli.main(["--headless", "storage", "reconcile", "--lab", str(self.lab_id)])
+            code = cli.main(["storage", "reconcile", "--lab", str(self.lab_id)])
 
         payload = json.loads(output.getvalue())
         self.assertEqual(code, 0)
@@ -772,7 +740,7 @@ finally:
              patch("autoresearch_runtime.state.load_state", return_value={}), \
              patch("autoresearch_runtime.cockpit.build_cockpit", return_value=guide), \
              patch("sys.stdout", output):
-            code = cli.main(["--headless", "--agent", "guide", "--json"])
+            code = cli.main(["--agent", "guide", "--json"])
 
         payload = json.loads(output.getvalue())
         self.assertEqual(code, 0)

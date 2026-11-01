@@ -111,7 +111,7 @@ def agent_command(agent: str, binary: str, prompt: str, workspace: Path, model: 
 def agent_env(home: Path, profile: Path | None) -> dict[str, str]:
     """Phase 1 gets no harness profile; phase 2 gets the one the host wrote."""
     env = {key: value for key, value in os.environ.items() if key != "AUTORESEARCH_HARNESS_PROFILE"}
-    env.update({"AUTORESEARCH_HOME": str(home), "AUTORESEARCH_NO_DASHBOARD": "1"})
+    env.update({"AUTORESEARCH_HOME": str(home)})
     if profile is not None:
         env["AUTORESEARCH_HARNESS_PROFILE"] = str(profile)
     return env

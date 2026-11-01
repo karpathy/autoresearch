@@ -690,11 +690,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repeats", type=int, default=1, help="Repeats for evaluation")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--project", type=Path)
-    parser.add_argument("--no-dashboard", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--open-browser", action="store_true",
-                        help="Open a browser tab for the dashboard")
-    parser.add_argument("--no-browser", action="store_true",
-                        help="Do not open a browser tab")
     args = parser.parse_args(argv)
     if args.auto:
         return fail(
@@ -749,17 +744,6 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--resume requires --project or a --spec with project")
         output = (resume_lab(program, project) if args.resume
                   else prepare_lab(program, args.spec, confirmed=args.confirmed))
-        if output is not None and not args.no_dashboard and not os.environ.get("AUTORESEARCH_NO_DASHBOARD"):
-            from .dashboard_server import start_dashboard
-            if project is not None:
-                root = _lab_root(program, project.resolve())
-                try:
-                    open_browser = args.open_browser and not args.no_browser and os.environ.get("AUTORESEARCH_NO_BROWSER") != "1"
-                    output["dashboard_server"] = start_dashboard(root, open_browser=open_browser)
-                    if not output["dashboard_server"]["browser_opened"]:
-                        output["dashboard_url"] = output["dashboard_server"]["url"]
-                except RuntimeError as error:
-                    output["dashboard_server"] = {"running": False, "error": str(error)}
     except (OSError, ValueError, LabError) as error:
         return fail("prepare", error)
     return emit("prepare", output if output is not None else {"found": False})

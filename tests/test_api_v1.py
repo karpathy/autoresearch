@@ -24,7 +24,6 @@ from types import SimpleNamespace
 from autoresearch_runtime.dash_http import create_server
 from autoresearch_runtime import runtimeops
 from autoresearch_runtime.sqlite_store import SQLiteStore
-from autoresearch_runtime.commands import trial as trial_command
 from autoresearch_runtime.commands import common as common_commands
 from autoresearch_runtime.config import load_config
 from autoresearch_runtime.harness_policy import contract_fingerprint
@@ -154,6 +153,65 @@ class ApiV1SecurityTest(unittest.TestCase):
         except HTTPError as error:
             return error.code, error.headers, error.read()
 
+    def _seed_lab(self, name: str) -> tuple[str, Path]:
+        """Create a SQLite lab with an accepted baseline through the store; a durable fixture for reads and refusals."""
+        state_dir = Path(self.temp.name) / f"state-{name}"
+        state_dir.mkdir()
+        candidate = support.git_project(state_dir / "candidate", {"value.txt": "1"})
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=candidate, text=True,
+                                         **support.hidden_process_kwargs()).strip()
+        config = {
+            "confirmed": True,
+            "source_root": str(candidate),
+            "state_dir": str(state_dir),
+            "config_path": str(state_dir / "lab.json"),
+            "goal": "test a durable API operation",
+            "repeats": 1,
+            "timeout_seconds": 30,
+            "metrics": {"primary": "score", "direction": "max", "guards": []},
+            "evaluator": ["python", "local-evaluator.py"],
+            "budget": {"max_trials": 1, "max_cost_usd": 0},
+            "pins": {"program": {"path": str(candidate / "program.md"), "sha256": "a" * 64}},
+            "_passport": {
+                "confirmed": True, "goal": "test a durable API operation",
+                "constraints": [], "limits": {"max_trials": 1},
+                "pins": {"program": {"path": str(candidate / "program.md"), "sha256": "a" * 64}},
+            },
+        }
+        store = SQLiteStore(self.home)
+        lab_id = store.create_lab(config, {"best_commit": commit, "current_epoch": 1, "inputs": [], "source": []},
+                                  candidate)
+        config_bytes = store.load_config_bytes(lab_id)
+        (state_dir / "lab.json").write_bytes(config_bytes)
+        state = store.load_state(lab_id)
+        state.update({
+            "best_commit": commit, "best_id": "baseline", "baseline_id": "baseline",
+            "baseline_verified": True, "config_sha256": hashlib.sha256(config_bytes).hexdigest(),
+            "inputs": [], "source": [],
+        })
+        store.save_state(lab_id, state)
+        baseline_id = store.create_run(lab_id, "baseline", "baseline", 1, {})
+        store.save_manifest(lab_id, baseline_id, {
+            "id": "baseline", "status": "accepted", "runs": [{"status": "ok", "metrics": {"score": 1}}],
+        })
+        self._install_offline_harness_profile(str(lab_id))
+        return str(lab_id), candidate
+
+    def _start_operation(self, lab_id: str, command: str, payload: dict[str, object], key: str) -> dict[str, object]:
+        """Reserve and launch a worker operation the way the CLI does; the HTTP write route no longer exists."""
+        from autoresearch_runtime.commands import common as command_common
+        from autoresearch_runtime.runtimeops import safe_operation_context
+        from autoresearch_runtime.trial import validate_trial_request
+
+        params: dict[str, object] = dict(payload)
+        if command == "trial":
+            config = load_config(lab_id)
+            safe_operation_context(config)
+            params = {"hypothesis": validate_trial_request(
+                config, command_common.normalize_trial_hypothesis(payload["hypothesis"]))}
+        params["confirmed"] = True
+        return command_common.enqueue_and_start_operation(lab_id, command, params, key)
+
     def test_public_health_is_minimal_and_reads_do_not_create_sqlite(self):
         status, _, body = self._request("/api/health")
         self.assertEqual(status, 200)
@@ -192,17 +250,18 @@ class ApiV1SecurityTest(unittest.TestCase):
         status, headers, body = self._request(
             "/api/v1/auth/bootstrap", method="POST", headers={"Origin": self.origin}, body=b"{}",
         )
-        self.assertEqual(status, 404, body.decode("utf-8", errors="replace"))
+        self.assertEqual(status, 405, body.decode("utf-8", errors="replace"))
+        self.assertEqual(json.loads(body)["error"]["code"], "method_not_allowed")
         self.assertNotIn("Set-Cookie", headers)
 
-    def test_local_api_mutation_may_omit_origin(self):
+    def test_local_api_write_may_omit_origin_and_is_refused_after_authentication(self):
         status, _, body = self._request(
             "/api/v1/labs", method="POST",
             headers={"Content-Type": "application/json"},
             body=b"{}",
         )
-        self.assertEqual(status, 400)
-        self.assertEqual(json.loads(body)["error"]["code"], "invalid_request")
+        self.assertEqual(status, 405)
+        self.assertEqual(json.loads(body)["error"]["code"], "method_not_allowed")
 
     def test_local_api_rejects_wrong_host(self):
         status, _, _ = self._request(
@@ -210,49 +269,34 @@ class ApiV1SecurityTest(unittest.TestCase):
         )
         self.assertEqual(status, 403)
 
-    def test_command_idempotency_returns_the_same_job_and_rejects_changed_payload(self):
-        state_dir = Path(self.temp.name) / "state"
-        state_dir.mkdir()
-        candidate = support.git_project(state_dir / "candidate", {"value.txt": "1"})
-        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=candidate, text=True, **support.hidden_process_kwargs()).strip()
-        config = {
-            "confirmed": True,
-            "source_root": str(candidate),
-            "state_dir": str(state_dir),
-            "config_path": str(state_dir / "lab.json"),
-            "goal": "test a durable API operation",
-            "repeats": 1,
-            "timeout_seconds": 30,
-            "metrics": {"primary": "score", "direction": "max", "guards": []},
-            "evaluator": ["python", "local-evaluator.py"],
-            "budget": {"max_trials": 1, "max_cost_usd": 0},
-            "pins": {"program": {"path": str(candidate / "program.md"), "sha256": "a" * 64}},
-            "_passport": {
-                "confirmed": True, "goal": "test a durable API operation",
-                "constraints": [], "limits": {"max_trials": 1},
-                "pins": {"program": {"path": str(candidate / "program.md"), "sha256": "a" * 64}},
-            },
-        }
-        lab_id = SQLiteStore(self.home).create_lab(
-            config, {"best_commit": commit, "current_epoch": 1, "inputs": [], "source": []}, candidate,
-        )
+    def test_every_write_method_on_v1_is_refused_with_the_stop_token_and_changes_nothing(self):
+        lab_id, _candidate = self._seed_lab("refusal")
         store = SQLiteStore(self.home)
-        config_bytes = store.load_config_bytes(lab_id)
-        (state_dir / "lab.json").write_bytes(config_bytes)
-        state = store.load_state(lab_id)
-        state.update({
-            "best_commit": commit, "best_id": "baseline", "baseline_id": "baseline",
-            "baseline_verified": True, "config_sha256": hashlib.sha256(config_bytes).hexdigest(),
-            "inputs": [], "source": [],
-        })
-        store.save_state(lab_id, state)
-        baseline_id = store.create_run(lab_id, "baseline", "baseline", 1, {})
-        store.save_manifest(lab_id, baseline_id, {
-            "id": "baseline", "status": "accepted", "runs": [{"status": "ok", "metrics": {"score": 1}}],
-        })
-        self._install_offline_harness_profile(str(lab_id))
-        (candidate / "value.txt").write_text("2", encoding="utf-8")
-        path = f"/api/v1/labs/{lab_id}/commands"
+        revision_before = store.get_revision()
+        lifecycle_before = store.get_lab(lab_id)["lifecycle"]
+        headers = {"X-AutoResearch-Stop": "local-test-token", "Content-Type": "application/json",
+                   "Idempotency-Key": "refused-write"}
+        writes = (
+            ("POST", f"/api/v1/labs/{lab_id}/lifecycle", b'{"action": "archive"}'),
+            ("POST", f"/api/v1/labs/{lab_id}/commands",
+             b'{"command": "baseline", "confirmed": true, "payload": {}}'),
+            ("PUT", f"/api/v1/labs/{lab_id}", b"{}"),
+            ("PATCH", f"/api/v1/labs/{lab_id}", b"{}"),
+            ("DELETE", f"/api/v1/labs/{lab_id}", None),
+        )
+        for method, path_text, body in writes:
+            with self.subTest(method=method, path=path_text):
+                status, response_headers, response = self._request(path_text, method=method, headers=headers, body=body)
+                self.assertEqual(status, 405, response.decode("utf-8", errors="replace"))
+                self.assertEqual(json.loads(response)["error"]["code"], "method_not_allowed")
+                self.assertEqual(response_headers.get("Allow"), "GET")
+        self.assertEqual(store.get_lab(lab_id)["lifecycle"], lifecycle_before)
+        self.assertEqual(store.get_revision(), revision_before)
+        self.assertIsNone(store.get_latest_operation(lab_id))
+
+    def test_job_evidence_compare_and_run_reads_are_served_from_the_store(self):
+        lab_id, candidate = self._seed_lab("reads")
+        store = SQLiteStore(self.home)
         status, _, body = self._request(
             f"/api/v1/labs/{lab_id}/guide", headers={"Authorization": "Bearer local-test-token"},
         )
@@ -265,38 +309,15 @@ class ApiV1SecurityTest(unittest.TestCase):
         self.assertEqual(guide_argv[2:4], ["--lab", str(lab_id)])
         self.assertNotIn("manifest.json", guide_argv)
 
-        first_body = json.dumps({"command": "trial", "confirmed": True, "payload": {"hypothesis": {
-            "title": "Test hypothesis", "observation": "A local change exists",
-            "expected_effect": "Score improves",
-        }}}).encode()
-        headers = {"Authorization": "Bearer local-test-token", "Content-Type": "application/json",
-                   "Idempotency-Key": "trial-1"}
-
-        with patch("autoresearch_runtime.commands.common.spawn_operation_worker", return_value=123) as spawn:
-            status, _, body = self._request(path, method="POST", headers=headers, body=first_body)
-            first = json.loads(body)["data"]
-            self.assertEqual(status, 202, body.decode())
-            status, _, body = self._request(path, method="POST", headers=headers, body=first_body)
-            second = json.loads(body)["data"]
-            self.assertEqual(status, 202)
-            self.assertEqual(first["operation_id"], second["operation_id"])
-            self.assertEqual(spawn.call_count, 1)
-
-            changed = json.dumps({"command": "trial", "confirmed": True, "payload": {"hypothesis": {
-                "title": "Different hypothesis", "observation": "A local change exists",
-                "expected_effect": "Score improves",
-            }}}).encode()
-            status, _, body = self._request(path, method="POST", headers=headers, body=changed)
-            self.assertEqual(status, 409)
-            self.assertEqual(json.loads(body)["error"]["code"], "idempotency_conflict")
-
-        operation_id = first["operation_id"]
+        (candidate / "value.txt").write_text("2", encoding="utf-8")
+        operation = store.enqueue_operation(lab_id, "trial", "trial-1", {"command": "trial", "params": {}})
         status, _, body = self._request(
-            f"/api/v1/jobs/{operation_id}", headers={"Authorization": "Bearer local-test-token"},
+            f"/api/v1/jobs/{operation['operation_id']}", headers={"Authorization": "Bearer local-test-token"},
         )
         job = json.loads(body)["data"]
         self.assertEqual(status, 200)
         self.assertEqual(job["status"], "queued")
+        self.assertEqual(job["command"], "trial")
         self.assertNotIn("payload", job)
         self.assertNotIn("idempotency_key", job)
 
@@ -314,21 +335,6 @@ class ApiV1SecurityTest(unittest.TestCase):
         self.assertEqual(evidence["content_base64"], "cmVnaXN0ZXJlZCBldmlkZW5jZQ==")
         self.assertNotIn("metadata", evidence)
         self.assertNotIn("object_path", evidence)
-
-        store.transition_operation(operation_id, "queued", "failed")
-        failed_headers = {**headers, "Idempotency-Key": "trial-spawn-failure"}
-        with patch("autoresearch_runtime.commands.common.spawn_operation_worker",
-                   side_effect=OSError("C:\\private\\worker-output")) as spawn:
-            status, _, body = self._request(path, method="POST", headers=failed_headers, body=first_body)
-            failed_job = json.loads(body)
-            self.assertEqual(status, 202)
-            self.assertEqual(failed_job["data"]["status"], "recovery_required")
-            self.assertTrue(failed_job["warnings"])
-            self.assertNotIn("private", body.decode())
-            # Retrying the identical key replays the durable job and never starts it again.
-            status, _, body = self._request(path, method="POST", headers=failed_headers, body=first_body)
-            self.assertEqual(status, 202)
-            self.assertEqual(spawn.call_count, 1)
 
         left_id = store.create_run(lab_id, "baseline", "baseline", 1, payload={})
         right_id = store.create_run(lab_id, "trial", "trial-0001", 1, payload={})
@@ -379,36 +385,7 @@ class ApiV1SecurityTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(json.loads(body)["data"]["comparable"])
 
-    def test_cli_trial_start_uses_the_same_operation_payload_as_the_api(self):
-        hypothesis = {
-            "title": "Same operation contract", "observation": "A candidate change exists",
-            "expected_effect": "Score improves", "evidence": ["recorded input"],
-        }
-        command, params, _ = __import__("autoresearch_runtime.api_v1", fromlist=["_validate_command"])._validate_command({
-            "command": "trial", "confirmed": True, "payload": {"hypothesis": hypothesis},
-        })
-        expected_operation_payload = {"command": command, "params": params}
-        config = SimpleNamespace(path=Path(self.temp.name) / "config.sqlite", lab_id="b5ef9c01-3a58-4ca8-a63c-4eb79216a912")
-        store = object()
-        operation_id = "b5ef9c01-3a58-4ca8-a63c-4eb79216a912"
-        captured = []
-        args = SimpleNamespace(trial_command="start", hypothesis=Path(self.temp.name) / "hypothesis.json",
-                               confirmed=True)
-
-        with patch("autoresearch_runtime.commands.trial.resolve_config", return_value=config), \
-             patch("autoresearch_runtime.commands.trial._load_hypothesis", return_value=hypothesis), \
-             patch("autoresearch_runtime.commands.trial.enqueue_and_start_operation",
-                   side_effect=lambda *values: (captured.append(values), {
-                       "operation_id": operation_id, "status": "queued",
-                   })[1]):
-            result = trial_command.run(args, None)
-
-        self.assertEqual((str(captured[0][0]), *captured[0][1:3]), (str(operation_id), "trial", params))
-        self.assertEqual({"command": captured[0][1], "params": captured[0][2]}, expected_operation_payload)
-        self.assertEqual(result["operation_id"], operation_id)
-        self.assertTrue(result["started"])
-
-    def test_api_local_worker_runs_baseline_trial_and_resumes_saved_repeat_without_evaluation(self):
+    def test_local_worker_runs_baseline_trial_and_resumes_saved_repeat_without_evaluation(self):
         project = support.git_project(Path(self.temp.name) / "local-project", {"score.txt": "1"})
         self.root.mkdir(parents=True, exist_ok=True)
         program = self.root / "program.md"
@@ -463,28 +440,14 @@ class ApiV1SecurityTest(unittest.TestCase):
             }},
             "repeats": 1, "timeout_seconds": 20,
         }
-        body = json.dumps({
-            "confirmed": True, "program": str(program), "spec": spec,
-            "passport": {"goal": "improve score", "constraints": ["local deterministic evaluator"]},
-        }).encode()
-        status, _, raw = self._request(
-            "/api/v1/labs", method="POST",
-            headers={"Authorization": "Bearer local-test-token", "Content-Type": "application/json"},
-            body=body,
-        )
-        self.assertEqual(status, 201, raw.decode())
-        lab_id = json.loads(raw)["data"]["lab_id"]
-        self._install_offline_harness_profile(lab_id)
+        from autoresearch_runtime.bootstrap import prepare_lab_from_dict
 
-        def post_command(command: str, payload: dict[str, object], key: str) -> dict[str, object]:
-            status_code, _, response_body = self._request(
-                f"/api/v1/labs/{lab_id}/commands", method="POST",
-                headers={"Authorization": "Bearer local-test-token", "Content-Type": "application/json",
-                         "Idempotency-Key": key},
-                body=json.dumps({"command": command, "confirmed": True, "payload": payload}).encode(),
-            )
-            self.assertEqual(status_code, 202, response_body.decode())
-            return json.loads(response_body)["data"]
+        prepared = prepare_lab_from_dict(
+            program, spec, confirmed=True,
+            passport={"goal": "improve score", "constraints": ["local deterministic evaluator"]},
+        )
+        lab_id = str(prepared["lab_id"])
+        self._install_offline_harness_profile(lab_id)
 
         def wait_job(operation_id: str) -> dict[str, object]:
             deadline = time.monotonic() + 30
@@ -500,23 +463,14 @@ class ApiV1SecurityTest(unittest.TestCase):
                 time.sleep(0.05)
             self.fail(f"Job {operation_id} did not finish")
 
-        # Start the real dashboard service, launch the local evaluator through its
-        # API, then stop HTTP while the evaluator is active. The worker must finish
-        # from its durable operation without depending on the web process.
+        # Start the read-only dashboard service, launch the local evaluator, then stop
+        # the service while the evaluator is active. The worker must finish from its
+        # durable operation without depending on the web process.
         from autoresearch_runtime.dash_process import start_dashboard, stop_dashboard
 
-        dashboard = start_dashboard(self.home, open_browser=False)
+        start_dashboard(self.home, open_browser=False)
         self.addCleanup(lambda: stop_dashboard(self.home))
-        server_info = json.loads((self.home / ".dashboard-server.json").read_text(encoding="utf-8"))
-        baseline_request = Request(
-            dashboard["url"] + f"api/v1/labs/{lab_id}/commands",
-            data=json.dumps({"command": "baseline", "confirmed": True, "payload": {}}).encode(),
-            method="POST",
-            headers={"Authorization": "Bearer " + server_info["token"],
-                     "Content-Type": "application/json", "Idempotency-Key": "local-baseline"},
-        )
-        with urlopen(baseline_request, timeout=5) as response:
-            baseline_job = json.loads(response.read())["data"]
+        baseline_job = self._start_operation(lab_id, "baseline", {}, "local-baseline")
         deadline = time.monotonic() + 10
         while not calls_path.exists() and time.monotonic() < deadline:
             time.sleep(0.02)
@@ -541,7 +495,7 @@ class ApiV1SecurityTest(unittest.TestCase):
                       "expected_effect": "This deterministic trial should be rejected"}
         if os.name == "nt":
             late_writer_trigger.touch()
-        trial_job = post_command("trial", {"hypothesis": hypothesis}, "local-trial")
+        trial_job = self._start_operation(lab_id, "trial", {"hypothesis": hypothesis}, "local-trial")
         if os.name == "nt":
             deadline = time.monotonic() + 30
             while not late_writer_started.is_file() and time.monotonic() < deadline:
@@ -582,7 +536,7 @@ class ApiV1SecurityTest(unittest.TestCase):
         interrupted["status"] = "interrupted"
         store.save_manifest(lab_id, "trial-0001", interrupted)
         before_resume = len(calls_path.read_text(encoding="utf-8").splitlines())
-        resume_job = post_command("resume", {"run_id": "trial-0001"}, "local-resume")
+        resume_job = self._start_operation(lab_id, "resume", {"run_id": "trial-0001"}, "local-resume")
         resumed = wait_job(str(resume_job["operation_id"]))
         self.assertEqual(resumed["status"], "succeeded", resumed)
         self.assertEqual(len(calls_path.read_text(encoding="utf-8").splitlines()), before_resume)

@@ -89,8 +89,6 @@ class HarnessPublicFlowTest(unittest.TestCase):
         self.addCleanup(self._restore_profile_env)
         self.env_patch = patch.dict(os.environ, {
             "AUTORESEARCH_HOME": str(self.home),
-            "AUTORESEARCH_NO_DASHBOARD": "1",
-            "AUTORESEARCH_NO_BROWSER": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONPATH": str(_SCRIPTS),
         })
@@ -121,7 +119,7 @@ class HarnessPublicFlowTest(unittest.TestCase):
             self.fail(f"CLI did not return JSON (exit {result.returncode}): {output!r}; {error}")
 
     def _run_lab(self, config: str, *args: str) -> subprocess.CompletedProcess[str]:
-        return self._run(_LAB, ["--config", config, "--headless", *args])
+        return self._run(_LAB, ["--config", config, *args])
 
 if __name__ == "__main__":
     unittest.main()

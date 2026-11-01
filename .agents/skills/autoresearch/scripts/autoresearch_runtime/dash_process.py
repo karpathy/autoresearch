@@ -1,4 +1,4 @@
-"""Loopback-only live dashboard. Mutations are delete, archive, and restore of one chosen lab."""
+"""Loopback-only, read-only dashboard service: start or reuse, status, and stop."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from pathlib import Path
 from urllib.error import URLError
 from urllib.parse import urljoin, urlsplit
@@ -152,91 +153,59 @@ def _dashboard_start_lock(root: Path):
             stream.close()
             thread_lock.release()
 
-def start_dashboard(root: Path, *, open_browser: bool = True, timeout: float = 5,
-                    port_start: int = 8765, force_open: bool = False) -> dict[str, Any]:
-    root = root.resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    with _dashboard_start_lock(root):
-        return _start_dashboard_locked(root, open_browser=open_browser, timeout=timeout,
-                                       port_start=port_start, force_open=force_open)
-
-def ensure_dashboard_server(root: Path, *, open_browser: bool = False, force_open: bool = False) -> dict[str, Any]:
-    if os.environ.get("AUTORESEARCH_NO_DASHBOARD") == "1":
-        return {"running": False, "url": None, "browser_opened": False, "pid": None}
+def start_dashboard(root: Path, *, open_browser: bool = False, timeout: float = 5,
+                    port_start: int = 8765) -> dict[str, Any]:
+    """Reuse this labs root's running dashboard, or start one. A browser opens only when asked."""
     root = root.resolve()
     root.mkdir(parents=True, exist_ok=True)
     with _dashboard_start_lock(root):
         info = _server_info(root, timeout=1.5)
         if info is None:
-            result = _start_dashboard_locked(root, open_browser=False, timeout=5.0,
-                                             port_start=8765, force_open=False)
-            info = _server_info(root, timeout=1.5)
-            if info is None:
-                return result
+            info = _launch_server(root, timeout=timeout, port_start=port_start)
         result = {"running": True, "url": info["url"], "browser_opened": False, "pid": info.get("pid")}
         if info.get("token_protection") != "restricted":
             _add_warning(result, "Dashboard stop-token file permissions could not be restricted; keep AUTORESEARCH_HOME private.")
         if open_browser:
-            _maybe_open_browser(root, info, result, force_open=force_open)
+            _maybe_open_browser(info, result)
         return result
 
 
-def _start_dashboard_locked(root: Path, *, open_browser: bool, timeout: float,
-                            port_start: int, force_open: bool) -> dict[str, Any]:
-    info = _server_info(root)
-    if info is None:
-        token = secrets.token_urlsafe(32)
-        scripts = Path(__file__).resolve().parents[1]
-        log_file = root / ".dashboard-server.log"
-        log_handle = open(log_file, "a", encoding="utf-8")
-        options: dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": log_handle,
-                                   "stderr": log_handle, "cwd": str(scripts)}
-        if os.name == "nt":
-            options.update(hidden_process_kwargs())
-        else:
-            options["start_new_session"] = True
-        options["env"] = {**os.environ, _STOP_TOKEN_ENV: token, "PYTHONPATH": os.pathsep.join(
-            item for item in (str(scripts), os.environ.get("PYTHONPATH", "")) if item
-        )}
-        try:
-            child = subprocess.Popen([sys.executable, "-m", "autoresearch_runtime.dashboard_server", "--serve",
-                                      "--root", os.fspath(root), "--port-start", str(port_start)], **options)
-        finally:
-            log_handle.close()
-        _SERVER_PROCESSES[str(root)] = child
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            info = _server_info(root)
-            if info is not None:
-                break
-            time.sleep(0.1)
-    if info is None:
-        raise RuntimeError("Dashboard server did not start; it will be retried by the next CLI command")
-    result = {"running": True, "url": info["url"], "browser_opened": False, "pid": info.get("pid")}
-    if info.get("token_protection") != "restricted":
-        _add_warning(result, "Dashboard stop-token file permissions could not be restricted; keep AUTORESEARCH_HOME private.")
-    if open_browser:
-        _maybe_open_browser(root, info, result, force_open=force_open)
-    return result
-
-
-def _maybe_open_browser(root: Path, info: dict[str, Any], result: dict[str, Any], *, force_open: bool) -> None:
-    marker = root / ".dashboard-browser-opened"
-    root_id = hashlib.sha256(str(root.resolve()).casefold().encode("utf-8")).hexdigest()[:16]
-    already_opened = _read_json(marker, {})
-    if not force_open and isinstance(already_opened, dict) and already_opened.get("root_id") == root_id:
-        return
+def _launch_server(root: Path, *, timeout: float, port_start: int) -> dict[str, Any]:
+    token = secrets.token_urlsafe(32)
+    scripts = Path(__file__).resolve().parents[1]
+    log_file = root / ".dashboard-server.log"
+    log_handle = open(log_file, "a", encoding="utf-8")
+    options: dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": log_handle,
+                               "stderr": log_handle, "cwd": str(scripts)}
+    if os.name == "nt":
+        options.update(hidden_process_kwargs())
+    else:
+        options["start_new_session"] = True
+    options["env"] = {**os.environ, _STOP_TOKEN_ENV: token, "PYTHONPATH": os.pathsep.join(
+        item for item in (str(scripts), os.environ.get("PYTHONPATH", "")) if item
+    )}
     try:
-        from . import dashboard_server
-        result["browser_opened"] = bool(dashboard_server.webbrowser.open(info["url"], new=2))
+        child = subprocess.Popen([sys.executable, "-m", "autoresearch_runtime.dashboard_server", "--serve",
+                                  "--root", os.fspath(root), "--port-start", str(port_start)], **options)
+    finally:
+        log_handle.close()
+    _SERVER_PROCESSES[str(root)] = child
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        info = _server_info(root)
+        if info is not None:
+            return info
+        time.sleep(0.1)
+    raise RuntimeError("Dashboard server did not start; run `dashboard start` again")
+
+
+def _maybe_open_browser(info: dict[str, Any], result: dict[str, Any]) -> None:
+    try:
+        result["browser_opened"] = bool(webbrowser.open(info["url"], new=2))
     except Exception:
         result["browser_opened"] = False
     if not result["browser_opened"]:
-        _add_warning(result, "Dashboard browser could not be opened; retry with `autoresearch dashboard ensure --open-browser`.")
-        return
-    temporary = marker.with_suffix(".tmp")
-    temporary.write_text(json.dumps({"root_id": root_id, "opened_at": time.time()}), encoding="utf-8")
-    os.replace(temporary, marker)
+        _add_warning(result, "Dashboard browser could not be opened; retry with `dashboard start --open-browser` or open the URL manually.")
 
 def dashboard_server_status(root: Path) -> dict[str, Any]:
     root = root.resolve()

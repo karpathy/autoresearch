@@ -87,8 +87,6 @@ class Lab:
                     if key != "AUTORESEARCH_HARNESS_PROFILE"}
         self.env.update({
             "AUTORESEARCH_HOME": str(home),
-            "AUTORESEARCH_NO_DASHBOARD": "1",
-            "AUTORESEARCH_NO_BROWSER": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONPATH": str(SCRIPTS),
         })
@@ -125,7 +123,7 @@ class Lab:
         return payload["data"]
 
     def lab(self, config: str, *args: str) -> dict[str, Any]:
-        return self.run(LAB, ["--config", config, "--headless", *args])
+        return self.run(LAB, ["--config", config, *args])
 
 
 def run_flow(base: Path, host: Path) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
@@ -136,7 +134,7 @@ def run_flow(base: Path, host: Path) -> tuple[dict[str, Any], dict[str, Any], li
     lab = Lab(project, home, host, base)
     prepared = lab.run(PREPARE, [
         "--program", str(project / "brief.md"), "--spec", str(project / "spec.json"),
-        "--confirmed", "--no-dashboard", "--no-browser",
+        "--confirmed",
     ])
     config = str(prepared["config"])
     fingerprint = lab.lab(config, "guide", "--json")["contract_fingerprint"]

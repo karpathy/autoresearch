@@ -10,7 +10,7 @@ const LAB_PAGE_SIZE = 100;
 
 let labs = [];
 let sqliteLabs = [];
-let lifecycleMode = "active";
+const lifecycleMode = "active";
 let selected = "";
 let labOffset = 0;
 let labPage = {offset: 0, total: 0, next_offset: null};
@@ -64,15 +64,8 @@ function setMessage(text, kind = "info") {
   banner.textContent = text || "";
 }
 
-async function request(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  if (options.body !== undefined) headers.set("Content-Type", "application/json");
-  const response = await fetch(path, {
-    ...options,
-    headers,
-    credentials: "same-origin",
-    cache: "no-store",
-  });
+async function request(path) {
+  const response = await fetch(path, {credentials: "same-origin", cache: "no-store"});
   if (response.status === 304) return {notModified: true, headers: response.headers};
   let payload = null;
   try { payload = await response.json(); } catch (error) {}
@@ -335,22 +328,6 @@ function activeRunText(summary) {
   return label + " · " + status + (details.length ? " · " + details.join(" · ") : "");
 }
 
-function lifecycleName() {
-  return lifecycleMode === "archived" ? "архивная" : "активная";
-}
-
-function renderLifecycleFilters() {
-  const host = document.getElementById("status-filters");
-  host.replaceChildren();
-  for (const [value, label] of [["active", "Активные"], ["archived", "Архив"]]) {
-    const button = node("button", "filter" + (lifecycleMode === value ? " is-on" : ""), label);
-    button.type = "button";
-    button.setAttribute("aria-pressed", String(lifecycleMode === value));
-    button.addEventListener("click", () => setLifecycleMode(value));
-    host.append(button);
-  }
-}
-
 function renderLabPageControls(host) {
   const controls = node("div", "v04-page-controls");
   if (labOffset > 0) {
@@ -385,8 +362,7 @@ function renderLabs() {
   nav.append(overview);
 
   if (!labs.length) {
-    nav.append(node("p", "empty", lifecycleMode === "archived"
-      ? "Архивных лабораторий пока нет." : "Активных лабораторий пока нет."));
+    nav.append(node("p", "empty", "Активных лабораторий пока нет."));
   }
   for (const lab of labs) {
     const id = labId(lab);
@@ -407,18 +383,15 @@ function renderLabs() {
   }
   renderLabPageControls(nav);
   selector.value = selected;
-  renderLifecycleFilters();
   applySearch(document.getElementById("lab-search").value);
 }
 
 function renderPortfolio() {
   detail.replaceChildren();
-  const title = lifecycleMode === "archived" ? "Архив лабораторий" : "Активные лаборатории";
-  detail.append(node("h2", "v04-page-title", title));
+  detail.append(node("h2", "v04-page-title", "Активные лаборатории"));
   renderLabPageControls(detail);
   if (!labs.length) {
-    const empty = labOffset > 0 ? "На этой странице лабораторий нет." :
-      (lifecycleMode === "archived" ? "Архивных лабораторий пока нет." : "Активных лабораторий пока нет.");
+    const empty = labOffset > 0 ? "На этой странице лабораторий нет." : "Активных лабораторий пока нет.";
     detail.append(node("div", "empty", empty));
     applySearch(document.getElementById("lab-search").value);
     return;
@@ -453,21 +426,6 @@ function renderPortfolio() {
     detail.append(card);
   }
   applySearch(document.getElementById("lab-search").value);
-}
-
-function renderLabActions(lab) {
-  const host = node("div", "v04-actions v04-lifecycle-actions");
-  const archived = lifecycleMode === "archived" || lab.lifecycle === "archived" || lab.archived === true;
-  const action = archived ? "restore" : "archive";
-  const label = archived ? "Восстановить" : "Архивировать";
-  const lifecycleButton = node("button", "button", label);
-  lifecycleButton.type = "button";
-  lifecycleButton.addEventListener("click", () => changeLifecycle(lab, action));
-  const deleteButton = node("button", "button danger", "Удалить");
-  deleteButton.type = "button";
-  deleteButton.addEventListener("click", () => changeLifecycle(lab, "delete"));
-  host.append(lifecycleButton, deleteButton);
-  return host;
 }
 
 function renderTabs() {
@@ -752,7 +710,7 @@ function renderLabDetail() {
   const summary = summaryFor(lab);
   const heading = node("section", "hero neutral v04-hero");
   heading.append(node("h2", "hero-title", lab.goal || lab.name || UNAVAILABLE));
-  const verdict = node("p", "verdict", (lab.status || lifecycleName()) + " · эпоха " +
+  const verdict = node("p", "verdict", (lab.status || "активная") + " · эпоха " +
     formatValue(summary.current_epoch_id ?? summary.current_epoch));
   heading.append(verdict);
   if (summary.goal_status === "met") {
@@ -764,7 +722,6 @@ function renderLabDetail() {
   }
   const {primary} = primaryAndGuards(summary, lab);
   heading.append(node("p", "v04-muted", primary ? "Основная метрика · " + primary.name : UNAVAILABLE));
-  heading.append(renderLabActions(lab));
   detail.append(heading, renderTabs());
   if (activeTab === "overview") detail.append(renderOverview(summary, lab));
   if (activeTab === "runs") {
@@ -776,23 +733,6 @@ function renderLabDetail() {
   if (activeTab === "evidence") renderEvidence();
   if (detail) detail.scrollTop = prevScrollTop;
   if (main) main.scrollTop = prevMainScroll;
-}
-
-async function changeLifecycle(lab, action) {
-  const id = labId(lab);
-  if (!id) return;
-  if (action === "delete" && !window.confirm("Удалить лабораторию «" + (lab.goal || id) + "» без возможности восстановления?")) return;
-  try {
-    await request("/api/v1/labs/" + encodeURIComponent(id) + "/lifecycle", {
-      method: "POST",
-      body: JSON.stringify({action, confirm_lab_id: id}),
-    });
-    setMessage(action === "delete" ? "Лаборатория удалена." : "Состояние лаборатории обновлено.", "info");
-    selected = "";
-    localStorage.removeItem(selectedKey);
-    if (action === "restore") lifecycleMode = "active";
-    await reloadLabs({offset: 0, clearSelection: true});
-  } catch (error) { setMessage(error.message, "warn"); }
 }
 
 function renderEvidenceDialog(item, value) {
@@ -1101,29 +1041,19 @@ async function reloadLab() {
   }
 }
 
-async function setLifecycleMode(mode) {
-  if (mode !== "active" && mode !== "archived") return;
-  try {
-    await reloadLabs({mode, offset: 0, clearSelection: true});
-  } catch (error) {
-    setMessage(error.message, "warn");
-  }
-}
-
 async function loadLabPage(offset) {
   try { await reloadLabs({offset, clearSelection: true}); }
   catch (error) { /* reloadLabs shows the error and retains the current page */ }
 }
 
 async function reloadLabs(options = {}) {
-  const mode = options.mode || lifecycleMode;
   const requestedOffset = Math.max(0, Number(options.offset === undefined ? labOffset : options.offset) || 0);
   const sourcePageSize = Math.floor(LAB_PAGE_SIZE / 2);
   const pageNumber = Math.floor(requestedOffset / LAB_PAGE_SIZE);
   const offset = pageNumber * LAB_PAGE_SIZE;
   const sourceOffset = pageNumber * sourcePageSize;
   const requestId = ++labRequestVersion;
-  const path = "/api/v1/labs?limit=" + sourcePageSize + "&lifecycle=" + mode + "&offset=" + sourceOffset;
+  const path = "/api/v1/labs?limit=" + sourcePageSize + "&lifecycle=" + lifecycleMode + "&offset=" + sourceOffset;
   const [sqliteResult] = await Promise.allSettled([request(path)]);
   if (requestId !== labRequestVersion) return;
 
@@ -1147,7 +1077,6 @@ async function reloadLabs(options = {}) {
   }
 
 
-  lifecycleMode = mode;
   labOffset = offset;
   labs = [...sqliteLabs];
   const total = sqliteTotal;

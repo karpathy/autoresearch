@@ -164,12 +164,11 @@ aside {
   padding: 8px 10px; outline: none;
 }
 #lab-search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 6px; }
-.filters button, .seg button {
+.seg button {
   border: 1px solid var(--line); background: var(--panel); border-radius: 999px;
   padding: 4px 10px; font-size: 12px; color: var(--muted);
 }
-.filters button.is-on, .seg button.is-on { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 650; }
+.seg button.is-on { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 650; }
 .project-title { margin: 16px 8px 6px; font-size: 13px; font-weight: 700; }
 .group-label { margin: 14px 8px 4px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 .lab-row { display: flex; align-items: flex-start; gap: 4px; }
@@ -463,7 +462,7 @@ main { overflow: auto; padding: 22px; min-width: 0; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 @media print {
-  .topbar, aside, .filters, .seg, #theme-toggle, #nav-toggle { display: none !important; }
+  .topbar, aside, .seg, #theme-toggle, #nav-toggle { display: none !important; }
   .layout { display: block; height: auto; }
   main { overflow: visible; }
   .hyp-body { display: block; }
@@ -794,9 +793,6 @@ main { overflow: auto; padding: 22px; min-width: 0; }
 .v04-page-controls{display:flex;flex-wrap:wrap;align-items:center;gap:.55rem;margin:.6rem 0;padding:.55rem 0}
 .v04-page-controls .button{min-height:2.2rem;padding:.4rem .7rem;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--ink);font:inherit;cursor:pointer}
 .v04-page-controls .button:hover{border-color:var(--accent)}
-.v04-lifecycle-actions{margin:.8rem 0 0}
-.v04-card .button.danger{border-color:color-mix(in srgb,var(--bad) 55%,var(--line));color:var(--bad)}
-.v04-card .button.danger:hover{background:var(--bad);color:var(--panel)}
 @media(max-width:1100px){
   .v04-summary-metric{grid-template-columns:repeat(4,minmax(0,1fr))}
   .v04-summary-metric>strong{grid-column:span 2}

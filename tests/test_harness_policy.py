@@ -19,7 +19,6 @@ from autoresearch_runtime.harness_policy import authorize_operation, recheck_ope
 from autoresearch_runtime.errors import LabError
 from autoresearch_runtime.runtimeops import _bind_operation_context, reserve_operation
 from autoresearch_runtime.worker import _validate_worker_policy
-from autoresearch_runtime.api_v1 import _validate_command
 from autoresearch_runtime.fuzzy_args import normalize_cli_args
 from autoresearch_runtime.commands.common import (
     explicit_confirmation, resolve_config,
@@ -313,17 +312,6 @@ class HarnessPolicyTest(unittest.TestCase):
         recheck.assert_called_once_with(self.config, "baseline", snapshot)
         self.assertEqual(clean, {"supersede": True})
         self.assertEqual(params["harness_policy"], snapshot)
-
-    def test_api_measurement_requires_boolean_confirmation_and_routes_it_to_shared_policy_path(self):
-        body = {"command": "baseline", "payload": {}}
-        for invalid in (None, False, 1, "true"):
-            request = {**body, "confirmed": invalid} if invalid is not None else body
-            with self.subTest(confirmed=invalid), self.assertRaises(ValueError):
-                _validate_command(request)
-
-        command, params, _ = _validate_command({**body, "confirmed": True})
-        self.assertEqual(command, "baseline")
-        self.assertIs(params["confirmed"], True)
 
     def test_cli_confirmation_flag_is_hoisted_from_after_the_command(self):
         self.assertEqual(

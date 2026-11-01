@@ -31,11 +31,11 @@ from autoresearch_runtime.trial import _aggregate_metric, _first_repeat_rejectio
 
 
 class FuzzyArgsNormalizationTest(unittest.TestCase):
-    def test_normalize_cli_args_hoists_headless_from_subcommand(self):
-        self.assertEqual(normalize_cli_args(["step", "--headless"]), ["--headless", "step"])
+    def test_normalize_cli_args_hoists_confirmed_from_subcommand(self):
+        self.assertEqual(normalize_cli_args(["step", "--confirmed"]), ["--confirmed", "step"])
         self.assertEqual(
-            normalize_cli_args(["trial", "--runs=3", "--headless"]),
-            ["--headless", "trial", "--repeats=3"],
+            normalize_cli_args(["trial", "--runs=3", "--confirmed"]),
+            ["--confirmed", "trial", "--repeats=3"],
         )
 
     def test_normalize_cli_args_hoists_agent_and_maps_aliases(self):
@@ -51,8 +51,8 @@ class FuzzyArgsNormalizationTest(unittest.TestCase):
 
     def test_normalize_cli_args_hoists_config_and_value_flags(self):
         self.assertEqual(
-            normalize_cli_args(["step", "--config", "lab.json", "--headless"]),
-            ["--config", "lab.json", "--headless", "step"],
+            normalize_cli_args(["step", "--config", "lab.json", "--confirmed"]),
+            ["--config", "lab.json", "--confirmed", "step"],
         )
         self.assertEqual(
             normalize_cli_args(["step", "--project=myproj", "--agent"]),

@@ -70,7 +70,7 @@ python .agents/skills/autoresearch/scripts/lab.py --config <lab.json> status
 - **Spending is not limited.** AutoLaboratory records requests and cost but never stops a paid call. Set a spending limit on each API key your evaluator uses.
 - **It does not sandbox your evaluator.** The host harness must enforce isolation and network policy; the profile only states that it does.
 - **"Accepted" is not "goal achieved."** Accepted means a trial beat its parent under the lab's rules. Goal success needs declared thresholds and confirmation repeats. See [measurement semantics](.agents/skills/autoresearch/references/measurement.md).
-- **A local dashboard starts with regular commands.** It binds to `127.0.0.1` and opens no browser. Use `--headless` or `AUTORESEARCH_NO_DASHBOARD=1` to skip it.
+- **The dashboard does not start by itself.** Run `dashboard start` to watch progress. It is read-only, binds to `127.0.0.1`, and opens a browser only with `--open-browser`.
 - **The codebase is not small.** The runtime is about 22k lines of Python, using only the standard library.
 
 ## Compatibility

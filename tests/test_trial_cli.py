@@ -137,7 +137,7 @@ class TrialCliTest(unittest.TestCase):
 
     def _prepare_baseline(self) -> str:
         prep = self._run(["prepare", "--program", str(self.program), "--spec", str(self.spec),
-                          "--confirmed", "--no-dashboard", "--no-browser"])
+                          "--confirmed"])
         config_path = self._assert_ok(prep, "prepare")["config"]
         self._assert_ok(self._run_approved(
             config_path, ["--confirmed", "--config", config_path, "baseline"],

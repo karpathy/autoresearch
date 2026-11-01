@@ -29,18 +29,25 @@ class DashboardObserverUITests(unittest.TestCase):
         cls.app = (ASSETS / "live_app.js").read_text(encoding="utf-8")
         cls.html = (ASSETS / "index.html").read_text(encoding="utf-8")
 
-    def test_overview_and_lifecycle_follow_the_read_only_contract(self) -> None:
-        self.assertIn('let lifecycleMode = "active"', self.app)
+    def test_overview_lists_only_active_labs_from_the_read_only_api(self) -> None:
+        self.assertIn('const lifecycleMode = "active"', self.app)
         self.assertIn("&lifecycle=", self.app)
         self.assertIn("dashboard_summary", self.app)
         self.assertIn("current_epoch_id", self.app)
         self.assertIn("active_run", self.app)
         self.assertIn("trend.slice(-5)", self.app)
-        self.assertIn("confirm_lab_id", self.app)
-        self.assertIn("window.confirm(", self.app)
         for tab in ("overview", "runs", "evidence"):
             self.assertIn(tab, self.app)
         self.assertIn('["evidence", "Свидетельства"]', self.app)
+
+    def test_live_app_sends_no_write_requests_and_has_no_lifecycle_controls(self) -> None:
+        self.assertNotIn('method: "POST"', self.app)
+        self.assertNotIn("method:", self.app)
+        self.assertNotIn("changeLifecycle", self.app)
+        self.assertNotIn("setLifecycleMode", self.app)
+        self.assertNotIn("/lifecycle", self.app)
+        self.assertNotIn("Удалить", self.app)
+        self.assertNotIn("Архивировать", self.app)
 
     def test_run_history_is_epoch_scoped_and_paginated_without_controls(self) -> None:
         self.assertIn("limit=20", self.app)
@@ -73,33 +80,6 @@ class DashboardObserverUITests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
-
-    def test_failed_lifecycle_switch_keeps_current_list_and_reports_the_error(self) -> None:
-        start = self.app.index("async function setLifecycleMode(mode) {")
-        end = self.app.index("\nasync function loadLabPage(offset)", start)
-        function = self.app[start:end]
-        view = self._run_js(f"""
-let lifecycleMode = "active";
-let selected = "lab-a";
-let detailRequest = 0;
-let labs = [{{uid: "lab-a"}}];
-let message = "";
-async function reloadLabs() {{ throw new Error("API offline"); }}
-function renderLabs() {{}}
-function setMessage(value) {{ message = value; }}
-{function}
-(async () => {{
-  let escaped = false;
-  try {{ await setLifecycleMode("archived"); }} catch (error) {{ escaped = true; }}
-  process.stdout.write(JSON.stringify({{lifecycleMode, selected, lab: labs[0].uid, message, escaped}}));
-}})();
-""")
-        self.assertEqual(view, {
-            "lifecycleMode": "active", "selected": "lab-a", "lab": "lab-a",
-            "message": "API offline", "escaped": False,
-        })
-
-
 
     def test_both_list_sources_failing_keeps_dashboard_unavailable(self) -> None:
         start = self.app.index("async function reloadLabs(options = {}) {")
@@ -153,7 +133,7 @@ async function requestLegacy() {{ throw new Error("Legacy offline"); }}
 
     def test_sqlite_run_page_uses_list_metrics_without_per_run_requests(self) -> None:
         start = self.app.index("async function reloadLab() {")
-        end = self.app.index("\nasync function setLifecycleMode(mode)", start)
+        end = self.app.index("\nasync function loadLabPage(offset)", start)
         function = self.app[start:end]
         view = self._run_js(f"""
 const lab = {{uid: "sqlite-lab", source: "sqlite", dashboard_summary: {{current_epoch: 2,
@@ -431,7 +411,7 @@ process.stdout.write(JSON.stringify(res));
 
     def test_reload_lab_preserves_offset_and_epoch_without_loading_flash_on_refresh(self) -> None:
         start = self.app.index("async function reloadLab() {")
-        end = self.app.index("\nasync function setLifecycleMode", start)
+        end = self.app.index("\nasync function loadLabPage(offset)", start)
         function = self.app[start:end]
         view = self._run_js(f"""
 let selected = "sqlite-lab";

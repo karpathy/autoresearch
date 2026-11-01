@@ -52,7 +52,7 @@ class LegacyLabRejectionTest(unittest.TestCase):
             with self.subTest(command=command):
                 out, err = io.StringIO(), io.StringIO()
                 with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                    code = main(["--config", str(self.lab / "lab.json"), "--headless", *command])
+                    code = main(["--config", str(self.lab / "lab.json"), *command])
                 self.assertNotEqual(code, 0)
                 self.assertIn("E_LEGACY_LAB", out.getvalue() + err.getvalue())
         self.assertEqual(support.tree_digest(self.lab), before)

@@ -68,7 +68,7 @@ class AgentGuidanceTest(unittest.TestCase):
         scripts = Path(__file__).resolve().parents[1] / ".agents" / "skills" / "autoresearch" / "scripts"
         cmd = [
             sys.executable, str(scripts / "lab.py"),
-            "--headless", "--agent", "--confirmed",
+            "--agent", "--confirmed",
             "--config", str(self.config.path),
             "step", "--run", *step_args,
         ]
@@ -211,7 +211,7 @@ class AgentGuidanceTest(unittest.TestCase):
         self.assertLess(len(observation), len("large unneeded raw narrative " * 100))
         agent_result = subprocess.run(
             [sys.executable, str(scripts / "lab.py"), "--config", str(self.config.path),
-             "--headless", "--agent", "guide", "--run", "trial-0012", "--json"],
+             "--agent", "guide", "--run", "trial-0012", "--json"],
             cwd=scripts, env=env, capture_output=True, text=True, encoding="utf-8", check=True,
             **support.hidden_process_kwargs(),
         )
@@ -413,8 +413,6 @@ class AgentGuidanceTest(unittest.TestCase):
                     "--project", str(mini_proj),
                     "--eval", f"python {eval_script}",
                     "--metric", "accuracy:max",
-                    "--no-browser",
-                    "--no-dashboard",
                 ])
             self.assertNotEqual(rc, 0)
             response = json.loads(stderr.getvalue())
@@ -607,7 +605,7 @@ class AgentGuidanceTest(unittest.TestCase):
                 cmd = [
                     sys.executable, str(scripts / "lab.py"),
                     "--lab", str(lab_id),
-                    "--headless", "--agent", "--confirmed", "trial",
+                    "--agent", "--confirmed", "trial",
                     "--title", "Repeat 2 crash",
                     "--observation", "O",
                     "--expected-effect", "E",

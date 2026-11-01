@@ -73,7 +73,7 @@ class FailedBaselineCliRetryTest(unittest.TestCase):
             lab = demo.Lab(project, base / "lab-home", host, base)
             prepared = lab.run(demo.PREPARE, [
                 "--program", str(project / "brief.md"), "--spec", str(project / "spec.json"),
-                "--confirmed", "--no-dashboard", "--no-browser",
+                "--confirmed",
             ])
             config = str(prepared["config"])
             fingerprint = lab.lab(config, "guide", "--json")["contract_fingerprint"]

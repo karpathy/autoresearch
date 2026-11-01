@@ -7,7 +7,6 @@ module only manages files, comparable metrics, and experiment history.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -26,7 +25,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--project", type=Path)
     parser.add_argument("--lab", type=str, default=None, help="Catalog lab id when --config is omitted")
     parser.add_argument("--agent", action="store_true", help="Return a compact command outcome and canonical guide")
-    parser.add_argument("--headless", action="store_true", help="Do not start or open the local dashboard")
     parser.add_argument("--confirmed", action="store_true",
                         help="Confirm this evaluator or write operation for the current contract")
     register_all(parser.add_subparsers(dest="command", required=True))
@@ -45,7 +43,6 @@ def main(argv: list[str] | None = None, *, labs_root: Path | None = None) -> int
     except SystemExit as error:
         code = error.code if isinstance(error.code, int) else 2
         return code if code != 0 else 0
-    dashboard_warning = None
     try:
         if args.agent and args.command == "trial" and getattr(args, "trial_command", None) in (None, "start"):
             hint_msg = (
@@ -83,27 +80,13 @@ def main(argv: list[str] | None = None, *, labs_root: Path | None = None) -> int
         command = getattr(args, "command", "lab")
         return fail(command, error)
 
-    if not args.headless and not args.agent and not os.environ.get("AUTORESEARCH_NO_DASHBOARD") and args.command != "dashboard":
-        try:
-            from .dashboard_server import ensure_dashboard_server
-            from .paths import resolve_home
-
-            dashboard = ensure_dashboard_server(resolve_home(), open_browser=False)
-            dashboard_warning = dashboard.get("warning") if isinstance(dashboard, dict) else None
-        except Exception:
-            dashboard_warning = "Dashboard did not start; the CLI command will continue and a later command can retry."
-
     try:
         output = run_command(args, labs_root)
     except (LabError, RuntimeError) as error:
-        if dashboard_warning:
-            print(f"Warning: {dashboard_warning}", file=sys.stderr)
         command = getattr(args, "command", "lab")
         return fail(command, error)
     warnings = output.pop("_warnings", None) if isinstance(output, dict) else None
     warnings = list(warnings or [])
-    if dashboard_warning:
-        warnings.append(str(dashboard_warning))
     cockpit_payload = None
     if getattr(args, "agent", False) and args.command == "guide":
         # guide already returns the canonical compact cockpit document.

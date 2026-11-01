@@ -18,7 +18,7 @@ Run `preflight --spec <path>` before preparation; it validates the contract with
 
 For ongoing work, reuse a lab only if brief, evaluator, metrics, and protected inputs still match. `prepare --resume` reuses a matching lab; evaluator `resume <run_id>` continues only supported runs with matching fingerprints. Put a new lab in a dedicated `AUTORESEARCH_HOME` outside the measured project. See [home.md](references/home.md) and [cli.md](references/cli.md) for storage behavior.
 
-The loopback dashboard service starts in the background with the first regular CLI command and is shared by `AUTORESEARCH_HOME`. Startup does not open or focus a browser; open one only after an explicit `--open-browser` request, such as `dashboard ensure --open-browser`. Use global `--headless` or `AUTORESEARCH_NO_DASHBOARD=1` to skip service startup. On Windows the service runs without opening a console window. SQLite labs use authenticated API routes.
+The dashboard does not start by itself. Run `dashboard start` to watch progress; it reuses the loopback service already running for this `AUTORESEARCH_HOME` or starts one, and it opens a browser only with `--open-browser`. The dashboard is read-only: the agent drives the lab through the CLI, and the browser only watches. On Windows the service runs without opening a console window. SQLite labs use authenticated API routes.
 
 ## Measure and compare
 

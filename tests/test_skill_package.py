@@ -98,7 +98,8 @@ class SkillPackageTest(unittest.TestCase):
         manifest = manifest_payload(SKILL)
         names = set(manifest["files"])
         self.assertIn("scripts/autoresearch_runtime/commands/trial.py", names)
-        self.assertIn("scripts/autoresearch_runtime/dashboard_assets/app.js", names)
+        self.assertNotIn("scripts/autoresearch_runtime/dashboard_assets/app.js", names)
+        self.assertIn("scripts/autoresearch_runtime/dashboard_assets/live_app.js", names)
         self.assertIn("scripts/autoresearch.py", names)
 
     def test_markdown_relative_links_resolve_in_skill_and_references(self):

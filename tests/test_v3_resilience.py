@@ -26,7 +26,6 @@ class TestV3Resilience(unittest.TestCase):
         self.env = os.environ.copy()
         self.env["PYTHONPATH"] = str(SCRIPTS_DIR)
         self.env["AUTORESEARCH_HOME"] = str(self.root / ".labs")
-        self.env["AUTORESEARCH_NO_BROWSER"] = "1"
         self.cli = [PYTHON, str(SCRIPTS_DIR / "autoresearch.py")]
 
     def tearDown(self):
@@ -88,7 +87,6 @@ class TestV3Resilience(unittest.TestCase):
             "--eval", eval_cmd,
             "--metric", "score:max",
             "--brief-text", "Goal: optimize score\n",
-            "--no-dashboard",
         ])
         self.assertEqual(rc, 2, f"Auto-prepare unexpectedly succeeded: {out}\nSTDERR: {err}")
         failure = json.loads(err)
@@ -135,7 +133,7 @@ class TestV3Resilience(unittest.TestCase):
 
         rc, out, err = self.run_cmd(self.cli + [
             "prepare", "--project", str(project), "--program", str(program),
-            "--spec", str(spec_path), "--confirmed", "--no-dashboard",
+            "--spec", str(spec_path), "--confirmed",
         ])
         self.assertEqual(rc, 0, f"Confirmed prepare failed: {out}\nSTDERR: {err}")
         config_path = out["data"]["config"]

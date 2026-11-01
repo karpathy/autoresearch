@@ -24,10 +24,6 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 
 from autoresearch_runtime.runtime_env import hidden_process_kwargs
 
-# CLI tests must not start persistent background dashboard processes by default.
-# Lifecycle tests explicitly clear this flag when they exercise auto-start.
-os.environ.setdefault("AUTORESEARCH_NO_DASHBOARD", "1")
-
 
 def tree_digest(root: Path) -> dict[str, str]:
     """Hash every file under root, including git metadata."""

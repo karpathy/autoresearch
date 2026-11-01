@@ -19,8 +19,7 @@ from urllib.request import Request, urlopen
 from unittest.mock import patch
 
 from autoresearch_runtime.dashboard_server import (
-    create_server, dashboard_server_status, ensure_dashboard_server,
-    notify_dashboard, start_dashboard, stop_dashboard,
+    create_server, dashboard_server_status, start_dashboard, stop_dashboard,
 )
 from autoresearch_runtime.lab import main as lab_main
 
@@ -183,13 +182,14 @@ process.stdout.write(JSON.stringify({{
                                 headers={"Origin": base, "Content-Type": "application/json"})
             with self.assertRaises(HTTPError) as missing:
                 urlopen(bootstrap)
-            self.assertEqual(missing.exception.code, 404)
+            self.assertEqual(missing.exception.code, 405)
+            self.assertIn("method_not_allowed", missing.exception.read().decode("utf-8"))
 
     def test_server_reuse_rejects_same_root_health_from_a_different_process(self):
         from autoresearch_runtime import dash_process
 
         home = Path(self.temp.name) / "identity-home"
-        with patch.dict(os.environ, {"AUTORESEARCH_HOME": str(home), "AUTORESEARCH_NO_DASHBOARD": ""}):
+        with patch.dict(os.environ, {"AUTORESEARCH_HOME": str(home)}):
             home.mkdir(parents=True)
             server = _test_server(home, port=0)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -211,36 +211,9 @@ process.stdout.write(JSON.stringify({{
             (home / ".dashboard-server.json").write_text(json.dumps(info), encoding="utf-8")
             self.assertIsNone(dash_process._server_info(home))
 
-    def test_notify_does_not_send_the_stop_token_to_a_foreign_service_port(self):
-        from autoresearch_runtime import dash_http
-        import hashlib
-
-        home = Path(self.temp.name) / "notify-home"
-        expected_root = home / "expected"
-        foreign_root = home / "foreign"
-        expected_root.mkdir(parents=True)
-        with patch.dict(os.environ, {"AUTORESEARCH_HOME": str(home)}):
-            server = _test_server(foreign_root, port=0)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            self.addCleanup(lambda: (server.shutdown(), server.server_close(), thread.join(timeout=2)))
-            expected_id = hashlib.sha256(str(expected_root.resolve()).casefold().encode("utf-8")).hexdigest()[:16]
-            (expected_root / ".dashboard-server.json").write_text(json.dumps({
-                "host": "127.0.0.1", "port": server.server_port,
-                "url": f"http://127.0.0.1:{server.server_port}/", "token": "do-not-forward",
-                "pid": os.getpid(), "root_id": expected_id, "home_id": server.home_id,
-                "service_id": "foreign-service",
-            }), encoding="utf-8")
-            with patch("autoresearch_runtime.dash_http.urlopen") as opener:
-                self.assertFalse(notify_dashboard(expected_root))
-
-            opener.assert_not_called()
-
-    def test_explicit_ensure_opens_plain_url_and_force_allows_reopening(self):
-        from autoresearch_runtime import dash_process
-
+    def test_explicit_open_launches_the_plain_url_on_every_request_and_never_otherwise(self):
         home = Path(self.temp.name) / "reopen-home"
-        with patch.dict(os.environ, {"AUTORESEARCH_HOME": str(home), "AUTORESEARCH_NO_DASHBOARD": ""}):
+        with patch.dict(os.environ, {"AUTORESEARCH_HOME": str(home)}):
             home.mkdir(parents=True)
             server = _test_server(home, port=0)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -253,13 +226,15 @@ process.stdout.write(JSON.stringify({{
                 "home_id": server.home_id, "service_id": server.service_id,
             }
             (home / ".dashboard-server.json").write_text(json.dumps(info), encoding="utf-8")
-            with patch("autoresearch_runtime.dash_process._restrict_server_info_permissions", return_value=True), \
-                 patch("autoresearch_runtime.dashboard_server.webbrowser.open", return_value=True) as opener:
-                first = ensure_dashboard_server(home, open_browser=True)
-                second = ensure_dashboard_server(home, open_browser=True, force_open=True)
+            with patch("autoresearch_runtime.dash_process.webbrowser.open", return_value=True) as opener:
+                first = start_dashboard(home, open_browser=True)
+                second = start_dashboard(home, open_browser=True)
+                quiet = start_dashboard(home)
 
+            self.assertEqual(first["pid"], os.getpid())
             self.assertTrue(first["browser_opened"])
             self.assertTrue(second["browser_opened"])
+            self.assertFalse(quiet["browser_opened"])
             self.assertEqual(opener.call_count, 2)
             self.assertEqual(opener.call_args_list[0].args[0], info["url"])
             self.assertEqual(opener.call_args_list[1].args[0], info["url"])
@@ -278,28 +253,17 @@ process.stdout.write(JSON.stringify({{
             self.assertEqual(data["data"], {"revision": "0", "initialized": False})
             self.assertFalse((home / "autoresearch.sqlite3").exists())
 
-    def test_cli_autostarts_once_but_headless_help_and_dashboard_management_skip_it(self):
+    def test_cli_commands_never_start_the_dashboard(self):
         from autoresearch_runtime import cli
 
-        home = Path(self.temp.name) / "autostart-home"
-        args = ["status"]
-        with patch.dict(os.environ, {"AUTORESEARCH_HOME": str(home), "AUTORESEARCH_NO_DASHBOARD": ""}), \
-             patch("autoresearch_runtime.dashboard_server.ensure_dashboard_server",
-                  return_value={"running": True, "url": "http://127.0.0.1:8765/", "browser_opened": False}) as auto, \
-             patch.object(cli, "run_command", return_value={"ran": True}):
-            output = io.StringIO()
-            with contextlib.redirect_stdout(output):
-                self.assertEqual(lab_main(args), 0)
-            auto.assert_called_once_with(home.resolve(), open_browser=False)
-            self.assertFalse((home / "autoresearch.sqlite3").exists())
-
-        with patch("autoresearch_runtime.dashboard_server.ensure_dashboard_server") as auto, \
-             patch.object(cli, "run_command", return_value={"ran": True}):
+        home = Path(self.temp.name) / "no-autostart-home"
+        with patch.dict(os.environ, {"AUTORESEARCH_HOME": str(home)}), \
+             patch.object(cli, "run_command", return_value={"ran": True}), \
+             patch("autoresearch_runtime.dash_process.subprocess.Popen") as launch:
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(lab_main(["--headless", "status"]), 0)
-                self.assertEqual(lab_main(["dashboard", "status"]), 0)
-                self.assertEqual(lab_main(["--help"]), 0)
-            auto.assert_not_called()
+                self.assertEqual(lab_main(["status"]), 0)
+            launch.assert_not_called()
+        self.assertFalse((home / ".dashboard-server.json").exists())
 
     def test_dashboard_start_token_stays_out_of_argv_and_browser_failure_can_retry(self):
         from autoresearch_runtime import dash_process
@@ -324,7 +288,7 @@ process.stdout.write(JSON.stringify({{
         self.assertEqual(launched[0][1]["env"]["AUTORESEARCH_DASHBOARD_STOP_TOKEN"], "private-start-token")
         self.assertEqual(launched[0][1]["env"].get("AUTORESEARCH_HOME"), os.environ.get("AUTORESEARCH_HOME"))
 
-        with patch("autoresearch_runtime.dashboard_server.webbrowser.open", side_effect=[False, True]) as opener:
+        with patch("autoresearch_runtime.dash_process.webbrowser.open", side_effect=[False, True]) as opener:
             first = start_dashboard(root, open_browser=True, port_start=19200)
             second = start_dashboard(root, open_browser=True, port_start=19200)
         self.addCleanup(lambda: stop_dashboard(root))
@@ -344,7 +308,7 @@ process.stdout.write(JSON.stringify({{
         occupied.bind(("127.0.0.1", 18950))
         occupied.listen()
         self.addCleanup(occupied.close)
-        with patch("autoresearch_runtime.dashboard_server.webbrowser.open", return_value=False) as open_browser:
+        with patch("autoresearch_runtime.dash_process.webbrowser.open", return_value=False) as open_browser:
             first = start_dashboard(self.root, open_browser=True, timeout=8, port_start=18950)
         self.addCleanup(lambda: stop_dashboard(self.root))
         self.assertTrue(open_browser.called)
@@ -356,7 +320,13 @@ process.stdout.write(JSON.stringify({{
             self.assertIn("permissions could not be restricted", first.get("warning", ""))
         self.assertNotIn(server_info["token"], json.dumps(first))
         self.assertNotIn(":18950/", first["url"])
-        second = start_dashboard(self.root, open_browser=False)
+        # A second `dashboard start` from the CLI reuses the running service and opens nothing.
+        second_output = io.StringIO()
+        with contextlib.redirect_stdout(second_output):
+            self.assertEqual(lab_main(["dashboard", "start", "--root", str(self.root)]), 0)
+        second = json.loads(second_output.getvalue())["data"]
+        self.assertEqual(second["url"], first["url"])
+        self.assertFalse(second["browser_opened"])
         self.assertEqual(first["pid"], second["pid"])
         self.assertTrue(dashboard_server_status(self.root)["running"])
         status_output = io.StringIO()
@@ -426,25 +396,15 @@ process.stdout.write(JSON.stringify({{
                         urlopen(stop_request, timeout=2).close()
                 thread.join(timeout=3)
 
-    def test_browser_is_opened_once_per_labs_root_and_can_be_reopened_explicitly(self):
-        with patch("autoresearch_runtime.dashboard_server.webbrowser.open", return_value=True) as open_browser:
-            first = start_dashboard(self.root, open_browser=True, port_start=18900)
-            second = start_dashboard(self.root, open_browser=True, port_start=18900)
-            third = start_dashboard(self.root, open_browser=True, force_open=True, port_start=18900)
-        self.addCleanup(lambda: stop_dashboard(self.root))
-        self.assertTrue(first["browser_opened"])
-        self.assertFalse(second["browser_opened"])
-        self.assertTrue(third["browser_opened"])
-        self.assertEqual(open_browser.call_count, 2)
-
-    def test_concurrent_dashboard_start_shares_server_and_opens_one_tab(self):
+    def test_concurrent_dashboard_start_shares_one_server(self):
         root = Path(self.temp.name) / "concurrent-labs"
-        with patch("autoresearch_runtime.dashboard_server.webbrowser.open", return_value=True) as open_browser:
+        with patch("autoresearch_runtime.dash_process.webbrowser.open", return_value=True) as open_browser:
             with ThreadPoolExecutor(max_workers=4) as pool:
                 results = list(pool.map(lambda _: start_dashboard(root, open_browser=True, port_start=19050), range(4)))
         self.addCleanup(lambda: stop_dashboard(root))
         self.assertEqual(len({item["pid"] for item in results}), 1)
-        self.assertEqual(open_browser.call_count, 1)
+        # Opening is an explicit request each time, so every request that asked for a tab got one.
+        self.assertEqual(open_browser.call_count, 4)
 
     def test_dashboard_start_lock_serializes_separate_processes(self):
         root = Path(self.temp.name) / "process-labs"
@@ -472,8 +432,7 @@ process.stdout.write(JSON.stringify({{
                             encoding="utf-8")
         self.assertIsNone(_server_info(self.root))
 
-    def test_events_sse_headers_heartbeat_and_broadcast(self):
-        # Keep this legacy compatibility test independent of the user's real SQLite home.
+    def test_events_sse_headers_and_heartbeat(self):
         home_patch = patch.dict(os.environ, {"AUTORESEARCH_HOME": str(Path(self.temp.name) / "sse-home")})
         home_patch.start()
         self.addCleanup(home_patch.stop)
@@ -500,29 +459,6 @@ process.stdout.write(JSON.stringify({{
             line1 = response.readline().decode("utf-8")
         self.assertEqual(response.readline().decode("utf-8"), "\n")
 
-        server.broadcast("update", {"revision": "test-rev-1", "timestamp": 123.45})
-        evt_line = response.readline().decode("utf-8")
-        data_line = response.readline().decode("utf-8")
-        blank_line = response.readline().decode("utf-8")
-        self.assertEqual(evt_line, "event: update\n")
-        self.assertIn('"revision": "test-rev-1"', data_line)
-        self.assertEqual(blank_line, "\n")
-
-        notify_dashboard(self.root, {"revision": "test-rev-2", "timestamp": 678.9})
-        evt_line2 = response.readline().decode("utf-8")
-        data_line2 = response.readline().decode("utf-8")
-        blank_line2 = response.readline().decode("utf-8")
-        self.assertEqual(evt_line2, "event: update\n")
-        self.assertIn('"revision": "test-rev-2"', data_line2)
-        self.assertEqual(blank_line2, "\n")
-
-        response.close()
-        server.broadcast("update", {"revision": "noop"})
-        deadline = __import__("time").monotonic() + 2
-        while len(server.clients) > 0 and __import__("time").monotonic() < deadline:
-            __import__("time").sleep(0.05)
-        self.assertEqual(len(server.clients), 0)
-
     def test_sqlite_sse_emits_only_authoritative_revision_changes(self):
         from autoresearch_runtime.sqlite_store import SQLiteStore
 
@@ -545,10 +481,6 @@ process.stdout.write(JSON.stringify({{
             try:
                 request = _local_request(f"http://127.0.0.1:{server.server_port}/api/events")
                 response = urlopen(request, timeout=5)
-                deadline = __import__("time").monotonic() + 2
-                while not server.clients and __import__("time").monotonic() < deadline:
-                    __import__("time").sleep(0.01)
-                server.broadcast("update", {"secret": "must-not-be-forwarded"})
                 event = response.readline().decode("utf-8")
                 while event == ": ping\n":
                     self.assertEqual(response.readline().decode("utf-8"), "\n")
@@ -560,7 +492,6 @@ process.stdout.write(JSON.stringify({{
                 payload = json.loads(data.removeprefix("data: "))
                 self.assertEqual(payload["revision"], "1")
                 self.assertEqual(set(payload), {"revision", "timestamp"})
-                self.assertNotIn("must-not-be-forwarded", data)
             finally:
                 if response is not None:
                     response.close()
@@ -568,26 +499,25 @@ process.stdout.write(JSON.stringify({{
                 server.server_close()
                 thread.join(timeout=2)
 
-    def test_ensure_dashboard_server_fast_check_and_fallback(self):
-        with patch.dict(os.environ, {"AUTORESEARCH_NO_DASHBOARD": ""}), \
-             patch("autoresearch_runtime.dash_process._server_info", return_value={"url": "http://127.0.0.1:8765/", "pid": 4242}) as mock_info, \
-             patch("autoresearch_runtime.dash_process._start_dashboard_locked") as mock_start:
-            res = ensure_dashboard_server(self.root, open_browser=False)
+    def test_start_reuses_a_live_server_and_launches_only_when_missing(self):
+        with patch("autoresearch_runtime.dash_process._server_info",
+                   return_value={"url": "http://127.0.0.1:8765/", "pid": 4242}) as mock_info, \
+             patch("autoresearch_runtime.dash_process._launch_server") as mock_launch:
+            res = start_dashboard(self.root, open_browser=False)
             self.assertTrue(res["running"])
             self.assertEqual(res["url"], "http://127.0.0.1:8765/")
             self.assertEqual(res["pid"], 4242)
             self.assertFalse(res["browser_opened"])
             mock_info.assert_called_once_with(self.root.resolve(), timeout=1.5)
-            mock_start.assert_not_called()
+            mock_launch.assert_not_called()
 
-        info = {"url": "http://127.0.0.1:8765/", "pid": 4243}
-        with patch.dict(os.environ, {"AUTORESEARCH_NO_DASHBOARD": ""}), \
-             patch("autoresearch_runtime.dash_process._server_info", side_effect=[None, info]), \
-             patch("autoresearch_runtime.dash_process._start_dashboard_locked", return_value={"running": True, "url": "http://127.0.0.1:8765/", "pid": 4243, "browser_opened": False}) as mock_start:
-            res = ensure_dashboard_server(self.root, open_browser=False)
+        with patch("autoresearch_runtime.dash_process._server_info", return_value=None), \
+             patch("autoresearch_runtime.dash_process._launch_server",
+                   return_value={"url": "http://127.0.0.1:8765/", "pid": 4243}) as mock_launch:
+            res = start_dashboard(self.root, open_browser=False)
             self.assertTrue(res["running"])
             self.assertEqual(res["pid"], 4243)
-            mock_start.assert_called_once_with(self.root.resolve(), open_browser=False, timeout=5.0, port_start=8765, force_open=False)
+            mock_launch.assert_called_once_with(self.root.resolve(), timeout=5, port_start=8765)
 
 if __name__ == "__main__":
     unittest.main()

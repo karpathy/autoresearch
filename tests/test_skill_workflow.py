@@ -507,32 +507,15 @@ class SkillWorkflowTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["data"]["title"], "Улучшение")
 
-    def test_prepare_cli_starts_dashboard_and_returns_url_when_browser_is_unavailable(self):
-        from unittest.mock import patch
+    def test_prepare_cli_creates_the_lab_and_starts_no_dashboard(self):
         from autoresearch_runtime.bootstrap import main as prepare_main
 
         output = io.StringIO()
-        with patch.dict(os.environ, {"AUTORESEARCH_NO_DASHBOARD": ""}), \
-             patch("autoresearch_runtime.dashboard_server.start_dashboard", return_value={
-            "running": True, "url": "http://127.0.0.1:8765/", "browser_opened": False, "pid": 123,
-        }) as start, contextlib.redirect_stdout(output):
+        with contextlib.redirect_stdout(output):
             self.assertEqual(prepare_main(["--confirmed", "--program", str(self.program), "--spec", str(self.spec())]), 0)
         result = json.loads(output.getvalue())["data"]
-        self.assertTrue(start.called)
-        self.assertEqual(result["dashboard_url"], "http://127.0.0.1:8765/")
-
-    def test_prepare_cli_respects_no_dashboard_env(self):
-        from unittest.mock import patch
-        from autoresearch_runtime.bootstrap import main as prepare_main
-
-        output = io.StringIO()
-        with patch.dict(os.environ, {"AUTORESEARCH_NO_DASHBOARD": "1"}), \
-             patch("autoresearch_runtime.dashboard_server.start_dashboard") as start, \
-             contextlib.redirect_stdout(output):
-            self.assertEqual(prepare_main(["--confirmed", "--program", str(self.program), "--spec", str(self.spec())]), 0)
-        result = json.loads(output.getvalue())["data"]
-        self.assertFalse(start.called)
-        self.assertIsNone(result.get("dashboard_url"))
+        self.assertNotIn("dashboard_url", result)
+        self.assertFalse((Path(os.environ["AUTORESEARCH_HOME"]) / ".dashboard-server.json").exists())
 
     def test_paid_evaluator_runs_without_a_key_limit(self):
         from autoresearch_runtime.bootstrap import prepare_lab
@@ -794,7 +777,7 @@ class SkillWorkflowTest(unittest.TestCase):
         scripts = installed / "scripts"
         prepared = subprocess.run(
             [sys.executable, str(scripts / "prepare.py"), "--program", str(self.program),
-             "--spec", str(self.spec()), "--confirmed", "--no-dashboard"], cwd=self.root, capture_output=True, text=True,
+             "--spec", str(self.spec()), "--confirmed"], cwd=self.root, capture_output=True, text=True,
              **support.hidden_process_kwargs(),
         )
         self.assertEqual(prepared.returncode, 0, prepared.stderr)
@@ -810,7 +793,7 @@ class SkillWorkflowTest(unittest.TestCase):
         self.assertEqual(json.loads(measured.stdout)["data"]["status"], "accepted")
         resumed = subprocess.run(
             [sys.executable, str(scripts / "prepare.py"), "--program", str(self.program),
-             "--project", str(self.project), "--resume", "--no-dashboard"],
+             "--project", str(self.project), "--resume"],
             cwd=self.root, capture_output=True, text=True,
             **support.hidden_process_kwargs(),
         )

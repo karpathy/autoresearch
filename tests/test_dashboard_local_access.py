@@ -83,12 +83,13 @@ class DashboardLocalAccessTest(unittest.TestCase):
         )
         for headers in cases:
             with self.subTest(headers=headers):
-                status, _, _ = self._request("/api/notify", method="POST", body=b"{}", headers=headers)
+                status, _, _ = self._request("/api/v1/labs", method="POST", body=b"{}", headers=headers)
                 self.assertEqual(status, 403)
 
     def test_originless_local_api_call_and_exact_host_are_supported(self):
-        status, _, _ = self._request("/api/notify", method="POST", body=b"{}")
-        self.assertEqual(status, 200)
+        # Authentication passes without an Origin; the write itself is then refused with 405.
+        status, _, _ = self._request("/api/v1/labs", method="POST", body=b"{}")
+        self.assertEqual(status, 405)
 
         status, _, _ = self._request("/", headers={"Host": "example.test"})
         self.assertEqual(status, 403)
@@ -123,18 +124,15 @@ class DashboardLocalAccessTest(unittest.TestCase):
         self.thread.join(timeout=2)
         self.assertFalse(self.thread.is_alive())
 
-    def test_browser_opens_plain_url_once_and_force_allows_reopening(self):
+    def test_browser_opens_the_plain_url_on_each_explicit_request(self):
         from autoresearch_runtime.dash_process import _maybe_open_browser
 
-        marker_root = Path(self.temp.name) / "browser-open"
-        marker_root.mkdir()
         info = {"url": self.base}
         result = {}
         with patch("autoresearch_runtime.dash_process.urlopen") as request, \
-             patch("autoresearch_runtime.dashboard_server.webbrowser.open", return_value=True) as opener:
-            _maybe_open_browser(marker_root, info, result, force_open=False)
-            _maybe_open_browser(marker_root, info, result, force_open=False)
-            _maybe_open_browser(marker_root, info, result, force_open=True)
+             patch("autoresearch_runtime.dash_process.webbrowser.open", return_value=True) as opener:
+            _maybe_open_browser(info, result)
+            _maybe_open_browser(info, result)
 
         self.assertTrue(result["browser_opened"])
         self.assertEqual(opener.call_count, 2)

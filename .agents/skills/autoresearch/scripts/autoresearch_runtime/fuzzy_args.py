@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Sequence
 
 GLOBAL_VALUE_FLAGS = {"--config", "--project", "--lab"}
-GLOBAL_BOOLEAN_FLAGS = {"--agent", "--headless", "--confirmed"}
+GLOBAL_BOOLEAN_FLAGS = {"--agent", "--confirmed"}
 FLAG_ALIASES = {
     "--runs": "--repeats",
     "--from-report": "--source",
@@ -17,7 +17,7 @@ def normalize_cli_args(argv: Sequence[str]) -> list[str]:
     """Normalize global flags and aliases in CLI arguments.
 
     1. Map aliases (--runs -> --repeats, --from-report -> --source, --input -> --source).
-    2. Hoist global flags (--agent, --headless, --confirmed, --config, --project, --lab) to the front so they
+    2. Hoist global flags (--agent, --confirmed, --config, --project, --lab) to the front so they
        can appear anywhere without triggering subparser unrecognized argument errors.
     """
     # Step 1: normalize aliases

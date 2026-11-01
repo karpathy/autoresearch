@@ -12,7 +12,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from autoresearch_runtime.dashboard import chart_series
 from autoresearch_runtime.lab import (
     LabError, load_config, load_state, run_baseline, run_trial,
     status_lab, main, recover_lab,

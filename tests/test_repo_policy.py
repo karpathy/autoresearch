@@ -17,7 +17,7 @@ except ImportError:
 REPO = Path(__file__).resolve().parents[1]
 SAMPLE_TOKEN = "forbidden-token"
 SAMPLE_RULES = [("sample rule", re.compile(SAMPLE_TOKEN, re.IGNORECASE))]
-RUNTIME_LINE_BUDGET = 15965  # Current total plus about 1 percent, rounded up; this should only be lowered.
+RUNTIME_LINE_BUDGET = 15170  # Current total plus about 1 percent, rounded up; this should only be lowered.
 
 
 def _git(repo, *args):

@@ -46,7 +46,7 @@ def main() -> int:
         live_dir = Path(td)
         labs_home = live_dir / ".labs"
         labs_home.mkdir(parents=True, exist_ok=True)
-        env_extra = {"AUTORESEARCH_HOME": str(labs_home), "AUTORESEARCH_NO_BROWSER": "1"}
+        env_extra = {"AUTORESEARCH_HOME": str(labs_home)}
         
         project_dir = live_dir / "my_project"
         project_dir.mkdir(parents=True, exist_ok=True)
@@ -126,7 +126,7 @@ def main() -> int:
         assert rc == 0, f"doctor failed: {err}"
         
         # Step 2: Prepare
-        rc, out, err, dt = run_cmd(cli + ["prepare", "--program", str(program_file), "--spec", str(spec_file), "--no-dashboard", "--no-browser"], env_extra=env_extra)
+        rc, out, err, dt = run_cmd(cli + ["prepare", "--program", str(program_file), "--spec", str(spec_file)], env_extra=env_extra)
         telemetry.append({"step": "prepare", "rc": rc, "stdout": out, "stderr": err, "dt_sec": round(dt, 3)})
         print(f"[{'OK' if rc == 0 else 'FAIL'}] prepare in {dt:.2f}s (rc={rc})")
         assert rc == 0, f"prepare failed: {err}\n{out}"
@@ -175,7 +175,7 @@ def main() -> int:
         trial_data = trial_resp["data"]
         print(f"Trial outcome: status={trial_data.get('status')}, best score: {trial_resp['cockpit']['state']['best']['score']}")
         
-        # Step 6: Dashboard status and static page verification
+        # Step 6: Dashboard status (the service is read-only and only runs when started)
         dash_status_cmd = cli + ["dashboard", "status", "--root", str(labs_home)]
         rc, out, err, dt = run_cmd(dash_status_cmd, env_extra=env_extra)
         telemetry.append({"step": "dashboard_status", "rc": rc, "stdout": out, "stderr": err, "dt_sec": round(dt, 3)})
@@ -183,14 +183,7 @@ def main() -> int:
         assert rc == 0, f"dashboard status failed: {err}\n{out}"
         dash_data = json.loads(out)
         assert dash_data.get("ok") is True
-        
-        static_html = state_dir / "dashboard.html"
-        if not static_html.is_file():
-            from autoresearch_runtime.dashboard import render_report_page
-            static_html.write_text(render_report_page(labs_home, selected_lab_id=state_dir.name), encoding="utf-8")
-        assert static_html.is_file() and static_html.stat().st_size > 100, f"Missing static dashboard.html at {static_html}"
-        print(f"[VERIFIED] Static dashboard.html exists and populated ({static_html.stat().st_size} bytes)")
-        
+
         # Step 7: Promote in place
         rc, out, err, dt = run_cmd(cli + ["--config", config_path, "promote", "--in-place"], env_extra=env_extra)
         telemetry.append({"step": "promote", "rc": rc, "stdout": out, "stderr": err, "dt_sec": round(dt, 3)})

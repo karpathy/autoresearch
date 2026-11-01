@@ -26,11 +26,7 @@ class BootstrapConfirmationTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.home = self.root / ".labs"
-        self.env = patch.dict(os.environ, {
-            "AUTORESEARCH_HOME": str(self.home),
-            "AUTORESEARCH_NO_DASHBOARD": "1",
-            "AUTORESEARCH_NO_BROWSER": "1",
-        })
+        self.env = patch.dict(os.environ, {"AUTORESEARCH_HOME": str(self.home)})
         self.env.start()
         self.addCleanup(self.env.stop)
 
@@ -70,8 +66,7 @@ class BootstrapConfirmationTest(unittest.TestCase):
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             code = bootstrap_main([
-                "--program", str(self.program), "--spec", str(self.spec),
-                "--no-dashboard", "--no-browser", *extra,
+                "--program", str(self.program), "--spec", str(self.spec), *extra,
             ])
         return code, stdout.getvalue(), stderr.getvalue()
 

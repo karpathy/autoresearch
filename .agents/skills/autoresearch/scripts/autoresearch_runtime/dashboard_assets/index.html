@@ -10,7 +10,7 @@ try {
   if (savedTheme) document.documentElement.dataset.theme = savedTheme;
 } catch (error) {}
 </script>
-__STYLE__
+<link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
 <header class="topbar">
@@ -28,7 +28,7 @@ __STYLE__
     <select id="top-lab-select" aria-label="Выбрать лабораторию"></select>
   </div>
   <div class="top-actions">
-    <p class="mode" id="updated"><span class="live-dot" aria-hidden="true"></span><span id="mode-text">__MODE_LABEL__</span></p>
+    <p class="mode" id="updated"><span class="live-dot" aria-hidden="true"></span><span id="mode-text">Live</span></p>
     <button type="button" class="icon-btn" id="theme-toggle" aria-label="Переключить тему"></button>
   </div>
 </header>
@@ -38,7 +38,6 @@ __STYLE__
     <div class="side-head">
       <h2>Проекты и лаборатории</h2>
       <input id="lab-search" type="search" placeholder="Поиск лаборатории" aria-label="Поиск лаборатории">
-      <div class="filters" id="status-filters" role="group" aria-label="Жизненный цикл лабораторий"></div>
     </div>
     <div id="navigation"></div>
   </aside>
@@ -51,6 +50,6 @@ __STYLE__
   </main>
 </div>
 <script id="snapshot" type="application/json">__PAYLOAD__</script>
-__APP__
+<script src="/assets/live_app.js" defer></script>
 </body>
 </html>
