@@ -1,29 +1,15 @@
-"""Small, data-agnostic experiment runner.
-
-An evaluator owns the domain data and writes one result.json per repeat. This
-module only manages files, comparable metrics, and experiment history.
-"""
+"""Loads and validates the lab configuration (LabConfig and load_config)."""
 
 from __future__ import annotations
 
-import argparse
 import fnmatch
-import hashlib
 import json
 import math
-import os
-import shutil
-import subprocess
-import sys
-import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .dashboard import render_report_page
-from .catalog import update_lab_status
 
 from .errors import LabError
 from .store import _sha256, _write_json

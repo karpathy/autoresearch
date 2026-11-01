@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .catalog import resolve_lab_path
 from .errors import LabError
 from .paths import lab_storage_roots, resolve_home
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -12,7 +11,7 @@ from .errors import LabError
 from .evaluator import _evaluate_once
 from .gitutil import _git
 from .measurement import next_sequence_id
-from .replay import _replay_checkout, _tree_hashes
+from .replay import _tree_hashes
 from .store import _write_json
 
 
