@@ -30,7 +30,7 @@ Framework acceptance means a trial passed comparison with its parent and guards.
 
 Use `guide --json --run <id>` to inspect a result and its evidence. Compare aggregate and parent-relative deltas to find bottlenecks, failed guards, or untested conditions. Before editing, state one explanation, evidence, one change, expected direction, and falsifier. Respect the confirmed budget.
 
-Edit only `candidate/`. Run one change per trial and compare it to the declared parent using repeat rules and guards. Execute trials using zero-file inline hypothesis flags (`--hypothesis-json '{"title":"...","observation":"...","expected_effect":"..."}'` or `--title "..." --observation "..." --expected-effect "..."`) on `step --run` or `trial` / `trial start` to avoid wasting tool calls on temporary `hypothesis.json` files.
+Edit only `candidate/`. Run one change per trial and compare it to the declared parent using repeat rules and guards. Execute trials using zero-file inline hypothesis flags (`--hypothesis-json '{"title":"...","observation":"...","expected_effect":"..."}'` or `--title "..." --observation "..." --expected-effect "..."`) on `--confirmed step --run` or `--confirmed trial` / `--confirmed trial start` to avoid wasting tool calls on temporary `hypothesis.json` files.
 
 Use the automatic diagnostics surfaced directly in the cockpit envelope instead of filesystem reads:
 - `impact.error_tail` and `run_detail.error_tail`: last 10 lines (up to 600 chars) of evaluator stderr/stdout on crash, eliminating the need to read `run.log`.

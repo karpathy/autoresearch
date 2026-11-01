@@ -58,10 +58,10 @@ python SKILL_DIR/scripts/lab.py --config <lab.json> guide --json [--run <run_id>
 
 ```text
 python SKILL_DIR/scripts/lab.py --config <lab.json> step
-python SKILL_DIR/scripts/lab.py --config <lab.json> step --run --hypothesis <hypothesis.json>
-python SKILL_DIR/scripts/lab.py --config <lab.json> step --run --hypothesis-json '{"title":"...","observation":"...","expected_effect":"..."}'
-python SKILL_DIR/scripts/lab.py --config <lab.json> step --run --title "..." --observation "..." --expected-effect "..."
-python SKILL_DIR/scripts/lab.py --config <lab.json> resume <run_id>
+python SKILL_DIR/scripts/lab.py --config <lab.json> --confirmed step --run --hypothesis <hypothesis.json>
+python SKILL_DIR/scripts/lab.py --config <lab.json> --confirmed step --run --hypothesis-json '{"title":"...","observation":"...","expected_effect":"..."}'
+python SKILL_DIR/scripts/lab.py --config <lab.json> --confirmed step --run --title "..." --observation "..." --expected-effect "..."
+python SKILL_DIR/scripts/lab.py --config <lab.json> --confirmed resume <run_id>
 ```
 
 For AI agents, inline hypothesis arguments (`--hypothesis-json` or `--title`/`--observation`/`--expected-effect`) are recommended over `--hypothesis <file>` to avoid disk write tool calls.
@@ -71,8 +71,8 @@ Native resume accepts only an interrupted, crashed, or timed-out run and validat
 Background trials remain available:
 
 ```text
-python SKILL_DIR/scripts/lab.py --config <lab.json> trial start --hypothesis <hypothesis.json>
-python SKILL_DIR/scripts/lab.py --config <lab.json> trial start --hypothesis-json '{"title":"...","observation":"...","expected_effect":"..."}'
+python SKILL_DIR/scripts/lab.py --config <lab.json> --confirmed trial start --hypothesis <hypothesis.json>
+python SKILL_DIR/scripts/lab.py --config <lab.json> --confirmed trial start --hypothesis-json '{"title":"...","observation":"...","expected_effect":"..."}'
 python SKILL_DIR/scripts/lab.py --config <lab.json> trial wait --timeout 30
 python SKILL_DIR/scripts/lab.py --config <lab.json> trial status
 ```
