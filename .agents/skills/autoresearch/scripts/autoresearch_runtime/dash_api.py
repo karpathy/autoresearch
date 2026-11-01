@@ -2,48 +2,23 @@
 
 from __future__ import annotations
 
-import argparse
-import contextlib
 import hashlib
 import json
 import math
-import os
-import secrets
-import socket
-import subprocess
-import sys
-import threading
-import time
-import webbrowser
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.error import URLError
-from urllib.parse import unquote, urljoin, urlsplit
-from urllib.request import Request, urlopen
 from typing import Any
 
-from .catalog import (
-    _human_goal,
-    aggregate_dashboard_status,
-    lab_lifecycle,
-    lab_status,
-    resolve_lab_path,
-)
+from .catalog import aggregate_dashboard_status, resolve_lab_path
 from .control_import import load_control_manifests
 from .paths import home_root_id, lab_storage_roots, resolve_home, resolve_root_by_id, root_id_for, storage_root_for_path
 from .dashboard import (
-    ASSET_TYPES,
-    STATUS_LABELS,
     _primary_score,
-    _worst,
-    assign_short_labels,
     build_problems,
     build_verdict,
     chart_series,
     metric_as_percent,
     metric_label,
     presentation_status,
-    read_asset,
     reason_label,
     render_unified_dashboard,
 )

@@ -2,49 +2,32 @@
 
 from __future__ import annotations
 
-import argparse
-import contextlib
 import hashlib
 import json
-import math
 import os
 import queue
 import secrets
-import shutil
 import socket
-import stat
-import subprocess
-import sys
 import threading
 import time
-import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.error import URLError
 from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 from urllib.request import Request, urlopen
 from typing import Any
 
 from .auth import AuthError, authenticate
-from .catalog import _human_goal, lab_lifecycle, lab_status, refresh_catalog, resolve_lab_path, save_catalog
-from .dashboard import (
-    ASSET_TYPES,
-    STATUS_LABELS,
-    assign_short_labels,
-    build_problems,
-    build_verdict,
-    chart_series,
-    metric_as_percent,
-    metric_label,
-    presentation_status,
-    read_asset,
-    reason_label,
-    render_unified_dashboard,
-)
+from .dashboard import ASSET_TYPES, read_asset, render_unified_dashboard
 
 from .dash_api import (
-    AmbiguousLab, _open_lab, _safe_diff, archive_lab, dashboard_details, dashboard_status,
-    delete_lab, render_live_page, restore_lab,
+    AmbiguousLab,
+    _open_lab,
+    _safe_diff,
+    archive_lab,
+    dashboard_details,
+    dashboard_status,
+    delete_lab,
+    restore_lab,
 )
 from .api_v1 import dispatch as dispatch_api_v1
 from .paths import resolve_home

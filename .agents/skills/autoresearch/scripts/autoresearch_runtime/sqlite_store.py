@@ -19,7 +19,6 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
-from urllib.parse import quote
 
 from .paths import resolve_home
 

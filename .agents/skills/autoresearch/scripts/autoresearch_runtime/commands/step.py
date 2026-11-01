@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
-from ..errors import LabError
 from ..gitutil import _git, _git_bytes
 from ..state import load_state
 from ..cockpit import get_state_card
 from ..step import load_and_validate_hypothesis, resolve_hypothesis_args, run_step
-from .common import (
-    explicit_confirmation, normalize_trial_hypothesis, resolve_config, run_durable_operation,
-)
+from .common import explicit_confirmation, resolve_config, run_durable_operation
 
 
 def execute_step(

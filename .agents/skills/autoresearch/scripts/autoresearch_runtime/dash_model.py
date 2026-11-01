@@ -2,44 +2,18 @@
 
 from __future__ import annotations
 
-import argparse
-import contextlib
 import hashlib
-import json
 import math
 import os
-import secrets
-import shutil
-import socket
 import stat
-import subprocess
-import sys
 import threading
 import time
-import webbrowser
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.error import URLError
-from urllib.parse import unquote, urljoin, urlsplit
-from urllib.request import Request, urlopen
 from typing import Any
 
 from .store import _sha256
-from .catalog import _human_goal, lab_lifecycle, lab_status, refresh_catalog, resolve_lab_path, save_catalog
-from .dashboard import (
-    ASSET_TYPES,
-    STATUS_LABELS,
-    assign_short_labels,
-    build_problems,
-    build_verdict,
-    chart_series,
-    metric_as_percent,
-    metric_label,
-    presentation_status,
-    read_asset,
-    reason_label,
-    render_unified_dashboard,
-)
+from .catalog import _human_goal, lab_lifecycle, lab_status, resolve_lab_path
+from .dashboard import STATUS_LABELS, assign_short_labels
 
 from .dash_io import _merged_usage, _read_json
 
