@@ -732,7 +732,7 @@ class LabTest(unittest.TestCase):
             init_lab(config)
 
     def test_packaged_synthetic_example(self):
-        example = Path(__file__).resolve().parents[1] / "examples" / "toy"
+        example = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "legacy-toy"
         copy = self.root / "toy"
         shutil.copytree(example, copy)
         config = load_config(copy / "lab.json")

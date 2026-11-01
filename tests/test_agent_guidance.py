@@ -45,24 +45,9 @@ class AgentGuidanceTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-        example = Path(__file__).resolve().parents[1] / "examples" / "toy"
+        example = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "legacy-toy"
         self.toy = self.root / "toy"
         shutil.copytree(example, self.toy)
-        # examples/toy ships spec.json for prepare. This fixture keeps the legacy config shape
-        # that load_config and _use_sqlite_toy read, pointed at the toy evaluator and project.
-        (self.toy / "lab.json").write_text(json.dumps({
-            "source_root": "project",
-            "state_dir": ".lab",
-            "source_paths": ["rule.txt"],
-            "editable_files": ["rule.txt"],
-            "input_files": ["cases.json"],
-            "evaluator": ["{python}", str(self.toy / "evaluator.py"), "{candidate}", "{run_dir}"],
-            "metrics": {"primary": "mean_error", "direction": "min",
-                        "guards": [{"name": "coverage", "direction": "max"}]},
-            "repeats": 2,
-            "timeout_seconds": 5,
-            "budget": {"max_seconds": 60, "max_trials": 5},
-        }), encoding="utf-8")
         self.config = load_config(self.toy / "lab.json")
 
     def _use_sqlite_toy(self):
