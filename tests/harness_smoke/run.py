@@ -36,7 +36,8 @@ RESULTS_ROOT = REPO / ".tests" / "harness_smoke"
 AGENTS = ("codex", "claude")
 WITHHELD = frozenset({"spec.json", "brief.md", "known_case.json", "README.md", "run_demo.py"})
 PHASE1_PROMPT = (
-    "Use the autoresearch skill in this workspace. The user has confirmed this passport. "
+    "Use the autoresearch skill in this workspace. AUTORESEARCH_HOME is already set for this "
+    "workspace; keep it as it is. The user has confirmed this passport. "
     "Project: toy/project. Goal: lower mean_error. Metric: mean_error, direction min. "
     "Guard: coverage must not fall. Evaluator: toy/evaluator.py, offline, makes no network calls. "
     "Limits: at most 3 trials, no paid calls. Constraints: never edit toy/project directly. "
@@ -182,9 +183,16 @@ def run_phase(name: str, args: argparse.Namespace, binary: str, workspace: Path,
             "seconds": round(time.monotonic() - began, 1)}
 
 
-def find_lab_configs(home: Path) -> list[Path]:
-    """Every lab.json the agent left under the lab home. The host trusts these, not the agent's text."""
-    return sorted(path for path in home.glob("**/lab.json") if path.is_file())
+def find_lab_configs(workspace: Path) -> list[Path]:
+    """Every lab the agent created in the workspace. The host trusts these, not the agent's text.
+
+    A SQLite lab's lab.json is a virtual path, so labs are found by their state directories,
+    under any home inside the workspace.
+    """
+    configs = []
+    for database in workspace.rglob("autoresearch.sqlite3"):
+        configs += [path / "lab.json" for path in database.parent.glob("projects/*/*") if path.is_dir()]
+    return sorted(configs)
 
 
 def tree_hashes(root: Path) -> dict[str, str]:
@@ -288,8 +296,10 @@ def run_smoke(args: argparse.Namespace, binary: str, workspace: Path, run_dir: P
                                  agent_env(home, None), resume=False)
 
     # Host: find the lab config itself and read its contract fingerprint.
-    found = find_lab_configs(home)
+    found = find_lab_configs(workspace)
     config = found[0] if len(found) == 1 else None
+    if config is not None:
+        home = config.parents[3]  # <home>/projects/<project>/<lab>/lab.json
     lab = DEMO.Lab(project, home, host, workspace)
     fingerprint: Any = None
     guide_error = None

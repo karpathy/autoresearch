@@ -102,12 +102,20 @@ def _confirmed_goal(program: Path, spec: dict[str, Any]) -> str:
     if isinstance(declared, str) and declared.strip():
         return declared.strip()[:240]
     try:
-        for line in program.read_text(encoding="utf-8").splitlines():
-            label, separator, value = line.partition(":")
-            if separator and label.strip().casefold() in {"goal", "цель"} and value.strip():
-                return value.strip()[:240]
+        lines = program.read_text(encoding="utf-8").splitlines()
     except OSError:
-        pass
+        return ""
+    for index, line in enumerate(lines):
+        label, separator, value = line.partition(":")
+        if separator and label.strip().casefold() in {"goal", "цель"} and value.strip():
+            return value.strip()[:240]
+        # The passport template in references/brief.md uses a "## Goal" section.
+        if line.strip().casefold() in {"## goal", "## цель"}:
+            for following in lines[index + 1:]:
+                if following.startswith("#"):
+                    break
+                if following.strip():
+                    return following.strip()[:240]
     return ""
 
 
