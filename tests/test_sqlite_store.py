@@ -5,6 +5,7 @@ try:
 except ImportError:
     from tests import support  # noqa: F401
 
+import contextlib
 import multiprocessing
 import sqlite3
 import tempfile
@@ -114,7 +115,7 @@ class SQLiteStoreTest(unittest.TestCase):
 
     def test_version_and_corruption_errors_leave_database_bytes_unchanged(self):
         self.create_lab()
-        with sqlite3.connect(self.store.db_path) as conn:
+        with contextlib.closing(sqlite3.connect(self.store.db_path)) as conn, conn:
             conn.execute("PRAGMA user_version=999")
         before = self.store.db_path.read_bytes()
         with self.assertRaises(StoreVersionError):

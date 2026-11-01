@@ -268,6 +268,7 @@ def _usage_totals(state_dir: Path) -> dict[str, Any]:
             "unknown_requests": int(unknown_requests), "unknown_cost_usd": round(unknown_cost, 10)}
 
 def _lab_summary(root: Path, project: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    root = root.resolve()  # state_dir below is resolved, and later paths are taken relative to root
     state_dir = resolve_lab_path(root, project, str(item["path"]))
     config = _read_json(state_dir / "lab.json", {})
     state = _read_json(state_dir / "state.json", {})

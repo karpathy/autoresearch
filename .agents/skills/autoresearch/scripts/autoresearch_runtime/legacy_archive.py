@@ -91,12 +91,17 @@ def _safe_relative(name: str) -> str:
     return path.as_posix()
 
 
+# On Windows with Python 3.12+, lstat and fstat report st_ctime values about a millisecond apart for
+# an unchanged file, so ctime there would report drift that did not happen.
+_SIGNATURE_USES_CTIME = os.name != "nt"
+
+
 def _file_signature(info: os.stat_result) -> tuple[int, int, int, int, int, int]:
     return (
         stat.S_IFMT(info.st_mode),
         int(info.st_size),
         int(getattr(info, "st_mtime_ns", int(info.st_mtime * 1_000_000_000))),
-        int(getattr(info, "st_ctime_ns", int(info.st_ctime * 1_000_000_000))),
+        int(getattr(info, "st_ctime_ns", int(info.st_ctime * 1_000_000_000))) if _SIGNATURE_USES_CTIME else 0,
         int(getattr(info, "st_dev", 0)),
         int(getattr(info, "st_ino", 0)),
     )

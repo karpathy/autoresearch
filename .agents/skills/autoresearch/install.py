@@ -150,10 +150,8 @@ def _prepare_install(source: Path, destination: Path, manifest: dict[str, Any], 
     if destination.is_symlink():
         if link:
             try:
-                link_target = Path(os.readlink(destination))
-                if not link_target.is_absolute():
-                    link_target = destination.parent / link_target
-                same_source = os.path.normcase(str(link_target.resolve())) == os.path.normcase(str(source))
+                # Resolve the link itself: os.readlink can return a \\?\ path on Windows, which resolve() keeps.
+                same_source = os.path.normcase(str(destination.resolve())) == os.path.normcase(str(source))
             except (OSError, RuntimeError):
                 same_source = False
             if same_source:

@@ -16,6 +16,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from autoresearch_runtime import legacy_archive
@@ -31,7 +32,7 @@ class LegacyArchiveExportTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
+        self.base = Path(self.temp.name).resolve()  # the code under test works with resolved paths
         self.root = self.base / "legacy-lab"
         self.root.mkdir()
         self.config_path = self.root / "lab.json"
@@ -76,6 +77,16 @@ class LegacyArchiveExportTest(unittest.TestCase):
         self.assertEqual(lab["state"]["baseline_id"], "baseline")
         self.assertEqual(lab["runs"], [{"id": "trial-0007", "status": "accepted", "kind": "trial"}])
         self.assertFalse(self.source_root.exists())
+
+    def test_signature_ignores_ctime_only_where_stat_calls_disagree_on_it(self) -> None:
+        common = {"st_mode": stat.S_IFREG, "st_size": 1, "st_mtime": 0, "st_ctime": 0,
+                  "st_mtime_ns": 2, "st_dev": 4, "st_ino": 5}
+        first = SimpleNamespace(st_ctime_ns=3, **common)
+        second = SimpleNamespace(st_ctime_ns=9, **common)
+        with patch.object(legacy_archive, "_SIGNATURE_USES_CTIME", False):
+            self.assertEqual(legacy_archive._file_signature(first), legacy_archive._file_signature(second))
+        with patch.object(legacy_archive, "_SIGNATURE_USES_CTIME", True):
+            self.assertNotEqual(legacy_archive._file_signature(first), legacy_archive._file_signature(second))
 
     def test_run_summaries_preserve_budget_and_interrupted_producer_statuses(self) -> None:
         expected = {"budget": "baseline-budget", "interrupted": "trial-interrupted"}

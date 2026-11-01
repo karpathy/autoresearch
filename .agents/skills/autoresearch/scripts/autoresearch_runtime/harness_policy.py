@@ -65,10 +65,11 @@ def _text(value: Any, name: str) -> str:
 
 
 def _inside(path: Path, root: Path) -> bool:
+    """Whether path is spelled through root. Each ancestor is resolved, so short (8.3) names cannot hide it."""
     try:
-        path.relative_to(root.resolve())
-        return True
-    except (OSError, ValueError):
+        resolved_root = root.resolve()
+        return any(candidate.resolve() == resolved_root for candidate in (path, *path.parents))
+    except (OSError, RuntimeError):
         return False
 
 

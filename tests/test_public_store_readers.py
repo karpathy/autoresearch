@@ -3,6 +3,7 @@ try:
 except ImportError:
     from tests import support  # noqa: F401
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -58,7 +59,7 @@ def _create_lab(store: SQLiteStore, root: Path):
 
 def _set_run_tie(store: SQLiteStore, lab_id, run_ids) -> None:
     placeholders = ",".join("?" for _ in run_ids)
-    with sqlite3.connect(store.db_path) as conn:
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn, conn:
         conn.execute(
             f"UPDATE runs SET created_at=? WHERE lab_id=? AND run_id IN ({placeholders})",
             ("2026-01-01T00:00:00.000Z", str(lab_id), *(str(run_id) for run_id in run_ids)),
