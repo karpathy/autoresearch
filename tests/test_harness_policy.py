@@ -22,15 +22,11 @@ from autoresearch_runtime.worker import _validate_worker_policy
 from autoresearch_runtime.api_v1 import _validate_command
 from autoresearch_runtime.fuzzy_args import normalize_cli_args
 from autoresearch_runtime.commands.common import (
-    enqueue_and_start_operation, explicit_confirmation, resolve_config,
+    explicit_confirmation, resolve_config,
 )
-from autoresearch_runtime.commands import probe as probe_command
-from autoresearch_runtime.commands import replay as replay_command
 from autoresearch_runtime.commands import baseline as baseline_command
 from autoresearch_runtime.baseline import run_baseline
 from autoresearch_runtime.trial import run_trial
-from autoresearch_runtime.probe import run_probe
-from autoresearch_runtime.replay import run_replay
 
 
 _ABSENT = object()
@@ -272,27 +268,6 @@ class HarnessPolicyTest(unittest.TestCase):
         self.assertNotIn("confirmed", bound["params"])
         self.assertTrue(payload["params"]["confirmed"])
 
-    def test_new_measurement_kinds_validate_payload_before_policy_capture(self):
-        for kind, params, error_code in (
-            ("probe", {"confirmed": True, "commit": "HEAD"}, "E_CONTRACT_PROBE"),
-            ("replay", {"confirmed": True, "trial_id": "baseline"}, "E_CONTRACT_REPLAY"),
-        ):
-            with self.subTest(kind=kind), patch(
-                "autoresearch_runtime.runtimeops.authorize_operation", create=True,
-            ) as authorize, patch(
-                "autoresearch_runtime.runtimeops.safe_operation_context", return_value={"schema": 1},
-            ):
-                caught = None
-                try:
-                    _bind_operation_context(
-                        self.config, kind, {"command": kind, "params": params},
-                    )
-                except LabError as error:
-                    caught = error
-            self.assertIsNotNone(caught, f"{kind} should reject its malformed payload")
-            self.assertEqual(caught.code, error_code)
-            authorize.assert_not_called()
-
     def test_policy_gate_precedes_enqueue_and_allowed_snapshot_is_persisted(self):
         class CapturingStore:
             def __init__(self):
@@ -363,58 +338,11 @@ class HarnessPolicyTest(unittest.TestCase):
         attempts = (
             lambda: run_baseline(self.config),
             lambda: run_trial(self.config, {"title": "t", "observation": "o", "expected_effect": "e"}),
-            lambda: run_probe(self.config, "HEAD", {}, "g", "l", 1),
-            lambda: run_replay(self.config, "trial-0001"),
         )
         for attempt in attempts:
             with self.subTest(attempt=attempt), self.assertRaises(LabError) as error:
                 attempt()
             self.assertEqual(error.exception.code, "E_DURABLE_OPERATION_REQUIRED")
-
-
-
-
-
-    def test_probe_and_replay_cli_keep_their_synchronous_result_shapes_on_durable_routes(self):
-        config = SimpleNamespace(lab_id=self.config.lab_id, repeats=2)
-        probe_result = {"id": "probe-0001", "status": "complete", "runs": []}
-        probe_args = SimpleNamespace(
-            adopt=None, commit=None, group="quality", label="check", repeats=None,
-            env_json="{}", confirmed=True,
-        )
-        with patch("autoresearch_runtime.commands.probe.resolve_config", return_value=config), \
-             patch("autoresearch_runtime.state.load_state", return_value={"best_commit": "abc123"}), \
-             patch("autoresearch_runtime.commands.probe.run_durable_operation",
-                   return_value=probe_result) as run_probe_op:
-            self.assertEqual(probe_command.run(probe_args, None), probe_result)
-        run_probe_op.assert_called_once_with(config, "probe", {
-            "commit": "abc123", "env": {}, "group": "quality", "label": "check", "repeats": 2,
-            "confirmed": True,
-        })
-
-        replay_result = {"id": "replay-0001", "status": "complete"}
-        replay_args = SimpleNamespace(plan=False, replay_trial="trial-0001", confirmed=True)
-        with patch("autoresearch_runtime.commands.replay.resolve_config", return_value=config), \
-             patch("autoresearch_runtime.commands.replay.run_durable_operation",
-                   return_value=replay_result) as run_replay_op:
-            self.assertEqual(replay_command.run(replay_args, None), replay_result)
-        run_replay_op.assert_called_once_with(config, "replay", {
-            "trial_id": "trial-0001", "confirmed": True,
-        })
-
-    def test_probe_and_replay_are_accepted_by_the_common_durable_queue(self):
-        operation = {"status": "queued", "operation_id": "operation-id"}
-        for kind, params in (("probe", {"commit": "abc", "env": {}}),
-                             ("replay", {"trial_id": "trial-0001"})):
-            with patch(
-                "autoresearch_runtime.runtimeops.reserve_and_launch_operation",
-                return_value=operation,
-            ) as reserve:
-                result = enqueue_and_start_operation(
-                    self.config.lab_id, kind, params, f"idempotency-{kind}"
-                )
-            self.assertEqual(result, operation)
-            reserve.assert_called_once()
 
 
 if __name__ == "__main__":

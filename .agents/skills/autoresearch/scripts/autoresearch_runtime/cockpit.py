@@ -484,7 +484,7 @@ def get_recommended_actions(
         return [{
             "priority": 1, "action": "INSPECT_RUN", "argv": argv, "command": _command(argv),
             "run_id": run_id or None,
-            "reason": f"Latest run ended as {status}; inspect its evidence before retrying or replaying.",
+            "reason": f"Latest run ended as {status}; inspect its evidence before retrying.",
         }]
     if status == "accepted" and not str(last_run.get("id", "")).startswith("baseline"):
         action, reason = "ITERATE", "Accepted run: inspect its evidence, then write a distinct hypothesis and candidate change."

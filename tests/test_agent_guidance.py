@@ -31,11 +31,9 @@ from autoresearch_runtime.snapshot import init_lab
 from autoresearch_runtime.sqlite_store import SQLiteStore
 from autoresearch_runtime.state import _save_manifest, load_state
 from autoresearch_runtime.store import _read_json, _write_json
-from autoresearch_runtime.probe import adopt_probe
 from tests.durable_workflow_helpers import (
     approved_offline_profile,
     run_baseline as run_durable_baseline,
-    run_probe as run_durable_probe,
     run_trial as run_durable_trial,
 )
 

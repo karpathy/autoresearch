@@ -10,7 +10,6 @@ from .evaluator import _remaining, _spent
 from .baseline import run_baseline
 from .trial import assess_candidate, recover_lab, run_trial, status_lab
 from .vault import restore_vault
-from .replay import replay_plan, run_replay
 from .promote import export_best, promote_in_place, promote_to_branch
 from .cli import main
 

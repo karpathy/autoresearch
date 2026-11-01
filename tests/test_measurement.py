@@ -13,8 +13,7 @@ from pathlib import Path
 from durable_workflow_helpers import run_baseline
 from autoresearch_runtime.evaluator import _evaluate_once
 from autoresearch_runtime.lab import init_lab, load_config, load_state, run_trial
-from autoresearch_runtime.measurement import incomparable_with_current, migrate_manifest, next_sequence_id
-from durable_workflow_helpers import run_probe
+from autoresearch_runtime.measurement import incomparable_with_current, migrate_manifest
 
 
 class MeasurementTest(unittest.TestCase):
@@ -30,7 +29,7 @@ class MeasurementTest(unittest.TestCase):
             "import json, os, sys\nfrom pathlib import Path\n"
             "candidate, run_dir = map(Path, sys.argv[1:3])\n"
             "value = int((candidate / 'value.txt').read_text())\n"
-            "att = {'probe_env': os.environ.get('PROBE_TAG', '')}\n"
+            "att = {'attest_env': os.environ.get('ATTEST_TAG', '')}\n"
             "run_dir.mkdir(parents=True, exist_ok=True)\n"
             "(run_dir / 'result.json').write_text(json.dumps({\n"
             "  'metrics': {'score': value},\n"
@@ -91,12 +90,12 @@ class MeasurementTest(unittest.TestCase):
         self.assertIn("incomparable_with_current", reason or "")
 
     def test_expected_attestations_mismatch_invalidates_run(self):
-        config = self._config(expected_attestations={"probe_env": "required"})
+        config = self._config(expected_attestations={"attest_env": "required"})
         init_lab(config)
         (config.state_dir / "candidate").mkdir(parents=True, exist_ok=True)
         status, _, reason = _evaluate_once(
-            config, config.state_dir / "runs" / "probe-test" / "repeat_01", 10,
-            extra_env={"PROBE_TAG": "wrong"},
+            config, config.state_dir / "runs" / "attest-test" / "repeat_01", 10,
+            extra_env={"ATTEST_TAG": "wrong"},
         )
         self.assertEqual(status, "invalid")
         self.assertIn("attestation", reason)

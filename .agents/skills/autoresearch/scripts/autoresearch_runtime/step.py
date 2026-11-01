@@ -225,7 +225,7 @@ def run_step(
 
     elif action_type == "INSPECT_RUN":
         result["status"] = "action_not_runnable"
-        result["message"] = "Inspect the selected run evidence before retrying or replaying it."
+        result["message"] = "Inspect the selected run evidence before retrying it."
 
     else:
         result["status"] = "action_not_runnable"

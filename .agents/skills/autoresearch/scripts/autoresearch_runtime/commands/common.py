@@ -207,7 +207,7 @@ def enqueue_and_start_operation(
     idempotency_key: str,
 ) -> dict[str, Any]:
     """Reserve durably and launch the shared worker under the lab lock."""
-    if command not in {"baseline", "trial", "resume", "recover", "epoch", "probe", "replay"}:
+    if command not in {"baseline", "trial", "resume", "recover", "epoch"}:
         raise LabError(f"Unsupported operation: {command}", code="E_USAGE_COMMAND")
     payload = {"command": command, "params": params}
     from ..runtimeops import reserve_and_launch_operation

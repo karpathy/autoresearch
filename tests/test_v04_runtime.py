@@ -24,7 +24,7 @@ from autoresearch_runtime.worker import run_operation_worker
 from autoresearch_runtime.measurement import open_contract_epoch
 from autoresearch_runtime.cockpit import build_cockpit
 from tests.durable_workflow_helpers import (
-    approved_offline_profile, run_baseline, run_durable_operation, run_probe, run_replay, run_trial,
+    approved_offline_profile, run_baseline, run_durable_operation, run_trial,
 )
 
 
@@ -676,42 +676,6 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         })
         self.assertEqual(trial["status"], "accepted")
         self.assertEqual(trial["parent"], "baseline-0002")
-
-    def test_probe_and_ingest_store_measurements_under_runs_without_json_shadows(self):
-        _prepared, config = self._prepare()
-        self.assertEqual(run_baseline(config)["status"], "accepted")
-        state_before = load_state(config)
-        probe = run_probe(config, "best", {}, "runtime", "candidate check", 1)
-        self.assertEqual(probe["status"], "complete")
-        self.assertFalse(probe["adoptable"])
-        store = SQLiteStore()
-        probe_manifest = store.load_manifest(config.lab_id, "probe-0001")
-        self.assertEqual(probe_manifest["runs"][0]["metrics"]["score"], 1)
-        self.assertEqual(load_state(config)["best_id"], state_before["best_id"])
-        self.assertFalse((config.state_dir / "probes" / "probe-0001" / "summary.json").exists())
-        self.assertEqual(list((config.state_dir / "runs" / "probe-0001").rglob("result.json")), [])
-
-    def test_replay_stores_results_and_proof_in_sqlite(self):
-        _prepared, config = self._prepare()
-        self.assertEqual(run_baseline(config)["status"], "accepted")
-        (config.state_dir / "candidate" / "score.txt").write_text("2", encoding="utf-8")
-        self.assertEqual(run_trial(config, {
-            "title": "Increase score", "observation": "Candidate score rises",
-            "expected_effect": "Replay confirms the accepted measurement",
-        })["status"], "accepted")
-
-        proof = run_replay(config, "trial-0001")
-        self.assertEqual(proof["status"], "complete")
-        self.assertFalse(proof["adoptable"])
-        store = SQLiteStore()
-        replay = store.get_run(config.lab_id, "replay-0001")
-        self.assertEqual(replay["kind"], "replay")
-        self.assertEqual(replay["manifest"]["runs"][0]["metrics"]["score"], 2)
-        replay_dir = config.state_dir / "runs" / "replay-0001"
-        self.assertFalse((replay_dir / "manifest.json").exists())
-        for name in ("result.json", "usage.json", "attempts.jsonl", "cases.jsonl", "sent-requests.jsonl"):
-            self.assertEqual(list(replay_dir.rglob(name)), [], name)
-        self.assertFalse((config.state_dir / "runs" / "trial-0001" / "rechecks").exists())
 
 
 if __name__ == "__main__":

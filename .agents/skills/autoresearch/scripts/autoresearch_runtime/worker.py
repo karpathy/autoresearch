@@ -52,22 +52,6 @@ def _dispatch_operation(config: Any, command: str, params: dict[str, Any]) -> An
         spec = params.get("spec", {})
         reason = params.get("reason")
         return open_contract_epoch(config.path, spec, reason=reason)
-    if command == "probe":
-        from .probe import run_probe
-        env = params.get("env")
-        if not isinstance(env, dict) or any(not isinstance(key, str) or not isinstance(value, str)
-                                            for key, value in env.items()):
-            raise ValueError("probe operation requires an object of string environment values")
-        return run_probe(
-            config, params.get("commit"), env, params.get("group"), params.get("label"),
-            params.get("repeats", config.repeats),
-        )
-    if command == "replay":
-        from .replay import run_replay
-        trial_id = params.get("trial_id")
-        if not isinstance(trial_id, str) or not trial_id:
-            raise ValueError("replay operation requires params.trial_id")
-        return run_replay(config, trial_id)
     raise ValueError(f"Unsupported operation command: {command}")
 
 

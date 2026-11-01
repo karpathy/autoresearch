@@ -29,12 +29,10 @@ Goal status is `unknown` when criteria or evidence are absent, `unconfirmed` whe
 
 ## Evidence classes
 
-The recorded result origin is one of `fresh`, `offline_recompute`, `historical`, or `imported`. A `fresh` origin means the evaluator ran on the current candidate and contract; inspect request and usage logs to determine whether it called a provider. `offline_recompute`, `historical`, and `imported` do not establish a fresh production goal. The origin label is metadata, not a network sandbox. Recovery actions such as `case_resume`, replay, and native lab resume describe how work continued, not a substitute for inspecting each repeat's origin and attempt logs. Keep unknown historical usage separate from usage observed during recovery.
+The recorded result origin is one of `fresh`, `offline_recompute`, `historical`, or `imported`. A `fresh` origin means the evaluator ran on the current candidate and contract; inspect request and usage logs to determine whether it called a provider. `offline_recompute`, `historical`, and `imported` do not establish a fresh production goal. The origin label is metadata, not a network sandbox. Recovery actions such as `case_resume` and native lab resume describe how work continued, not a substitute for inspecting each repeat's origin and attempt logs. Keep unknown historical usage separate from usage observed during recovery.
 
-## Epochs and probes
+## Epochs
 
 `baseline --supersede --reason TEXT` starts a new baseline epoch. `epoch open --reason TEXT --spec PATH` updates supported contract fields, refreshes fingerprints, and clears baseline pointers without rewriting `runs/`. Interrupted work must be resolved before opening an epoch.
-
-Probes compare conditions such as model or provider on an isolated copy; they do not automatically satisfy a verified-baseline requirement. `probe --adopt` is rejected as a baseline-adoption path. Preserve the probe and run the declared baseline procedure.
 
 Baseline validation modes describe comparability checks: `historical` verifies against comparable saved metric runs; `fresh` requires a hash-pinned known case. Do not change modes merely to bypass a mismatch.

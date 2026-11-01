@@ -139,7 +139,7 @@ def _has_comparable_history(root: Path, project: Path, metric: str, inputs: list
                     if not old_script.is_file() or _sha256(old_script) != evaluator_sha256:
                         continue
                     state = store.load_state(lab_id)
-                    # Imported history and probes may be visible as results, but only a
+                    # Imported history may be visible as results, but only a
                     # verified baseline can prevent a fresh run from bypassing history.
                     if state.get("baseline_verified") is not True:
                         continue

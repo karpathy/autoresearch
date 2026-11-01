@@ -16,7 +16,6 @@ from tests.support import tree_digest
 from autoresearch_runtime.cli import main
 from autoresearch_runtime.config import load_config
 from autoresearch_runtime.errors import LabError
-from autoresearch_runtime.probe import adopt_probe
 
 
 class PreflightContractTest(unittest.TestCase):
