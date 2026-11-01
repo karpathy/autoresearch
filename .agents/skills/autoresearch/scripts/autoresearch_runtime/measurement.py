@@ -387,34 +387,6 @@ def next_sequence_id(storage_dir: os.PathLike[str] | str, prefix: str) -> str:
             pass
 
 
-def compare_metrics(current: float, baseline: float, direction: str = "max") -> int:
-    """Compare two metric values according to optimization direction.
-
-    Returns:
-        1 if current is better than baseline
-       -1 if current is worse than baseline
-        0 if they are equal
-    """
-    if math.isclose(current, baseline):
-        return 0
-    if direction == "min":
-        return 1 if current < baseline else -1
-    return 1 if current > baseline else -1
-
-
-def is_metric_improved(
-    proposed: float,
-    baseline: float,
-    direction: str = "max",
-    *,
-    margin: float = 0.0,
-) -> bool:
-    """Return True if proposed value is strictly better than baseline by at least margin."""
-    if direction == "min":
-        return proposed < (baseline - margin)
-    return proposed > (baseline + margin)
-
-
 def check_guard_thresholds(
     metrics: dict[str, Any],
     guard_thresholds: dict[str, dict[str, float]] | list[dict[str, Any]] | None,
@@ -453,51 +425,3 @@ def check_guard_thresholds(
             return False, f"guard {name} above max_threshold ({val} > {max_t})"
 
     return True, None
-
-
-def assess_candidate_metrics(
-    candidate_metrics: dict[str, Any],
-    baseline_metrics: dict[str, Any] | None,
-    primary: str,
-    direction: str = "max",
-    guards: tuple[tuple[str, str], ...] | list[tuple[str, str]] | None = None,
-    guard_thresholds: dict[str, dict[str, float]] | None = None,
-    target_threshold: float | None = None,
-    min_gain: float | None = None,
-) -> tuple[bool, str]:
-    """Universal matching of candidate metrics against baseline and explicit thresholds."""
-    if guard_thresholds:
-        ok, reason = check_guard_thresholds(candidate_metrics, guard_thresholds)
-        if not ok:
-            return False, reason or "guard threshold violated"
-
-    cand_primary = candidate_metrics.get(primary)
-    if cand_primary is None or isinstance(cand_primary, bool) or not isinstance(cand_primary, (int, float)):
-        return False, f"missing or invalid primary metric: {primary}"
-    cand_primary = float(cand_primary)
-
-    if target_threshold is not None:
-        if direction == "min" and cand_primary > target_threshold:
-            return False, f"primary metric {cand_primary} failed target_threshold ({cand_primary} > {target_threshold})"
-        if direction == "max" and cand_primary < target_threshold:
-            return False, f"primary metric {cand_primary} failed target_threshold ({cand_primary} < {target_threshold})"
-
-    if baseline_metrics is not None and primary in baseline_metrics:
-        base_primary = baseline_metrics[primary]
-        if not isinstance(base_primary, bool) and isinstance(base_primary, (int, float)):
-            base_primary = float(base_primary)
-            margin = float(min_gain) if min_gain is not None else 0.0
-            if not is_metric_improved(cand_primary, base_primary, direction=direction, margin=margin):
-                return False, "primary did not improve"
-
-    if guards and baseline_metrics is not None:
-        for name, guard_dir in guards:
-            if name in candidate_metrics and name in baseline_metrics:
-                cand_val = candidate_metrics[name]
-                base_val = baseline_metrics[name]
-                if isinstance(cand_val, (int, float)) and isinstance(base_val, (int, float)):
-                    if (float(cand_val) < float(base_val) if guard_dir == "max" else float(cand_val) > float(base_val)):
-                        return False, f"guard {name} regressed"
-
-    return True, "improved"
-

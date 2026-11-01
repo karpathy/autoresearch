@@ -5,7 +5,7 @@ Evaluator runs use two separate approvals:
 1. The operator approves the current lab contract when preparing it.
 2. The operator or harness confirms each evaluator operation with the CLI's `--confirmed` flag (or API `confirmed: true`).
 
-The host also supplies a profile through `AUTORESEARCH_HARNESS_PROFILE`. Keep that file outside both the measured project and the lab state directory. A profile is a trusted-host attestation. AutoResearch validates its shape and contract fingerprint, but cannot prove that the named harness actually enforces its sandbox, network policy, or external provider limits.
+The host also supplies a profile through `AUTORESEARCH_HARNESS_PROFILE`. Keep that file outside both the measured project and the lab state directory. A profile is a trusted-host attestation. AutoResearch validates its shape and contract fingerprint, but cannot prove that the named harness actually enforces its sandbox or network policy. AutoResearch does not limit spending; see [Spending](#spending) below.
 
 Treat evaluator code as arbitrary. Keeping the profile outside the project is path hygiene, not filesystem isolation. The external host sandbox must prevent the evaluator from reading or changing the profile and host credentials; AutoResearch also removes the profile-path variable from the evaluator environment, but does not enforce filesystem permissions.
 
@@ -23,7 +23,7 @@ Copy `data.contract_fingerprint` from the guide's JSON envelope exactly. It chan
 
 ## Profile format
 
-For an offline evaluator, use `network.mode: "disabled"` and `spend: null`:
+For an offline evaluator, use `network.mode: "disabled"`:
 
 ```json
 {
@@ -34,26 +34,23 @@ For an offline evaluator, use `network.mode: "disabled"` and `spend: null`:
     "contract_fingerprint": "<copy from guide JSON>"
   },
   "sandbox": {"enabled": true, "scope": "workspace"},
-  "network": {"mode": "disabled"},
-  "spend": null
+  "network": {"mode": "disabled"}
 }
 ```
 
-`sandbox.scope` is `workspace`, `container`, `vm`, or `microvm`. For a network-enabled evaluator, set `network.mode` to `allowlisted`, list the permitted hosts, and provide an externally enforced cap:
+`sandbox.scope` is `workspace`, `container`, `vm`, or `microvm`. For a network-enabled evaluator, set `network.mode` to `allowlisted` and list the permitted hosts:
 
 ```json
-"network": {"mode": "allowlisted", "allowed_hosts": ["api.example.com"]},
-"spend": {
-  "provider": "<configured provider>",
-  "scope": "per_run",
-  "max_requests": 10,
-  "max_cost_usd": 1.00
-}
+"network": {"mode": "allowlisted", "allowed_hosts": ["api.example.com"]}
 ```
 
-The spend object requires at least one of `max_requests` or `max_cost_usd`; `scope` may be `per_run`, `session`, `day`, or `month`. If the lab names a provider, the profile provider must match. `unknown` and `unrestricted` network modes are rejected. An allowlist without an external spend cap is rejected.
+`unknown` and `unrestricted` network modes are rejected. The profile needs only `schema_version`, `harness`, `approval`, `sandbox`, and `network`. Any other top-level field is rejected, except the retired `spend` block described below.
 
-These cap values are assertions about controls enforced by the host, harness, or provider account. They are not limits enforced by AutoResearch around an arbitrary evaluator subprocess. Passport `budget.max_requests` and `budget.max_cost_usd` remain declared and measured values; they do not stop an external request.
+## Spending
+
+AutoResearch does not limit spending. It records request and cost usage and reports it, but it does not stop a request or a charge. Set a spending limit on each API key the evaluator uses, in the provider's account settings.
+
+Profiles written for earlier versions may still contain a `spend` block. It is accepted, not validated, and left out of the profile's attested material. Passport `max_seconds` and `max_trials` remain the only limits that AutoResearch enforces.
 
 ## Run an approved operation
 
@@ -66,4 +63,4 @@ python SKILL_DIR/scripts/lab.py --config <lab-config> --confirmed trial start --
 
 The CLI fails closed when the current operation is not explicitly confirmed, the profile is missing or invalid, the fingerprint is stale, or required isolation/capability attestations are absent. An old profile approves the contract only; it does not confirm a new operation. Read-only commands and preflight do not need a profile. Preparation creates no evaluator result; `prepare --auto` is deprecated and performs no preparation or evaluation.
 
-An agent is compatible only when its host harness can provide the documented profile and enforce the stated controls. This interface does not imply that every agent platform has a sandbox, approval mechanism, or provider spend cap.
+An agent is compatible only when its host harness can provide the documented profile and enforce the stated controls. This interface does not imply that every agent platform has a sandbox or approval mechanism.

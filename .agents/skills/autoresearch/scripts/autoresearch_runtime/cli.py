@@ -29,7 +29,8 @@ from .errors import LabError
 from .fuzzy_args import normalize_cli_args
 
 
-def main(argv: list[str] | None = None, *, labs_root: Path | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Build the lab CLI parser without parsing or executing anything."""
     parser = argparse.ArgumentParser(description="Generic hypothesis lab")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--project", type=Path)
@@ -39,6 +40,11 @@ def main(argv: list[str] | None = None, *, labs_root: Path | None = None) -> int
     parser.add_argument("--confirmed", action="store_true",
                         help="Confirm this evaluator or write operation for the current contract")
     register_all(parser.add_subparsers(dest="command", required=True))
+    return parser
+
+
+def main(argv: list[str] | None = None, *, labs_root: Path | None = None) -> int:
+    parser = build_parser()
     if argv is not None:
         argv_list = list(argv)
     else:

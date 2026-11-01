@@ -48,14 +48,14 @@ Execute the trial using **zero-file inline arguments**. Do NOT call `write_file`
 ### Option A: Inline JSON (Recommended)
 
 ```bash
-python scripts/lab.py --agent step --run \
+python scripts/lab.py --agent --confirmed step --run \
   --hypothesis-json '{"title":"Vectorize loop","observation":"Inner loop takes 80% CPU","expected_effect":"Reduce latency by 25%"}'
 ```
 
 Or for asynchronous / background trials:
 
 ```bash
-python scripts/lab.py --agent trial start \
+python scripts/lab.py --agent --confirmed trial start \
   --hypothesis-json '{"title":"Vectorize loop","observation":"Inner loop takes 80% CPU","expected_effect":"Reduce latency by 25%"}'
 python scripts/lab.py --agent trial wait --timeout 60
 ```
@@ -63,7 +63,7 @@ python scripts/lab.py --agent trial wait --timeout 60
 ### Option B: Inline Individual Flags
 
 ```bash
-python scripts/lab.py --agent step --run \
+python scripts/lab.py --agent --confirmed step --run \
   --title "Vectorize loop" \
   --observation "Inner loop takes 80% CPU" \
   --expected-effect "Reduce latency by 25%"

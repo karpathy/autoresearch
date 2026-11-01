@@ -386,8 +386,8 @@ def dashboard_details(home: Path, project_id: str, lab_id: str, *, include_diffs
                             baseline=baseline_record.get("score"), best=best_record.get("score"),
                             hypotheses=hypotheses, samples=samples)
     budget = {
-        "requests": {"used": summary.get("requests"), "limit": summary.get("request_limit")},
-        "cost": {"used": summary.get("cost_usd"), "limit": summary.get("cost_limit_usd")},
+        "requests": {"used": summary.get("requests")},
+        "cost": {"used": summary.get("cost_usd")},
         "duration_seconds": summary.get("duration_seconds"),
     }
     return {"lab": summary, "conditions": safe_conditions, "baseline": baseline_record,

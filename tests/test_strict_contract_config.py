@@ -16,7 +16,7 @@ from autoresearch_runtime.errors import LabError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TOY_LAB = REPO_ROOT / "examples" / "toy"
+TOY_LAB = REPO_ROOT / "tests" / "fixtures" / "legacy-toy"
 
 
 class StrictContractConfigTest(unittest.TestCase):

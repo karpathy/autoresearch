@@ -316,7 +316,7 @@ class RuntimeGoalSignalIntegrationTest(unittest.TestCase):
     def test_real_baseline_and_trial_report_repeat_spread_and_confirm_goal(self):
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp) / "toy"
-            shutil.copytree(Path(__file__).resolve().parents[1] / "examples" / "toy", project)
+            shutil.copytree(Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "legacy-toy", project)
             config_path = project / "lab.json"
             raw_config = json.loads(config_path.read_text(encoding="utf-8"))
             raw_config["goal_criteria"] = {

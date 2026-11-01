@@ -1,6 +1,6 @@
 [project]
 name = "autoresearch-lab"
-version = "0.7.0"
+version = "0.8.0"
 description = "Data-agnostic hypothesis evaluation lab"
 readme = "README.md"
 license = "MIT"

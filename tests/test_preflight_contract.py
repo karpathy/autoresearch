@@ -87,8 +87,27 @@ class PreflightContractTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("exact quote", payload["error"]["message"])
 
+    def test_preflight_and_prepare_reject_spend_limits_with_a_coded_error(self):
+        from autoresearch_runtime.bootstrap import main as prepare_main
+
+        spec = self.spec()
+        raw = json.loads(spec.read_text())
+        raw["budget"] = {"max_requests": 5, "max_cost_usd": 2.0}
+        spec.write_text(json.dumps(raw))
+        code, payload = self.invoke("preflight", "--spec", str(spec), "--program", str(self.program))
+        self.assertEqual(code, 2, payload)
+        self.assertEqual(payload["error"]["code"], "E_CONTRACT_SPEND_LIMIT")
+        self.assertIn("does not limit spending", payload["error"]["message"])
+        self.assertIn("limit on the API key", payload["error"]["message"])
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = prepare_main(["--confirmed", "--program", str(self.program), "--spec", str(spec)])
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(err.getvalue())["error"]["code"], "E_CONTRACT_SPEND_LIMIT")
+
     def test_goal_criteria_is_optional_validated_configuration(self):
-        example = Path(__file__).parents[1] / "examples" / "toy"
+        example = Path(__file__).parents[1] / "tests" / "fixtures" / "legacy-toy"
         toy = self.root / "toy"
         shutil.copytree(example, toy)
         path = toy / "lab.json"
@@ -104,7 +123,7 @@ class PreflightContractTest(unittest.TestCase):
 
     def test_claimed_offline_verification_requires_pinned_fixture(self):
         toy = self.root / "toy"
-        shutil.copytree(Path(__file__).parents[1] / "examples" / "toy", toy)
+        shutil.copytree(Path(__file__).parents[1] / "tests" / "fixtures" / "legacy-toy", toy)
         path = toy / "lab.json"
         raw = json.loads(path.read_text())
         raw["evaluator_capabilities"] = {"case_resume": True, "offline_verified": True}
@@ -125,7 +144,7 @@ class PreflightContractTest(unittest.TestCase):
 
     def test_probe_adoption_never_mutates_best_pointer(self):
         toy = self.root / "toy"
-        shutil.copytree(Path(__file__).parents[1] / "examples" / "toy", toy)
+        shutil.copytree(Path(__file__).parents[1] / "tests" / "fixtures" / "legacy-toy", toy)
         raw = json.loads((toy / "lab.json").read_text())
         raw.update(source_root=str(toy / "source"), state_dir=str(toy / ".lab"),
                    input_files=[str(toy / "cases.json")])

@@ -17,6 +17,7 @@ except ImportError:
 REPO = Path(__file__).resolve().parents[1]
 SAMPLE_TOKEN = "forbidden-token"
 SAMPLE_RULES = [("sample rule", re.compile(SAMPLE_TOKEN, re.IGNORECASE))]
+RUNTIME_LINE_BUDGET = 22258  # Current total plus 2 percent, rounded up; this should only be lowered.
 
 
 def _git(repo, *args):
@@ -37,6 +38,15 @@ def _run_cli(argv, repo):
 class RepoPolicyTest(unittest.TestCase):
     def test_tracked_paths_fit_windows_clone_roots(self):
         self.assertEqual(repo_policy.long_paths(repo_policy.tracked_paths(REPO)), [])
+
+    def test_runtime_python_stays_within_size_budget(self):
+        scripts = ".agents/skills/autoresearch/scripts/"
+        total = sum(
+            len((REPO / path).read_bytes().splitlines())
+            for path in repo_policy.tracked_paths(REPO)
+            if path.startswith(scripts) and path.endswith(".py")
+        )
+        self.assertLessEqual(total, RUNTIME_LINE_BUDGET)
 
     def test_fixtures_are_stored_as_exact_bytes(self):
         fixtures = [

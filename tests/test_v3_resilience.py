@@ -130,7 +130,6 @@ class TestV3Resilience(unittest.TestCase):
                     "sha256": hashlib.sha256(known_case.read_bytes()).hexdigest(),
                 },
             },
-            "budget": {"max_requests": 0, "max_cost_usd": 0},
             "exclude_globs": ["eval.py"],
         }), encoding="utf-8")
 

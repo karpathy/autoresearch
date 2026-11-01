@@ -91,10 +91,6 @@ def reason_label(reason: str) -> str:
     return _REASON_LABELS.get(text, text)
 
 
-def _reason_label(reason: str) -> str:
-    return reason_label(reason)
-
-
 def presentation_status(status: str, reason: str = "") -> tuple[str, str]:
     """Return a CSS kind and a Russian label. Missing API keys are not a budget stop."""
     if is_config_error(reason):

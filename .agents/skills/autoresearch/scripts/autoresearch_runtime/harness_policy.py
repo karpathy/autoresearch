@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import re
 from pathlib import Path
@@ -18,7 +17,6 @@ _MAX_PROFILE_BYTES = 64 * 1024
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$")
 _FINGERPRINT = re.compile(r"^[a-f0-9]{64}$")
 _HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}(?::[0-9]{1,5})?$")
-_CAP_SCOPES = {"per_run", "session", "day", "month"}
 _SANDBOX_SCOPES = {"workspace", "container", "vm", "microvm"}
 
 
@@ -100,48 +98,12 @@ def _profile_path(config: Any) -> Path:
     return path
 
 
-def _normalize_spend(value: Any, config: Any) -> dict[str, Any] | None:
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        _fail("Harness profile spend must be null or an object")
-    allowed = {"provider", "scope", "id", "max_cost_usd", "max_requests"}
-    if set(value) - allowed or not {"provider", "scope"}.issubset(value):
-        _fail("Harness profile spend requires provider and scope, with optional id and external caps")
-    if not ("max_cost_usd" in value or "max_requests" in value):
-        _fail("Harness profile spend must declare max_cost_usd or max_requests")
-    provider = _text(value.get("provider"), "spend.provider")
-    scope = _text(value.get("scope"), "spend.scope")
-    if scope not in _CAP_SCOPES:
-        _fail("Harness profile spend.scope must be per_run, session, day, or month")
-    configured_provider = (getattr(config, "evaluator_capabilities", {}) or {}).get("provider")
-    if configured_provider is not None and provider != configured_provider:
-        _fail("Harness profile spend.provider does not match the lab evaluator provider")
-    normalized: dict[str, Any] = {"provider": provider, "scope": scope}
-    if "id" in value:
-        normalized["id"] = _text(value["id"], "spend.id")
-    if "max_cost_usd" in value:
-        cost = value["max_cost_usd"]
-        try:
-            finite_cost = math.isfinite(float(cost))
-        except (TypeError, ValueError, OverflowError):
-            finite_cost = False
-        if isinstance(cost, bool) or not isinstance(cost, (int, float)) or not finite_cost or cost < 0:
-            _fail("Harness profile spend.max_cost_usd must be a finite non-negative number")
-        normalized["max_cost_usd"] = float(cost)
-    if "max_requests" in value:
-        requests = value["max_requests"]
-        if isinstance(requests, bool) or not isinstance(requests, int) or requests < 0:
-            _fail("Harness profile spend.max_requests must be a non-negative integer")
-        normalized["max_requests"] = requests
-    return normalized
-
-
-def _normalize_profile(value: Any, config: Any, fingerprint: str) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {
-        "schema_version", "harness", "approval", "sandbox", "network", "spend",
-    }:
-        _fail("Harness profile must contain exactly schema_version, harness, approval, sandbox, network, and spend")
+def _normalize_profile(value: Any, fingerprint: str) -> dict[str, Any]:
+    # "spend" was removed in 0.8.0. An older profile may still carry it; the block is ignored
+    # and never enters the normalized, attested material.
+    required = {"schema_version", "harness", "approval", "sandbox", "network"}
+    if not isinstance(value, dict) or set(value) - required - {"spend"} or not required.issubset(value):
+        _fail("Harness profile must contain exactly schema_version, harness, approval, sandbox, and network")
     schema_version = value.get("schema_version")
     if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != 1:
         _fail("Harness profile schema_version must be 1")
@@ -198,9 +160,6 @@ def _normalize_profile(value: Any, config: Any, fingerprint: str) -> dict[str, A
     if mode in {"unknown", "unrestricted"}:
         _fail(f"Harness profile network mode {mode!r} is blocked", "E_HARNESS_POLICY_REJECTED")
 
-    spend = _normalize_spend(value.get("spend"), config)
-    if mode == "allowlisted" and spend is None:
-        _fail("Allowlisted network requires an external spend cap", "E_HARNESS_POLICY_REJECTED")
     normalized_network: dict[str, Any] = {"mode": mode}
     if mode == "allowlisted":
         normalized_network["allowed_hosts"] = allowed_hosts
@@ -210,7 +169,6 @@ def _normalize_profile(value: Any, config: Any, fingerprint: str) -> dict[str, A
         "approval": {"approved": True, "contract_fingerprint": fingerprint},
         "sandbox": {"enabled": True, "scope": sandbox_scope},
         "network": normalized_network,
-        "spend": spend,
     }
 
 
@@ -231,7 +189,7 @@ def authorize_operation(config: Any, command: str, *, confirmed: Any) -> dict[st
         parsed = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=_unique_object)
     except (UnicodeError, ValueError) as error:
         _fail(f"Harness profile is not strict UTF-8 JSON: {error}")
-    profile = _normalize_profile(parsed, config, fingerprint)
+    profile = _normalize_profile(parsed, fingerprint)
     normalized = json.dumps(profile, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return {
         "schema_version": 1,
