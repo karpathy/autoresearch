@@ -337,21 +337,18 @@ class SkillWorkflowTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "reference input is missing or changed"):
             prepare_lab(self.program, spec_path, confirmed=True)
 
-    def test_historical_model_repro_nonblocking_accepts_drift_with_identity_gates(self):
+    def test_historical_model_repro_nonblocking_accepts_drift(self):
         from autoresearch_runtime.bootstrap import prepare_lab
 
         fixture_path = self.root / "evaluator-fixture.bin"
         fixture_path.write_bytes(b"evaluator-fixture-v1")
         fixture_sha = hashlib.sha256(fixture_path.read_bytes()).hexdigest()
-        request_sha = hashlib.sha256(b"hello-request" * 2).hexdigest()
         self.evaluator.write_text(
             "import json, sys\n"
             "from pathlib import Path\n"
             "candidate, run_dir = map(Path, sys.argv[1:3])\n"
             "value = int((candidate / 'value.txt').read_text())\n"
             "run_dir.mkdir(parents=True, exist_ok=True)\n"
-            "with (run_dir / 'sent-requests.jsonl').open('w', encoding='utf-8') as stream:\n"
-            "    stream.write(json.dumps({'body': 'hello-request'}) + '\\n')\n"
             "(run_dir / 'result.json').write_text(json.dumps({'metrics': {'score': value}, "
             "'usage': {'requests': 0, 'cost_usd': 0}}))\n",
             encoding="utf-8",
@@ -359,7 +356,6 @@ class SkillWorkflowTest(unittest.TestCase):
         spec_path = self.historical_spec([2, 2])
         raw = json.loads(spec_path.read_text(encoding="utf-8"))
         raw["baseline_validation"]["model_repro"] = {"blocking": False}
-        raw["baseline_validation"]["request_identity"] = {"sha256": request_sha}
         raw["baseline_validation"]["evaluator_fixture"] = {
             "path": str(fixture_path),
             "sha256": fixture_sha,
@@ -376,7 +372,6 @@ class SkillWorkflowTest(unittest.TestCase):
         )
         state = load_state(config)
         self.assertIsNotNone(state["baseline_id"])
-        self.assertFalse((config.state_dir / "runs" / "baseline" / "repeat_01" / "sent-requests.jsonl").exists())
 
     def test_matching_historical_baseline_records_verification(self):
         from autoresearch_runtime.bootstrap import prepare_lab
@@ -852,27 +847,6 @@ class SkillWorkflowTest(unittest.TestCase):
         )
         self.assertEqual(resumed.returncode, 0, resumed.stderr)
         self.assertEqual(json.loads(resumed.stdout)["data"]["config"], config)
-
-
-class RequestIdentityDigestTest(unittest.TestCase):
-    def test_retry_lines_do_not_change_the_request_digest(self):
-        from types import SimpleNamespace
-
-        from autoresearch_runtime.baseline import _request_identity_digest
-
-        with tempfile.TemporaryDirectory() as temp:
-            state = Path(temp)
-            log = state / "runs" / "baseline" / "repeat_01" / "sent-requests.jsonl"
-            log.parent.mkdir(parents=True)
-            body = {"messages": [{"role": "user", "content": "same"}]}
-            line = json.dumps({"body": body, "status": 200}, ensure_ascii=False)
-            retry = json.dumps({"body": body, "status": 429}, ensure_ascii=False)
-            log.write_text(retry + "\n" + line + "\n" + retry + "\n", encoding="utf-8")
-            digest_with_retries = _request_identity_digest(SimpleNamespace(state_dir=state), "baseline", 1)
-            log.write_text(line + "\n", encoding="utf-8")
-            digest_once = _request_identity_digest(SimpleNamespace(state_dir=state), "baseline", 1)
-            self.assertEqual(digest_with_retries, digest_once)
-            self.assertIsNotNone(digest_once)
 
 
 if __name__ == "__main__":

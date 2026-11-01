@@ -5,7 +5,6 @@ come from environment variables set for each run directory:
 
 - ``AUTORESEARCH_CASE_LOG`` — finished case records (``cases.jsonl``).
 - ``AUTORESEARCH_ATTEMPTS_LOG`` — per-HTTP attempt lines (``attempts.jsonl``).
-- ``AUTORESEARCH_WIRE_LOG`` — wire hook output (``sent-requests.jsonl``).
 """
 
 from __future__ import annotations

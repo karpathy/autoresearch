@@ -341,27 +341,6 @@ class NativeResumeTest(unittest.TestCase):
         self.assertEqual(evaluate.call_count, 1)
         self.assertEqual(resumed["runs"][0]["duration_seconds"], 7.0)
 
-    def test_request_identity_incomparable_run_rechecks_saved_result_without_rerun(self):
-        config, counter = self.make_lab(repeats=1, capabilities=False)
-        run_baseline(config)
-        trial = self.trial_that_crashes_after_writing_repeat_one(config)
-        run_dir = config.state_dir / "runs" / trial["id"]
-        manifest_path = run_dir / "manifest.json"
-        manifest = _read_json(manifest_path)
-        manifest.update(
-            status="incomparable",
-            reason="request_identity sha256 mismatch: expected legacy-order digest",
-        )
-        _write_json(manifest_path, manifest)
-        calls_before = counter.read_text(encoding="utf-8").splitlines()
-
-        resumed = resume_run(config, trial["id"])
-
-        self.assertEqual(resumed["status"], "accepted")
-        self.assertEqual(counter.read_text(encoding="utf-8").splitlines(), calls_before)
-
-
-
     def test_successful_http_without_case_checkpoint_requires_reconciliation(self):
         hits = []
 

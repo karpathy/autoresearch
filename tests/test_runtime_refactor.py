@@ -166,24 +166,6 @@ class SQLiteStoreRefactorTest(unittest.TestCase):
         else:
             os.environ["AUTORESEARCH_HOME"] = self.prev_home
 
-    def test_append_wire_events_batch_single_transaction(self):
-        run_id = self.store.create_run(self.lab_id, "trial", "R1", 1)
-        events = [
-            ({"url": "http://api.local/v1", "method": "POST", "status": 200, "cost_usd": 0.01}, "ev-1"),
-            ({"url": "http://api.local/v2", "method": "GET", "status": 200, "cost_usd": 0.02}, None),
-        ]
-        event_ids = self.store.append_wire_events_batch(self.lab_id, run_id, 1, events)
-        self.assertEqual(len(event_ids), 2)
-        self.assertEqual(event_ids[0], "ev-1")
-
-        loaded = self.store.load_wire_events(self.lab_id, run_id, repeat_index=1)
-        self.assertEqual(len(loaded), 2)
-        loaded_ids = {item["attempt_id"] for item in loaded}
-        self.assertEqual(loaded_ids, set(event_ids))
-        self.assertIn("ev-1", loaded_ids)
-        loaded_urls = {item["url"] for item in loaded}
-        self.assertEqual(loaded_urls, {"http://api.local/v1", "http://api.local/v2"})
-
     def test_document_key_routes_run_repeat_usage_json(self):
         doc_key = self.store._document_key(str(self.lab_id), "runs/R1/repeat_01/usage.json")
         self.assertEqual(doc_key, "run:R1:usage:repeat_01")

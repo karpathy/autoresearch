@@ -134,7 +134,7 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         self.assertFalse((home / ".active").exists())
         for name in ("lab.json", "state.json", "history.json", "worker.json", "dashboard.html"):
             self.assertFalse((config.state_dir / name).exists(), name)
-        for name in ("manifest.json", "result.json", "usage.json", "attempts.jsonl", "cases.jsonl", "sent-requests.jsonl"):
+        for name in ("manifest.json", "result.json", "usage.json", "attempts.jsonl", "cases.jsonl"):
             self.assertEqual(list((config.state_dir / "runs").rglob(name)), [], name)
 
         again = prepare_lab(self.program, self.spec, confirmed=True)
@@ -355,7 +355,6 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         repeat_dir = config.state_dir / "runs" / "trial-0001" / "repeat_01"
         self.assertFalse((repeat_dir / "cases.jsonl").exists())
         self.assertFalse((repeat_dir / "attempts.jsonl").exists())
-        self.assertFalse((repeat_dir / "sent-requests.jsonl").exists())
 
         resumed = resume_run(config, "trial-0001")
         self.assertEqual(resumed["status"], "accepted", resumed)
@@ -367,7 +366,6 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         )], ["case-1", "case-2"])
         attempts = store.load_attempts(config.lab_id, "trial-0001", repeat_index=1)
         self.assertEqual(sum(item.get("event") == "started" for item in attempts), 2)
-        self.assertEqual(len(store.load_wire_events(config.lab_id, "trial-0001", repeat_index=1)), 2)
 
     def test_rejected_finalizing_resume_blocks_foreign_worktree_changes(self):
         _prepared, config = self._prepare()
@@ -420,7 +418,7 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         self.assertEqual(trial["parent"], "baseline")
         self.assertEqual(load_state(config)["best_id"], "baseline")
 
-    def test_usage_and_wire_events_do_not_duplicate_lifecycle_requests(self):
+    def test_usage_and_attempt_events_do_not_duplicate_lifecycle_requests(self):
         _prepared, config = self._prepare()
         self.assertEqual(run_baseline(config)["status"], "accepted")
         store = SQLiteStore()
@@ -438,88 +436,6 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         store.append_usage(config.lab_id, "baseline", 1, {"requests": 1, "cost_usd": None})
 
         attempts = config.state_dir / "runs" / "baseline" / "repeat_01" / "attempts.jsonl"
-        wire = config.state_dir / "runs" / "baseline" / "repeat_01" / "sent-requests.jsonl"
-        from autoresearch_runtime.wire_record import record_sent_request
-        with mock.patch.dict(os.environ, {
-            "AUTORESEARCH_WIRE_LOG": str(wire), "AUTORESEARCH_WIRE_LOG_BODY": "1",
-        }):
-            record_sent_request(
-                url="https://example.test", method="POST", body='{"input":"x"}',
-                headers={"Content-Type": "application/json"}, status=200,
-                response_body='{"ok":true}', attempt=1,
-            )
-            record_sent_request(
-                url="https://example.test", method="POST", body='{"input":"y"}',
-                headers={"Content-Type": "application/json"}, status=200,
-                response_body='{"ok":true}', attempt=1,
-            )
-        first_sidecar = wire.read_bytes()
-        from autoresearch_runtime.evaluator import _import_sqlite_wire_log
-        _import_sqlite_wire_log(config, wire.parent, (store, "baseline", 1))
-        wire_rows = store.load_wire_events(config.lab_id, "baseline", repeat_index=1)
-        self.assertEqual(
-            {row["body"]: row["wire_sequence"] for row in wire_rows},
-            {'{"input":"x"}': 1, '{"input":"y"}': 2},
-        )
-        from autoresearch_runtime.baseline import _request_identity_digest
-        self.assertEqual(
-            _request_identity_digest(config, "baseline", 1),
-            hashlib.sha256(b'{"input":"x"}{"input":"y"}').hexdigest(),
-        )
-
-        # Reimporting the same recovery sidecar must preserve IDs and sequence values.
-        wire.write_bytes(first_sidecar)
-        _import_sqlite_wire_log(config, wire.parent, (store, "baseline", 1))
-        wire_rows = store.load_wire_events(config.lab_id, "baseline", repeat_index=1)
-        self.assertEqual(
-            {row["body"]: row["wire_sequence"] for row in wire_rows},
-            {'{"input":"x"}': 1, '{"input":"y"}': 2},
-        )
-
-        with mock.patch.dict(os.environ, {
-            "AUTORESEARCH_WIRE_LOG": str(wire), "AUTORESEARCH_WIRE_LOG_BODY": "1",
-        }):
-            record_sent_request(
-                url="https://example.test", method="POST", body='{"input":"z"}',
-                headers={"Content-Type": "application/json"}, status=200,
-                response_body='{"ok":true}', attempt=1,
-            )
-        _import_sqlite_wire_log(config, wire.parent, (store, "baseline", 1))
-        wire_rows = store.load_wire_events(config.lab_id, "baseline", repeat_index=1)
-        self.assertEqual(
-            {row["body"]: row["wire_sequence"] for row in wire_rows},
-            {'{"input":"x"}': 1, '{"input":"y"}': 2, '{"input":"z"}': 3},
-        )
-        self.assertEqual(
-            _request_identity_digest(config, "baseline", 1),
-            hashlib.sha256(b'{"input":"x"}{"input":"y"}{"input":"z"}').hexdigest(),
-        )
-
-        # A new evaluator phase restarts the sidecar line counter. An identical
-        # request still represents a distinct lifecycle event and must be kept.
-        with mock.patch.dict(os.environ, {
-            "AUTORESEARCH_WIRE_LOG": str(wire), "AUTORESEARCH_WIRE_LOG_BODY": "1",
-        }):
-            record_sent_request(
-                url="https://example.test", method="POST", body='{"input":"x"}',
-                headers={"Content-Type": "application/json"}, status=200,
-                response_body='{"ok":true}', attempt=1,
-            )
-        _import_sqlite_wire_log(config, wire.parent, (store, "baseline", 1))
-        wire_rows = store.load_wire_events(config.lab_id, "baseline", repeat_index=1)
-        self.assertEqual(
-            sorted((row["wire_sequence"], row["body"]) for row in wire_rows),
-            [
-                (1, '{"input":"x"}'),
-                (2, '{"input":"y"}'),
-                (3, '{"input":"z"}'),
-                (4, '{"input":"x"}'),
-            ],
-        )
-        self.assertEqual(
-            _request_identity_digest(config, "baseline", 1),
-            hashlib.sha256(b'{"input":"x"}{"input":"y"}{"input":"z"}{"input":"x"}').hexdigest(),
-        )
         stats = config.state_dir / "runs" / "baseline" / "repeat_01" / "net-stats.json"
         usage = config.state_dir / "runs" / "baseline" / "repeat_01" / "usage.json"
         store.set_document(config.lab_id, stats, {"rate_limited_responses": 1})
@@ -531,11 +447,9 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
             "requests": 2, "unknown_requests": 1, "cost_usd": None,
             "confirmed_cost_usd": 0.25,
         })
-        self.assertEqual(len(store.load_wire_events(config.lab_id, "baseline", repeat_index=1)), 4)
         usage_events = [item for item in store.load_attempts(config.lab_id, "baseline", repeat_index=1)
                         if item.get("event") == "usage"]
         self.assertEqual(len(usage_events), 2)
-        self.assertFalse(wire.exists())
 
     def test_evaluator_clears_inherited_unbounded_retry_flag(self):
         _prepared, config = self._prepare()

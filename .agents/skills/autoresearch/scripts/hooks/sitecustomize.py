@@ -1,4 +1,4 @@
-"""Record provider HTTP traffic and durable attempt outcomes in evaluator processes.
+"""Journal durable provider attempt outcomes and net stats in evaluator processes.
 
 The runtime journals an attempt before transport and completes it after a
 response. It never retries provider requests because a transport failure may
@@ -38,10 +38,6 @@ def _chain_next() -> None:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return
-
-
-def _wire_enabled() -> bool:
-    return bool(os.environ.get("AUTORESEARCH_WIRE_LOG", "").strip())
 
 
 def _attempts_enabled() -> bool:
@@ -179,113 +175,6 @@ def _note_limited(delay: float) -> None:
     _write_stats(stats)
 
 
-def _wire_tools():
-    scripts = Path(__file__).resolve().parents[1]
-    if str(scripts) not in sys.path:
-        sys.path.append(str(scripts))
-    from autoresearch_runtime.wire_record import record_sent_request, redact_headers
-
-    return record_sent_request, redact_headers
-
-
-def _urllib_header_map(request) -> dict[str, str]:
-    headers: dict[str, str] = {}
-    source = getattr(request, "headers", None)
-    if source is not None and hasattr(source, "items"):
-        for key, value in source.items():
-            headers[str(key)] = str(value)
-        return headers
-    if hasattr(request, "header_items"):
-        for key, value in request.header_items():
-            headers[str(key)] = str(value)
-    elif hasattr(request, "unredirected_hdrs"):
-        for key, value in request.unredirected_hdrs.items():
-            headers[str(key)] = str(value)
-    return headers
-
-
-def _read_http_error_body(error: HTTPError) -> bytes | None:
-    try:
-        raw = error.read()
-    except Exception:
-        return None
-    if raw is None:
-        return None
-    if isinstance(raw, bytes):
-        return raw
-    if isinstance(raw, str):
-        return raw.encode("utf-8")
-    return None
-
-
-def _read_urlopen_response_body(response) -> bytes | None:
-    import io
-
-    read = getattr(response, "read", None)
-    if read is None:
-        return None
-    try:
-        raw = read()
-    except Exception:
-        return None
-    if isinstance(raw, bytes):
-        if raw:
-            response.fp = io.BytesIO(raw)
-            response.length = len(raw)
-        return raw
-    if isinstance(raw, str):
-        return raw.encode("utf-8")
-    return None
-
-
-def _record_urllib(request, *, status: int | None, response_body: bytes | str | None, attempt: int) -> None:
-    if not _wire_enabled():
-        return
-    record_sent_request, redact_headers = _wire_tools()
-    record_sent_request(
-        url=request.get_full_url(),
-        method=request.get_method() or "GET",
-        body=request.data,
-        headers=redact_headers(_urllib_header_map(request)),
-        status=status,
-        response_body=response_body,
-        attempt=attempt,
-    )
-
-
-def _record_requests(request, *, status: int | None, response_body: bytes | str | None, attempt: int) -> None:
-    if not _wire_enabled():
-        return
-    record_sent_request, redact_headers = _wire_tools()
-    headers = {str(key): str(value) for key, value in request.headers.items()}
-    record_sent_request(
-        url=str(request.url),
-        method=str(request.method or "GET"),
-        body=request.body,
-        headers=redact_headers(headers),
-        status=status,
-        response_body=response_body,
-        attempt=attempt,
-    )
-
-
-def _record_httpx(request, *, status: int | None, response_body: bytes | str | None, attempt: int) -> None:
-    if not _wire_enabled():
-        return
-    record_sent_request, redact_headers = _wire_tools()
-    headers = {str(key): str(value) for key, value in request.headers.items()}
-    body = request.content if hasattr(request, "content") else getattr(request, "stream", None)
-    record_sent_request(
-        url=str(request.url),
-        method=str(request.method),
-        body=body,
-        headers=redact_headers(headers),
-        status=status,
-        response_body=response_body,
-        attempt=attempt,
-    )
-
-
 def _install_urllib(_state=None) -> None:
     import urllib.request
 
@@ -300,8 +189,6 @@ def _install_urllib(_state=None) -> None:
             response = original(request, *args, **kwargs)
         except HTTPError as error:
             _finish_attempt(context, error.code)
-            response_body = _read_http_error_body(error) if _wire_enabled() else None
-            _record_urllib(request, status=error.code, response_body=response_body, attempt=1)
             if error.code in _RATE_LIMIT_STATUSES:
                 _note_limited(0)
             raise
@@ -310,8 +197,6 @@ def _install_urllib(_state=None) -> None:
             raise
         status = getattr(response, "status", getattr(response, "code", 200))
         _finish_attempt(context, status)
-        response_body = _read_urlopen_response_body(response) if _wire_enabled() else None
-        _record_urllib(request, status=status, response_body=response_body, attempt=1)
         if status in _RATE_LIMIT_STATUSES:
             _note_limited(0)
         return response
@@ -335,13 +220,6 @@ def _install_requests(_state=None) -> None:
         _note_attempt()
         response = original(self, request, **kwargs)
         _finish_attempt(context, response.status_code)
-        content = None
-        if _wire_enabled() and getattr(response, "_content_consumed", True):
-            try:
-                content = response.content
-            except Exception:
-                content = None
-        _record_requests(request, status=response.status_code, response_body=content, attempt=1)
         if response.status_code in _RATE_LIMIT_STATUSES:
             _note_limited(0)
         return response
@@ -365,19 +243,6 @@ def _install_httpx(_state=None) -> None:
             _note_attempt()
             response = original(self, request, **kwargs)
             _finish_attempt(context, response.status_code)
-            can_read = (
-                getattr(response, "is_stream_consumed", False)
-                or hasattr(response, "_content")
-                or getattr(response, "is_closed", False)
-                or not hasattr(response, "is_stream_consumed")
-            )
-            content = None
-            if _wire_enabled() and can_read:
-                try:
-                    content = response.content
-                except Exception:
-                    content = None
-            _record_httpx(request, status=response.status_code, response_body=content, attempt=1)
             if response.status_code in _RATE_LIMIT_STATUSES:
                 _note_limited(0)
             return response
@@ -394,19 +259,6 @@ def _install_httpx(_state=None) -> None:
             _note_attempt()
             response = await original_async(self, request, **kwargs)
             _finish_attempt(context, response.status_code)
-            can_read = (
-                getattr(response, "is_stream_consumed", False)
-                or hasattr(response, "_content")
-                or getattr(response, "is_closed", False)
-                or not hasattr(response, "is_stream_consumed")
-            )
-            if _wire_enabled() and can_read:
-                content = None
-                try:
-                    content = response.content
-                except Exception:
-                    content = None
-                _record_httpx(request, status=response.status_code, response_body=content, attempt=1)
             if response.status_code in _RATE_LIMIT_STATUSES:
                 _note_limited(0)
             return response
@@ -462,6 +314,6 @@ def _patch_imported_clients() -> None:
 
 
 _chain_next()
-if _wire_enabled() or _attempts_enabled() or _stats_path() is not None or _network_guard_enabled():
+if _attempts_enabled() or _stats_path() is not None or _network_guard_enabled():
     _install_urllib()
     _patch_imported_clients()

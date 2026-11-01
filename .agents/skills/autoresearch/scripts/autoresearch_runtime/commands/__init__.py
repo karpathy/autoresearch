@@ -8,7 +8,6 @@ from typing import Any
 from . import (
     baseline,
     cancel,
-    cases,
     dashboard,
     doctor,
     epoch,
@@ -26,7 +25,7 @@ from . import (
 
 COMMANDS = (
     doctor, baseline, epoch, status, recover, trial, vault, cancel,
-    dashboard, promote, cases, guide, step, preflight, resume, storage,
+    dashboard, promote, guide, step, preflight, resume, storage,
 )
 
 
@@ -40,7 +39,7 @@ def run_command(args: Any, labs_root: Path | None) -> dict[str, Any]:
         "baseline": baseline, "epoch": epoch, "status": status,
         "recover": recover, "trial": trial,
         "vault": vault, "dashboard": dashboard, "doctor": doctor, "promote": promote,
-        "cases": cases, "storage": storage, "cancel": cancel,
+        "storage": storage, "cancel": cancel,
         "guide": guide, "step": step, "preflight": preflight, "resume": resume,
     }
     return by_name[args.command].run(args, labs_root)

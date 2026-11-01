@@ -376,7 +376,6 @@ class SQLiteStoreTest(unittest.TestCase):
         self.store.append_attempt(lab_id, run_id, "http-1", "finished", finished)
         self.store.append_attempt(lab_id, run_id, "http-1", "finished", finished)
         self.store.append_usage(lab_id, run_id, 1, {"requests": 9, "cost_usd": 99.0})
-        self.store.append_wire_event(lab_id, run_id, 1, {"url": "https://example.invalid"}, event_id="wire-1")
         self.assertEqual(self.store.usage_totals(lab_id, run_id, repeat_index=1), {
             "requests": 1, "unknown_requests": 0, "cost_usd": 0.25, "unknown_costs": 0,
         })
@@ -387,7 +386,6 @@ class SQLiteStoreTest(unittest.TestCase):
         self.assertEqual(totals, {
             "requests": 7, "unknown_requests": 0, "cost_usd": 1.25, "unknown_costs": 0,
         })
-        self.assertEqual(len(self.store.load_wire_events(lab_id, run_id, repeat_index=1)), 1)
 
     def test_first_schema_initialization_is_serialized_across_processes(self):
         context = multiprocessing.get_context("spawn")
