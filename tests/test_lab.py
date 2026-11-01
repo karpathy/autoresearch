@@ -348,9 +348,9 @@ class LabTest(unittest.TestCase):
         except OSError:
             self.skipTest("Symlink creation is unavailable on this Windows account")
 
-        trial = run_trial(config, {"title": "Linked", "observation": "x", "expected_effect": "y"})
-        self.assertEqual(trial["status"], "invalid")
-        self.assertIn("Candidate symlink", trial["reason"])
+        with self.assertRaisesRegex(LabError, "Candidate symlink"):
+            run_trial(config, {"title": "Linked", "observation": "x", "expected_effect": "y"})
+        self.assertEqual(load_state(config)["best_id"], "baseline")
 
     def test_invalid_result_never_promotes(self):
         (self.source / "candidate.txt").write_text("1;1", encoding="utf-8")
