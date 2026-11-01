@@ -338,9 +338,10 @@ class TrialAndStateRefactorTest(unittest.TestCase):
             cache_dir.mkdir()
             (cache_dir / "app.cpython-310.pyc").write_bytes(b"pyc-data")
 
-            mock_config = Mock(state_dir=Path(td), storage_mode="legacy")
+            mock_config = Mock(state_dir=Path(td))
             state = {"config_sha256": "c" * 64, "inputs": []}
-            fps = _fingerprints(mock_config, state)
+            with patch("autoresearch_runtime.state._passport_pins_sha256", return_value=None):
+                fps = _fingerprints(mock_config, state)
             self.assertIn("app.py", fps["candidate_hashes"])
             self.assertNotIn("__pycache__/app.cpython-310.pyc", fps["candidate_hashes"])
 

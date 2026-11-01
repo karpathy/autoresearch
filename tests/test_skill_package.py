@@ -120,28 +120,6 @@ class SkillPackageTest(unittest.TestCase):
                     f"{document.relative_to(SKILL)} links to missing relative path {destination!r}",
                 )
 
-    def test_missing_lab_is_an_error_not_a_relative_guess(self):
-        from autoresearch_runtime.errors import LabError
-        from autoresearch_runtime.resolve import resolve_config_path
-
-        with tempfile.TemporaryDirectory() as temp:
-            previous = os.environ.get("AUTORESEARCH_HOME")
-            os.environ["AUTORESEARCH_HOME"] = str(Path(temp) / "home")
-            cwd = os.getcwd()
-            try:
-                empty = Path(temp) / "empty"
-                empty.mkdir()
-                os.chdir(empty)
-                with self.assertRaises(LabError) as caught:
-                    resolve_config_path(config=None, lab=None, project=None, labs_root=None)
-                self.assertEqual(caught.exception.code, "E_NO_LAB")
-            finally:
-                os.chdir(cwd)
-                if previous is None:
-                    os.environ.pop("AUTORESEARCH_HOME", None)
-                else:
-                    os.environ["AUTORESEARCH_HOME"] = previous
-
     def test_installed_copy_runs_doctor_from_a_foreign_directory_without_warnings(self):
         import importlib.util
 

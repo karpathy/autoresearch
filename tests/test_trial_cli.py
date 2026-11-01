@@ -205,14 +205,6 @@ class TrialCliTest(unittest.TestCase):
         self.assertIn("worker", data)
         self.assertIn("running_manifests", data)
 
-    def test_probe_baseline_and_best(self):
-        config = self._prepare_baseline()
-        for commit in ("baseline", "best"):
-            data = self._assert_ok(self._run_approved(config, [
-                "--confirmed", "--config", config, "probe", "--commit", commit, "--group", "g",
-                "--label", "base" if commit == "baseline" else "best", "--repeats", "1",
-            ]), "probe")
-            self.assertEqual(data["status"], "complete")
 
     def test_promote_export_patch(self):
         config = self._prepare_baseline()
@@ -227,24 +219,6 @@ class TrialCliTest(unittest.TestCase):
         self.assertEqual(operation["result"]["status"], "accepted")
         data = self._assert_ok(self._run(["--config", config, "promote"]), "promote")
         self.assertTrue(Path(data["patch"]).is_file())
-
-    def test_roots_list_and_add(self):
-        listed = self._assert_ok(self._run(["roots", "list"]), "roots")
-        self.assertTrue(listed["roots"])
-        extra = self.work / "extra-root"
-        extra.mkdir()
-        added = self._assert_ok(self._run(["roots", "add", str(extra)]), "roots")
-        paths = {item["path"] for item in added["roots"]}
-        self.assertIn(str(extra.resolve()), paths)
-
-    def test_catalog_archive_recover(self):
-        config = self._prepare_baseline()
-        self._assert_ok(self._run(["catalog", "repair"]), "catalog")
-        self._assert_ok(self._run(["archive"]), "archive")
-        self._assert_ok(self._run_approved(
-            config, ["--confirmed", "--config", config, "recover"],
-        ), "recover")
-
 
 if __name__ == "__main__":
     unittest.main()

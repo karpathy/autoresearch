@@ -112,17 +112,10 @@ def init_lab(config: LabConfig) -> dict[str, Any]:
     _git(candidate, "add", "-A", "-f", "--", ".")
     _git(candidate, "-c", "user.name=AutoResearch", "-c", "user.email=lab@local", "commit", "-q", "-m", "baseline snapshot")
     meta = _source_meta(config.source_root)
-    lab_config_path = config.state_dir / "lab.json"
-    if getattr(config, "storage_mode", "legacy") == "legacy" and config.path.resolve() != lab_config_path.resolve():
-        shutil.copyfile(config.path, lab_config_path)
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        if not isinstance(config.config_bytes, bytes):
-            raise LabError("SQLite lab requires the exact validated config bytes")
-        config_hash = hashlib.sha256(config.config_bytes).hexdigest()
-        config_copy_sha256 = config_hash
-    else:
-        config_hash = _sha256(config.path)
-        config_copy_sha256 = _sha256(lab_config_path)
+    if not isinstance(config.config_bytes, bytes):
+        raise LabError("SQLite lab requires the exact validated config bytes")
+    config_hash = hashlib.sha256(config.config_bytes).hexdigest()
+    config_copy_sha256 = config_hash
     state = {
         "schema": 2,
         "setup_pending": config.pending,
@@ -142,33 +135,18 @@ def init_lab(config: LabConfig) -> dict[str, Any]:
     if config.baseline_validation is not None:
         state["baseline_verified"] = False
     state_path = config.state_dir / "state.json"
-    if getattr(config, "storage_mode", "legacy") == "legacy" and state_path.is_file():
-        prior = json.loads(state_path.read_text(encoding="utf-8"))
-        if isinstance(prior, dict):
-            state = {**prior, **state}
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
-        try:
-            raw_config = json.loads(config.config_bytes.decode("utf-8"))
-        except (AttributeError, UnicodeError, ValueError) as error:
-            raise LabError("SQLite lab config bytes are invalid") from error
-        passport = config.passport or {}
-        create_config = {**raw_config, "confirmed": True, "passport": passport,
-                         "pins": passport.get("pins", [])}
-        SQLiteStore().create_lab(
-            create_config, state, candidate,
-            source_config_bytes=config.config_bytes,
-        )
+    from .sqlite_store import SQLiteStore
+    try:
+        raw_config = json.loads(config.config_bytes.decode("utf-8"))
+    except (AttributeError, UnicodeError, ValueError) as error:
+        raise LabError("SQLite lab config bytes are invalid") from error
+    passport = config.passport or {}
+    create_config = {**raw_config, "confirmed": True, "passport": passport,
+                     "pins": passport.get("pins", [])}
+    SQLiteStore().create_lab(
+        create_config, state, candidate,
+        source_config_bytes=config.config_bytes,
+    )
     _write_json(state_path, state)
     _store_vault(config)
     return state
-
-def setup_project(project: Path, labs_root: Path | None = None) -> dict[str, Any]:
-    raise LabError(
-        "File-backed setup is no longer supported; legacy labs remain read-only",
-        code="E_OPERATION_REMOVED",
-        hint=(
-            "Start a new SQLite lab with `prepare --program <program.md> --spec <spec.json> "
-            "--confirmed` and set a dedicated AUTORESEARCH_HOME outside the project."
-        ),
-    )

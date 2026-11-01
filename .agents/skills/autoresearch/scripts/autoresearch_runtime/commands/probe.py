@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..locking import lab_lock
-from ..probe import adopt_probe, run_probe
+from ..probe import adopt_probe
 from .common import explicit_confirmation, resolve_config, run_durable_operation
 
 
@@ -23,10 +23,7 @@ def register(subparsers: Any) -> None:
 
 
 def run(args: Any, labs_root: Path | None) -> dict[str, Any]:
-    config = resolve_config(
-        args, labs_root, pending_ok=False,
-        mutating_action=None if getattr(args, "adopt", None) else "probe",
-    )
+    config = resolve_config(args, labs_root, pending_ok=False)
     if getattr(args, "adopt", None):
         with lab_lock(config.state_dir):
             return adopt_probe(config, args.adopt)
@@ -44,10 +41,7 @@ def run(args: Any, labs_root: Path | None) -> dict[str, Any]:
         raise ValueError(f"Invalid --env-json: {error}") from error
     if not isinstance(env, dict) or any(not isinstance(key, str) or not isinstance(value, str) for key, value in env.items()):
         raise ValueError("--env-json must be an object of string keys and string values")
-    if config.storage_mode == "sqlite":
-        return run_durable_operation(config, "probe", {
-            "commit": commit, "env": env, "group": group, "label": label, "repeats": repeats,
-            **explicit_confirmation(args),
-        })
-    with lab_lock(config.state_dir):
-        return run_probe(config, commit, env, group, label, repeats)
+    return run_durable_operation(config, "probe", {
+        "commit": commit, "env": env, "group": group, "label": label, "repeats": repeats,
+        **explicit_confirmation(args),
+    })

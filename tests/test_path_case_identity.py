@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from autoresearch_runtime.paths import _path_key, home_root_id, load_roots, project_id
+from autoresearch_runtime.paths import _path_key, home_root_id, project_id
 
 
 class PathCaseIdentityTest(unittest.TestCase):
@@ -53,30 +53,6 @@ class PathCaseIdentityTest(unittest.TestCase):
                         lower = project_id(lower_path)
         self.assertNotEqual(upper, lower)
 
-    def test_root_deduplication_uses_platform_normalization(self):
-        with tempfile.TemporaryDirectory() as td:
-            home = Path(td)
-            roots_file = home / "roots.json"
-            roots_file.write_text(json.dumps({"roots": [
-                {"id": "upper", "path": "root/Case"},
-                {"id": "lower", "path": "root/case"},
-            ]}), encoding="utf-8")
-            path_type = type(home)
-
-            class UninitializedStore:
-                def __init__(self, *_args):
-                    pass
-
-                def is_initialized(self):
-                    return False
-
-            with patch.object(Path, "resolve", autospec=True, side_effect=lambda path: path):
-                with patch("autoresearch_runtime.paths.Path", path_type):
-                    with patch("autoresearch_runtime.paths.os.name", "posix"):
-                        with patch("autoresearch_runtime.paths.os.path.normcase", side_effect=lambda value: value):
-                            with patch("autoresearch_runtime.sqlite_store.SQLiteStore", UninitializedStore):
-                                roots = load_roots(home)
-        self.assertEqual({item["id"] for item in roots}, {"upper", "lower"})
 
 
 if __name__ == "__main__":

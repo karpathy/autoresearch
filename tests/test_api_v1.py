@@ -204,19 +204,6 @@ class ApiV1SecurityTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(json.loads(body)["error"]["code"], "invalid_request")
 
-    def test_legacy_data_routes_allow_local_access_and_reject_cross_origin_writes(self):
-        status, _, _ = self._request("/api/status")
-        self.assertEqual(status, 200)
-        status, _, _ = self._request("/api/labs/project/lab/details")
-        self.assertEqual(status, 404)
-        status, _, _ = self._request("/api/notify", method="POST", body=b"{}")
-        self.assertEqual(status, 200)
-        status, _, _ = self._request("/api/notify", method="POST", body=b"{}", headers={
-            "Origin": "http://evil.example", "Sec-Fetch-Site": "cross-site",
-            "Sec-Fetch-Mode": "cors",
-        })
-        self.assertEqual(status, 403)
-
     def test_local_api_rejects_wrong_host(self):
         status, _, _ = self._request(
             "/api/v1/labs", headers={"Host": "evil.example"}
@@ -401,8 +388,7 @@ class ApiV1SecurityTest(unittest.TestCase):
             "command": "trial", "confirmed": True, "payload": {"hypothesis": hypothesis},
         })
         expected_operation_payload = {"command": command, "params": params}
-        config = SimpleNamespace(path=Path(self.temp.name) / "config.sqlite", storage_mode="sqlite",
-                                 lab_id="b5ef9c01-3a58-4ca8-a63c-4eb79216a912")
+        config = SimpleNamespace(path=Path(self.temp.name) / "config.sqlite", lab_id="b5ef9c01-3a58-4ca8-a63c-4eb79216a912")
         store = object()
         operation_id = "b5ef9c01-3a58-4ca8-a63c-4eb79216a912"
         captured = []
@@ -410,7 +396,6 @@ class ApiV1SecurityTest(unittest.TestCase):
                                confirmed=True)
 
         with patch("autoresearch_runtime.commands.trial.resolve_config", return_value=config), \
-             patch("autoresearch_runtime.commands.trial._sqlite_context", return_value=(store, operation_id)), \
              patch("autoresearch_runtime.commands.trial._load_hypothesis", return_value=hypothesis), \
              patch("autoresearch_runtime.commands.trial.enqueue_and_start_operation",
                    side_effect=lambda *values: (captured.append(values), {
@@ -418,7 +403,7 @@ class ApiV1SecurityTest(unittest.TestCase):
                    })[1]):
             result = trial_command.run(args, None)
 
-        self.assertEqual(captured[0][0:3], (operation_id, "trial", params))
+        self.assertEqual((str(captured[0][0]), *captured[0][1:3]), (str(operation_id), "trial", params))
         self.assertEqual({"command": captured[0][1], "params": captured[0][2]}, expected_operation_payload)
         self.assertEqual(result["operation_id"], operation_id)
         self.assertTrue(result["started"])

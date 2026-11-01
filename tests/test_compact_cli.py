@@ -11,7 +11,7 @@ import unittest
 from tests import test_agent_guidance as guidance
 from autoresearch_runtime.cli import main
 from autoresearch_runtime.snapshot import init_lab
-from autoresearch_runtime.baseline import run_baseline
+from durable_workflow_helpers import run_baseline
 
 
 class CompactCliTest(unittest.TestCase):

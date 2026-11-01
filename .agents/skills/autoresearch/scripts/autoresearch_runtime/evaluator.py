@@ -148,7 +148,9 @@ def _spent(manifests: list[dict[str, Any]], state_dir: Path | None = None) -> di
                 if attempts_path.is_file() or (attempts_target is not None and attempts_target[2] == "attempts"):
                     from .case_checkpoint import summarize_usage
 
-                    sources.append(summarize_usage(attempts_path))
+                    journal = summarize_usage(attempts_path)
+                    if journal.get("requests") or attempts_path.is_file():
+                        sources.append(journal)  # an empty journal says nothing about pricing
             usage = _max_metered_usage(*sources)
             requests += float(usage.get("requests", 0) or 0)
             cost += float(usage.get("confirmed_cost_usd", usage.get("cost_usd", 0)) or 0)
@@ -186,6 +188,7 @@ def _max_metered_usage(*sources: dict[str, Any]) -> dict[str, Any]:
     fully_priced = any(
         int(number(source, "requests") or 0) == requests
         and int(number(source, "unknown_requests") or 0) == 0
+        and int(number(source, "unknown_costs") or 0) == 0
         and (number(source, "cost_usd") is not None or number(source, "confirmed_cost_usd") is not None)
         for source in valid
     )
@@ -238,7 +241,9 @@ def _merge_attempt_usage(run_dir: Path, base: dict[str, Any] | None = None) -> d
     usage_target = _sqlite_document(usage_path)
     has_attempts = attempts_path.is_file() or (attempts_target is not None and attempts_target[2] == "attempts")
     attempt_usage = summarize_usage(attempts_path) if has_attempts else {}
-    metered = _max_metered_usage(file_usage, attempt_usage, base or {})
+    if not attempt_usage.get("requests") and not attempts_path.is_file():
+        attempt_usage = {}  # No journal rows yet: nothing was metered.
+    metered = _max_metered_usage(file_usage, _disk_usage(run_dir), attempt_usage, base or {})
     result_usage = dict(base) if isinstance(base, dict) else {}
     result_usage.update(metered)
     if (has_attempts or usage_path.is_file()) and not (
@@ -325,14 +330,13 @@ def _evaluate_once(config: LabConfig, run_dir: Path, timeout: float, *,
     command = [replacements.get(arg, arg) for arg in (evaluator or config.evaluator)]
     run_dir.mkdir(parents=True, exist_ok=True)
     repeat_row: tuple[Any, Any, int] | None = None
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
-        from .store import _sqlite_document
-        target = _sqlite_document(run_dir / "result.json")
-        if target is not None and target[2] == "result":
-            store, lab_id, _, run_id, repeat_index = target
-            store.ensure_repeat_started(lab_id, run_id, repeat_index)
-            repeat_row = (store, run_id, repeat_index)
+    from .sqlite_store import SQLiteStore
+    from .store import _sqlite_document
+    target = _sqlite_document(run_dir / "result.json")
+    if target is not None and target[2] == "result":
+        store, lab_id, _, run_id, repeat_index = target
+        store.ensure_repeat_started(lab_id, run_id, repeat_index)
+        repeat_row = (store, run_id, repeat_index)
     environment = os.environ.copy()
     skill_scripts = str(Path(__file__).resolve().parents[1])
     hooks_dir = str(Path(skill_scripts) / "hooks")
@@ -427,7 +431,7 @@ def _import_sqlite_wire_log(
     config: LabConfig, run_dir: Path, repeat_row: tuple[Any, Any, int] | None,
 ) -> None:
     """Import evaluator-written request evidence before removing its recovery sidecar."""
-    if repeat_row is None or getattr(config, "storage_mode", "legacy") != "sqlite":
+    if repeat_row is None:
         return
     path = Path(run_dir) / "sent-requests.jsonl"
     if not path.is_file():
@@ -519,13 +523,29 @@ def _attach_net_stats(run_dir: Path, result: dict[str, Any]) -> None:
         "attempts": stats.get("attempts") or 0,
     }
 
+def _disk_usage(run_dir: Path) -> dict[str, Any]:
+    """Usage the evaluator wrote to AUTORESEARCH_USAGE_PATH; SQLite labs would otherwise ignore it."""
+    path = Path(run_dir) / "usage.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def _usage_from_file(run_dir: Path) -> dict[str, Any]:
     usage = _read_json(run_dir / "usage.json")
     if not isinstance(usage, dict):
+        usage = {}
+    disk = _disk_usage(run_dir)
+    if disk:
+        usage = _max_metered_usage(usage, disk)
+    if not usage:
         return {}
     # Keep only metering fields; evaluator logs and API responses are never copied here.
     return {"usage": {key: usage[key] for key in
-                       ("requests", "cost_usd", "confirmed_cost_usd", "unknown_requests", "unknown_cost_usd")
+                       ("requests", "cost_usd", "confirmed_cost_usd", "unknown_requests", "unknown_cost_usd",
+                        "unknown_costs")
                        if key in usage}}
 
 
@@ -558,7 +578,7 @@ def _attach_case_log(
                     break
         except OSError:
             pass
-    if not cases and repeat_row is not None and getattr(config, "storage_mode", "legacy") == "sqlite":
+    if not cases and repeat_row is not None:
         store, run_id, repeat_index = repeat_row
         try:
             loaded = store.load_checkpoints(config.lab_id, run_id, repeat_index=repeat_index)

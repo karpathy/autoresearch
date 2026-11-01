@@ -12,7 +12,7 @@ from typing import Any
 
 
 from .errors import LabError
-from .store import _sha256, _write_json
+from .store import _sha256
 
 
 @dataclass(frozen=True)
@@ -44,7 +44,6 @@ class LabConfig:
     guard_thresholds: dict[str, dict[str, float]] | None = None
     goal_criteria: dict[str, Any] | None = None
     evaluator_capabilities: dict[str, Any] = field(default_factory=dict)
-    storage_mode: str = "legacy"
     lab_id: str | None = None
     config_bytes: bytes | None = None
     passport: dict[str, Any] | None = None
@@ -204,48 +203,63 @@ def _research_fields(raw: dict[str, Any], path: Path, source: Path, state_dir: P
     return goal, capabilities
 
 
-def _load_config(path: Path | str, *, allow_pending: bool = False, read_only: bool = False) -> LabConfig:
-    from .snapshot import _discover_source
+LEGACY_LAB_MESSAGE = (
+    "This lab.json is a legacy file-based lab. That format is no longer supported; "
+    "git tag v0.8.0 can open and export it. The files were not changed."
+)
+
+
+def _legacy_lab_error() -> LabError:
+    return LabError(
+        LEGACY_LAB_MESSAGE, code="E_LEGACY_LAB",
+        hint=("Check out git tag v0.8.0 to open or export this lab, "
+              "then start a new lab with `prepare` under a dedicated AUTORESEARCH_HOME."),
+    )
+
+
+def _load_config(path: Path | str, *, allow_pending: bool = False) -> LabConfig:
+    from .sqlite_store import EntityNotFoundError, SQLiteStore
     raw_ref = str(path)
     try:
         canonical_ref = str(uuid.UUID(raw_ref))
     except (ValueError, TypeError, AttributeError):
         canonical_ref = None
     path = Path(path).expanduser().resolve()
-    storage_mode = "legacy"
-    lab_id: str | None = None
-    config_bytes: bytes | None = None
-    passport: dict[str, Any] | None = None
+    store = SQLiteStore()
+    resolved_id = None
+    if store.is_initialized():
+        try:
+            resolved_id = store.resolve_lab_id(canonical_ref if canonical_ref is not None else path)
+        except EntityNotFoundError:
+            resolved_id = None
+    if resolved_id is None:
+        if canonical_ref is None and path.is_file():
+            raise _legacy_lab_error()
+        if canonical_ref is not None:
+            raise LabError(
+                f"Unknown SQLite lab: {canonical_ref}", code="E_LAB_NOT_FOUND",
+                hint="Pass a valid --lab reference or a known `lab.json` path with --config.",
+            )
+        raise LabError(
+            f"No SQLite lab is registered for {path}", code="E_LAB_NOT_FOUND",
+            hint="Pass a valid --lab reference or a known `lab.json` path with --config.",
+        )
+    row = store.get_lab(resolved_id)
+    config_bytes = store.load_config_bytes(resolved_id)
+    raw_projection = store.load_projection(resolved_id, "config")
+    passport = raw_projection.get("passport") if isinstance(raw_projection.get("passport"), dict) else None
+    return parse_config(Path(row["config_path"]), config_bytes, allow_pending=allow_pending,
+                        lab_id=str(resolved_id), passport=passport)
+
+
+def parse_config(
+    path: Path, config_bytes: bytes, *, allow_pending: bool = False,
+    lab_id: str | None = None, passport: dict[str, Any] | None = None,
+) -> LabConfig:
+    """Validate exact lab.json bytes. `path` only locates relative entries; it need not exist."""
+    from .snapshot import _discover_source
+    path = Path(path)
     try:
-        from .sqlite_store import EntityNotFoundError, SQLiteStore
-        store = SQLiteStore()
-        if store.is_initialized():
-            if canonical_ref is not None:
-                try:
-                    resolved_id = store.resolve_lab_id(canonical_ref)
-                except EntityNotFoundError as error:
-                    raise LabError(
-                        f"Unknown SQLite lab: {canonical_ref}", code="E_LAB_NOT_FOUND",
-                        hint="Pass a valid --lab reference or a known `lab.json` path with --config.",
-                    ) from error
-            else:
-                try:
-                    resolved_id = store.resolve_lab_id(path)
-                except EntityNotFoundError:
-                    resolved_id = None
-            if resolved_id is not None:
-                row = store.get_lab(resolved_id)
-                path = Path(row["config_path"])
-                config_bytes = store.load_config_bytes(resolved_id)
-                raw_projection = store.load_projection(resolved_id, "config")
-                passport = raw_projection.get("passport") if isinstance(raw_projection.get("passport"), dict) else None
-                lab_id = str(resolved_id)
-                storage_mode = "sqlite"
-    except ImportError:
-        pass
-    try:
-        if config_bytes is None:
-            config_bytes = path.read_bytes()
         raw = json.loads(config_bytes.decode("utf-8"))
         if (any(key in raw and not isinstance(raw[key], list) for key in ("source_paths", "editable_files", "large_candidate_files"))
                 or not isinstance(raw["evaluator"], list)):
@@ -256,20 +270,6 @@ def _load_config(path: Path | str, *, allow_pending: bool = False, read_only: bo
         state_dir = (path.parent / raw.get("state_dir", "../AutoResearch-state")).resolve()
         if not source_root.is_dir() or state_dir == source_root or source_root in state_dir.parents:
             raise LabError("Source must exist and state must be outside it")
-        state_path = state_dir / "state.json"
-        lab_config_path = state_dir / "lab.json"
-        if storage_mode == "legacy" and not read_only and state_path.is_file() and lab_config_path.is_file():
-            try:
-                state_data = json.loads(state_path.read_text(encoding="utf-8"))
-                if state_data.get("setup_pending"):
-                    actual_sha = _sha256(lab_config_path)
-                    if state_data.get("config_copy_sha256") != actual_sha:
-                        state_data["config_copy_sha256"] = actual_sha
-                        if path.resolve() == lab_config_path.resolve():
-                            state_data["config_sha256"] = actual_sha
-                        _write_json(state_path, state_data)
-            except Exception:
-                pass
         exclude_raw = raw.get("exclude_globs", [])
         if exclude_raw is None:
             exclude_raw = []
@@ -512,16 +512,36 @@ def _load_config(path: Path | str, *, allow_pending: bool = False, read_only: bo
         unit=unit, target_threshold=target_threshold,
         guard_thresholds=guard_thresholds or None,
         goal_criteria=goal_criteria, evaluator_capabilities=evaluator_capabilities,
-        storage_mode=storage_mode, lab_id=lab_id, config_bytes=config_bytes, passport=passport,
+        lab_id=lab_id, config_bytes=config_bytes, passport=passport,
     )
 
 
-def load_config(path: Path | str, *, allow_pending: bool = False, read_only: bool = False) -> LabConfig:
-    """Load a runtime lab config and normalize malformed inputs for CLI callers."""
-    try:
-        return _load_config(path, allow_pending=allow_pending, read_only=read_only)
-    except LabError as error:
-        if error.code in {"E_CONFIG_INVALID", "E_LAB_NOT_FOUND", "E_LAB_AMBIGUOUS"}:
-            raise
-        raise LabError(str(error), code="E_CONFIG_INVALID", hint=error.hint) from error
+def _normalize(error: LabError) -> LabError:
+    if error.code in {"E_CONFIG_INVALID", "E_LAB_NOT_FOUND", "E_LAB_AMBIGUOUS", "E_LEGACY_LAB"}:
+        return error
+    return LabError(str(error), code="E_CONFIG_INVALID", hint=error.hint)
 
+
+def load_config(path: Path | str, *, allow_pending: bool = False) -> LabConfig:
+    """Load a registered SQLite lab by UUID or virtual lab.json path."""
+    try:
+        return _load_config(path, allow_pending=allow_pending)
+    except LabError as error:
+        normalized = _normalize(error)
+        if normalized is error:
+            raise
+        raise normalized from error
+
+
+def validate_config_file(path: Path, *, allow_pending: bool = False) -> LabConfig:
+    """Validate a draft lab.json that is not registered in SQLite yet."""
+    path = Path(path).expanduser().resolve()
+    try:
+        return parse_config(path, path.read_bytes(), allow_pending=allow_pending)
+    except OSError as error:
+        raise LabError(f"Invalid lab config: {error}", code="E_CONFIG_INVALID") from error
+    except LabError as error:
+        normalized = _normalize(error)
+        if normalized is error:
+            raise
+        raise normalized from error

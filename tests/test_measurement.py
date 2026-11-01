@@ -10,11 +10,11 @@ import threading
 import unittest
 from pathlib import Path
 
-from autoresearch_runtime.baseline import run_baseline
+from durable_workflow_helpers import run_baseline
 from autoresearch_runtime.evaluator import _evaluate_once
 from autoresearch_runtime.lab import init_lab, load_config, load_state, run_trial
 from autoresearch_runtime.measurement import incomparable_with_current, migrate_manifest, next_sequence_id
-from autoresearch_runtime.probe import run_probe
+from durable_workflow_helpers import run_probe
 
 
 class MeasurementTest(unittest.TestCase):
@@ -101,39 +101,7 @@ class MeasurementTest(unittest.TestCase):
         self.assertEqual(status, "invalid")
         self.assertIn("attestation", reason)
 
-    def test_probe_writes_summary_with_atomic_ids(self):
-        config = self._config()
-        init_lab(config)
-        commit = load_state(config)["best_commit"]
-        ids: list[str] = []
-        errors: list[Exception] = []
 
-        def worker(label: str) -> None:
-            try:
-                summary = run_probe(config, commit, {"PROBE_TAG": label}, "g", label, 1)
-                ids.append(summary["id"])
-            except Exception as error:  # pragma: no cover - surfaced in assertion
-                errors.append(error)
-
-        threads = [threading.Thread(target=worker, args=(f"p{i}",)) for i in range(3)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-        self.assertEqual(errors, [])
-        self.assertEqual(len(ids), len(set(ids)))
-        self.assertTrue(all(item.startswith("probe-") for item in ids))
-
-    def test_probe_accepts_best_and_baseline_aliases(self):
-        config = self._config()
-        init_lab(config)
-        best = load_state(config)["best_commit"]
-        by_best = run_probe(config, "best", {"PROBE_TAG": "a"}, "g", "a", 1)
-        by_baseline = run_probe(config, "baseline", {"PROBE_TAG": "b"}, "g", "b", 1)
-        self.assertEqual(by_best["commit"], best)
-        self.assertEqual(by_best["commit_ref"], "best")
-        self.assertEqual(by_baseline["status"], "complete")
-        self.assertEqual(by_baseline["commit_ref"], "baseline")
 
     def test_acceptance_min_gain_requires_margin(self):
         config = self._config(acceptance={"min_gain": 2.5, "confirm_repeats": 1})

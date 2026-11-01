@@ -245,59 +245,14 @@ def read_worker(state_dir: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def run_worker(config_path: Path, hypothesis_path: Path) -> dict[str, Any]:
-    config = load_config(config_path, allow_pending=False)
-    if config.storage_mode != "sqlite":
-        raise LabError(
-            "Legacy trial workers are disabled; legacy labs are read-only",
-            code="E_LEGACY_READ_ONLY",
-            hint=(
-                "Export a legacy lab with `--config <legacy-lab.json> storage export --output archive.zip`, "
-                "then start fresh with `prepare` and a new AUTORESEARCH_HOME."
-            ),
-        )
-    raise LabError(
-        "Standalone trial workers are disabled; submit SQLite runs through the durable operation service",
-        code="E_DURABLE_OPERATION_REQUIRED",
-        hint="Run `python scripts/lab.py trial start --confirmed` with an approved harness profile.",
-    )
-
-
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run one AutoResearch trial in the background")
-    parser.add_argument("--operation-id")
-    parser.add_argument("--config", type=Path)
-    parser.add_argument("--hypothesis", type=Path)
+    parser = argparse.ArgumentParser(description="Run one queued AutoResearch operation in the background")
+    parser.add_argument("--operation-id", required=True)
     args = parser.parse_args(argv)
     os.environ.update(hardened_env())
-    if args.operation_id:
-        if args.config is not None or args.hypothesis is not None:
-            parser.error("--operation-id cannot be combined with --config or --hypothesis")
-        try:
-            run_operation_worker(args.operation_id)
-        except Exception as error:
-            raise SystemExit(1) from error
-        return 0
-    if args.config is None or args.hypothesis is None:
-        parser.error("--config and --hypothesis are required for a legacy trial worker")
     try:
-        run_worker(args.config.resolve(), args.hypothesis.resolve())
+        run_operation_worker(args.operation_id)
     except Exception as error:
-        if getattr(error, "code", None) not in {
-            "E_LEGACY_READ_ONLY", "E_DURABLE_OPERATION_REQUIRED",
-        }:
-            try:
-                config = load_config(args.config.resolve(), allow_pending=False)
-                _write_worker(config.state_dir, {
-                    "pid": os.getpid(),
-                    "heartbeat": time.time(),
-                    "hypothesis": str(args.hypothesis.resolve()),
-                    "status": "failed",
-                    "error": str(error),
-                })
-            except Exception:
-                pass
-        print(str(error), file=sys.stderr)
         raise SystemExit(1) from error
     return 0
 

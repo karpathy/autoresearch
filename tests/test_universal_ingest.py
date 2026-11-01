@@ -1,3 +1,8 @@
+try:
+    import support  # noqa: F401
+except ImportError:
+    from tests import support  # noqa: F401
+
 import json
 import tempfile
 import unittest

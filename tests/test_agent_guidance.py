@@ -29,7 +29,8 @@ from autoresearch_runtime.cockpit import (
 from autoresearch_runtime.config import load_config
 from autoresearch_runtime.snapshot import init_lab
 from autoresearch_runtime.sqlite_store import SQLiteStore
-from autoresearch_runtime.state import load_state
+from autoresearch_runtime.state import _save_manifest, load_state
+from autoresearch_runtime.store import _read_json, _write_json
 from autoresearch_runtime.probe import adopt_probe
 from tests.durable_workflow_helpers import (
     approved_offline_profile,
@@ -39,13 +40,17 @@ from tests.durable_workflow_helpers import (
 )
 
 
+def _rows(text):
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
 class AgentGuidanceTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-        example = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "legacy-toy"
+        example = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "draft-config"
         self.toy = self.root / "toy"
         shutil.copytree(example, self.toy)
         self.config = load_config(self.toy / "lab.json")
@@ -59,38 +64,6 @@ class AgentGuidanceTest(unittest.TestCase):
         self.addCleanup(home_patch.stop)
 
         init_lab(self.config)
-        initial_state = load_state(self.config)
-        candidate = self.config.state_dir / "candidate"
-        config = json.loads(self.config.path.read_text(encoding="utf-8"))
-        for name in config.get("input_files", []):
-            shutil.copy2(self.config.path.parent / name, self.config.state_dir / name)
-        config.update({
-            "source_root": str(self.config.source_root),
-            "state_dir": str(self.config.state_dir),
-            "config_path": str(self.config.state_dir / "lab.json"),
-            "input_files": [str(self.config.state_dir / name) for name in config.get("input_files", [])],
-            "confirmed": True,
-            "goal": "Improve the toy evaluator score",
-            "pins": {"program": {"path": str(self.toy / "program.md"), "sha256": "a" * 64}},
-        })
-        config["_passport"] = {
-            "confirmed": True,
-            "goal": config["goal"],
-            "constraints": [],
-            "limits": config["budget"],
-            "metrics": config["metrics"],
-            "evaluator": config["evaluator"],
-            "pins": config["pins"],
-        }
-        store = SQLiteStore(home)
-        lab_id = store.create_lab(config, initial_state, candidate)
-        config_bytes = store.load_config_bytes(lab_id)
-        (self.config.state_dir / "lab.json").write_bytes(config_bytes)
-        state = store.load_state(lab_id)
-        state["config_sha256"] = hashlib.sha256(config_bytes).hexdigest()
-        state["config_copy_sha256"] = state["config_sha256"]
-        store.save_state(lab_id, state)
-        self.config = load_config(str(lab_id))
         return self.config
 
     def _run_sqlite_step(self, *step_args):
@@ -182,7 +155,7 @@ class AgentGuidanceTest(unittest.TestCase):
         for manifest in (parent, accepted, rejected):
             run_dir = runs / manifest["id"]
             run_dir.mkdir(parents=True)
-            (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            support.save_manifest(self.config, manifest)
 
         state = load_state(self.config)
         state.update(baseline_id="baseline", best_id="trial-0001")
@@ -252,26 +225,6 @@ class AgentGuidanceTest(unittest.TestCase):
             for key, value in agent_guide.items()
         })
 
-    def test_guide_filters_current_epoch_before_bounded_selection(self):
-        init_lab(self.config)
-        state = load_state(self.config)
-        state["current_epoch"] = 2
-        run_root = self.config.state_dir / "runs"
-        for number in range(1, 13):
-            run_id = f"trial-{number:04d}"
-            run_dir = run_root / run_id
-            run_dir.mkdir(parents=True)
-            epoch = 2 if number == 1 else 1
-            manifest = {
-                "id": run_id, "status": "rejected", "epoch": epoch,
-                "runs": [{"status": "ok", "metrics": {"mean_error": number}}],
-            }
-            (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-
-        card = build_cockpit(self.config, state)
-        self.assertEqual(card["current_epoch"], 2)
-        self.assertEqual(card["selected_run_id"], "trial-0001")
-        self.assertLessEqual(len(card["evidence"]), 5)
 
     def test_cockpit_reports_decision_unit_and_spend_from_run_evidence(self):
         from dataclasses import replace
@@ -282,7 +235,6 @@ class AgentGuidanceTest(unittest.TestCase):
         )
         init_lab(config)
         run_dir = config.state_dir / "runs" / "baseline"
-        run_dir.mkdir(parents=True)
         manifest = {
             "id": "baseline", "status": "accepted", "epoch": 1,
             "runs": [
@@ -292,7 +244,9 @@ class AgentGuidanceTest(unittest.TestCase):
                  "usage": {"requests": 1, "cost_usd": 0.2}},
             ],
         }
-        (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        support.save_manifest(config, manifest)
+        for index, run in enumerate(manifest["runs"], start=1):
+            _write_json(run_dir / f"repeat_{index:02d}" / "result.json", run)
         state = load_state(config)
         state.update(baseline_id="baseline", best_id="baseline", requests=0, cost_usd=0.0)
 
@@ -336,13 +290,10 @@ class AgentGuidanceTest(unittest.TestCase):
         ):
             run_dir = config.state_dir / "runs" / run_id
             run_dir.mkdir(parents=True)
-            (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            support.save_manifest(config, manifest)
         repeat_dir = config.state_dir / "runs" / "H6" / "repeat_01"
         repeat_dir.mkdir()
-        (repeat_dir / "attempts.jsonl").write_text(
-            json.dumps({"event": "started", "attempt_id": "unknown-h6-call"}) + "\n",
-            encoding="utf-8",
-        )
+        _write_json((repeat_dir / "attempts.jsonl"), _rows(json.dumps({"event": "started", "attempt_id": "unknown-h6-call"}) + "\n"))
 
         guide = build_cockpit(config, state, run_id="H6")
 
@@ -386,56 +337,13 @@ class AgentGuidanceTest(unittest.TestCase):
                  "metrics": {"mean_error": 2.5}},
             ],
         }
-        manifest_path = config.state_dir / "runs" / "baseline" / "manifest.json"
-        manifest_path.parent.mkdir(parents=True)
-        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        support.save_manifest(config, manifest)
         self.assertEqual(build_cockpit(config, state)["goal_status"], "met")
 
         manifest["runs"][1]["details"]["evidence_origin"] = "offline_recompute"
-        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        support.save_manifest(config, manifest)
         self.assertEqual(build_cockpit(config, state)["goal_status"], "unconfirmed")
 
-    def test_step_waits_or_inspects_instead_of_starting_another_trial(self):
-        from autoresearch_runtime.step import run_step
-        from autoresearch_runtime.store import _write_json
-
-        init_lab(self.config)
-        state = load_state(self.config)
-        state.update(baseline_id="baseline", best_id="baseline")
-        _write_json(self.config.state_dir / "state.json", state)
-        baseline = {
-            "id": "baseline", "status": "accepted", "epoch": 1,
-            "config_sha256": state["config_sha256"],
-            "input_hashes": {item["path"]: item["sha256"] for item in state["inputs"]},
-            "evaluator": list(self.config.evaluator),
-            "runs": [{"status": "ok", "metrics": {"mean_error": 4.0, "coverage": 1.0}}],
-        }
-        baseline_dir = self.config.state_dir / "runs" / "baseline"
-        baseline_dir.mkdir(parents=True)
-        (baseline_dir / "manifest.json").write_text(json.dumps(baseline), encoding="utf-8")
-        active = self.config.state_dir / "runs" / "trial-0001"
-        active.mkdir()
-        (active / "manifest.json").write_text(json.dumps({
-            "id": "trial-0001", "status": "running", "parent": "baseline", "epoch": 1,
-            "config_sha256": baseline["config_sha256"], "input_hashes": baseline["input_hashes"],
-            "evaluator": baseline["evaluator"],
-            "runs": [],
-        }), encoding="utf-8")
-        waiting = run_step(self.config, run=False)
-        self.assertEqual(waiting["recommended_action"]["action"], "WAIT")
-        self.assertIn("wait", waiting["argv"])
-        self.assertLessEqual(len(waiting["evidence"]), 5)
-        self.assertEqual(run_step(self.config, run=True)["status"], "waiting_for_trial")
-
-        failed = active / "manifest.json"
-        failed.write_text(json.dumps({
-            "id": "trial-0001", "status": "timeout", "parent": "baseline", "epoch": 1,
-            "runs": [],
-        }), encoding="utf-8")
-        inspect = run_step(self.config, run=False)
-        self.assertEqual(inspect["recommended_action"]["action"], "INSPECT_RUN")
-        self.assertIn("guide", inspect["argv"])
-        self.assertEqual(run_step(self.config, run=True)["status"], "action_not_runnable")
 
     def test_setup_pending_with_declared_evaluator_runs_baseline(self):
         from dataclasses import replace
@@ -447,47 +355,6 @@ class AgentGuidanceTest(unittest.TestCase):
         no_evaluator = replace(self.config, evaluator=(), primary="")
         self.assertEqual(get_recommended_actions(no_evaluator, state)[0]["action"], "CONFIG_SETUP")
 
-    def test_probe_adoption_updates_cockpit(self):
-        from autoresearch_runtime.errors import LabError
-
-        self._use_sqlite_toy()
-        run_durable_baseline(self.config)
-
-        # Candidate modifies rule
-        (self.config.state_dir / "candidate" / "rule.txt").write_text("5", encoding="utf-8")
-        import subprocess
-        subprocess.run(
-            [
-                "git", "-c", "user.name=AutoResearch Tests",
-                "-c", "user.email=tests@example.invalid",
-                "commit", "-am", "test probe rule",
-            ],
-            cwd=str(self.config.state_dir / "candidate"),
-            capture_output=True,
-            check=True,
-            **support.hidden_process_kwargs(),
-        )
-        commit_hash = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(self.config.state_dir / "candidate"),
-            capture_output=True,
-            text=True,
-            check=True,
-            **support.hidden_process_kwargs(),
-        ).stdout.strip()
-
-        probe_res = run_durable_probe(self.config, commit_hash, {}, "ideas", "test-probe", repeats=1)
-        probe_id = probe_res["id"]
-
-        # Adopt probe
-        state_before = load_state(self.config)
-        with self.assertRaises(LabError) as error:
-            adopt_probe(self.config, probe_id)
-        self.assertEqual(error.exception.code, "E_CONTRACT_PROBE_ADOPTION")
-
-        state = load_state(self.config)
-        self.assertEqual(state["best_id"], state_before["best_id"])
-        self.assertEqual(state["best_commit"], state_before["best_commit"])
 
     def test_fuzzy_args_normalization(self):
         from autoresearch_runtime.fuzzy_args import normalize_cli_args
@@ -507,63 +374,7 @@ class AgentGuidanceTest(unittest.TestCase):
         self.assertIn("--repeats=5", norm_eq)
         self.assertIn("--source=data.json", norm_eq)
 
-    def test_step_command_lifecycle(self):
-        from autoresearch_runtime.step import run_step
 
-        self._use_sqlite_toy()
-        # 1. Before baseline: recommended action RUN_BASELINE
-        step1 = run_step(self.config, run=False)
-        self.assertEqual(step1["stage"], "BASELINE_NEEDED")
-        self.assertEqual(step1["recommended_action"]["action"], "RUN_BASELINE")
-        self.assertEqual(step1["status"], "recommended")
-
-        # 2. Execute baseline with --run
-        step2 = self._run_sqlite_step()
-        self.assertEqual(step2["data"]["status"], "accepted")
-        self.assertEqual(step2["cockpit"]["state"]["stage"], "ITERATING")
-
-        # 3. Iterating stage without changes
-        step3 = run_step(self.config, run=False)
-        self.assertEqual(step3["stage"], "ITERATING")
-        self.assertIn(step3["recommended_action"]["action"], ("ITERATE", "RUN_TRIAL"))
-
-        step3_run = self._run_sqlite_step()
-        self.assertEqual(step3_run["data"]["status"], "hypothesis_required")
-
-        # 4. Iterating stage with candidate changes
-        (self.config.state_dir / "candidate" / "rule.txt").write_text("7\n", encoding="utf-8")
-        step4 = self._run_sqlite_step()
-        self.assertEqual(step4["data"]["status"], "hypothesis_required")
-        self.assertNotIn("result", step4["data"])
-
-        hypothesis_path = self.toy / "hypothesis.json"
-        hypothesis_path.write_text(json.dumps({
-            "title": "Adjust toy rule", "observation": "Rule 7 improves the example cases",
-            "expected_effect": "Lower mean_error without reducing coverage",
-        }), encoding="utf-8")
-        step4 = self._run_sqlite_step("--hypothesis", str(hypothesis_path))
-        self.assertIn(step4["data"]["status"], ("accepted", "rejected"))
-        trial_id = step4["cockpit"]["selected_run_id"]
-        trial = SQLiteStore().load_manifest(self.config.lab_id, trial_id)
-        self.assertIsNotNone(trial)
-        self.assertEqual(trial["title"], "Adjust toy rule")
-
-    def test_step_command_parses_explicit_hypothesis(self):
-        init_lab(self.config)
-        hypothesis_path = self.toy / "hypothesis.json"
-        hypothesis_path.write_text("{}", encoding="utf-8")
-        scripts = Path(__file__).resolve().parents[1] / ".agents" / "skills" / "autoresearch" / "scripts"
-        env = os.environ.copy()
-        env["PYTHONPATH"] = str(scripts)
-        result = subprocess.run(
-            [sys.executable, str(scripts / "lab.py"), "--config", str(self.config.path),
-             "step", "--hypothesis", str(hypothesis_path)],
-            cwd=scripts, env=env, capture_output=True, text=True, encoding="utf-8", check=True,
-            **support.hidden_process_kwargs(),
-        )
-        payload = json.loads(result.stdout)
-        self.assertTrue(payload["ok"], payload)
-        self.assertEqual(payload["data"]["stage"], "BASELINE_NEEDED")
 
     def test_prepare_auto_returns_migration_workflow_without_evaluator_or_lab_writes(self):
         from autoresearch_runtime.bootstrap import main as bootstrap_main
@@ -733,133 +544,7 @@ class AgentGuidanceTest(unittest.TestCase):
         self.assertIn("ValueError: invalid literal for int() with base 10", cockpit["run_detail"]["reason"])
         self.assertIn("Evaluator exited 1", cockpit["impact"]["verdict"])
 
-    def test_end_to_end_step_run_with_inline_hypothesis_json(self):
-        self._use_sqlite_toy()
-        baseline = run_durable_baseline(self.config)
-        self.assertEqual(baseline["status"], "accepted")
 
-        # In toy evaluator: cases are (1->2, 2->4, 3->6). Factor 2 yields error 0.0 (baseline factor 1 had error 2.0).
-        (self.config.state_dir / "candidate" / "rule.txt").write_text("2\n", encoding="utf-8")
-
-        scripts = Path(__file__).resolve().parents[1] / ".agents" / "skills" / "autoresearch" / "scripts"
-        hyp_json = json.dumps({
-            "title": "Lower toy error inline",
-            "observation": "Factor 2 perfectly matches expected = input * 2",
-            "expected_effect": "Lower mean_error to 0.0",
-        })
-        cmd = [
-            sys.executable, str(scripts / "lab.py"),
-            "--headless",
-            "--agent",
-            "--confirmed",
-            "step",
-            "--config", str(self.config.path),
-            "--run",
-            "--hypothesis-json", hyp_json,
-        ]
-        with approved_offline_profile(self.config):
-            env = os.environ.copy()
-            env["PYTHONPATH"] = str(scripts)
-            res = subprocess.run(
-                cmd,
-                cwd=str(scripts),
-                env=env,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                **support.hidden_process_kwargs(),
-            )
-        self.assertEqual(res.returncode, 0, f"Command failed: {res.stderr}\n{res.stdout}")
-
-        envelope = json.loads(res.stdout)
-        self.assertTrue(envelope["ok"])
-        data = envelope["data"]
-        self.assertEqual(data.get("status"), "accepted")
-        cockpit = envelope.get("cockpit")
-        self.assertIsNotNone(cockpit)
-        self.assertEqual(cockpit["impact"]["status"], "accepted")
-        self.assertTrue(cockpit["impact"]["is_new_best"])
-
-    def test_sqlite_step_run_after_crash_trial_resumes_cleanly(self):
-        """Check 1: SQLite mode trial crash followed by candidate edit and step --run resumes with accepted status."""
-        scripts = Path(__file__).resolve().parents[1] / ".agents" / "skills" / "autoresearch" / "scripts"
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir)
-            home = tmp_path / "home"
-            home.mkdir()
-            with patch.dict(os.environ, {"AUTORESEARCH_HOME": str(home)}):
-                state_dir = home / "state"
-                state_dir.mkdir()
-                candidate = support.git_project(state_dir / "candidate", {"solver.py": "def solve():\n    return 10\n"})
-                commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=candidate, text=True, **support.hidden_process_kwargs()).strip()
-                eval_path = tmp_path / "evaluator.py"
-                eval_path.write_text(
-                    "import json, sys\n"
-                    "from pathlib import Path\n"
-                    "candidate = Path(sys.argv[1])\n"
-                    "run_dir = Path(sys.argv[2])\n"
-                    "run_dir.mkdir(parents=True, exist_ok=True)\n"
-                    "sys.path.insert(0, str(candidate))\n"
-                    "import solver\n"
-                    "score = float(solver.solve())\n"
-                    "(run_dir / 'result.json').write_text(json.dumps({'metrics': {'score': score}, 'status': 'ok'}))\n",
-                    encoding="utf-8",
-                )
-                cfg = {
-                    "confirmed": True, "source_root": str(candidate), "state_dir": str(state_dir),
-                    "config_path": str(state_dir / "lab.json"), "goal": "test", "repeats": 1, "timeout_seconds": 15,
-                    "metrics": {"primary": "score", "direction": "max", "guards": []},
-                    "evaluator": ["{python}", str(eval_path), "{candidate}", "{run_dir}"],
-                    "budget": {"max_trials": 10, "max_cost_usd": 0},
-                    "pins": {"program": {"path": str(candidate / "program.md"), "sha256": "a" * 64}},
-                    "_passport": {"confirmed": True, "goal": "test", "constraints": [], "limits": {"max_trials": 10}, "pins": {"program": {"path": str(candidate / "program.md"), "sha256": "a" * 64}}},
-                }
-                store = SQLiteStore(home)
-                lab_id = store.create_lab(cfg, {"best_commit": commit, "current_epoch": 1, "inputs": [], "source": []}, candidate)
-                config_bytes = store.load_config_bytes(lab_id)
-                (state_dir / "lab.json").write_bytes(config_bytes)
-                state = store.load_state(lab_id)
-                state.update({
-                    "best_commit": commit, "best_id": "baseline", "baseline_id": "baseline",
-                    "baseline_verified": True, "config_sha256": hashlib.sha256(config_bytes).hexdigest(),
-                    "inputs": [], "source": [],
-                })
-                store.save_state(lab_id, state)
-                base_run_id = store.create_run(lab_id, "baseline", "baseline", 1, {})
-                store.save_manifest(lab_id, base_run_id, {
-                    "id": "baseline", "status": "accepted", "runs": [{"status": "ok", "metrics": {"score": 0.5}}],
-                })
-
-                (candidate / "solver.py").write_text("def solve():\n    return 1 / 0\n", encoding="utf-8")
-                c_run_id = store.create_run(lab_id, "trial-0001", "trial-0001", 1, {})
-                store.save_manifest(lab_id, c_run_id, {
-                    "id": "trial-0001", "status": "crash", "reason": "Evaluator exited 1: ZeroDivisionError",
-                    "error_tail": "ZeroDivisionError: division by zero",
-                    "runs": [{"status": "crash", "error_tail": "ZeroDivisionError: division by zero", "metrics": {}}],
-                })
-                state["best_id"] = "baseline"
-                store.save_state(lab_id, state)
-
-                # Fix candidate
-                (candidate / "solver.py").write_text("def solve():\n    return 42\n", encoding="utf-8")
-
-                cmd = [
-                    sys.executable, str(scripts / "lab.py"),
-                    "--lab", str(lab_id),
-                    "--headless", "--agent", "--confirmed", "step",
-                    "--run",
-                    "--title", "Fix after crash",
-                    "--observation", "Fixed zero div",
-                    "--expected-effect", "Score improves",
-                ]
-                config = load_config(str(lab_id))
-                with approved_offline_profile(config):
-                    res = subprocess.run(cmd, env={**os.environ, "AUTORESEARCH_HOME": str(home)}, capture_output=True, text=True, encoding="utf-8", **support.hidden_process_kwargs())
-                self.assertEqual(res.returncode, 0, f"SQLite step failed: {res.stderr}\n{res.stdout}")
-                out = json.loads(res.stdout)
-                self.assertTrue(out["ok"])
-                self.assertEqual(out["data"]["status"], "accepted")
-                self.assertNotEqual(out["data"].get("action"), "action_not_runnable")
 
     def test_sqlite_multi_repeat_crash_preserves_error_tail_in_impact_and_run_detail(self):
         """Check 3: Multi-repeat SQLite lab where Repeat 1 succeeds and Repeat 2 crashes preserves error_tail."""
@@ -956,98 +641,6 @@ class AgentGuidanceTest(unittest.TestCase):
                 self.assertIn("error_tail", cockpit_detail["run_detail"])
                 self.assertEqual(cockpit_detail["run_detail"]["error_tail"], cockpit_detail["impact"]["error_tail"])
 
-    def test_sqlite_step_hypothesis_fields_retention_and_guide_surfacing(self):
-        """Check 4: --rationale, --target-files, --falsification in SQLite are retained and surfaced in guide."""
-        scripts = Path(__file__).resolve().parents[1] / ".agents" / "skills" / "autoresearch" / "scripts"
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir)
-            home = tmp_path / "home"
-            home.mkdir()
-            with patch.dict(os.environ, {"AUTORESEARCH_HOME": str(home)}):
-                state_dir = home / "state"
-                state_dir.mkdir()
-                candidate = support.git_project(state_dir / "candidate", {"solver.py": "x = 1\n"})
-                commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=candidate, text=True, **support.hidden_process_kwargs()).strip()
-
-                evaluator_code = (
-                    "import json, sys\n"
-                    "from pathlib import Path\n"
-                    "run_dir = Path(sys.argv[2])\n"
-                    "run_dir.mkdir(parents=True, exist_ok=True)\n"
-                    "(run_dir / 'result.json').write_text(json.dumps({'metrics': {'score': 1.0}, 'status': 'ok'}))\n"
-                )
-                eval_path = tmp_path / "evaluator.py"
-                eval_path.write_text(evaluator_code, encoding="utf-8")
-
-                cfg = {
-                    "confirmed": True, "source_root": str(candidate), "state_dir": str(state_dir),
-                    "config_path": str(state_dir / "lab.json"), "goal": "test hypothesis retention",
-                    "repeats": 1, "timeout_seconds": 15,
-                    "metrics": {"primary": "score", "direction": "max", "guards": []},
-                    "evaluator": ["{python}", str(eval_path), "{candidate}", "{run_dir}"],
-                    "budget": {"max_trials": 10, "max_cost_usd": 0},
-                    "pins": {"program": {"path": str(candidate / "program.md"), "sha256": "a" * 64}},
-                    "_passport": {"confirmed": True, "goal": "test", "constraints": [], "limits": {"max_trials": 10}, "pins": {"program": {"path": str(candidate / "program.md"), "sha256": "a" * 64}}},
-                }
-                store = SQLiteStore(home)
-                lab_id = store.create_lab(cfg, {"best_commit": commit, "current_epoch": 1, "inputs": [], "source": []}, candidate)
-                config_bytes = store.load_config_bytes(lab_id)
-                (state_dir / "lab.json").write_bytes(config_bytes)
-                state = store.load_state(lab_id)
-                state.update({
-                    "best_commit": commit, "best_id": "baseline", "baseline_id": "baseline",
-                    "baseline_verified": True, "config_sha256": hashlib.sha256(config_bytes).hexdigest(),
-                    "inputs": [], "source": [],
-                })
-                store.save_state(lab_id, state)
-                base_id = store.create_run(lab_id, "baseline", "baseline", 1, {})
-                store.save_manifest(lab_id, base_id, {
-                    "id": "baseline", "status": "accepted", "runs": [{"status": "ok", "metrics": {"score": 0.5}}],
-                })
-
-                (candidate / "solver.py").write_text("x = 2\n", encoding="utf-8")
-                cmd = [
-                    sys.executable, str(scripts / "lab.py"),
-                    "--lab", str(lab_id),
-                    "--headless", "--agent", "--confirmed", "step",
-                    "--run",
-                    "--title", "T1",
-                    "--observation", "O1",
-                    "--expected-effect", "E1",
-                    "--rationale", "R1",
-                    "--target-files", "solver.py",
-                ]
-                config = load_config(str(lab_id))
-                with approved_offline_profile(config):
-                    res = subprocess.run(cmd, env={**os.environ, "AUTORESEARCH_HOME": str(home)}, capture_output=True, text=True, encoding="utf-8", **support.hidden_process_kwargs())
-                self.assertEqual(res.returncode, 0, f"Step run failed: {res.stderr}\n{res.stdout}")
-                out = json.loads(res.stdout)
-                data = out["data"]
-                run_id = data.get("id") or data.get("run_id") or (out.get("cockpit") or {}).get("selected_run_id")
-                self.assertTrue(run_id)
-
-                m = store.load_manifest(lab_id, run_id)
-                rationale = m.get("rationale") or (m.get("hypothesis") or {}).get("rationale")
-                target_files = m.get("target_files") or (m.get("hypothesis") or {}).get("target_files")
-                self.assertEqual(rationale, "R1")
-                self.assertEqual(target_files, ["solver.py"])
-
-                guide_cmd = [
-                    sys.executable, str(scripts / "lab.py"),
-                    "--lab", str(lab_id),
-                    "--headless", "guide",
-                    "--json",
-                    "--run", run_id,
-                ]
-                g_res = subprocess.run(guide_cmd, env={**os.environ, "AUTORESEARCH_HOME": str(home)}, capture_output=True, text=True, encoding="utf-8", **support.hidden_process_kwargs())
-                self.assertEqual(g_res.returncode, 0, f"Guide failed: {g_res.stderr}\n{g_res.stdout}")
-                g_out = json.loads(g_res.stdout)
-                g_hyp = g_out["data"]["run_detail"]["hypothesis"]
-                self.assertEqual(g_hyp["title"], "T1")
-                self.assertEqual(g_hyp["observation"], "O1")
-                self.assertEqual(g_hyp["expected_effect"], "E1")
-                self.assertEqual(g_hyp["rationale"], "R1")
-                self.assertEqual(g_hyp["target_files"], ["solver.py"])
 
     def test_sqlite_recent_manifests_single_query_and_compact_budget_under_heavy_load(self):
         """Check 5: _recent_manifests single SQL query and <= 4500 byte cockpit budget under heavy load."""

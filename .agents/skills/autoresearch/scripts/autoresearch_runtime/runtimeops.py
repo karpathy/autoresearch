@@ -114,7 +114,7 @@ def _config_for(config_or_ref: LabConfig | str) -> LabConfig:
         except EntityNotFoundError as error:
             raise LabError(f"Unknown SQLite lab: {config_or_ref}") from error
         config = load_config(row["config_path"], allow_pending=True)
-    if config.storage_mode != "sqlite" or not config.lab_id:
+    if not config.lab_id:
         raise LabError("Durable operations require a SQLite-backed lab")
     return config
 
@@ -279,8 +279,6 @@ def current_operation_id() -> str | None:
 
 def require_durable_operation_context(config: LabConfig, executor: str) -> None:
     """Keep SQLite measurement executors reachable only through a claimed worker."""
-    if getattr(config, "storage_mode", "legacy") != "sqlite":
-        return
     operation_id = _CURRENT_OPERATION.get()
     if not operation_id:
         raise LabError(
@@ -834,7 +832,7 @@ def _recover_cancelled_lab(config: LabConfig, kind: str, operation_id: str) -> l
     from .trial import recover_lab
 
     interrupted = recover_lab(config, restore_candidate=True)
-    if interrupted and config.storage_mode == "sqlite":
+    if interrupted:
         store = SQLiteStore()
         for run_ref in interrupted:
             manifest = store.load_manifest(config.lab_id, run_ref)

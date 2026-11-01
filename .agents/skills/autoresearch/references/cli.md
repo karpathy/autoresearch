@@ -28,18 +28,13 @@ Prepare a lab only after the user approves its passport. For a new SQLite lab, p
 
 `prepare --auto` is deprecated. It returns `E_AUTO_MIGRATION_REQUIRED` before preparing a lab or starting an evaluator. Use `preflight`, then explicit `prepare.py --confirmed`, review the guide fingerprint, configure the host profile, and start a separate confirmed baseline.
 
-## Legacy labs and SQLite export
+## Legacy file-based labs and SQLite export
 
-Legacy labs are archive-only. `guide` and `status` read their saved state without validating source availability, repairing history, or running an evaluator. They mark the lab `ARCHIVE_ONLY`, report no usable baseline, and recommend a complete ZIP export. The export keeps regular contained files byte-for-byte under `lab/`; the root `archive-index.json` records each path, size, SHA-256, and excluded lock file. Symlinks, reparse points, external state directories, and output paths inside the lab are refused.
+A lab stored as plain files (a real `lab.json` with no SQLite lab behind it) is no longer supported. Any command that loads one fails with `E_LEGACY_LAB` and leaves the files unchanged. Git tag `v0.8.0` can open and export such labs. Export a SQLite lab as JSON; the export needs no harness profile or evaluator confirmation:
 
 ```text
-python SKILL_DIR/scripts/lab.py --config <legacy-lab.json> guide --json
-python SKILL_DIR/scripts/lab.py --config <legacy-lab.json> status
-python SKILL_DIR/scripts/lab.py --config <legacy-lab.json> storage export --output <archive.zip>
 python SKILL_DIR/scripts/lab.py storage export --lab <sqlite-ref> --output <lab.json>
 ```
-
-The recommended guide command includes exact argv for an archive path outside the legacy lab. Run those tokens as shown; the export command does not need a harness profile or evaluator confirmation. Start a working lab separately with a new goal, project, and dedicated `AUTORESEARCH_HOME` outside the project. Do not import archived runs, rewrite archived fingerprints, or treat history as a new baseline. A fresh baseline still requires the normal explicit confirmation and trusted host profile.
 
 ## Free checks and bounded guidance
 
@@ -82,22 +77,16 @@ Evaluation and signal diagnostics are automatically attached to the cockpit enve
 - `case_samples`: in `case_regression` signals, surfaces up to 3 compact failing cases (`id`, `status`, `error`, `metrics`), eliminating `cases.jsonl` reads.
 - `dead_ends`: in the cockpit summary, lists up to 8 rejected/crashed hypotheses from the current epoch (backed by a 100-run history memory), guarding against cycling through failed ideas across context compaction.
 
-For legacy labs, use their archive-only guide/status and preserve the full folder with ZIP export. For SQLite-backed labs, query the durable job through `trial status`/`trial wait` and inspect the stored guide/run projection instead of searching for a `manifest.json` path.
+Query the durable job through `trial status`/`trial wait` and inspect the stored guide/run projection instead of searching for a `manifest.json` path.
 
-## Compatibility audit and retired writes
+## Errors
 
-Before using an older lab:
-
-```text
-python SKILL_DIR/scripts/lab.py --config <lab.json> compat
-```
-
-`compat` remains a read-only format audit. `compat --migrate`, `history-import`, `storage migrate`, and `storage cleanup` return `E_OPERATION_REMOVED` (exit 2) with the archive/new-start guidance. Legacy write attempts, including physical `archive --apply` and `catalog repair --apply`, return `E_LEGACY_READ_ONLY`; `catalog repair` without `--apply` is a read-only preview. Unknown `--lab` selectors return `E_LAB_NOT_FOUND`, malformed selected configs return `E_CONFIG_INVALID`, and ambiguous selectors stay explicit. SQLite `storage export` and `storage reconcile` remain available.
+Unknown `--lab` selectors return `E_LAB_NOT_FOUND`, malformed selected configs return `E_CONFIG_INVALID`, and ambiguous selectors stay explicit. SQLite `storage export` and `storage reconcile` remain available.
 
 ## Other commands
 
-Use `prepare` to create a new SQLite-backed lab. The old `setup --project <path>` entry point remains as a typed removal notice; it no longer creates file-backed labs. `recover` remains available for SQLite labs. The local dashboard service starts in the background on the first regular lab command, before lab resolution or preparation, and is shared by commands using the same `AUTORESEARCH_HOME`. Startup does not open or focus a browser; a supported explicit `--open-browser` request, such as `dashboard ensure --open-browser`, is required. On Windows the service runs without a console window. Global `--headless` or `AUTORESEARCH_NO_DASHBOARD=1` skips service startup. `dashboard` supports `start`, `ensure`, `status`, and `stop`. Its stop token stays in protected home metadata and is never passed on the command line. See [home layout](home.md) for service files.
+Use `prepare` to create a new SQLite-backed lab. `recover` remains available for SQLite labs. The local dashboard service starts in the background on the first regular lab command, before lab resolution or preparation, and is shared by commands using the same `AUTORESEARCH_HOME`. Startup does not open or focus a browser; a supported explicit `--open-browser` request, such as `dashboard ensure --open-browser`, is required. On Windows the service runs without a console window. Global `--headless` or `AUTORESEARCH_NO_DASHBOARD=1` skips service startup. `dashboard` supports `start`, `ensure`, `status`, and `stop`. Its stop token stays in protected home metadata and is never passed on the command line. See [home layout](home.md) for service files.
 
 `cases diff --left <repeat-dir> --right <repeat-dir> [--out <path>]` compares response-body hashes for successful case IDs from two existing repeat directories. It reads their `cases.jsonl` and `sent-requests.jsonl`; both paths must be real directories, so this command does not query SQLite-backed labs' virtual repeat paths. SQLite checkpoint and attempt records stay in the database, are consumed by native `resume <run_id>`, and are included by explicit `storage export --lab REF --output <file>`.
 
-`archive [--root <path>]` previews legacy archive candidates. Legacy `archive --apply`, dashboard move/delete actions, and restore actions are read-only refusals. SQLite lifecycle actions continue through their existing store/API paths. `ingest --source <report> [--as-type <type>] [--dry-run]` imports saved result records; dry-run previews records without writing.
+`ingest --source <report> [--as-type <type>] [--dry-run]` imports saved result records; dry-run previews records without writing.

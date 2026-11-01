@@ -14,10 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from .envelope import emit, fail
-from .lab import LabError, _refresh_dashboard, _write_json, init_lab, load_config, load_state
-from .history import read_history
-from .catalog import project_directory, record_lab, resolve_lab_path
-from .paths import brief_path, home_root_id, lab_storage_roots, project_id, resolve_home, storage_root_for_path
+from .config import validate_config_file
+from .lab import LabError, init_lab, load_config, load_state
+from .paths import brief_path, home_root_id, project_directory, project_id, resolve_home
 from .pins import _has_comparable_history, validate as pins_validate
 from .runtime_env import hidden_process_kwargs
 
@@ -79,10 +78,6 @@ def _lab_root(program: Path, project: Path) -> Path:
     return root
 
 
-def _active_path(root: Path, project: Path) -> Path:
-    return root / ".active" / f"{project_id(project)}.json"
-
-
 def _brief_goal(program: Path, spec: dict[str, Any]) -> str:
     declared = spec.get("goal")
     if isinstance(declared, str) and declared.strip():
@@ -119,60 +114,26 @@ def _confirmed_goal(program: Path, spec: dict[str, Any]) -> str:
     return ""
 
 
-def _record_active(root: Path, program: Path, project: Path, config_path: Path) -> None:
-    _write_json(_active_path(root, project), {
-        "program": str(program), "program_sha256": _hash(program), "config": str(config_path),
-        "project_id": project_id(project),
-    })
-
-
 def _resume_from_config(program: Path, project: Path, config_path: Path, storage_root: Path) -> dict[str, Any] | None:
-    db_store = None
-    db_lab_id = None
+    from .sqlite_store import EntityNotFoundError, SQLiteStore
+    db_store = SQLiteStore(storage_root)
+    if not db_store.is_initialized():
+        return None
     try:
-        from .sqlite_store import EntityNotFoundError, SQLiteStore
-        db_store = SQLiteStore(storage_root)
-        if db_store.is_initialized():
-            try:
-                db_lab_id = db_store.resolve_lab_id(config_path)
-            except EntityNotFoundError:
-                db_lab_id = None
-    except ImportError:
-        db_store = None
-    if db_lab_id is not None:
-        raw_config = db_store.load_config_bytes(db_lab_id)
-        try:
-            relative = Path(db_store.get_lab(db_lab_id)["state_dir"]).relative_to(storage_root.resolve())
-        except ValueError:
-            return None
-        if "archive" in relative.parts:
-            return None
-        saved_config = json.loads(raw_config.decode("utf-8"))
-        load_ref: Path | str = str(db_lab_id)
-    else:
-        if not config_path.is_file():
-            return None
-        try:
-            relative = config_path.relative_to(storage_root.resolve())
-        except ValueError:
-            return None
-        if "archive" in relative.parts:
-            return None
-        saved_config = json.loads(config_path.read_text(encoding="utf-8"))
-        load_ref = config_path
+        db_lab_id = db_store.resolve_lab_id(config_path)
+    except EntityNotFoundError:
+        return None
+    raw_config = db_store.load_config_bytes(db_lab_id)
+    try:
+        relative = Path(db_store.get_lab(db_lab_id)["state_dir"]).relative_to(storage_root.resolve())
+    except ValueError:
+        return None
+    if "archive" in relative.parts:
+        return None
+    saved_config = json.loads(raw_config.decode("utf-8"))
+    load_ref = str(db_lab_id)
     if saved_config.get("strict_contract") is not True:
         return None
-    if db_lab_id is None:
-        raise LabError(
-            "Legacy file-backed labs are read-only and cannot be resumed for new work",
-            code="E_LEGACY_READ_ONLY",
-            hint=(
-                "Export this lab with `python scripts/lab.py --config <lab.json> storage export "
-                "--output <archive.zip>`. To start new work, review a new spec and run `prepare "
-                "--program <program.md> --spec <spec.json> --confirmed` with a dedicated "
-                "AUTORESEARCH_HOME outside the project."
-            ),
-        )
     try:
         config = load_config(load_ref, allow_pending=True)
     except (LabError, OSError, ValueError):
@@ -180,10 +141,7 @@ def _resume_from_config(program: Path, project: Path, config_path: Path, storage
     state = load_state(config)
     if state.get("baseline_id") is not None and state.get("baseline_verified") is not True:
         return None
-    from .store import _sha256
-    config_sha256 = (hashlib.sha256(config.config_bytes).hexdigest()
-                     if getattr(config, "storage_mode", "legacy") == "sqlite"
-                     and isinstance(config.config_bytes, bytes) else _sha256(config.path))
+    config_sha256 = hashlib.sha256(config.config_bytes).hexdigest()
     if config.source_root != project or config_sha256 != state["config_sha256"]:
         raise ValueError("Active lab configuration changed")
     snapshot = config.state_dir / "program.snapshot.md"
@@ -195,14 +153,10 @@ def _resume_from_config(program: Path, project: Path, config_path: Path, storage
             return None
     home = _lab_root(program, project)
     resumed = {"config": str(config.path), "candidate": str(config.state_dir / "candidate"),
-               "dashboard": (None if getattr(config, "storage_mode", "legacy") == "sqlite"
-                             else str(config.state_dir / "dashboard.html")),
+               "dashboard": None,
                "dashboard_root": str(home),
                "created": False}
-    if config.lab_id:
-        resumed["lab_id"] = config.lab_id
-    else:
-        resumed["catalog"] = str(storage_root / "catalog.json")
+    resumed["lab_id"] = config.lab_id
     return resumed
 
 
@@ -215,10 +169,10 @@ def resume_lab(program: Path, project: Path) -> dict[str, Any] | None:
     if not project.is_dir():
         raise ValueError(f"Project is missing: {project}")
     home = _lab_root(program, project)
-    try:
-        from .sqlite_store import SQLiteStore
-        store = SQLiteStore(home)
-        if store.is_initialized():
+    from .sqlite_store import SQLiteStore
+    store = SQLiteStore(home)
+    if store.is_initialized():
+        if True:
             active_id = store.get_active_lab(home_root_id(home), project_id(project))
             if active_id is not None:
                 row = store.get_lab(active_id)
@@ -238,50 +192,7 @@ def resume_lab(program: Path, project: Path) -> dict[str, Any] | None:
                 offset += len(page["items"])
                 if offset >= page["total"] or not page["items"]:
                     break
-    except ImportError:
-        pass
-    search_roots = lab_storage_roots(home, program=program)
-    pointer = _active_path(home, project)
-    if pointer.is_file():
-        active = json.loads(pointer.read_text(encoding="utf-8"))
-        if active.get("program") == str(program) and active.get("program_sha256") == _hash(program):
-            config_path = Path(active["config"]).resolve()
-            storage_root = storage_root_for_path(config_path, home, program=program)
-            if storage_root is not None:
-                resumed = _resume_from_config(program, project, config_path, storage_root)
-                if resumed is not None:
-                    return resumed
-    found: list[tuple[float, dict[str, Any]]] = []
-    for storage_root in search_roots:
-        catalog_path = storage_root / "catalog.json"
-        if not catalog_path.is_file():
-            continue
-        try:
-            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        for entry in catalog.get("projects", []):
-            if not isinstance(entry, dict) or Path(str(entry.get("source_root", ""))).resolve() != project:
-                continue
-            for lab in entry.get("labs", []):
-                if not isinstance(lab, dict) or not isinstance(lab.get("path"), str):
-                    continue
-                state_dir = resolve_lab_path(storage_root, entry, lab["path"])
-                config_path = state_dir / "lab.json"
-                if not config_path.is_file():
-                    continue
-                snapshot = state_dir / "program.snapshot.md"
-                if snapshot.is_file() and _hash(snapshot) != _hash(program):
-                    continue
-                resumed = _resume_from_config(program, project, config_path, storage_root)
-                if resumed is None:
-                    continue
-                state_path = state_dir / "state.json"
-                stamp = state_path.stat().st_mtime if state_path.is_file() else 0
-                found.append((stamp, resumed))
-    if not found:
-        return None
-    return max(found, key=lambda item: item[0])[1]
+    return None
 
 
 def prepare_lab(
@@ -438,7 +349,6 @@ def prepare_lab(
             if key_name in spec:
                 raw[key_name] = spec[key_name]
         goal = _confirmed_goal(program, spec) if has_program else ""
-        use_sqlite = has_program
         # Validate everything before creating the real state directory. In particular,
         # reject unclassified large files without leaving a half-created lab behind.
         with tempfile.TemporaryDirectory(prefix="autoresearch-preflight-") as temporary:
@@ -453,7 +363,7 @@ def prepare_lab(
                 preflight_evaluator[script_index] = str(preflight_script)
             preflight_raw["evaluator"] = preflight_evaluator
             preflight_path.write_text(json.dumps(preflight_raw, ensure_ascii=False), encoding="utf-8")
-            checked = load_config(preflight_path, allow_pending=True, read_only=True)
+            checked = validate_config_file(preflight_path, allow_pending=True)
             if dry_run:
                 return {"contract_valid": True, "config_preview": preflight_raw,
                         "config": str(config_path), "candidate": str(state_dir / "candidate"),
@@ -473,7 +383,7 @@ def prepare_lab(
         ]
         passport_payload = {
             **(passport or {}),
-            "confirmed": bool(use_sqlite),
+            "confirmed": True,
             "goal": goal or _brief_goal(program, spec),
             "project": str(project),
             "metrics": metrics,
@@ -483,31 +393,14 @@ def prepare_lab(
             "contract_id": key,
             "pins": passport_pins,
         }
-        if config_path.exists():
-            if _without_retired_spend(json.loads(config_path.read_text(encoding="utf-8"))) != raw:
-                raise ValueError(f"Lab configuration differs from the prepared contract: {config_path}")
-            config = load_config(config_path, allow_pending=True)
-            if _hash(config_path) != load_state(config)["config_sha256"]:
-                raise ValueError(f"Lab configuration changed after preparation: {config_path}")
-            record_lab(root, project, state_dir, goal=_brief_goal(program, spec),
-                       metric=metrics["primary"], conditions={
-                           "direction": metrics["direction"], "repeats": contract["repeats"],
-                           "timeout_seconds": contract["timeout_seconds"],
-                           "inputs": [{"name": item.name, "sha256": _hash(item)} for item in inputs],
-                       }, contract_id=key)
-            _record_active(root, program, project, config_path)
-            return {"config": str(config_path), "candidate": str(state_dir / "candidate"),
-                    "dashboard": str(state_dir / "dashboard.html"), "catalog": str(root / "catalog.json"),
-                    "dashboard_root": str(root), "created": False}
         existing_db_id = None
-        if use_sqlite:
-            from .sqlite_store import EntityNotFoundError, SQLiteStore
-            database = SQLiteStore(root)
-            if database.is_initialized():
-                try:
-                    existing_db_id = database.resolve_lab_id(config_path)
-                except EntityNotFoundError:
-                    existing_db_id = None
+        from .sqlite_store import EntityNotFoundError, SQLiteStore
+        database = SQLiteStore(root)
+        if database.is_initialized():
+            try:
+                existing_db_id = database.resolve_lab_id(config_path)
+            except EntityNotFoundError:
+                existing_db_id = None
         if existing_db_id is not None:
             existing_bytes = database.load_config_bytes(existing_db_id)
             if _without_retired_spend(json.loads(existing_bytes.decode("utf-8"))) != raw:
@@ -522,7 +415,7 @@ def prepare_lab(
                     "dashboard": None,
                     "dashboard_root": str(root), "created": False,
                     "goal": row["goal"], "primary_metric": row["primary_metric"]}
-        if use_sqlite and (confirmed is not True or not goal):
+        if confirmed is not True or not goal:
             raise ValueError("A new confirmed lab requires an explicit confirmation and non-empty goal")
         if state_dir.exists():
             raise ValueError(f"Incomplete lab directory needs inspection: {state_dir}")
@@ -532,41 +425,21 @@ def prepare_lab(
             target.parent.mkdir()
             shutil.copy2(script, target)
         (state_dir / "program.snapshot.md").write_bytes(program.read_bytes())
-        if use_sqlite:
-            validation_path = state_dir / ".lab-config.validate.json"
-            validation_path.write_bytes(raw_config_bytes)
-            try:
-                validated = load_config(validation_path, allow_pending=True)
-            finally:
-                validation_path.unlink(missing_ok=True)
-            config = replace(validated, path=config_path, storage_mode="sqlite",
-                             config_bytes=raw_config_bytes, passport=passport_payload)
-        else:
-            _write_json(config_path, raw)
-            config = load_config(config_path, allow_pending=True)
+        validation_path = state_dir / ".lab-config.validate.json"
+        validation_path.write_bytes(raw_config_bytes)
+        try:
+            validated = validate_config_file(validation_path, allow_pending=True)
+        finally:
+            validation_path.unlink(missing_ok=True)
+        config = replace(validated, path=config_path, config_bytes=raw_config_bytes, passport=passport_payload)
         init_lab(config)
-        catalog = read_history(state_dir)
-        if use_sqlite:
-            from .sqlite_store import SQLiteStore
-            database = SQLiteStore(root)
-            lab_id = database.resolve_lab_id(config_path)
-            database.set_active_lab(home_root_id(root), project_id(project), lab_id)
-            return {"lab_id": str(lab_id), "config": str(config_path),
-                    "candidate": str(state_dir / "candidate"),
-                    "dashboard": None, "dashboard_root": str(root),
-                    "created": True, "goal": passport_payload["goal"],
-                    "primary_metric": metrics["primary"]}
-        _refresh_dashboard(config)
-        record_lab(root, project, state_dir, goal=_brief_goal(program, spec),
-                   metric=metrics["primary"], conditions={
-                       "direction": metrics["direction"], "repeats": contract["repeats"],
-                       "timeout_seconds": contract["timeout_seconds"],
-                       "inputs": [{"name": item.name, "sha256": _hash(item)} for item in inputs],
-                   }, contract_id=key)
-        _record_active(root, program, project, config_path)
-        return {"config": str(config_path), "candidate": str(state_dir / "candidate"),
-                "dashboard": str(state_dir / "dashboard.html"), "catalog": str(root / "catalog.json"),
-                "dashboard_root": str(root), "created": True}
+        lab_id = database.resolve_lab_id(config_path)
+        database.set_active_lab(home_root_id(root), project_id(project), lab_id)
+        return {"lab_id": str(lab_id), "config": str(config_path),
+                "candidate": str(state_dir / "candidate"),
+                "dashboard": None, "dashboard_root": str(root),
+                "created": True, "goal": passport_payload["goal"],
+                "primary_metric": metrics["primary"]}
     except LabError as error:
         if error.code == SPEND_LIMIT_CODE:
             raise
@@ -871,10 +744,6 @@ def main(argv: list[str] | None = None) -> int:
             from .dashboard_server import start_dashboard
             if project is not None:
                 root = _lab_root(program, project.resolve())
-                from .paths import adopt_legacy_stores
-
-                # No-op when AUTORESEARCH_HOME is set explicitly.
-                adopt_legacy_stores(root, extra_seeds=[program.parent, project])
                 try:
                     open_browser = args.open_browser and not args.no_browser and os.environ.get("AUTORESEARCH_NO_BROWSER") != "1"
                     output["dashboard_server"] = start_dashboard(root, open_browser=open_browser)

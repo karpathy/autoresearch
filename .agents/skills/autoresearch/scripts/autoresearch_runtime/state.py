@@ -9,8 +9,6 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .dashboard import render_report_page
-from .catalog import update_lab_status
 
 from .errors import LabError
 from .store import _sha256, _write_json
@@ -20,43 +18,29 @@ def load_state(config: LabConfig) -> dict[str, Any]:
     from .config import LabConfig
     from .measurement import migrate_state
     try:
-        if getattr(config, "storage_mode", "legacy") == "sqlite":
-            from .sqlite_store import SQLiteStore
-            raw_state = SQLiteStore().load_state(config.lab_id)
-        else:
-            raw_state = json.loads((config.state_dir / "state.json").read_text(encoding="utf-8"))
+        from .sqlite_store import SQLiteStore
+        raw_state = SQLiteStore().load_state(config.lab_id)
         state = migrate_state(raw_state)
     except (OSError, ValueError) as error:
         raise LabError(f"Lab is not initialized: {error}") from error
-    lab_config_path = config.state_dir / "lab.json"
-    if getattr(config, "storage_mode", "legacy") == "legacy" and lab_config_path.is_file():
-        actual_copy_sha = _sha256(lab_config_path)
-        if state.get("setup_pending") and state.get("config_copy_sha256") != actual_copy_sha:
-            state["config_copy_sha256"] = actual_copy_sha
-            if config.path.resolve() == lab_config_path.resolve():
-                state["config_sha256"] = actual_copy_sha
-            _write_json(config.state_dir / "state.json", state)
     return state
 
 def _runs(config: LabConfig) -> list[dict[str, Any]]:
     from .config import LabConfig
     from .measurement import migrate_manifest
 
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
-        store = SQLiteStore()
-        manifests = []
-        cursor = None
-        while True:
-            page = store.list_runs(config.lab_id, limit=100, cursor=cursor)
-            manifests.extend(store.load_manifest(config.lab_id, item["run_id"]) for item in page["items"])
-            cursor = page.get("next_cursor")
-            if cursor is None:
-                break
-        return sorted((migrate_manifest(item) for item in manifests if item),
-                      key=lambda item: str(item.get("id", "")))
-    manifests = sorted((config.state_dir / "runs").glob("*/manifest.json"))
-    return [migrate_manifest(json.loads(path.read_text(encoding="utf-8"))) for path in manifests]
+    from .sqlite_store import SQLiteStore
+    store = SQLiteStore()
+    manifests = []
+    cursor = None
+    while True:
+        page = store.list_runs(config.lab_id, limit=100, cursor=cursor)
+        manifests.extend(store.load_manifest(config.lab_id, item["run_id"]) for item in page["items"])
+        cursor = page.get("next_cursor")
+        if cursor is None:
+            break
+    return sorted((migrate_manifest(item) for item in manifests if item),
+                  key=lambda item: str(item.get("id", "")))
 
 def _check_external_frozen(config: LabConfig, state: dict[str, Any]) -> None:
     from .config import LabConfig
@@ -85,11 +69,6 @@ def _finalize_setup(config: LabConfig, state: dict[str, Any]) -> None:
         raise LabError("Baseline candidate changed after setup")
     state["inputs"] = [{"path": str(item), "sha256": _sha256(item)} for item in config.input_files]
     state["config_sha256"] = _sha256(config.path)
-    lab_config_path = config.state_dir / "lab.json"
-    if config.path.resolve() != lab_config_path.resolve() and config.path.is_file():
-        shutil.copyfile(config.path, lab_config_path)
-    if lab_config_path.is_file():
-        state["config_copy_sha256"] = _sha256(lab_config_path)
     _write_json(config.state_dir / "state.json", state)
     _store_vault(config)
 
@@ -147,8 +126,6 @@ def _fingerprints(config: LabConfig, state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _passport_pins_sha256(config: LabConfig) -> str | None:
-    if getattr(config, "storage_mode", "legacy") != "sqlite":
-        return None
     from .sqlite_store import SQLiteStore
     pins = SQLiteStore().load_pins(config.lab_id)
     immutable = [{
@@ -163,15 +140,13 @@ def _passport_pins_sha256(config: LabConfig) -> str | None:
 
 def _verify_passport_pins(config: LabConfig, manifest: dict[str, Any]) -> None:
     expected = manifest.get("passport_pins_sha256")
-    if getattr(config, "storage_mode", "legacy") != "sqlite":
-        return
     actual = _passport_pins_sha256(config)
     if not isinstance(expected, str) or expected != actual:
         raise LabError("Passport pins changed after the run snapshot; refusing to finalize or resume")
 
 
 def _verify_migration_baseline_trust(config: LabConfig, state: dict[str, Any]) -> None:
-    if getattr(config, "storage_mode", "legacy") != "sqlite" or not state.get("baseline_id"):
+    if not state.get("baseline_id"):
         return
     from .sqlite_store import SQLiteStore
     binding = SQLiteStore().get_document(config.lab_id, "migration_binding", None)
@@ -225,44 +200,18 @@ def stamp_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
 def _save_manifest(config: LabConfig, manifest: dict[str, Any]) -> None:
     from .config import LabConfig
     stamp_manifest(manifest)
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
-        store = SQLiteStore()
-        alias = str(manifest["id"])
-        existing = store.get_run(config.lab_id, alias)
-        if existing is None:
-            parent = manifest.get("parent")
-            parent_id = str(store.resolve_run_id(config.lab_id, parent)) if parent else None
-            store.create_run(
-                config.lab_id,
-                "baseline" if alias.startswith("baseline") else "trial",
-                alias,
-                int(manifest.get("epoch") or 1),
-                {"parent_run_id": parent_id, "candidate_commit": manifest.get("base_commit")},
-            )
-        store.save_manifest(config.lab_id, alias, manifest)
-        update_lab_status(config.state_dir)
-        return
-    _write_json(config.state_dir / "runs" / manifest["id"] / "manifest.json", manifest)
-    update_lab_status(config.state_dir)
-    try:
-        from .dash_http import notify_dashboard
-        projects_dir = next((parent for parent in config.state_dir.parents if parent.name == "projects"), None)
-        labs_root = projects_dir.parent if projects_dir is not None else config.state_dir.parent
-        notify_dashboard(labs_root)
-    except Exception:
-        pass
-
-
-def _refresh_dashboard(config: LabConfig) -> None:
-    from .config import LabConfig
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        # SQLite guide/dashboard clients read the current DB revision directly.
-        return
-    projects_dir = next((parent for parent in config.state_dir.parents if parent.name == "projects"), None)
-    labs_root = projects_dir.parent if projects_dir is not None else config.state_dir.parent
-    page = render_report_page(labs_root, selected_lab_id=config.state_dir.name)
-    target = config.state_dir / "dashboard.html"
-    temporary = target.with_name(target.name + ".tmp")
-    temporary.write_text(page, encoding="utf-8")
-    os.replace(temporary, target)
+    from .sqlite_store import SQLiteStore
+    store = SQLiteStore()
+    alias = str(manifest["id"])
+    existing = store.get_run(config.lab_id, alias)
+    if existing is None:
+        parent = manifest.get("parent")
+        parent_id = str(store.resolve_run_id(config.lab_id, parent)) if parent else None
+        store.create_run(
+            config.lab_id,
+            "baseline" if alias.startswith("baseline") else "trial",
+            alias,
+            int(manifest.get("epoch") or 1),
+            {"parent_run_id": parent_id, "candidate_commit": manifest.get("base_commit")},
+        )
+    store.save_manifest(config.lab_id, alias, manifest)

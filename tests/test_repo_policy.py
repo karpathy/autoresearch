@@ -17,7 +17,7 @@ except ImportError:
 REPO = Path(__file__).resolve().parents[1]
 SAMPLE_TOKEN = "forbidden-token"
 SAMPLE_RULES = [("sample rule", re.compile(SAMPLE_TOKEN, re.IGNORECASE))]
-RUNTIME_LINE_BUDGET = 21993  # Current total plus 2 percent, rounded up; this should only be lowered.
+RUNTIME_LINE_BUDGET = 17923  # Current total plus 2 percent, rounded up; this should only be lowered.
 
 
 def _git(repo, *args):
@@ -47,6 +47,13 @@ class RepoPolicyTest(unittest.TestCase):
             if path.startswith(scripts) and path.endswith(".py")
         )
         self.assertLessEqual(total, RUNTIME_LINE_BUDGET)
+
+    def test_tests_using_the_runtime_get_the_isolated_home(self):
+        """tests/support.py gives the process a temporary home; a module that skips it can write to the real one."""
+        missing = [path.name for path in sorted((REPO / "tests").glob("test_*.py"))
+                   if "autoresearch_runtime" in path.read_text(encoding="utf-8")
+                   and "import support" not in path.read_text(encoding="utf-8")]
+        self.assertEqual(missing, [])
 
     def test_fixtures_are_stored_as_exact_bytes(self):
         fixtures = [

@@ -74,33 +74,6 @@ class DashboardLocalAccessTest(unittest.TestCase):
             finally:
                 error.close()
 
-    def test_dashboard_and_legacy_reads_work_without_credentials(self):
-        details = f"/api/labs/{quote(self.project)}/ready-lab"
-        for path in ("/", "/assets/live_app.js", "/api/health", "/api/status", details):
-            with self.subTest(path=path):
-                status, headers, body = self._request(path)
-                self.assertEqual(status, 200)
-                self.assertNotIn("Set-Cookie", headers)
-                self.assertTrue(body)
-
-        with urlopen(self.base + "/api/events", timeout=2) as response:
-            self.assertEqual(response.status, 200)
-            self.assertEqual(response.headers.get("Content-Type"), "text/event-stream")
-
-    def test_local_legacy_lifecycle_write_is_read_only_without_credentials(self):
-        path = f"/api/labs/{quote(self.project)}/ready-lab/archive"
-        status, headers, body = self._request(path, method="POST", body=b"{}", headers={
-            "Origin": self.base,
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-Fetch-Mode": "cors",
-            "X-AutoResearch-Confirm": "ready-lab",
-        })
-        self.assertEqual(status, 409, body.decode("utf-8", errors="replace"))
-        self.assertNotIn("Access-Control-Allow-Origin", headers)
-        self.assertEqual(json.loads(body)["code"], "E_LEGACY_READ_ONLY")
-        self.assertTrue(self.lab.is_dir())
-        self.assertFalse((self.root / "archive" / self.project / "ready-lab").exists())
-
     def test_cross_origin_browser_mutations_are_rejected(self):
         cases = (
             {"Origin": "http://example.test", "Sec-Fetch-Site": "same-origin",

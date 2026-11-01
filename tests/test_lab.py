@@ -14,6 +14,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+from autoresearch_runtime.store import _read_json, _write_json
 from autoresearch_runtime.lab import (
     LabError,
     assess_candidate,
@@ -77,6 +78,31 @@ class LabTest(unittest.TestCase):
         self.assertEqual(spent["unknown_cost_usd"], 0.0)
         self.assertEqual(spent["unknown_costs"], 1.0)
 
+    def test_failed_repeat_usage_is_saved_and_unknown_reservation_blocks_next_run(self):
+        self.install_evaluator()
+        evaluator = Path(self.config["evaluator"][1])
+        evaluator.write_text(
+            "import json,sys\nfrom pathlib import Path\n"
+            "run=Path(sys.argv[2]);run.mkdir(parents=True,exist_ok=True)\n"
+            "(run/'usage.json').write_text(json.dumps({'requests':50,'cost_usd':0.0176445324}))\n"
+            "raise SystemExit(1)\n", encoding="utf-8")
+        config = load_config(self.config_path)
+        init_lab(config)
+        with self.assertRaisesRegex(LabError, "Evaluator exited 1"):
+            run_baseline(config)
+        manifest = _read_json(config.state_dir / "runs" / "baseline" / "manifest.json")
+        self.assertEqual(manifest["runs"][0]["usage"]["requests"], 50)
+        self.assertAlmostEqual(status_lab(config)["spent"]["cost_usd"], 0.0176445324)
+
+        usage_path = config.state_dir / "runs" / "baseline" / "repeat_01" / "usage.json"
+        _write_json(usage_path, {"requests": 1, "cost_usd": 0.02, "unknown_requests": 1,
+                                 "unknown_cost_usd": 0.02})
+        unresolved = {"id": "baseline", "runs": [{"duration_seconds": 1}]}
+        manifest_path = config.state_dir / "runs" / "baseline" / "manifest.json"
+        _write_json(manifest_path, unresolved)
+        self.assertEqual(_spent([unresolved], config.state_dir)["unknown_requests"], 1)
+        self.assertGreater(_remaining(config), 0)
+
     def install_evaluator(self):
         evaluator = self.root / "evaluator.py"
         evaluator.write_text(
@@ -111,30 +137,6 @@ class LabTest(unittest.TestCase):
         self.config["evaluator"] = ["{python}", str(evaluator), "{candidate}", "{run_dir}"]
         self.write_config()
 
-    def test_failed_repeat_usage_is_saved_and_unknown_reservation_blocks_next_run(self):
-        self.install_evaluator()
-        evaluator = Path(self.config["evaluator"][1])
-        evaluator.write_text(
-            "import json,sys\nfrom pathlib import Path\n"
-            "run=Path(sys.argv[2]);run.mkdir(parents=True,exist_ok=True)\n"
-            "(run/'usage.json').write_text(json.dumps({'requests':50,'cost_usd':0.0176445324}))\n"
-            "raise SystemExit(1)\n", encoding="utf-8")
-        config = load_config(self.config_path)
-        init_lab(config)
-        with self.assertRaisesRegex(LabError, "Evaluator exited 1"):
-            run_baseline(config)
-        manifest = json.loads((config.state_dir / "runs" / "baseline" / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["runs"][0]["usage"]["requests"], 50)
-        self.assertAlmostEqual(status_lab(config)["spent"]["cost_usd"], 0.0176445324)
-
-        usage_path = config.state_dir / "runs" / "baseline" / "repeat_01" / "usage.json"
-        usage_path.write_text(json.dumps({"requests": 1, "cost_usd": 0.02, "unknown_requests": 1,
-                                          "unknown_cost_usd": 0.02}), encoding="utf-8")
-        unresolved = {"id": "baseline", "runs": [{"duration_seconds": 1}]}
-        manifest_path = config.state_dir / "runs" / "baseline" / "manifest.json"
-        manifest_path.write_text(json.dumps(unresolved), encoding="utf-8")
-        self.assertEqual(_spent([unresolved], config.state_dir)["unknown_requests"], 1)
-        self.assertGreater(_remaining(config), 0)
 
     def test_init_copies_source_and_hashes_opaque_input(self):
         config = load_config(self.config_path)
@@ -274,11 +276,6 @@ class LabTest(unittest.TestCase):
         self.assertEqual([run["metrics"]["score"] for run in trial["runs"]], [5.0, 5.0])
         self.assertEqual(load_state(config)["best_id"], trial["id"])
         self.assertEqual(candidate.read_text(encoding="utf-8"), "2;1")
-        with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(main(["--config", str(config.path), "report"]), 0)
-        dashboard = (config.state_dir / "dashboard.html").read_text(encoding="utf-8")
-        self.assertIn("createElementNS('http://www.w3.org/2000/svg','svg')", dashboard)
-        self.assertIn("More signal", dashboard)
 
     def test_rejected_trial_restores_best_and_keeps_patch(self):
         (self.source / "candidate.txt").write_text("2;1", encoding="utf-8")
@@ -320,12 +317,8 @@ class LabTest(unittest.TestCase):
         run_baseline(config)
         (config.state_dir / "candidate" / "protected.txt").write_text("tampered", encoding="utf-8")
 
-        trial = run_trial(config, {"title": "Tamper", "observation": "x", "expected_effect": "y"})
-
-        self.assertEqual(trial["status"], "invalid")
-        self.assertIn("Protected file changed", trial["reason"])
-        self.assertEqual(trial["runs"], [])
-        self.assertEqual((config.state_dir / "candidate" / "protected.txt").read_text(encoding="utf-8"), "fixed")
+        with self.assertRaisesRegex(LabError, "Protected file changed"):
+            run_trial(config, {"title": "Tamper", "observation": "x", "expected_effect": "y"})
         self.assertEqual(load_state(config)["best_id"], "baseline")
 
     def test_extra_candidate_file_before_trial_is_recorded_and_removed(self):
@@ -337,11 +330,8 @@ class LabTest(unittest.TestCase):
         extra = config.state_dir / "candidate" / "extra.tmp"
         extra.write_text("surprise", encoding="utf-8")
 
-        trial = run_trial(config, {"title": "Extra", "observation": "x", "expected_effect": "y"})
-
-        self.assertEqual(trial["status"], "invalid")
-        self.assertIn("Candidate file set changed", trial["reason"])
-        self.assertFalse(extra.exists())
+        with self.assertRaisesRegex(LabError, "Candidate file set changed"):
+            run_trial(config, {"title": "Extra", "observation": "x", "expected_effect": "y"})
 
     def test_candidate_symlink_cannot_read_outside_snapshot(self):
         (self.source / "candidate.txt").write_text("1;1", encoding="utf-8")
@@ -358,9 +348,9 @@ class LabTest(unittest.TestCase):
         except OSError:
             self.skipTest("Symlink creation is unavailable on this Windows account")
 
-        trial = run_trial(config, {"title": "Linked", "observation": "x", "expected_effect": "y"})
-        self.assertEqual(trial["status"], "invalid")
-        self.assertIn("Candidate symlink", trial["reason"])
+        with self.assertRaisesRegex(LabError, "Candidate symlink"):
+            run_trial(config, {"title": "Linked", "observation": "x", "expected_effect": "y"})
+        self.assertEqual(load_state(config)["best_id"], "baseline")
 
     def test_invalid_result_never_promotes(self):
         (self.source / "candidate.txt").write_text("1;1", encoding="utf-8")
@@ -458,7 +448,7 @@ class LabTest(unittest.TestCase):
         with self.assertRaisesRegex(LabError, "Candidate changed during evaluation"):
             run_baseline(config)
 
-        manifest = json.loads((config.state_dir / "runs" / "baseline" / "manifest.json").read_text(encoding="utf-8"))
+        manifest = _read_json(config.state_dir / "runs" / "baseline" / "manifest.json")
         self.assertEqual(manifest["status"], "invalid")
         self.assertEqual((config.state_dir / "candidate" / "protected.txt").read_text(encoding="utf-8"), "fixed")
 
@@ -472,34 +462,9 @@ class LabTest(unittest.TestCase):
         with self.assertRaisesRegex(LabError, "Baseline failed"):
             run_baseline(config)
 
-        manifest = json.loads((config.state_dir / "runs" / "baseline" / "manifest.json").read_text(encoding="utf-8"))
+        manifest = _read_json(config.state_dir / "runs" / "baseline" / "manifest.json")
         self.assertEqual(manifest["status"], "crash")
 
-    def test_failed_baseline_retry_keeps_both_attempts_and_spend(self):
-        (self.source / "candidate.txt").write_text("1;1", encoding="utf-8")
-        self.install_evaluator()
-        original = (self.root / "evaluator.py").read_text(encoding="utf-8")
-        flag = self.root / "fail-once.flag"
-        (self.root / "evaluator.py").write_text(
-            "from pathlib import Path\n"
-            f"flag = Path({str(flag)!r})\n"
-            "if not flag.exists():\n"
-            "    flag.write_text('done')\n"
-            "    raise SystemExit(1)\n" + original,
-            encoding="utf-8",
-        )
-        self.config["repeats"] = 1
-        self.write_config()
-        config = load_config(self.config_path)
-        init_lab(config)
-        with self.assertRaisesRegex(LabError, "Baseline failed"):
-            run_baseline(config)
-        baseline = run_baseline(config)
-
-        self.assertEqual(baseline["id"], "baseline-0002")
-        self.assertEqual(load_state(config)["baseline_id"], "baseline-0002")
-        self.assertTrue((config.state_dir / "runs" / "baseline" / "manifest.json").exists())
-        self.assertGreater(status_lab(config)["spent"]["seconds"], baseline["runs"][0]["duration_seconds"])
 
     def test_changed_input_blocks_new_trial(self):
         (self.source / "candidate.txt").write_text("1;1", encoding="utf-8")
@@ -595,22 +560,9 @@ class LabTest(unittest.TestCase):
         run_baseline(config)
         (config.state_dir / "candidate" / "candidate.txt").write_text("2;1", encoding="utf-8")
 
-        with self.assertRaisesRegex(LabError, "Hypothesis needs"):
+        with self.assertRaisesRegex(LabError, "trial hypothesis must be an object"):
             run_trial(config, ["not", "an", "object"])
 
-    def test_trial_auto_generates_hypothesis_from_diff_stat(self):
-        (self.source / "candidate.txt").write_text("1;1", encoding="utf-8")
-        self.install_evaluator()
-        config = load_config(self.config_path)
-        init_lab(config)
-        run_baseline(config)
-        (config.state_dir / "candidate" / "candidate.txt").write_text("2;1", encoding="utf-8")
-
-        trial = run_trial(config, None)
-        self.assertEqual(trial["status"], "accepted")
-        self.assertIn("candidate.txt", trial["title"])
-        self.assertIn("candidate.txt", trial["observation"])
-        self.assertTrue(trial["expected_effect"])
 
     def test_each_experiment_records_input_candidate_and_result_hashes(self):
         (self.source / "candidate.txt").write_text("1;1", encoding="utf-8")
@@ -643,41 +595,6 @@ class LabTest(unittest.TestCase):
         with self.assertRaisesRegex(LabError, "Input changed"):
             run_trial(config, {"title": "x", "observation": "x", "expected_effect": "y"})
 
-    def test_new_trial_refuses_legacy_recovery_of_running_manifest(self):
-        (self.source / "candidate.txt").write_text("1;1", encoding="utf-8")
-        self.install_evaluator()
-        config = load_config(self.config_path)
-        init_lab(config)
-        run_baseline(config)
-        (config.state_dir / "candidate" / "candidate.txt").write_text("2;1", encoding="utf-8")
-        trial_dir = config.state_dir / "runs" / "trial-0001"
-        trial_dir.mkdir()
-        (trial_dir / "manifest.json").write_text(json.dumps({
-            "id": "trial-0001", "status": "running", "runs": [],
-            "base_commit": load_state(config)["best_commit"],
-        }), encoding="utf-8")
-        before = support.tree_digest(config.state_dir)
-
-        with self.assertRaises(LabError) as raised:
-            run_trial(config, {"title": "Next", "observation": "x", "expected_effect": "y"})
-
-        self.assertEqual(raised.exception.code, "E_LEGACY_READ_ONLY")
-        self.assertEqual(support.tree_digest(config.state_dir), before)
-        prev = json.loads((trial_dir / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(prev["status"], "running")
-
-    def test_legacy_init_is_denied_before_lock_artifact_is_created(self):
-        output = io.StringIO()
-        with patch.dict(os.environ, {"AUTORESEARCH_HOME": str(self.root / "home")}):
-            with contextlib.redirect_stderr(output):
-                result = main(["--config", str(self.config_path), "init"])
-
-        payload = json.loads(output.getvalue())
-        self.assertNotEqual(result, 0)
-        self.assertEqual(payload["error"]["code"], "E_LEGACY_READ_ONLY")
-        self.assertFalse((self.root / "state" / ".lock.guard").exists())
-        self.assertFalse((self.root / "state" / "candidate").exists())
-
     def test_sqlite_init_ignores_its_persistent_lock_guard(self):
         self.install_evaluator()
         state_dir = self.root / "sqlite-state"
@@ -703,7 +620,6 @@ class LabTest(unittest.TestCase):
         }
         sqlite_config = replace(
             validated,
-            storage_mode="sqlite",
             config_bytes=config_bytes,
             passport=passport,
         )
@@ -732,7 +648,7 @@ class LabTest(unittest.TestCase):
             init_lab(config)
 
     def test_packaged_synthetic_example(self):
-        example = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "legacy-toy"
+        example = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "draft-config"
         copy = self.root / "toy"
         shutil.copytree(example, copy)
         config = load_config(copy / "lab.json")

@@ -1,4 +1,4 @@
-"""Manage explicit SQLite exports and explain retired legacy write commands."""
+"""Export and reconcile SQLite-backed labs."""
 
 from __future__ import annotations
 
@@ -14,18 +14,7 @@ def register(subparsers: Any) -> None:
     storage = subparsers.add_parser("storage", help="export or reconcile SQLite-backed labs")
     commands = storage.add_subparsers(dest="storage_command", required=True)
 
-    migrate = commands.add_parser("migrate", help="retired; export a legacy lab archive and prepare a new lab")
-    migrate.add_argument("--root", type=Path, help=argparse.SUPPRESS)
-    migrate.add_argument("--lab", help=argparse.SUPPRESS)
-    migrate.add_argument("--goal", help=argparse.SUPPRESS)
-    migrate.add_argument("--apply", action="store_true", help=argparse.SUPPRESS)
-
-    cleanup = commands.add_parser("cleanup", help="retired; legacy labs are read-only")
-    cleanup.add_argument("--root", type=Path, help=argparse.SUPPRESS)
-    cleanup.add_argument("--lab", help=argparse.SUPPRESS)
-    cleanup.add_argument("--apply", action="store_true", help=argparse.SUPPRESS)
-
-    export = commands.add_parser("export", help="export a SQLite lab as JSON or a legacy lab as ZIP")
+    export = commands.add_parser("export", help="export a SQLite lab as JSON")
     export.add_argument("--lab", dest="storage_lab", default=argparse.SUPPRESS,
                         help="SQLite lab UUID or unambiguous lab reference")
     export.add_argument("--output", required=True, type=Path, help="new export file; existing files are not overwritten")
@@ -46,40 +35,15 @@ def run(args: Any, labs_root: Path | None) -> dict[str, Any]:
             hint="Use either global --lab <sqlite-ref> or storage export/reconcile --lab <sqlite-ref>.",
         )
     lab = command_lab if command_lab is not None else global_lab
-    if args.storage_command == "migrate":
-        raise _removed("storage migrate")
-    if args.storage_command == "cleanup":
-        raise _removed("storage cleanup")
     if args.storage_command == "export":
-        config = getattr(args, "config", None)
-        if config is not None and lab is not None:
-            raise LabError(
-                "Choose one export source: --config for a legacy lab or --lab for a SQLite lab",
-                code="E_USAGE_SELECTOR",
-                hint="Use `storage export --config <legacy-lab.json> --output archive.zip` or `storage export --lab <sqlite-ref> --output export.json`.",
-            )
-        if config is not None:
-            from ..legacy_archive import export_legacy_zip
-
-            return export_legacy_zip(config, args.output)
         if lab is None:
             raise LabError(
                 "An export source is required",
                 code="E_USAGE_SELECTOR",
-                hint="Pass --lab <sqlite-ref> or --config <legacy-lab.json>.",
+                hint="Pass --lab <sqlite-ref>.",
             )
         return export_lab_json(lab=lab, output=args.output)
     if args.storage_command == "reconcile":
         return reconcile_storage(lab=lab, apply=bool(args.apply))
     raise ValueError(f"Unknown storage command: {args.storage_command}")
 
-
-def _removed(command: str) -> LabError:
-    return LabError(
-        f"`{command}` is no longer available; legacy lab history stays read-only",
-        code="E_OPERATION_REMOVED",
-        hint=(
-            "Preserve a legacy lab with `--config <legacy-lab.json> storage export --output archive.zip`, "
-            "then start fresh with `prepare` and a new AUTORESEARCH_HOME."
-        ),
-    )

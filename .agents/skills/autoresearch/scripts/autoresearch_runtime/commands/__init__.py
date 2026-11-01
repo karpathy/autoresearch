@@ -6,28 +6,20 @@ from pathlib import Path
 from typing import Any
 
 from . import (
-    archive,
     baseline,
     cancel,
-    catalog_cmd,
     cases,
-    compat,
     dashboard,
     doctor,
     epoch,
     guide,
-    history_import,
     ingest,
-    init,
     probe,
     promote,
     preflight,
-    roots,
     recover,
     resume,
     replay,
-    report,
-    setup,
     status,
     storage,
     step,
@@ -36,9 +28,8 @@ from . import (
 )
 
 COMMANDS = (
-    doctor, setup, init, baseline, epoch, status, report, recover, trial, replay, vault, cancel,
-    history_import, dashboard, archive, catalog_cmd, promote, probe, roots, compat, cases,
-    guide, ingest, step, preflight, resume, storage,
+    doctor, baseline, epoch, status, recover, trial, replay, vault, cancel,
+    dashboard, promote, probe, cases, guide, ingest, step, preflight, resume, storage,
 )
 
 
@@ -48,16 +39,11 @@ def register_all(subparsers: Any) -> None:
 
 
 def run_command(args: Any, labs_root: Path | None) -> dict[str, Any]:
-    for command in COMMANDS:
-        # The parser dest is the subcommand name, which matches the module's parser.
-        pass
     by_name = {
-        "setup": setup, "init": init, "baseline": baseline, "epoch": epoch, "status": status,
-        "report": report, "recover": recover, "trial": trial, "replay": replay,
-        "vault": vault, "history-import": history_import, "dashboard": dashboard,
-        "archive": archive, "catalog": catalog_cmd, "doctor": doctor, "promote": promote,
-        "probe": probe, "roots": roots, "compat": compat, "cases": cases, "storage": storage,
-        "cancel": cancel,
+        "baseline": baseline, "epoch": epoch, "status": status,
+        "recover": recover, "trial": trial, "replay": replay,
+        "vault": vault, "dashboard": dashboard, "doctor": doctor, "promote": promote,
+        "probe": probe, "cases": cases, "storage": storage, "cancel": cancel,
         "guide": guide, "ingest": ingest, "step": step, "preflight": preflight, "resume": resume,
     }
     return by_name[args.command].run(args, labs_root)

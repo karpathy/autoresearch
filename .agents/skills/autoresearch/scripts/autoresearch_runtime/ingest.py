@@ -16,7 +16,6 @@ from typing import Any
 
 from .errors import LabError
 from .measurement import next_sequence_id
-from .state import _refresh_dashboard
 
 
 RESULT_TYPES = ("baseline", "experiment", "reproducibility_control", "provider_check")
@@ -308,9 +307,6 @@ def ingest_reports(
                 from .control_import import import_control_report
 
                 import_control_report(state_dir, file_path, result_type=result_type, label=label, entries=entries)
-
-        if not dry_run and written_summaries:
-            _refresh_dashboard(config)
 
     except Exception as err:
         # Rollback partial changes on error

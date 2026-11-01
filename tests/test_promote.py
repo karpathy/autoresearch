@@ -7,6 +7,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from autoresearch_runtime.store import _write_json
 from pathlib import Path
 
 from autoresearch_runtime.lab import (
@@ -172,7 +173,7 @@ class PromoteTest(unittest.TestCase):
             ["git", "rev-parse", "HEAD"], cwd=config.source_root, text=True,
             **support.hidden_process_kwargs(),
         ).strip()
-        (config.state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        _write_json(config.state_dir / "state.json", state)
         (config.source_root / "note.txt").write_text("drift", encoding="utf-8")
         subprocess.run(["git", "add", "note.txt"], cwd=config.source_root, check=True, **support.hidden_process_kwargs())
         subprocess.run(
@@ -294,7 +295,7 @@ class PromoteTest(unittest.TestCase):
         run_trial(config, {"title": "Mismatch", "observation": "prefix", "expected_effect": "up"})
         state = load_state(config)
         state["project_prefix"] = ""
-        (config.state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        _write_json(config.state_dir / "state.json", state)
         with self.assertRaises(LabError) as ctx:
             promote_in_place(config)
         self.assertEqual(ctx.exception.code, "E_PREFIX_MISMATCH")
@@ -607,7 +608,7 @@ class PromoteTest(unittest.TestCase):
         ).stdout.decode("utf-8").strip()
         state = load_state(config)
         state["best_commit"] = head
-        (config.state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        _write_json(config.state_dir / "state.json", state)
         with self.assertRaises(LabError) as ctx:
             promote_in_place(config)
         self.assertEqual(ctx.exception.code, "frozen_tampered")

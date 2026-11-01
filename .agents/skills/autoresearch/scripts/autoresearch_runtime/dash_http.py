@@ -1,4 +1,4 @@
-"""Loopback-only live dashboard. Mutations are delete, archive, and restore of one chosen lab."""
+"""Loopback-only live dashboard server. Lab data and lifecycle changes go through /api/v1."""
 
 from __future__ import annotations
 
@@ -19,16 +19,6 @@ from typing import Any
 from .auth import AuthError, authenticate
 from .dashboard import ASSET_TYPES, read_asset, render_unified_dashboard
 
-from .dash_api import (
-    AmbiguousLab,
-    _open_lab,
-    _safe_diff,
-    archive_lab,
-    dashboard_details,
-    dashboard_status,
-    delete_lab,
-    restore_lab,
-)
 from .api_v1 import dispatch as dispatch_api_v1
 from .paths import resolve_home
 from .sqlite_store import SQLiteStore
@@ -96,11 +86,8 @@ class DashboardHTTPServer(ThreadingHTTPServer):
 
     def revision_payload(self) -> dict[str, Any]:
         store = SQLiteStore(resolve_home())
-        if store.is_initialized():
-            return {"revision": str(store.get_revision()), "timestamp": time.time()}
-        status = dashboard_status(self.root)
-        return {"revision": str(status.get("revision") or "0"),
-                "timestamp": status.get("timestamp") or status.get("updated_at", time.time())}
+        revision = str(store.get_revision()) if store.is_initialized() else "0"
+        return {"revision": revision, "timestamp": time.time()}
 
     def cached_revision_payload(self, max_age: float = 0.5) -> dict[str, Any]:
         now = time.monotonic()
@@ -172,21 +159,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 page = render_unified_dashboard({}, {}, live=True, root_id=self.server.root_id)
                 self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
             return
-        if self.path == "/api/status":
-            payload = dict(dashboard_status(self.server.root))
-            if "revision" not in payload or not payload["revision"]:
-                payload["revision"] = hashlib.sha256(
-                    json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
-                ).hexdigest()[:16]
-            if "timestamp" not in payload:
-                payload["timestamp"] = payload.get("updated_at", time.time())
-            revision = str(payload.get("revision") or "")
-            if revision and self.headers.get("If-None-Match") == revision:
-                self._send(304, b"", "application/json; charset=utf-8", {"ETag": revision})
-                return
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self._send(200, body, "application/json; charset=utf-8", {"ETag": revision} if revision else None)
-        elif self.path == "/api/events" or self.path.startswith("/api/events?"):
+        if self.path == "/api/events" or self.path.startswith("/api/events?"):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
@@ -230,31 +203,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             finally:
                 self.server.unregister_client(client_queue)
                 self.close_connection = True
-        elif self.path.startswith("/api/labs/"):
-            parsed = urlsplit(self.path)
-            parts = [unquote(part) for part in parsed.path.split("/") if part]
-            root_query = parse_qs(parsed.query).get("root", [None])[0]
-            if len(parts) == 4 and parts[:2] == ["api", "labs"]:
-                payload = dashboard_details(self.server.root, parts[2], parts[3], root_id=root_query)
-                if isinstance(payload, dict) and payload.get("error") == "ambiguous":
-                    self._send(409, json.dumps(payload).encode("utf-8"), "application/json; charset=utf-8")
-                elif payload is not None:
-                    self._send(200, json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                               "application/json; charset=utf-8")
-                else:
-                    self._send(404, b"Not found", "text/plain; charset=utf-8")
-            elif len(parts) == 7 and parts[:2] == ["api", "labs"] and parts[4] == "runs" and parts[6] == "diff":
-                try:
-                    opened = _open_lab(self.server.root, parts[2], parts[3], root_id=root_query)
-                except AmbiguousLab:
-                    opened = None
-                diff = _safe_diff(opened[2], parts[5]) if opened else None
-                if diff is not None:
-                    self._send(200, diff.encode("utf-8"), "text/plain; charset=utf-8")
-                else:
-                    self._send(404, b"Not found", "text/plain; charset=utf-8")
-            else:
-                self._send(404, b"Not found", "text/plain; charset=utf-8")
         else:
             self._send(404, b"Not found", "text/plain; charset=utf-8")
 
@@ -266,24 +214,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except AuthError as error:
             self._legacy_auth_error(error)
             return
-        parsed = urlsplit(self.path)
-        parts = [unquote(part) for part in parsed.path.split("/") if part]
-        root_query = parse_qs(parsed.query).get("root", [None])[0]
-        actions = {"delete": delete_lab, "archive": archive_lab, "restore": restore_lab}
-        if len(parts) == 5 and parts[:2] == ["api", "labs"] and parts[4] in actions:
-            confirm = self.headers.get("X-AutoResearch-Confirm", "")
-            if not secrets.compare_digest(confirm, parts[3]):
-                self._send(403, b'{"error":"confirm"}', "application/json; charset=utf-8")
-                return
-            try:
-                length = int(self.headers.get("Content-Length", "0") or 0)
-            except ValueError:
-                length = 0
-            if length > 0:
-                self.rfile.read(min(length, 4096))
-            status, payload = actions[parts[4]](self.server.root, parts[2], parts[3], root_id=root_query)
-            self._send(status, json.dumps(payload).encode("utf-8"), "application/json; charset=utf-8")
-            return
         if self.path == "/api/notify":
             try:
                 length = int(self.headers.get("Content-Length", "0") or 0)
@@ -294,11 +224,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             event_type = req_data.get("event") or "update"
             event_data = req_data.get("data")
             if not isinstance(event_data, dict) or not event_data:
-                status = dashboard_status(self.server.root)
-                event_data = {
-                    "revision": str(status.get("revision") or ""),
-                    "timestamp": status.get("timestamp") or status.get("updated_at", time.time()),
-                }
+                event_data = self.server.revision_payload()
             self.server.broadcast(event_type, event_data)
             self._send(200, b'{"ok":true}', "application/json; charset=utf-8")
             return
@@ -330,11 +256,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 def notify_dashboard(root: Path, data: dict[str, Any] | None = None) -> bool:
     root = root.resolve()
     if data is None:
-        status = dashboard_status(root)
-        data = {
-            "revision": str(status.get("revision") or ""),
-            "timestamp": status.get("timestamp") or status.get("updated_at", time.time()),
-        }
+        store = SQLiteStore(resolve_home())
+        data = {"revision": str(store.get_revision()) if store.is_initialized() else "0",
+                "timestamp": time.time()}
     server = get_active_server(root)
     if server is not None:
         server.broadcast("update", data)

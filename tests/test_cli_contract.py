@@ -4,6 +4,7 @@ except ImportError:
     from tests import support  # noqa: F401
 
 import json
+from autoresearch_runtime.store import _write_json
 import os
 import subprocess
 import sys
@@ -16,8 +17,6 @@ from pathlib import Path
 from autoresearch_runtime.envelope import exit_code_for, fail
 from autoresearch_runtime.errors import LabError
 from autoresearch_runtime.locking import lab_lock
-from autoresearch_runtime.resolve import resolve_config_path
-from autoresearch_runtime.worker import run_worker
 
 _SCRIPTS = Path(__file__).resolve().parents[1] / ".agents" / "skills" / "autoresearch" / "scripts"
 _LAB = _SCRIPTS / "lab.py"
@@ -88,71 +87,6 @@ class CliContractTest(unittest.TestCase):
         with patch("tests.durable_workflow_helpers.contract_fingerprint", return_value="0" * 64):
             with approved_offline_profile(config) as profile:
                 self.assertTrue(profile.is_file())
-
-    def test_resolve_ambiguity_lists_candidates(self):
-        home = Path(os.environ["AUTORESEARCH_HOME"])
-        home.mkdir(parents=True, exist_ok=True)
-        project = self.root / "my project"
-        project.mkdir()
-        catalog = {
-            "schema": 1,
-            "projects": [{
-                "id": "my-project-deadbeef00",
-                "name": "my project",
-                "source_root": str(project.resolve()),
-                "labs": [
-                    {"id": "lab-a", "path": "projects/my-project-deadbeef00/a", "archived": False},
-                    {"id": "lab-b", "path": "projects/my-project-deadbeef00/b", "archived": False},
-                ],
-            }],
-        }
-        for lab_id in ("a", "b"):
-            state = home / "projects" / "my-project-deadbeef00" / lab_id
-            state.mkdir(parents=True)
-            (state / "lab.json").write_text(
-                json.dumps({"source_root": str(project), "state_dir": str(state)}),
-                encoding="utf-8",
-            )
-        (home / "catalog.json").write_text(json.dumps(catalog), encoding="utf-8")
-        with self.assertRaises(LabError) as ctx:
-            resolve_config_path(config=None, lab=None, project=project, labs_root=home)
-        self.assertIn("lab-a", str(ctx.exception))
-        self.assertIn("lab-b", str(ctx.exception))
-
-    def test_legacy_worker_entry_is_read_only_before_hypothesis_access(self):
-        from types import SimpleNamespace
-        from unittest.mock import patch
-
-        legacy = SimpleNamespace(storage_mode="legacy")
-        config_path = self.root / "legacy-lab.json"
-        hyp_path = self.root / "missing-hypothesis.json"
-        with patch("autoresearch_runtime.worker.load_config", return_value=legacy):
-            with self.assertRaises(LabError) as error:
-                run_worker(config_path.resolve(), hyp_path.resolve())
-        self.assertEqual(error.exception.code, "E_LEGACY_READ_ONLY")
-
-    def test_path_with_space_in_project(self):
-        home = Path(os.environ["AUTORESEARCH_HOME"])
-        spaced = self.root / "space dir"
-        spaced.mkdir()
-        state = home / "projects" / "space-dir-abc1234567" / "contract-1"
-        state.mkdir(parents=True)
-        config_path = state / "lab.json"
-        config_path.write_text(json.dumps({
-            "source_root": str(spaced.resolve()),
-            "state_dir": str(state.resolve()),
-        }), encoding="utf-8")
-        catalog = {
-            "schema": 1,
-            "projects": [{
-                "id": "space-dir-abc1234567",
-                "source_root": str(spaced.resolve()),
-                "labs": [{"id": "contract-1", "path": state.relative_to(home).as_posix(), "archived": False}],
-            }],
-        }
-        (home / "catalog.json").write_text(json.dumps(catalog), encoding="utf-8")
-        resolved = resolve_config_path(config=None, lab=None, project=spaced, labs_root=home)
-        self.assertEqual(resolved.resolve(), config_path.resolve())
 
     def test_lab_lock_blocks_second_holder(self):
         state_dir = self.root / "lock-lab"
@@ -244,9 +178,9 @@ class CliContractTest(unittest.TestCase):
         fixture._commit_source("upstream edit to the promoted file")
         state = load_state(config)
         state["source_head"] = fixture._git_out("rev-parse", "HEAD").strip()
-        (config.state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        _write_json(config.state_dir / "state.json", state)
 
-        result = _run_lab(["--config", str(fixture.config_path), "--agent", "promote", "--to-branch", "fix-branch"])
+        result = _run_lab(["--config", str(config.path), "--agent", "promote", "--to-branch", "fix-branch"])
 
         self.assertEqual(result.returncode, 0, result.stderr)
         envelope = json.loads(result.stdout)

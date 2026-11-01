@@ -16,8 +16,6 @@ from .store import _write_json
 
 
 def _next_probe_id(config: LabConfig) -> str:
-    if getattr(config, "storage_mode", "legacy") != "sqlite":
-        return next_sequence_id(config.state_dir / "probes", "probe")
     from .sqlite_store import SQLiteStore
 
     store = SQLiteStore()
@@ -96,7 +94,7 @@ def run_probe(
     probe_id = _next_probe_id(config)
     probe_dir = probes_root / probe_id
     checkout = probe_dir / "checkout"
-    run_dir = config.state_dir / "runs" / probe_id if getattr(config, "storage_mode", "legacy") == "sqlite" else probe_dir
+    run_dir = config.state_dir / "runs" / probe_id
     summary: dict[str, Any] = {
         "schema": 1,
         "id": probe_id,
@@ -111,17 +109,16 @@ def run_probe(
         "runs": [],
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
     }
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
+    from .sqlite_store import SQLiteStore
 
-        store = SQLiteStore()
-        state = __import__("autoresearch_runtime.state", fromlist=["load_state"]).load_state(config)
-        run_uuid = store.create_run(config.lab_id, "probe", probe_id,
-                                    int(state.get("current_epoch") or 1),
-                                    {"candidate_commit": state.get("best_commit")})
-        summary["run_id"] = str(run_uuid)
-        summary["epoch"] = int(state.get("current_epoch") or 1)
-        _write_json(run_dir / "manifest.json", summary)
+    store = SQLiteStore()
+    state = __import__("autoresearch_runtime.state", fromlist=["load_state"]).load_state(config)
+    run_uuid = store.create_run(config.lab_id, "probe", probe_id,
+                                int(state.get("current_epoch") or 1),
+                                {"candidate_commit": state.get("best_commit")})
+    summary["run_id"] = str(run_uuid)
+    summary["epoch"] = int(state.get("current_epoch") or 1)
+    _write_json(run_dir / "manifest.json", summary)
     try:
         _probe_checkout(config, commit.strip(), checkout)
         expected = _tree_hashes(checkout)
@@ -133,11 +130,11 @@ def run_probe(
             )
             if status != "ok":
                 summary.update(status=status, reason=reason)
-                _write_json(run_dir / ("manifest.json" if getattr(config, "storage_mode", "legacy") == "sqlite" else "summary.json"), summary)
+                _write_json(run_dir / "manifest.json", summary)
                 return summary
             if _tree_hashes(checkout) != expected:
                 summary.update(status="invalid", reason="checkout changed during evaluation")
-                _write_json(run_dir / ("manifest.json" if getattr(config, "storage_mode", "legacy") == "sqlite" else "summary.json"), summary)
+                _write_json(run_dir / "manifest.json", summary)
                 return summary
             runs.append(result)
         summary.update(status="complete", runs=runs)
@@ -150,7 +147,7 @@ def run_probe(
                 summary["worst"] = min(values) if config.direction == "max" else max(values)
                 summary["mean"] = sum(values) / len(values)
                 summary["spread"] = max(values) - min(values)
-        _write_json(run_dir / ("manifest.json" if getattr(config, "storage_mode", "legacy") == "sqlite" else "summary.json"), summary)
+        _write_json(run_dir / "manifest.json", summary)
         return summary
     finally:
         if _git(live, "rev-parse", "HEAD") != head_before or _git(live, "status", "--porcelain") != worktree_before:

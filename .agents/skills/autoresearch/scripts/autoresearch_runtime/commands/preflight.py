@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from ..config import load_config
+from ..config import validate_config_file
 from ..errors import LabError
 from ..evaluator import _validate_result
 
@@ -38,7 +38,7 @@ def run(args: Any, labs_root: Path | None) -> dict[str, Any]:
                 config_path.write_text(json.dumps(preview), encoding="utf-8")
                 (root / "program.snapshot.md").write_bytes(brief_bytes)
                 (root / "result.json").write_bytes(args.result.read_bytes())
-                _validate_result(load_config(config_path, allow_pending=True, read_only=True), root)
+                _validate_result(validate_config_file(config_path, allow_pending=True), root)
                 output["result_valid"] = True
         return output
     except (OSError, ValueError, KeyError, TypeError) as error:

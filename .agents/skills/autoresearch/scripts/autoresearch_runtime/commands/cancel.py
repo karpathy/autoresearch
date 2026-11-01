@@ -18,8 +18,6 @@ def register(subparsers: Any) -> None:
 
 def run(args: Any, labs_root: Path | None) -> dict[str, Any]:
     config = resolve_config(args, labs_root, pending_ok=True)
-    if getattr(config, "storage_mode", "legacy") != "sqlite" or not config.lab_id:
-        raise LabError("Cancellation requires a SQLite-backed lab; use recover for legacy labs", code="E_USAGE")
     operation = cancel_run(
         str(config.lab_id), args.run_id,
         expected_operation_id=getattr(args, "operation_id", None),

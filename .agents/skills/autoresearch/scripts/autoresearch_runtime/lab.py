@@ -4,8 +4,8 @@ from __future__ import annotations
 from .errors import LabError
 from .store import _write_json
 from .config import load_config
-from .snapshot import init_lab, setup_project
-from .state import _refresh_dashboard, load_state
+from .snapshot import init_lab
+from .state import load_state
 from .evaluator import _remaining, _spent
 from .baseline import run_baseline
 from .trial import assess_candidate, recover_lab, run_trial, status_lab

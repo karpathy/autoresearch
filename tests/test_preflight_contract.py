@@ -1,4 +1,9 @@
 """Offline contract checks must catch adapter mistakes before evaluation."""
+try:
+    import support  # noqa: F401
+except ImportError:
+    from tests import support  # noqa: F401
+
 import contextlib
 import io
 import json
@@ -107,7 +112,7 @@ class PreflightContractTest(unittest.TestCase):
         self.assertEqual(json.loads(err.getvalue())["error"]["code"], "E_CONTRACT_SPEND_LIMIT")
 
     def test_goal_criteria_is_optional_validated_configuration(self):
-        example = Path(__file__).parents[1] / "tests" / "fixtures" / "legacy-toy"
+        example = Path(__file__).parents[1] / "tests" / "fixtures" / "draft-config"
         toy = self.root / "toy"
         shutil.copytree(example, toy)
         path = toy / "lab.json"
@@ -123,7 +128,7 @@ class PreflightContractTest(unittest.TestCase):
 
     def test_claimed_offline_verification_requires_pinned_fixture(self):
         toy = self.root / "toy"
-        shutil.copytree(Path(__file__).parents[1] / "tests" / "fixtures" / "legacy-toy", toy)
+        shutil.copytree(Path(__file__).parents[1] / "tests" / "fixtures" / "draft-config", toy)
         path = toy / "lab.json"
         raw = json.loads(path.read_text())
         raw["evaluator_capabilities"] = {"case_resume": True, "offline_verified": True}
@@ -142,20 +147,6 @@ class PreflightContractTest(unittest.TestCase):
         self.assertEqual(code, 2, payload)
         self.assertIn("attestation mismatch", payload["error"]["message"])
 
-    def test_probe_adoption_never_mutates_best_pointer(self):
-        toy = self.root / "toy"
-        shutil.copytree(Path(__file__).parents[1] / "tests" / "fixtures" / "legacy-toy", toy)
-        raw = json.loads((toy / "lab.json").read_text())
-        raw.update(source_root=str(toy / "source"), state_dir=str(toy / ".lab"),
-                   input_files=[str(toy / "cases.json")])
-        raw["evaluator"][1] = str(toy / "source" / "evaluator.py")
-        (toy / "lab.json").write_text(json.dumps(raw))
-        config = load_config(toy / "lab.json")
-        before = tree_digest(toy)
-        with self.assertRaises(LabError) as caught:
-            adopt_probe(config, "probe-0001")
-        self.assertEqual(caught.exception.code, "E_CONTRACT_PROBE_ADOPTION")
-        self.assertEqual(tree_digest(toy), before)
 
     def test_ingest_cli_records_type_without_setting_baseline(self):
         from autoresearch_runtime.bootstrap import prepare_lab

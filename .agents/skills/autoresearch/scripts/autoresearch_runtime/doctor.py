@@ -11,56 +11,13 @@ from typing import Any
 
 from .integrity import check_skill, read_version
 from .locking import _pid_alive
-from .paths import lab_storage_roots, resolve_home
+from .paths import resolve_home
 
 STALE_SECONDS = 300
 
 
 def _stale_running_manifests(home: Path, project: Path | None) -> list[str]:
     stale: list[str] = []
-    manifests = []
-    for storage in lab_storage_roots(home):
-        manifests.extend(storage.rglob("runs/*/manifest.json"))
-    for manifest_path in manifests:
-        if "archive" in manifest_path.parts:
-            continue
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if manifest.get("status") != "running":
-            continue
-        state_dir = manifest_path.parent.parent.parent
-        if project is not None:
-            meta = state_dir / "lab-meta.json"
-            if meta.is_file():
-                try:
-                    payload = json.loads(meta.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    payload = {}
-                if payload.get("project_path") and Path(str(payload["project_path"])).resolve() != project.resolve():
-                    continue
-        worker_path = state_dir / "worker.json"
-        worker = None
-        if worker_path.is_file():
-            try:
-                worker = json.loads(worker_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                worker = None
-        lock_path = state_dir / ".lock"
-        lock_pid = 0
-        if lock_path.is_file():
-            try:
-                lock_pid = int(json.loads(lock_path.read_text(encoding="utf-8")).get("pid") or 0)
-            except (OSError, ValueError, TypeError):
-                lock_pid = 0
-        worker_pid = int((worker or {}).get("pid") or 0)
-        worker_hb = float((worker or {}).get("heartbeat") or 0)
-        lock_alive = _pid_alive(lock_pid)
-        worker_alive = _pid_alive(worker_pid) and (time.time() - worker_hb) < STALE_SECONDS
-        if not lock_alive and not worker_alive:
-            stale.append(str(manifest_path))
-
     try:
         from .sqlite_store import SQLiteStore
 

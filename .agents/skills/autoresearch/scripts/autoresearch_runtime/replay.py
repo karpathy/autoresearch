@@ -33,8 +33,7 @@ def _input_blockers(config: LabConfig, manifest: dict[str, Any]) -> list[dict[st
         if path.is_file() and _sha256(path) == digest:
             continue
         blob = config.state_dir / "vault" / "blobs" / str(digest)
-        selector = (f"--lab {config.lab_id}" if getattr(config, "storage_mode", "legacy") == "sqlite"
-                    else f"--config {config.path}")
+        selector = f"--lab {config.lab_id}"
         command = f"python lab.py {selector} vault restore --path {path}"
         if blob.is_file():
             blockers.append({
@@ -68,8 +67,7 @@ def replay_plan(config: LabConfig) -> dict[str, Any]:
             blockers.append({"path": str(patch), "reason": "change.patch is missing"})
         if not manifest.get("base_commit"):
             blockers.append({"path": "", "reason": "base_commit is missing"})
-        selector = (f"--lab {config.lab_id}" if getattr(config, "storage_mode", "legacy") == "sqlite"
-                    else f"--config {config.path}")
+        selector = f"--lab {config.lab_id}"
         gaps.append({
             "id": run_id,
             "status": manifest.get("status"),
@@ -107,37 +105,30 @@ def run_replay(config: LabConfig, trial_id: str) -> dict[str, Any]:
     worktree_before = _git(live, "status", "--porcelain")
     blockers = _input_blockers(config, manifest)
     replay_root = config.state_dir / "replays" / trial_id
-    sqlite_mode = getattr(config, "storage_mode", "legacy") == "sqlite"
-    if sqlite_mode:
-        from .sqlite_store import SQLiteStore
-        store = SQLiteStore()
-        page = store.list_runs(config.lab_id, limit=100, offset=0)
-        replay_aliases = [item.get("alias", "") for item in page["items"]
-                          if item.get("kind") == "replay"]
-        offset = len(page["items"])
-        while offset < page["total"]:
-            page = store.list_runs(config.lab_id, limit=100, offset=offset)
-            replay_aliases.extend(item.get("alias", "") for item in page["items"]
-                                  if item.get("kind") == "replay")
-            offset += len(page["items"])
-        numbers = [int(alias[7:]) for alias in replay_aliases
-                   if isinstance(alias, str) and alias.startswith("replay-") and alias[7:].isdigit()]
-        replay_id = f"replay-{max(numbers, default=0) + 1:04d}"
-    else:
-        replay_id = next_sequence_id(replay_root, "replay")
+    from .sqlite_store import SQLiteStore
+    store = SQLiteStore()
+    page = store.list_runs(config.lab_id, limit=100, offset=0)
+    replay_aliases = [item.get("alias", "") for item in page["items"]
+                      if item.get("kind") == "replay"]
+    offset = len(page["items"])
+    while offset < page["total"]:
+        page = store.list_runs(config.lab_id, limit=100, offset=offset)
+        replay_aliases.extend(item.get("alias", "") for item in page["items"]
+                              if item.get("kind") == "replay")
+        offset += len(page["items"])
+    numbers = [int(alias[7:]) for alias in replay_aliases
+               if isinstance(alias, str) and alias.startswith("replay-") and alias[7:].isdigit()]
+    replay_id = f"replay-{max(numbers, default=0) + 1:04d}"
     state = migrate_state(load_state(config))
     epoch = epoch_snapshot_for_manifest(manifest, state)
     frozen_evaluator = tuple(epoch.get("evaluator") or config.evaluator) if epoch else config.evaluator
-    recheck_dir = (config.state_dir / "runs" / replay_id if sqlite_mode else
-                   config.state_dir / "runs" / trial_id / "rechecks" / replay_id)
-    if not sqlite_mode:
-        recheck_dir.mkdir(parents=True, exist_ok=True)
+    recheck_dir = config.state_dir / "runs" / replay_id
     proof: dict[str, Any] = {
         "schema": 1,
         "id": replay_id,
         "type": "replay",
         "trial_id": trial_id,
-        "lab_id": str(config.lab_id) if sqlite_mode else config.state_dir.name,
+        "lab_id": str(config.lab_id),
         "replay_id": replay_id,
         "recheck_kind": "exact",
         "base_commit": manifest.get("base_commit"),
@@ -148,21 +139,20 @@ def run_replay(config: LabConfig, trial_id: str) -> dict[str, Any]:
         "repeats": config.repeats,
         "adoptable": False,
     }
-    if sqlite_mode:
-        replay_run_id = store.create_run(config.lab_id, "replay", replay_id,
-                                         int(state.get("current_epoch") or 1), {
-                                             "parent_run_id": str(store.resolve_run_id(config.lab_id, trial_id)),
-                                             "candidate_commit": state.get("best_commit"),
-                                         })
-        proof["run_id"] = str(replay_run_id)
-        proof["epoch"] = int(state.get("current_epoch") or 1)
-        _write_json(recheck_dir / "manifest.json", proof)
+    replay_run_id = store.create_run(config.lab_id, "replay", replay_id,
+                                     int(state.get("current_epoch") or 1), {
+                                         "parent_run_id": str(store.resolve_run_id(config.lab_id, trial_id)),
+                                         "candidate_commit": state.get("best_commit"),
+                                     })
+    proof["run_id"] = str(replay_run_id)
+    proof["epoch"] = int(state.get("current_epoch") or 1)
+    _write_json(recheck_dir / "manifest.json", proof)
     patch = config.state_dir / "runs" / trial_id / "change.patch"
     if patch.is_file():
         proof["patch_sha256"] = _sha256(patch)
     if blockers or not manifest.get("base_commit"):
         proof["blockers"] = blockers or [{"reason": "base_commit is missing"}]
-        _write_json(recheck_dir / ("manifest.json" if sqlite_mode else "verification.json"), proof)
+        _write_json(recheck_dir / "manifest.json", proof)
         return proof
     checkout = config.state_dir / "replays" / trial_id / replay_id / "checkout"
     try:
@@ -175,7 +165,7 @@ def run_replay(config: LabConfig, trial_id: str) -> dict[str, Any]:
             proof["hash_mismatch"] = sorted(
                 name for name in set(actual) | set(expected) if actual.get(name) != expected.get(name)
             )
-            _write_json(recheck_dir / ("manifest.json" if sqlite_mode else "verification.json"), proof)
+            _write_json(recheck_dir / "manifest.json", proof)
             return proof
         runs = []
         limited = 0
@@ -187,21 +177,17 @@ def run_replay(config: LabConfig, trial_id: str) -> dict[str, Any]:
             )
             if status != "ok":
                 proof.update(status="failed", reason=reason)
-                _write_json(recheck_dir / ("manifest.json" if sqlite_mode else "verification.json"), proof)
+                _write_json(recheck_dir / "manifest.json", proof)
                 return proof
             if _tree_hashes(checkout) != expected:
                 proof.update(status="failed", reason="checkout changed during evaluation")
-                _write_json(recheck_dir / ("manifest.json" if sqlite_mode else "verification.json"), proof)
+                _write_json(recheck_dir / "manifest.json", proof)
                 return proof
-            if not sqlite_mode:
-                _write_json(run_dir / "result.json", {
-                    key: result[key] for key in ("metrics", "usage", "details") if key in result
-                })
             runs.append(result)
             limited += int((result.get("net") or {}).get("rate_limited_responses") or 0)
         proof.update(status="complete", runs_recorded=len(runs),
                      unknown_cost_attempts=limited, cost_status="confirmed" if not limited else "partial")
-        _write_json(recheck_dir / ("manifest.json" if sqlite_mode else "verification.json"), proof)
+        _write_json(recheck_dir / "manifest.json", proof)
         return proof
     finally:
         if _git(live, "rev-parse", "HEAD") != head_before or _git(live, "status", "--porcelain") != worktree_before:

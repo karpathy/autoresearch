@@ -19,7 +19,7 @@ python SKILL_DIR/scripts/prepare.py --project <project> --program <brief.md> --s
 python SKILL_DIR/scripts/lab.py --config <config-path-from-prepare> guide --json
 ```
 
-Copy `data.contract_fingerprint` from the guide's JSON envelope exactly. It changes when the active measurement contract or epoch changes. Re-read the guide and update the host profile after such a change. Legacy file-based labs do not provide this fingerprint and cannot start durable evaluator operations.
+Copy `data.contract_fingerprint` from the guide's JSON envelope exactly. It changes when the active measurement contract or epoch changes. Re-read the guide and update the host profile after such a change.
 
 ## Profile format
 

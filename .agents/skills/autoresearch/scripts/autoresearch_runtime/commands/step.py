@@ -36,13 +36,10 @@ def register(subparsers: Any) -> None:
 
 
 def run(args: Any, labs_root: Path | None) -> dict[str, Any]:
-    config = resolve_config(
-        args, labs_root, pending_ok=True,
-        mutating_action="step --run" if bool(getattr(args, "run", False)) else None,
-    )
+    config = resolve_config(args, labs_root, pending_ok=True)
     hypothesis_input = resolve_hypothesis_args(args)
 
-    if config.storage_mode == "sqlite" and bool(getattr(args, "run", False)):
+    if bool(getattr(args, "run", False)):
         result = run_step(config, run=False, hypothesis_path=hypothesis_input)
         action = result.get("recommended_action") or {}
         action_type = action.get("action")

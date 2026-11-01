@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+try:
+    import support  # noqa: F401
+except ImportError:
+    from tests import support  # noqa: F401
+
 import json
 import tempfile
 import unittest
@@ -15,7 +20,7 @@ class DurableCliDispatchTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.config = SimpleNamespace(
-            storage_mode="sqlite", lab_id="b5ef9c01-3a58-4ca8-a63c-4eb79216a912",
+            lab_id="b5ef9c01-3a58-4ca8-a63c-4eb79216a912",
             state_dir=Path(self.temp.name) / "state",
         )
 

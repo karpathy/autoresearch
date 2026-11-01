@@ -19,10 +19,15 @@ from urllib.parse import urljoin, urlsplit
 from urllib.request import Request, urlopen
 from typing import Any
 
-from . import dash_api as _dash_api  # noqa: F401 — multi-root dashboard_status patch
 
 from .dash_http import DashboardHTTPServer, create_server
-from .dash_io import _read_json
+
+
+def _read_json(path: Path, fallback: Any = None) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return fallback
 from .paths import resolve_home
 from .runtime_env import hidden_process_kwargs
 

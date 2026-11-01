@@ -48,16 +48,15 @@ def _metric_summary(run: dict[str, Any] | None, metric: str, direction: str) -> 
 def _load_manifest(config: LabConfig, run_id: str | None) -> dict[str, Any] | None:
     if not isinstance(run_id, str) or not run_id or Path(run_id).name != run_id or run_id in {".", ".."}:
         return None
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
-        store = SQLiteStore()
-        if store.is_initialized():
-            try:
-                manifest = store.load_manifest(config.lab_id, run_id)
-                if manifest is not None:
-                    return manifest
-            except Exception:
-                pass
+    from .sqlite_store import SQLiteStore
+    store = SQLiteStore()
+    if store.is_initialized():
+        try:
+            manifest = store.load_manifest(config.lab_id, run_id)
+            if manifest is not None:
+                return manifest
+        except Exception:
+            pass
     from .store import _read_json
 
     for parent in (config.state_dir / "runs", config.state_dir / "controls"):
@@ -154,20 +153,19 @@ def _recent_manifests(
     if "limit" in kwargs:
         limit = kwargs["limit"]
 
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
-        store = SQLiteStore()
-        if store.is_initialized():
-            try:
-                return store.list_recent_manifests(config.lab_id, current_epoch, limit=limit)
-            except Exception:
-                pass
-            try:
-                page = store.list_runs(config.lab_id, limit=max(1, min(limit, 100)), epoch_id=current_epoch)
-                return [manifest for item in page["items"]
-                        if (manifest := store.load_manifest(config.lab_id, item["run_id"])) is not None]
-            except Exception:
-                pass
+    from .sqlite_store import SQLiteStore
+    store = SQLiteStore()
+    if store.is_initialized():
+        try:
+            return store.list_recent_manifests(config.lab_id, current_epoch, limit=limit)
+        except Exception:
+            pass
+        try:
+            page = store.list_runs(config.lab_id, limit=max(1, min(limit, 100)), epoch_id=current_epoch)
+            return [manifest for item in page["items"]
+                    if (manifest := store.load_manifest(config.lab_id, item["run_id"])) is not None]
+        except Exception:
+            pass
 
     run_root = config.state_dir / "runs"
     newest: list[tuple[float, str, dict[str, Any]]] = []
@@ -241,15 +239,10 @@ def _evidence_item(config: LabConfig, manifest: dict[str, Any], roles: list[str]
     run_id = str(manifest.get("id") or "unknown")
     primary = _metric_summary(manifest, config.primary, config.direction)
     expected = int(getattr(config, "repeats", 0) or 0)
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
-        run_uuid = SQLiteStore().resolve_run_id(config.lab_id, run_id)
-        source = f"/api/v1/labs/{config.lab_id}/runs/{run_uuid}"
-        source_kind = "api"
-    else:
-        root = "controls" if (config.state_dir / "controls" / run_id / "manifest.json").is_file() else "runs"
-        source = str((config.state_dir / root / run_id / "manifest.json").resolve())
-        source_kind = "file"
+    from .sqlite_store import SQLiteStore
+    run_uuid = SQLiteStore().resolve_run_id(config.lab_id, run_id)
+    source = f"/api/v1/labs/{config.lab_id}/runs/{run_uuid}"
+    source_kind = "api"
     return {
         "id": run_id,
         "roles": roles,
@@ -290,9 +283,7 @@ def _evidence(config: LabConfig, manifests: list[tuple[str, dict[str, Any] | Non
 
 def _argv(config: LabConfig, *args: str) -> list[str]:
     scripts = Path(__file__).resolve().parents[1]
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        return [sys.executable, str(scripts / "lab.py"), "--lab", str(config.lab_id), *args]
-    return [sys.executable, str(scripts / "lab.py"), "--config", str(config.path.resolve()), *args]
+    return [sys.executable, str(scripts / "lab.py"), "--lab", str(config.lab_id), *args]
 
 
 def _command(argv: list[str]) -> str:
@@ -316,17 +307,11 @@ def get_state_card(config: LabConfig, state: dict[str, Any]) -> dict[str, Any]:
         best_manifest = baseline_manifest
         best_stats = baseline_stats
 
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
-        spent = SQLiteStore().lab_usage_totals(config.lab_id)
-        spent["confirmed_cost_usd"] = float(spent.get("cost_usd", 0.0) or 0.0)
-        if spent.get("unknown_requests") or spent.get("unknown_costs"):
-            spent["cost_usd"] = None
-    else:
-        from .evaluator import _spent
-        from .state import _runs
-
-        spent = _spent(_runs(config), config.state_dir)
+    from .sqlite_store import SQLiteStore
+    spent = SQLiteStore().lab_usage_totals(config.lab_id)
+    spent["confirmed_cost_usd"] = float(spent.get("cost_usd", 0.0) or 0.0)
+    if spent.get("unknown_requests") or spent.get("unknown_costs"):
+        spent["cost_usd"] = None
     budget_card = {"time_remaining_seconds": None}
     budget = config.budget
     if budget:
@@ -493,7 +478,7 @@ def get_recommended_actions(
         }]
     if incomplete:
         run_id = str(last_run.get("id") or "")
-        if run_id and getattr(config, "storage_mode", "legacy") == "sqlite":
+        if run_id:
             from .sqlite_store import SQLiteStore
             run_id = str(SQLiteStore().resolve_run_id(config.lab_id, run_id))
             argv = _argv(config, "guide", "--json", "--run", run_id)
@@ -536,14 +521,10 @@ def build_cockpit(
     from .worker import read_worker
 
     active_lifecycle = None
-    if getattr(config, "storage_mode", "legacy") == "sqlite":
-        from .sqlite_store import SQLiteStore
-        active_lifecycle = SQLiteStore().get_active_run(config.lab_id)
-    else:
-        from .state import _runs
-        active_lifecycle = next((item for item in _runs(config) if item.get("status") == "running"), None)
+    from .sqlite_store import SQLiteStore
+    active_lifecycle = SQLiteStore().get_active_run(config.lab_id)
     worker = read_worker(config.state_dir)
-    if getattr(config, "storage_mode", "legacy") == "sqlite" and isinstance(worker, dict):
+    if isinstance(worker, dict):
         operation_status = worker.get("status")
         if operation_status == "recovery_required":
             active_lifecycle = {"id": None, "status": "recovery_required",
@@ -640,11 +621,8 @@ def build_cockpit(
     }
     if run_id is not None and isinstance(selected, dict):
         run_root = config.state_dir / ("controls" if (config.state_dir / "controls" / run_id).is_dir() else "runs") / run_id
-        if getattr(config, "storage_mode", "legacy") == "sqlite":
-            from .sqlite_store import SQLiteStore
-            run_source = f"/api/v1/labs/{config.lab_id}/runs/{SQLiteStore().resolve_run_id(config.lab_id, run_id)}"
-        else:
-            run_source = str((run_root / "manifest.json").resolve())
+        from .sqlite_store import SQLiteStore
+        run_source = f"/api/v1/labs/{config.lab_id}/runs/{SQLiteStore().resolve_run_id(config.lab_id, run_id)}"
         hypothesis_limits = {
             "title": 120, "observation": 180, "expected_effect": 180,
             "falsification": 140, "rationale": 140,

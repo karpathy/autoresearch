@@ -390,26 +390,3 @@ def render_unified_dashboard(snapshot: dict[str, Any], details: dict[str, Any], 
     page = (ASSETS_DIR / "index.html").read_text(encoding="utf-8")
     return (page.replace("__STYLE__", style).replace("__APP__", app)
             .replace("__MODE_LABEL__", mode).replace("__PAYLOAD__", payload))
-
-
-def render_report_page(root: Path, selected_project_id: str = "", selected_lab_id: str = "") -> str:
-    """Create an offline snapshot with the same page and detail model as live mode."""
-    from .dashboard_server import dashboard_details, dashboard_status
-
-    root = root.resolve()
-    summary = dashboard_status(root)
-    details: dict[str, Any] = {}
-    for project in summary.get("projects", []):
-        for lab in project.get("labs", []):
-            key = f"{project.get('id', '')}::{lab.get('id', '')}"
-            model = dashboard_details(root, str(project.get("id", "")), str(lab.get("id", "")),
-                                      include_diffs=True)
-            if model is not None:
-                details[key] = model
-    if selected_lab_id and not selected_project_id:
-        selected_project_id = next((str(project.get("id", "")) for project in summary.get("projects", [])
-                                    if any(str(lab.get("id", "")) == selected_lab_id
-                                           for lab in project.get("labs", []))), "")
-    selected = f"{selected_project_id}::{selected_lab_id}" if selected_project_id and selected_lab_id else ""
-    root_id = hashlib.sha256(str(root).casefold().encode("utf-8")).hexdigest()[:16]
-    return render_unified_dashboard(summary, details, live=False, root_id=root_id, selected_lab=selected)

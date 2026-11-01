@@ -19,11 +19,9 @@ def register(subparsers: Any) -> None:
 
 def run(args: Any, labs_root: Path | None) -> dict[str, Any]:
     from ..dashboard_server import dashboard_server_status, ensure_dashboard_server, stop_dashboard
-    from ..paths import adopt_legacy_stores, resolve_home
+    from ..paths import resolve_home
 
     root = args.root or resolve_home()
-    if args.root is None:
-        adopt_legacy_stores(root)
     if args.dashboard_command in ("start", "ensure"):
         return ensure_dashboard_server(root, open_browser=args.open_browser, force_open=args.open_browser)
     if args.dashboard_command == "status":
