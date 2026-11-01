@@ -14,8 +14,8 @@ from .config import LabConfig
 from .errors import LabError
 from .evaluator import _budget_overrun, _evaluate_once, _remaining
 from .gitutil import _restore_candidate
-from .state import _check_candidate_unchanged, _check_frozen, _finalize_setup, _fingerprints, _runs, _save_manifest, _verify_passport_pins, load_state
-from .store import _write_json
+from .state import _IGNORED_CACHE_DIRS, _check_candidate_unchanged, _check_frozen, _finalize_setup, _fingerprints, _runs, _save_manifest, _verify_passport_pins, load_state
+from .store import _sha256, _write_json
 
 
 def _body_field_text(body: Any) -> str:
@@ -176,6 +176,22 @@ def _finalize_baseline(
     return manifest
 
 
+def _check_candidate_matches_snapshot(config: LabConfig, state: dict[str, Any]) -> None:
+    """The first baseline must measure the project as prepared, not edits made before it."""
+    candidate = config.state_dir / "candidate"
+    current = {
+        file.relative_to(candidate).as_posix(): file for file in candidate.rglob("*")
+        if file.is_file() and not any(part in _IGNORED_CACHE_DIRS for part in file.relative_to(candidate).parts)
+    }
+    expected = {item["path"]: item["sha256"] for item in state["source"]}
+    changed = sorted(
+        name for name in current.keys() | expected.keys()
+        if name not in current or name not in expected or _sha256(current[name]) != expected[name]
+    )
+    if changed:
+        raise LabError(f"Candidate changed before the first measurement: {', '.join(changed[:5])}")
+
+
 def run_baseline(config: LabConfig, *, supersede: bool = False, reason: str | None = None) -> dict[str, Any]:
     from .runtimeops import require_durable_operation_context
     require_durable_operation_context(config, "baseline")
@@ -207,6 +223,8 @@ def run_baseline(config: LabConfig, *, supersede: bool = False, reason: str | No
     _finalize_setup(config, state)
     _check_frozen(config, state)
     previous = [item for item in _runs(config) if item["id"] == "baseline" or item["id"].startswith("baseline-")]
+    if not previous and not supersede:
+        _check_candidate_matches_snapshot(config, state)
     if any(item["status"] == "running" for item in previous):
         from .trial import recover_lab
 

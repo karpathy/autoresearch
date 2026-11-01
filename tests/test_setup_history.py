@@ -152,6 +152,13 @@ class SetupHistoryTest(unittest.TestCase):
         with self.assertRaisesRegex(LabError, "Input changed"):
             run_trial(config, {"title": "x", "observation": "x", "expected_effect": "y"})
 
+    def test_first_baseline_rejects_candidate_changed_before_measurement(self):
+        (self.project / ".gitignore").write_text("surprise.txt\n", encoding="utf-8")
+        config, _ = self.draft_lab()
+        (config.state_dir / "candidate" / "surprise.txt").write_text("changed", encoding="utf-8")
+        with self.assertRaisesRegex(LabError, "changed before the first measurement"):
+            run_baseline(config)
+
 
 if __name__ == "__main__":
     unittest.main()
