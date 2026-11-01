@@ -1,0 +1,15 @@
+{
+  "project": "project",
+  "evaluator": ["{python}", "evaluator.py", "{candidate}", "{run_dir}"],
+  "metrics": {
+    "primary": "mean_error",
+    "direction": "min",
+    "guards": [{"name": "coverage", "direction": "max"}]
+  },
+  "repeats": 1,
+  "timeout_seconds": 30,
+  "baseline_validation": {
+    "mode": "fresh",
+    "known_case": {"path": "known_case.json", "sha256": ""}
+  }
+}
