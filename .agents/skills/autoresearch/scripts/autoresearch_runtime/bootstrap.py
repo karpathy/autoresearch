@@ -56,10 +56,8 @@ def _reject_spend_limits(spec: dict[str, Any]) -> None:
         )
 
 
-def _retired_spend_identity(budget: dict[str, Any]) -> dict[str, Any]:
+def _retired_spend_identity() -> dict[str, Any]:
     """Historical values of the retired spend fields. They feed the lab id and are never stored."""
-    if budget.get("openrouter"):
-        return {"max_requests": None, "max_cost_usd": None}
     return {"max_requests": 0, "max_cost_usd": 0}
 
 
@@ -289,7 +287,7 @@ def prepare_lab(
         budget.update(declared_budget)
         # The lab id hashes the historical budget shape, so a spec that never declared the
         # retired spend fields keeps its id. Those fields are not written to lab.json.
-        identity_budget = {**budget, **_retired_spend_identity(budget)}
+        identity_budget = {**budget, **_retired_spend_identity()}
         network_retry = spec.get("network_retry")
         if network_retry is not None and (
             not isinstance(network_retry, dict) or not isinstance(network_retry.get("enabled", True), bool)

@@ -422,19 +422,6 @@ class SkillWorkflowTest(unittest.TestCase):
         prepared = prepare_lab(self.program, spec_path, confirmed=True)
         self.assertFalse((Path(prepared["candidate"]) / "database.sql").exists())
 
-    def test_openrouter_brief_does_not_require_a_key_budget(self):
-        from autoresearch_runtime.bootstrap import prepare_lab
-
-        self.program.write_text(
-            self.program.read_text(encoding="utf-8") + "\nProvider: OpenRouter paid requests\n",
-            encoding="utf-8",
-        )
-        prepared = prepare_lab(self.program, self.spec(), confirmed=True)
-        config = load_config(Path(prepared["config"]))
-        self.assertIsNotNone(self.store().get_lab(config.lab_id))
-        self.assertNotIn("max_requests", config.budget)
-        self.assertNotIn("max_cost_usd", config.budget)
-
     def test_fabricated_local_limit_without_brief_source_is_rejected(self):
         from autoresearch_runtime.bootstrap import prepare_lab
 
@@ -450,7 +437,7 @@ class SkillWorkflowTest(unittest.TestCase):
         from autoresearch_runtime.errors import LabError
 
         for field, value in (
-            ("budget", {"max_requests": 5, "openrouter": True}),
+            ("budget", {"max_requests": 5}),
             ("budget", {"max_cost_usd": 2.0}),
             ("budget_sources", {"max_cost_usd": "at most 2 dollars"}),
         ):
@@ -550,7 +537,6 @@ class SkillWorkflowTest(unittest.TestCase):
     def test_paid_evaluator_runs_without_a_key_limit(self):
         from autoresearch_runtime.bootstrap import prepare_lab
 
-        self.program.write_text(self.program.read_text(encoding="utf-8") + "\nProvider: OpenRouter paid requests\n", encoding="utf-8")
         evaluator = self.root / "paid_evaluator.py"
         evaluator.write_text(
             "import json, os, sys\nfrom pathlib import Path\n"
@@ -563,7 +549,6 @@ class SkillWorkflowTest(unittest.TestCase):
         spec_path = self.spec()
         raw = json.loads(spec_path.read_text(encoding="utf-8"))
         raw["evaluator"] = ["{python}", str(evaluator), "{candidate}", "{run_dir}"]
-        raw["budget"] = {"openrouter": True}
         spec_path.write_text(json.dumps(raw), encoding="utf-8")
         self.update_known_case(spec_path)
         prepared = prepare_lab(self.program, spec_path, confirmed=True)
@@ -571,23 +556,9 @@ class SkillWorkflowTest(unittest.TestCase):
         baseline = run_baseline(config)
         self.assertEqual(baseline["status"], "accepted")
         self.assertIsNone(baseline["runs"][0]["details"]["limit"])
-        self.assertFalse((config.state_dir / "openrouter_budget.json").exists())
         self.assertAlmostEqual(baseline["runs"][0]["usage"]["cost_usd"], 0.1)
 
-    def test_openrouter_flag_prepares_a_lab_without_a_balance_check(self):
-        from autoresearch_runtime.bootstrap import prepare_lab
-
-        self.program.write_text(self.program.read_text(encoding="utf-8") + "\nProvider: OpenRouter paid requests\n", encoding="utf-8")
-        spec_path = self.spec()
-        raw = json.loads(spec_path.read_text(encoding="utf-8"))
-        raw["budget"] = {"openrouter": True}
-        spec_path.write_text(json.dumps(raw), encoding="utf-8")
-        prepared = prepare_lab(self.program, spec_path, confirmed=True)
-        config = load_config(Path(prepared["config"]))
-        self.assertTrue(config.budget["openrouter"])
-        self.assertFalse(Path(prepared["config"]).exists())
-
-    def test_openrouter_flag_stores_no_spend_fields_and_caps_nothing(self):
+    def test_retired_spend_fields_are_not_stored_and_no_cap_reaches_the_evaluator(self):
         from autoresearch_runtime.bootstrap import prepare_lab
 
         evaluator = self.root / "key_capped_evaluator.py"
@@ -602,7 +573,6 @@ class SkillWorkflowTest(unittest.TestCase):
         spec_path = self.spec()
         raw = json.loads(spec_path.read_text(encoding="utf-8"))
         raw["evaluator"] = ["{python}", str(evaluator), "{candidate}", "{run_dir}"]
-        raw["budget"] = {"openrouter": True}
         spec_path.write_text(json.dumps(raw), encoding="utf-8")
         self.update_known_case(spec_path)
         prepared = prepare_lab(self.program, spec_path, confirmed=True)
@@ -612,7 +582,6 @@ class SkillWorkflowTest(unittest.TestCase):
         baseline = run_baseline(config)
         self.assertEqual(baseline["status"], "accepted")
         self.assertIsNone(baseline["runs"][0]["details"]["limit"])
-        self.assertFalse((config.state_dir / "openrouter_budget.json").exists())
 
     def test_lab_stored_before_0_8_resumes_under_the_same_contract(self):
         from autoresearch_runtime.bootstrap import prepare_lab
