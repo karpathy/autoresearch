@@ -4,6 +4,7 @@ except ImportError:
     from tests import support  # noqa: F401
 
 import json
+from autoresearch_runtime.store import _write_json
 import os
 import subprocess
 import sys
@@ -164,7 +165,6 @@ class CliContractTest(unittest.TestCase):
         self.assertIsNotNone(operation)
         self.assertEqual(operation["status"], "succeeded", operation)
 
-    @unittest.skip("pending port from a legacy file lab to the SQLite flow")
     def test_agent_promote_conflict_reports_worktree_and_apply_error(self):
         from autoresearch_runtime.lab import load_state
         from tests import test_promote as promote_tests
@@ -178,9 +178,9 @@ class CliContractTest(unittest.TestCase):
         fixture._commit_source("upstream edit to the promoted file")
         state = load_state(config)
         state["source_head"] = fixture._git_out("rev-parse", "HEAD").strip()
-        (config.state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        _write_json(config.state_dir / "state.json", state)
 
-        result = _run_lab(["--config", str(fixture.config_path), "--agent", "promote", "--to-branch", "fix-branch"])
+        result = _run_lab(["--config", str(config.path), "--agent", "promote", "--to-branch", "fix-branch"])
 
         self.assertEqual(result.returncode, 0, result.stderr)
         envelope = json.loads(result.stdout)

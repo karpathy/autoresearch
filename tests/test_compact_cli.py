@@ -32,7 +32,6 @@ class CompactCliTest(unittest.TestCase):
         self.assertEqual(compact["data"], full["data"])
         self.assertNotIn("cockpit", compact)
 
-    @unittest.skip("pending port from a legacy file lab to the SQLite flow")
     def test_agent_guide_canonical_payload_stays_bounded(self):
         guidance.AgentGuidanceTest._use_sqlite_toy(self)
         guidance.run_durable_baseline(self.config)

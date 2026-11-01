@@ -27,8 +27,8 @@ from autoresearch_runtime.commands.common import (
 from autoresearch_runtime.commands import probe as probe_command
 from autoresearch_runtime.commands import replay as replay_command
 from autoresearch_runtime.commands import baseline as baseline_command
-from durable_workflow_helpers import run_baseline
-from durable_workflow_helpers import run_trial
+from autoresearch_runtime.baseline import run_baseline
+from autoresearch_runtime.trial import run_trial
 from autoresearch_runtime.probe import run_probe
 from autoresearch_runtime.replay import run_replay
 
@@ -359,7 +359,6 @@ class HarnessPolicyTest(unittest.TestCase):
         self.assertEqual(explicit_confirmation(SimpleNamespace(confirmed=False)), {})
         self.assertEqual(explicit_confirmation(SimpleNamespace()), {})
 
-    @unittest.skip("pending port from a legacy file lab to the SQLite flow")
     def test_sqlite_measurement_executors_reject_calls_outside_the_durable_worker(self):
         attempts = (
             lambda: run_baseline(self.config),

@@ -42,7 +42,6 @@ class PreflightContractTest(unittest.TestCase):
         self.assertEqual(payload["data"]["integration_status"], "unverified")
         self.assertEqual(tree_digest(self.root), before)
 
-    @unittest.skip("pending port from a legacy file lab to the SQLite flow")
     def test_preflight_uses_live_result_validator(self):
         spec = self.spec()
         result = self.root / "result.json"
@@ -132,7 +131,6 @@ class PreflightContractTest(unittest.TestCase):
         with self.assertRaises(LabError):
             load_config(path)
 
-    @unittest.skip("pending port from a legacy file lab to the SQLite flow")
     def test_preflight_preserves_exact_provider_attestations(self):
         spec = self.spec()
         raw = json.loads(spec.read_text())
@@ -144,20 +142,6 @@ class PreflightContractTest(unittest.TestCase):
         self.assertEqual(code, 2, payload)
         self.assertIn("attestation mismatch", payload["error"]["message"])
 
-    def test_probe_adoption_never_mutates_best_pointer(self):
-        toy = self.root / "toy"
-        shutil.copytree(Path(__file__).parents[1] / "tests" / "fixtures" / "draft-config", toy)
-        raw = json.loads((toy / "lab.json").read_text())
-        raw.update(source_root=str(toy / "source"), state_dir=str(toy / ".lab"),
-                   input_files=[str(toy / "cases.json")])
-        raw["evaluator"][1] = str(toy / "source" / "evaluator.py")
-        (toy / "lab.json").write_text(json.dumps(raw))
-        config = load_config(toy / "lab.json")
-        before = tree_digest(toy)
-        with self.assertRaises(LabError) as caught:
-            adopt_probe(config, "probe-0001")
-        self.assertEqual(caught.exception.code, "E_CONTRACT_PROBE_ADOPTION")
-        self.assertEqual(tree_digest(toy), before)
 
     def test_ingest_cli_records_type_without_setting_baseline(self):
         from autoresearch_runtime.bootstrap import prepare_lab

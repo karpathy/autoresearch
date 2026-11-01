@@ -379,7 +379,6 @@ class ApiV1SecurityTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(json.loads(body)["data"]["comparable"])
 
-    @unittest.skip("pending port from a legacy file lab to the SQLite flow")
     def test_cli_trial_start_uses_the_same_operation_payload_as_the_api(self):
         hypothesis = {
             "title": "Same operation contract", "observation": "A candidate change exists",
@@ -397,7 +396,6 @@ class ApiV1SecurityTest(unittest.TestCase):
                                confirmed=True)
 
         with patch("autoresearch_runtime.commands.trial.resolve_config", return_value=config), \
-             patch("autoresearch_runtime.commands.trial._sqlite_context", return_value=(store, operation_id)), \
              patch("autoresearch_runtime.commands.trial._load_hypothesis", return_value=hypothesis), \
              patch("autoresearch_runtime.commands.trial.enqueue_and_start_operation",
                    side_effect=lambda *values: (captured.append(values), {
@@ -405,7 +403,7 @@ class ApiV1SecurityTest(unittest.TestCase):
                    })[1]):
             result = trial_command.run(args, None)
 
-        self.assertEqual(captured[0][0:3], (operation_id, "trial", params))
+        self.assertEqual((str(captured[0][0]), *captured[0][1:3]), (str(operation_id), "trial", params))
         self.assertEqual({"command": captured[0][1], "params": captured[0][2]}, expected_operation_payload)
         self.assertEqual(result["operation_id"], operation_id)
         self.assertTrue(result["started"])

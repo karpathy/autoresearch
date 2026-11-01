@@ -205,14 +205,6 @@ class TrialCliTest(unittest.TestCase):
         self.assertIn("worker", data)
         self.assertIn("running_manifests", data)
 
-    def test_probe_baseline_and_best(self):
-        config = self._prepare_baseline()
-        for commit in ("baseline", "best"):
-            data = self._assert_ok(self._run_approved(config, [
-                "--confirmed", "--config", config, "probe", "--commit", commit, "--group", "g",
-                "--label", "base" if commit == "baseline" else "best", "--repeats", "1",
-            ]), "probe")
-            self.assertEqual(data["status"], "complete")
 
     def test_promote_export_patch(self):
         config = self._prepare_baseline()

@@ -7,6 +7,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from autoresearch_runtime.store import _write_json
 from pathlib import Path
 
 from autoresearch_runtime.lab import (
@@ -172,7 +173,7 @@ class PromoteTest(unittest.TestCase):
             ["git", "rev-parse", "HEAD"], cwd=config.source_root, text=True,
             **support.hidden_process_kwargs(),
         ).strip()
-        (config.state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        _write_json(config.state_dir / "state.json", state)
         (config.source_root / "note.txt").write_text("drift", encoding="utf-8")
         subprocess.run(["git", "add", "note.txt"], cwd=config.source_root, check=True, **support.hidden_process_kwargs())
         subprocess.run(
@@ -286,7 +287,6 @@ class PromoteTest(unittest.TestCase):
         self.assertIn("pkg/app/value.txt", str(ctx.exception))
         self.assertEqual((self.source / "value.txt").read_text(encoding="utf-8"), "1")
 
-    @unittest.skip("pending port from a legacy file lab to the SQLite flow")
     def test_stored_prefix_mismatch_fails_closed(self):
         config = self._subdirectory_lab("prefix-mismatch-repo", commit=True)
         init_lab(config)
@@ -295,7 +295,7 @@ class PromoteTest(unittest.TestCase):
         run_trial(config, {"title": "Mismatch", "observation": "prefix", "expected_effect": "up"})
         state = load_state(config)
         state["project_prefix"] = ""
-        (config.state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        _write_json(config.state_dir / "state.json", state)
         with self.assertRaises(LabError) as ctx:
             promote_in_place(config)
         self.assertEqual(ctx.exception.code, "E_PREFIX_MISMATCH")
@@ -594,7 +594,6 @@ class PromoteTest(unittest.TestCase):
         self.assertTrue(result["applied"], result)
         self.assertEqual(local_config("core.autocrlf"), before)
 
-    @unittest.skip("pending port from a legacy file lab to the SQLite flow")
     def test_non_editable_target_rejected_before_apply_on_both_paths(self):
         config = self._ready_lab()
         candidate = config.state_dir / "candidate"
@@ -609,7 +608,7 @@ class PromoteTest(unittest.TestCase):
         ).stdout.decode("utf-8").strip()
         state = load_state(config)
         state["best_commit"] = head
-        (config.state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        _write_json(config.state_dir / "state.json", state)
         with self.assertRaises(LabError) as ctx:
             promote_in_place(config)
         self.assertEqual(ctx.exception.code, "frozen_tampered")

@@ -120,6 +120,19 @@ def _install_draft_lab_shims() -> None:
         raw_bytes = _absolute_config_bytes(original)
         parsed = config_module.parse_config(original, raw_bytes, allow_pending=config.pending)
         raw = json.loads(raw_bytes.decode("utf-8"))
+        # A draft built with dataclasses.replace(...) carries overrides: persist them in the stored contract.
+        changed = False
+        if config.unit != parsed.unit:
+            raw["metrics"] = {**raw["metrics"], "unit": config.unit}; changed = True
+        if config.goal_criteria != parsed.goal_criteria:
+            raw["goal_criteria"] = config.goal_criteria; changed = True
+        if config.budget != parsed.budget:
+            raw["budget"] = dict(config.budget); changed = True
+        if tuple(config.guards) != tuple(parsed.guards):
+            raw["metrics"] = {**raw["metrics"], "guards": [{"name": n, "direction": d} for n, d in config.guards]}; changed = True
+        if changed:
+            raw_bytes = (json.dumps(raw, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+            parsed = config_module.parse_config(original, raw_bytes, allow_pending=config.pending)
         passport = {
             "confirmed": True, "goal": "test lab", "project": str(parsed.source_root),
             "metrics": raw["metrics"], "constraints": raw.get("budget", {}),
@@ -151,3 +164,21 @@ def _install_draft_lab_shims() -> None:
 
 
 _install_draft_lab_shims()
+
+
+def save_manifest(config, manifest):
+    """Write a run manifest into the lab's SQLite store, opening the epoch it names if needed."""
+    from autoresearch_runtime.measurement import open_epoch
+    from autoresearch_runtime.sqlite_store import SQLiteStore
+    from autoresearch_runtime.state import _save_manifest
+
+    store = SQLiteStore()
+    state = store.load_state(config.lab_id)
+    epoch = int(manifest.get("epoch") or 1)
+    opened = False
+    while int(state.get("current_epoch") or 1) < epoch:
+        open_epoch(state, config)
+        opened = True
+    if opened:
+        store.save_state(config.lab_id, state)
+    _save_manifest(config, manifest)

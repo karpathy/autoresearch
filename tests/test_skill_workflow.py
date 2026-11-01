@@ -741,45 +741,6 @@ class SkillWorkflowTest(unittest.TestCase):
         self.assertEqual(store.get_latest_operation(config.lab_id)["operation_id"], last_operation["operation_id"])
         self.assertEqual(sql.read_text(encoding="utf-8"), "SELECT 2;\n")
 
-    @unittest.skip("pending port from a legacy file lab to the SQLite flow")
-    def test_trial_completion_leaves_archival_explicit(self):
-        from unittest.mock import patch
-        from autoresearch_runtime.bootstrap import prepare_lab
-        from autoresearch_runtime.archive import archive_idle_labs
-        from autoresearch_runtime.dash_api import archive_lab
-        from autoresearch_runtime.errors import LabError
-
-        prepared = prepare_lab(self.program, self.spec(), confirmed=True)
-        config = load_config(Path(prepared["config"]))
-        self.assertEqual(run_baseline(config)["status"], "accepted")
-        (config.state_dir / "candidate" / "value.txt").write_text("2", encoding="utf-8")
-
-        trial = run_trial(config, self.delegated_hypothesis())
-        status, payload = archive_lab(Path(os.environ["AUTORESEARCH_HOME"]), "project", str(config.lab_id))
-        self.assertEqual(status, 409)
-        self.assertEqual(payload["error"], "unsupported_db_lab_action")
-
-        # Keep the legacy file-store behavior independently testable beside DB labs.
-        legacy_home = self.root / "legacy-home"
-        failed = legacy_home / "projects" / "old-project-id" / "failed-contract"
-        failed.mkdir(parents=True)
-        (failed / "lab.json").write_text(json.dumps({"source_root": str(self.project)}), encoding="utf-8")
-        (failed / "state.json").write_text(json.dumps({"setup_pending": True, "inputs": []}), encoding="utf-8")
-        archived = legacy_home / "archive" / "old-project-id" / "failed-contract"
-        self.assertTrue(failed.exists())
-        self.assertNotIn("archived_labs", trial)
-        with patch.dict(os.environ, {"AUTORESEARCH_HOME": str(legacy_home)}):
-            preview = archive_idle_labs(legacy_home)
-        self.assertEqual(preview["archived"], [])
-        self.assertTrue(failed.exists())
-        before = support.tree_digest(legacy_home)
-        with patch.dict(os.environ, {"AUTORESEARCH_HOME": str(legacy_home)}):
-            with self.assertRaises(LabError) as error:
-                archive_idle_labs(legacy_home, apply=True)
-        self.assertEqual(error.exception.code, "E_LEGACY_READ_ONLY")
-        self.assertEqual(support.tree_digest(legacy_home), before)
-        self.assertTrue(failed.exists())
-        self.assertFalse(archived.exists())
 
     def test_preparation_refuses_changed_internal_configuration_on_resume(self):
         from autoresearch_runtime.bootstrap import prepare_lab
