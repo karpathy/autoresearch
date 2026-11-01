@@ -190,18 +190,6 @@ def main() -> int:
         print(f"[{'OK' if rc != 0 and 'E_CONTRACT_PROBE_ADOPTION' in combined else 'FAIL'}] probe_adopt contract rejection in {dt:.2f}s (rc={rc})")
         assert rc != 0 and "E_CONTRACT_PROBE_ADOPTION" in combined, f"probe adopt should be rejected by contract: {err}\n{out}"
         
-        # Step 7: Universal Ingest
-        external_report = live_dir / "external_run.json"
-        external_report.write_text(json.dumps({
-            "metrics": {"accuracy": 0.99, "error": 0.01},
-            "source_path": "external_bench.py"
-        }), encoding="utf-8")
-        
-        rc, out, err, dt = run_cmd(cli + ["--config", config_path, "ingest", "--from-report", str(external_report), "--as-type", "probe"], env_extra=env_extra)
-        telemetry.append({"step": "ingest_external", "rc": rc, "stdout": out, "stderr": err, "dt_sec": round(dt, 3)})
-        print(f"[{'OK' if rc == 0 else 'FAIL'}] ingest_external in {dt:.2f}s (rc={rc})")
-        assert rc == 0, f"ingest failed: {err}\n{out}"
-        
         # Step 8: Dashboard status and static page verification
         dash_status_cmd = cli + ["dashboard", "status", "--root", str(labs_home)]
         rc, out, err, dt = run_cmd(dash_status_cmd, env_extra=env_extra)

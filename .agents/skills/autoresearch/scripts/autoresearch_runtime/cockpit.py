@@ -59,11 +59,8 @@ def _load_manifest(config: LabConfig, run_id: str | None) -> dict[str, Any] | No
             pass
     from .store import _read_json
 
-    for parent in (config.state_dir / "runs", config.state_dir / "controls"):
-        manifest = _read_json(parent / run_id / "manifest.json", None)
-        if isinstance(manifest, dict):
-            return manifest
-    return None
+    manifest = _read_json(config.state_dir / "runs" / run_id / "manifest.json", None)
+    return manifest if isinstance(manifest, dict) else None
 
 
 def _manifest_epoch(manifest: dict[str, Any] | None, current_epoch: int) -> int:
@@ -620,7 +617,7 @@ def build_cockpit(
         "dead_ends": _build_dead_ends_digest([m for m in [selected, *recent] if isinstance(m, dict)], current_epoch),
     }
     if run_id is not None and isinstance(selected, dict):
-        run_root = config.state_dir / ("controls" if (config.state_dir / "controls" / run_id).is_dir() else "runs") / run_id
+        run_root = config.state_dir / "runs" / run_id
         from .sqlite_store import SQLiteStore
         run_source = f"/api/v1/labs/{config.lab_id}/runs/{SQLiteStore().resolve_run_id(config.lab_id, run_id)}"
         hypothesis_limits = {

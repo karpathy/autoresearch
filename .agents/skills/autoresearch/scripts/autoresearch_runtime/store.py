@@ -25,7 +25,7 @@ def _sqlite_document(path: Path) -> tuple[Any, Any, str, str | None, int | None]
             return candidate.parent, {"state.json": "state", "history.json": "history", "worker.json": "worker"}[name], None, None
         if name == "index.json" and candidate.parent.name == "vault":
             return candidate.parent.parent, "vault_index", None, None
-        if name == "manifest.json" and candidate.parent.parent.name in {"runs", "controls"}:
+        if name == "manifest.json" and candidate.parent.parent.name == "runs":
             state_dir = candidate.parent.parent.parent
             return state_dir, "manifest", candidate.parent.name, None
         if name in {"result.json", "attempts.jsonl", "cases.jsonl", "usage.json", "sent-requests.jsonl", "net-stats.json"}:

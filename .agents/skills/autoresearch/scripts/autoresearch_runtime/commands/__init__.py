@@ -13,7 +13,6 @@ from . import (
     doctor,
     epoch,
     guide,
-    ingest,
     probe,
     promote,
     preflight,
@@ -29,7 +28,7 @@ from . import (
 
 COMMANDS = (
     doctor, baseline, epoch, status, recover, trial, replay, vault, cancel,
-    dashboard, promote, probe, cases, guide, ingest, step, preflight, resume, storage,
+    dashboard, promote, probe, cases, guide, step, preflight, resume, storage,
 )
 
 
@@ -44,6 +43,6 @@ def run_command(args: Any, labs_root: Path | None) -> dict[str, Any]:
         "recover": recover, "trial": trial, "replay": replay,
         "vault": vault, "dashboard": dashboard, "doctor": doctor, "promote": promote,
         "probe": probe, "cases": cases, "storage": storage, "cancel": cancel,
-        "guide": guide, "ingest": ingest, "step": step, "preflight": preflight, "resume": resume,
+        "guide": guide, "step": step, "preflight": preflight, "resume": resume,
     }
     return by_name[args.command].run(args, labs_root)

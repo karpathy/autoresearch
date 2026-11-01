@@ -148,28 +148,5 @@ class PreflightContractTest(unittest.TestCase):
         self.assertIn("attestation mismatch", payload["error"]["message"])
 
 
-    def test_ingest_cli_records_type_without_setting_baseline(self):
-        from autoresearch_runtime.bootstrap import prepare_lab
-        from autoresearch_runtime.sqlite_store import SQLiteStore
-
-        prepared = prepare_lab(self.program, self.spec(), confirmed=True)
-        config = load_config(Path(prepared["config"]))
-        lab_id = prepared["lab_id"]
-        store = SQLiteStore()
-        report = self.root / "saved-report.json"
-        report.write_text(json.dumps({"metrics": {config.primary: 0.5}}))
-        code, payload = self.invoke("--config", str(config.path), "ingest", "--source", str(report), "--as-type", "baseline")
-        self.assertEqual(code, 0, payload)
-        runs = store.list_runs(lab_id, limit=10)["items"]
-        probes = [run for run in runs if run["kind"] == "probe"]
-        self.assertEqual(len(probes), 1)
-        imported = store.get_run(lab_id, probes[0]["run_id"])
-        self.assertEqual(imported["manifest"]["status"], "non_adoptable")
-        self.assertFalse(imported["manifest"]["adoptable"])
-        self.assertEqual(imported["manifest"]["runs"][0]["metrics"][config.primary], 0.5)
-        state = store.load_projection(lab_id, "state")
-        self.assertIsNone(state["baseline_id"])
-
-
 if __name__ == "__main__":
     unittest.main()

@@ -23,10 +23,6 @@ from autoresearch_runtime.runtimeops import reserve_and_launch_operation
 from autoresearch_runtime.worker import run_operation_worker
 from autoresearch_runtime.measurement import open_contract_epoch
 from autoresearch_runtime.cockpit import build_cockpit
-from autoresearch_runtime.control_import import (
-    import_control_report, load_control_manifests, promote_control_to_baseline,
-)
-from autoresearch_runtime.ingest import ingest_reports
 from tests.durable_workflow_helpers import (
     approved_offline_profile, run_baseline, run_durable_operation, run_probe, run_replay, run_trial,
 )
@@ -681,26 +677,6 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         self.assertEqual(trial["status"], "accepted")
         self.assertEqual(trial["parent"], "baseline-0002")
 
-    def test_imported_controls_are_sqlite_probes_and_never_adopted_as_baseline(self):
-        _prepared, config = self._prepare()
-        before = load_state(config)
-        manifest = import_control_report(
-            config.state_dir, self.root / "control-report.json", result_type="provider_check",
-            label="Provider check", entries=[{"metrics": {"score": 4}}, {"metrics": {"score": 5}}],
-        )
-        self.assertEqual(manifest["id"], "control-0001")
-        self.assertEqual(manifest["status"], "non_adoptable")
-        self.assertFalse(manifest["adoptable"])
-        self.assertFalse((config.state_dir / "controls").exists())
-        stored = load_control_manifests(config.state_dir)
-        self.assertEqual(len(stored), 1)
-        self.assertEqual([item["metrics"]["score"] for item in stored[0]["runs"]], [4, 5])
-        run = SQLiteStore().get_run(config.lab_id, "control-0001")
-        self.assertEqual(run["kind"], "probe")
-        self.assertEqual(load_state(config)["baseline_id"], before["baseline_id"])
-        with self.assertRaisesRegex(LabError, "non-adoptable"):
-            promote_control_to_baseline(config.state_dir, "control-0001")
-
     def test_probe_and_ingest_store_measurements_under_runs_without_json_shadows(self):
         _prepared, config = self._prepare()
         self.assertEqual(run_baseline(config)["status"], "accepted")
@@ -714,16 +690,6 @@ class SQLiteRuntimeIntegrationTest(unittest.TestCase):
         self.assertEqual(load_state(config)["best_id"], state_before["best_id"])
         self.assertFalse((config.state_dir / "probes" / "probe-0001" / "summary.json").exists())
         self.assertEqual(list((config.state_dir / "runs" / "probe-0001").rglob("result.json")), [])
-
-        source = self.root / "imported.json"
-        source.write_text(json.dumps({"metrics": {"score": 7}, "commit": "external"}), encoding="utf-8")
-        imported = ingest_reports(config.state_dir, source, result_type="experiment")
-        self.assertEqual(len(imported), 1)
-        imported_manifest = store.load_manifest(config.lab_id, "probe-0002")
-        self.assertEqual(imported_manifest["status"], "non_adoptable")
-        self.assertEqual(imported_manifest["runs"][0]["metrics"]["score"], 7)
-        self.assertFalse(imported[0].exists())
-        self.assertEqual(load_state(config)["best_id"], state_before["best_id"])
 
     def test_replay_stores_results_and_proof_in_sqlite(self):
         _prepared, config = self._prepare()
