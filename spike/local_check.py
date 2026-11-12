@@ -2,8 +2,11 @@
 Spike (pi-autoresearch-serverless, plan 17a), on the workstation, before anything is spent: a small
 model of train.py's own code on the CPU (depth 2, so one short window and one long, at T 2048).
 
+0. train.py's budget: N steps follow upstream's schedule exactly, at the step time that ends a
+   time budget after N steps.
 1. FlexAttention and SDPA give the same logits, eagerly, and compiled if torch.compile works here.
-2. The export (spike/export.py) and spike/onnx_check.py, on onnxruntime's CPU provider.
+2. The export (spike/export.py) and spike/onnx_check.py, on onnxruntime's CPU provider, with its
+   full eval (the scorer's nats head) on the export's rows.
 
     .venv/bin/python spike/local_check.py [OUT_DIR] [DEPTH]
 
@@ -18,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 
+import numpy as np
 import torch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,6 +43,40 @@ def max_diff(a, b):
     return float((a - b).abs().max())
 
 
+def schedule(code, budget, dt):
+    """train.py's loop, without the training: the progress before each step, and the steps run, at a
+    constant step time dt."""
+    step, seconds, progress = 0, 0.0, []
+    while True:
+        progress.append(code["budget_progress"](budget, step, seconds))
+        if step > 10:
+            seconds += dt
+        step += 1
+        if code["budget_finished"](budget, step, seconds):
+            return progress, step
+
+
+def budget_failures(code):
+    """For every N in [12, 1500] and integer step times (whole seconds keep the sums exact): N steps
+    and (N - 11) * dt seconds give the same progress at every step, and both stop after N steps."""
+    failures = []
+    for n in range(12, 1501):
+        dt = 1 + n % 4
+        by_steps = schedule(code, code["Steps"](n), dt)
+        by_seconds = schedule(code, code["Seconds"]((n - 11) * dt), dt)
+        if by_steps != by_seconds or by_steps[1] != n:
+            failures.append(f"budget: {n} steps at dt {dt}: steps {by_steps[1]}, seconds {by_seconds[1]}")
+    for env in ({"AR_STEPS": "953", "AR_TIME_BUDGET": "300"}, {"AR_STEPS": "11"}):
+        try:
+            code["budget_from"](env)
+            failures.append(f"budget: {env} accepted")
+        except AssertionError:
+            pass
+    if code["budget_from"]({}) != code["Seconds"](code["TIME_BUDGET"]):
+        failures.append("budget: upstream's default is not prepare.py's TIME_BUDGET")
+    return failures[:10]
+
+
 def main(out_dir, depth):
     code = train_model_code()
     torch.manual_seed(0)
@@ -54,7 +92,8 @@ def main(out_dir, depth):
             p.add_(torch.randn_like(p) * 0.02)
     assert model.window_sizes[0] == (T // 2, 0) and model.window_sizes[-1] == (T, 0), model.window_sizes
 
-    failures = []
+    failures = budget_failures(code)
+    print(f"budget: {'ok' if not failures else failures}", flush=True)
     report = {}
     idx = torch.randint(0, V, (2, T))
     with torch.no_grad():
@@ -78,10 +117,15 @@ def main(out_dir, depth):
     y = torch.randint(0, V, (8, T))
     token_bytes = torch.randint(1, 9, (V,))
     token_bytes[-4:] = 0  # the special tokens
-    export(model, x, y, token_bytes, out_dir)
+    info = export(model, x, y, token_bytes, out_dir)
+    val_dir = os.path.join(out_dir, "val")  # as spike/val_rows.py writes it, from the export's rows
+    os.makedirs(val_dir, exist_ok=True)
+    np.save(os.path.join(val_dir, "x.npy"), x.numpy().astype(np.int32))
+    np.save(os.path.join(val_dir, "y.npy"), y.numpy().astype(np.int32))
+    np.save(os.path.join(val_dir, "token_bytes.npy"), token_bytes.numpy().astype(np.int64))
 
     proc = subprocess.run(
-        [sys.executable, "-I", os.path.join(ROOT, "spike", "onnx_check.py"), out_dir],
+        [sys.executable, "-I", os.path.join(ROOT, "spike", "onnx_check.py"), out_dir, val_dir],
         capture_output=True, text=True, check=False,
     )
     sys.stdout.write(proc.stdout)
@@ -103,6 +147,11 @@ def main(out_dir, depth):
                 failures.append(f"{c['name']} bpb differs by {c['bpb_diff']:.3g}")
             if c["splice_prefix_max_abs_diff"] > 1e-5:
                 failures.append(f"{c['name']} splice changed the prefix by {c['splice_prefix_max_abs_diff']:.3g}")
+        full = result.get("full_eval", {"error": "missing"})
+        if "error" in full or "skipped" in full:
+            failures.append(f"full_eval: {full.get('error') or full.get('skipped')}")
+        elif not full["finite"] or abs(full["bpb"] - info["bpb"]) > 1e-6:
+            failures.append(f"full_eval bpb {full['bpb']} against the export's {info['bpb']}")
     if failures:
         print("FAILED:\n  " + "\n  ".join(failures))
         sys.exit(1)

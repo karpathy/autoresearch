@@ -1,19 +1,28 @@
-# Spike (pi-autoresearch-serverless, plan 17a): upstream's environment from its uv.lock (torch
-# 2.9.1+cu128 on Python 3.10), onnx for the export, the data and tokenizer of prepare.py's default
-# (10 training shards and the val shard), and the scorer's own environment at /opt/scorer: Python 3.12
-# with onnxruntime's CUDA provider (CUDA 13, which Cloud Run's driver 580 supports; no wheel for 3.10).
-FROM python:3.10-bookworm
+# Spike (pi-autoresearch-serverless, plan 17a, Trial 3): upstream's environment from its uv.lock (torch
+# 2.9.1+cu128 on Python 3.10), onnx for the export, and onnxruntime-gpu 1.23.2 for the scorer: its last
+# release for Python 3.10, built for CUDA 12, on the CUDA 12 libraries torch's lock brings already. One
+# Python, one CUDA stack, no package cache; and the data and tokenizer of prepare.py's default (10
+# training shards and the val shard).
+FROM python:3.10-slim-bookworm
+
+# Triton compiles its launcher with the system's C compiler, at run time.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc g++ libc6-dev \
+ && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /uvx /usr/local/bin/
-ENV UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never PYTHONUNBUFFERED=1
+ENV UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 
+# The checks: Python's headers and gcc for Triton; no NVIDIA package but the lock's CUDA 12 ones; the
+# CUDA provider in onnxruntime.
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-install-project \
- && uv pip install --python .venv/bin/python onnx==1.23.2 onnxscript==0.7.2 onnx-ir==1.1.0
-
-RUN UV_PYTHON_DOWNLOADS=automatic uv venv --python 3.12 /opt/scorer \
- && uv pip install --python /opt/scorer/bin/python "onnxruntime-gpu[cuda,cudnn]==1.31.1" onnx==1.23.2 numpy
+ && uv pip install --python .venv/bin/python onnx==1.23.2 onnxscript==0.7.2 onnx-ir==1.1.0 onnxruntime-gpu==1.23.2 \
+ && test -f "$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["include"])')/Python.h" \
+ && gcc --version > /dev/null \
+ && ! ls .venv/lib/python3.10/site-packages | grep '^nvidia_' | grep -v '_cu12-' \
+ && .venv/bin/python -c "import onnxruntime as o; p = o.get_available_providers(); assert 'CUDAExecutionProvider' in p, p"
 
 COPY prepare.py ./
 RUN .venv/bin/python prepare.py --num-shards 10

@@ -46,9 +46,10 @@ def bpb_terms(logits, targets, token_bytes):
     return float((nll * (nbytes > 0)).sum()), int(nbytes.sum())
 
 
-def export(model, x, y, token_bytes, out_dir):
+def export(model, x, y, token_bytes, out_dir, train_val_bpb=None):
     """Writes model.onnx and the reference into out_dir. x, y: [rows, T] int64 tensors on the CPU;
-    token_bytes: [V] int tensor on the CPU."""
+    token_bytes: [V] int tensor on the CPU; train_val_bpb: train.py's own full eval of the model (bf16
+    autocast), for the scorer's full eval to compare with."""
     os.makedirs(out_dir, exist_ok=True)
     info = {}
     model = model.to("cpu").float().eval()
@@ -78,7 +79,8 @@ def export(model, x, y, token_bytes, out_dir):
     np.save(os.path.join(out_dir, "y.npy"), ys)
     np.save(os.path.join(out_dir, "token_bytes.npy"), tb)
     np.save(os.path.join(out_dir, "logits0.npy"), logits[0])
-    reference = {"rows": int(x.size(0)), "T": int(T), "vocab": int(tb.shape[0]), "bpb": nats / (math.log(2) * nbytes)}
+    reference = {"rows": int(x.size(0)), "T": int(T), "vocab": int(tb.shape[0]), "bpb": nats / (math.log(2) * nbytes),
+                 "train_val_bpb": train_val_bpb}
     with open(os.path.join(out_dir, "reference.json"), "w") as f:
         json.dump(reference, f)
     info.update(reference)

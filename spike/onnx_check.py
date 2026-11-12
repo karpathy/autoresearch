@@ -1,14 +1,21 @@
 """
-Spike (pi-autoresearch-serverless, plan 17a): what scoring the exported model in onnxruntime would
-take, on the CPU and on the GPU. Run in the scorer's own environment, as 16a's scorer is: numpy, onnx
-and onnxruntime only, never torch or the training code.
+Spike (pi-autoresearch-serverless, plan 17a): what scoring the exported model in onnxruntime takes,
+on the CPU and on the GPU. Imports numpy, onnx and onnxruntime only, never torch or the training
+code, as 16a's scorer; isolated by `python -I`, in the training's environment since Trial 3.
 
-    python -I spike/onnx_check.py EXPORT_DIR
+    python -I spike/onnx_check.py EXPORT_DIR [VAL_DIR]
 
 For each provider (CUDA with TF32 off and on, then the CPU): the session's creation, its logits on
 the first row against PyTorch's float32 ones, its bpb on the rows against PyTorch's, one causality
 probe, and the time of a forward at batch 1 and 8, from which the time to score upstream's 40 x 524288
-val tokens follows. Prints one line, SPIKE_ONNX.
+val tokens follows.
+
+With VAL_DIR (spike/val_rows.py's), the full eval: the model with the scorer's own head after it,
+which turns its logits and the targets into each token's nats on the device, so that only [B, T]
+floats come back, and the model never sees a target. On CUDA with TF32 off, or on the CPU for a
+handful of rows only. Its bpb, against train.py's own (bf16) for the same weights.
+
+Prints one line, SPIKE_ONNX.
 """
 
 import json
@@ -23,9 +30,13 @@ from collections import Counter
 os.environ["ORT_DISABLE_TELEMETRY"] = "1"
 import numpy as np  # noqa: E402
 import onnx  # noqa: E402
+import onnx.compose  # noqa: E402
 import onnxruntime as ort  # noqa: E402
+from onnx import TensorProto, helper  # noqa: E402
 
 EVAL_TOKENS = 40 * 524288  # upstream's prepare.py
+FULL_EVAL_BATCH = 32
+CPU_FULL_EVAL_ROWS = 64  # beyond this, the CPU takes too long: no full eval without CUDA
 
 
 def threads():
@@ -86,6 +97,63 @@ def bpb_terms(logits, targets, token_bytes):
     return float((nll * (nbytes > 0)).sum()), int(nbytes.sum())
 
 
+def with_nats_head(proto):
+    """The model, its logits [B, T, V] fed to the scorer's own nodes: nats = -log_softmax(logits)
+    gathered at targets [B, T] (int64), in float32. Inputs: the model's, and "scorer_targets"; the one
+    output: "scorer_nats" [B, T]. The model's graph is unchanged, and none of its nodes sees a target."""
+    (logits,) = proto.graph.output
+    axes = helper.make_tensor("scorer_axes", TensorProto.INT64, [1], [-1])
+    nodes = [
+        helper.make_node("LogSoftmax", [logits.name], ["scorer_logp"], axis=-1),
+        helper.make_node("Unsqueeze", ["scorer_targets", "scorer_axes"], ["scorer_index"]),
+        helper.make_node("GatherElements", ["scorer_logp", "scorer_index"], ["scorer_picked"], axis=-1),
+        helper.make_node("Squeeze", ["scorer_picked", "scorer_axes"], ["scorer_logp_target"]),
+        helper.make_node("Neg", ["scorer_logp_target"], ["scorer_nats"]),
+    ]
+    graph = helper.make_graph(
+        nodes, "scorer_nats_head",
+        inputs=[logits, helper.make_tensor_value_info("scorer_targets", TensorProto.INT64, ["batch", "T"])],
+        outputs=[helper.make_tensor_value_info("scorer_nats", TensorProto.FLOAT, ["batch", "T"])],
+        initializer=[axes],
+    )
+    head = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)], ir_version=proto.ir_version)
+    return onnx.compose.merge_models(proto, head, io_map=[(logits.name, logits.name)])
+
+
+def full_eval(data, providers, options, val_dir, train_val_bpb):
+    out = {"batch": FULL_EVAL_BATCH}
+    x = np.load(os.path.join(val_dir, "x.npy"), mmap_mode="r")
+    y = np.load(os.path.join(val_dir, "y.npy"), mmap_mode="r")
+    tb = np.load(os.path.join(val_dir, "token_bytes.npy"))
+    out["rows"] = int(x.shape[0])
+    t0 = time.perf_counter()
+    session = ort.InferenceSession(data, options, providers=providers)
+    out["create_seconds"] = time.perf_counter() - t0
+    out["providers"] = session.get_providers()
+    if out["providers"][0] != "CUDAExecutionProvider" and x.shape[0] > CPU_FULL_EVAL_ROWS:
+        out["skipped"] = f"{x.shape[0]} rows without CUDA"
+        return out
+    (idx,) = [i.name for i in session.get_inputs() if i.name != "scorer_targets"]
+    nats_sum, nbytes = 0.0, 0
+    finite = True
+    t0 = time.perf_counter()
+    for i in range(0, x.shape[0], FULL_EVAL_BATCH):
+        xb = np.asarray(x[i : i + FULL_EVAL_BATCH], dtype=np.int64)
+        yb = np.asarray(y[i : i + FULL_EVAL_BATCH], dtype=np.int64)
+        (nats,) = session.run(["scorer_nats"], {idx: xb, "scorer_targets": yb})
+        finite = finite and bool(np.isfinite(nats).all())
+        b = tb[yb]
+        nats_sum += float((nats.astype(np.float64) * (b > 0)).sum())
+        nbytes += int(b.sum())
+    out["seconds"] = time.perf_counter() - t0
+    out["finite"] = finite
+    out["bpb"] = nats_sum / (math.log(2) * nbytes)
+    out["train_val_bpb"] = train_val_bpb
+    if train_val_bpb is not None:
+        out["diff_from_train"] = out["bpb"] - train_val_bpb
+    return out
+
+
 def timed(fn, repeats):
     fn()  # warm-up
     times = []
@@ -133,7 +201,7 @@ def check(name, data, providers, options, x, y, tb, logits0, ref_bpb, dynamic):
     return out
 
 
-def main(directory):
+def main(directory, val_dir=None):
     with open(os.path.join(directory, "model.onnx"), "rb") as f:
         data = f.read()
     x = np.load(os.path.join(directory, "x.npy"))
@@ -172,8 +240,21 @@ def main(directory):
             result["checks"].append({"name": name, "error": f"{type(e).__name__}: {e}"[:4000]})
         print(f"{name}: {json.dumps(result['checks'][-1])}", flush=True)
 
+    if val_dir is not None:
+        cuda = "CUDAExecutionProvider" in ort.get_available_providers()
+        providers = [("CUDAExecutionProvider", {"use_tf32": "0"}), "CPUExecutionProvider"] if cuda else ["CPUExecutionProvider"]
+        options = ort.SessionOptions()
+        if not cuda:
+            options.intra_op_num_threads = threads()
+        try:
+            merged = with_nats_head(proto).SerializeToString()
+            result["full_eval"] = full_eval(merged, providers, options, val_dir, ref.get("train_val_bpb"))
+        except Exception as e:  # noqa: BLE001 - the spike records why
+            result["full_eval"] = {"error": f"{type(e).__name__}: {e}"[:4000]}
+        print(f"full_eval: {json.dumps(result['full_eval'])}", flush=True)
+
     print("SPIKE_ONNX " + json.dumps(result), flush=True)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)

@@ -26,7 +26,61 @@ from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evalua
 # window) or "sdpa" (SDPA: is_causal for the long window, a boolean band mask for a short one).
 ATTN = os.environ.get("AR_ATTN", "flex")
 assert ATTN in ("flex", "sdpa"), ATTN
-TIME_BUDGET = int(os.environ.get("AR_TIME_BUDGET", TIME_BUDGET))
+
+
+# The run's budget: upstream's seconds of training (prepare.py's 300, or AR_TIME_BUDGET) or, for the
+# spike, a number of steps (AR_STEPS), never both. Upstream's clock starts after step 10, so its
+# progress before step s is (s - 11) * dt / seconds at a constant step time dt: a budget of N steps
+# is upstream's schedule at the step time that ends it after N steps (953 for the H100's 499.6M tokens).
+@dataclass(frozen=True)
+class Seconds:
+    seconds: int
+
+
+@dataclass(frozen=True)
+class Steps:
+    steps: int  # more than 11: the first 11 run outside upstream's clock
+
+    def __post_init__(self):
+        assert self.steps > 11, self.steps
+
+
+def budget_from(env):
+    seconds, steps = env.get("AR_TIME_BUDGET"), env.get("AR_STEPS")
+    assert not (seconds and steps), "AR_TIME_BUDGET and AR_STEPS: one budget, not both"
+    return Steps(int(steps)) if steps else Seconds(int(seconds) if seconds else TIME_BUDGET)
+
+
+def budget_progress(budget, step, seconds):
+    """The schedules' progress before step `step`, with `seconds` of training counted so far."""
+    match budget:
+        case Seconds(total):
+            return min(seconds / total, 1.0)
+        case Steps(total):
+            return min(max(step - 11, 0) / (total - 11), 1.0)
+    raise TypeError(budget)
+
+
+def budget_finished(budget, step, seconds):
+    """Whether training stops once `step` steps have run, with `seconds` counted."""
+    match budget:
+        case Seconds(total):
+            return step > 10 and seconds >= total
+        case Steps(total):
+            return step >= total
+    raise TypeError(budget)
+
+
+def budget_remaining(budget, step, seconds):
+    match budget:
+        case Seconds(total):
+            return f"{max(0, total - seconds):.0f}s"
+        case Steps(total):
+            return f"{total - step} steps"
+    raise TypeError(budget)
+
+
+BUDGET = budget_from(os.environ)
 
 
 def window_mask(impl, left, T, device):
@@ -550,10 +604,10 @@ model = torch.compile(model, dynamic=False)
 train_loader = make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train")
 x, y, epoch = next(train_loader)  # prefetch first batch
 
-print(f"Time budget: {TIME_BUDGET}s")
+print(f"Budget: {BUDGET}")
 print(f"Gradient accumulation steps: {grad_accum_steps}")
 
-# Schedules (all based on progress = training_time / TIME_BUDGET)
+# Schedules (all based on progress = training_time / TIME_BUDGET, or its steps' equivalent: budget_progress)
 
 def get_lr_multiplier(progress):
     if progress < WARMUP_RATIO:
@@ -592,7 +646,7 @@ while True:
         x, y, epoch = next(train_loader)
 
     # Progress and schedules
-    progress = min(total_training_time / TIME_BUDGET, 1.0)
+    progress = budget_progress(BUDGET, step, total_training_time)
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(progress)
@@ -625,9 +679,9 @@ while True:
     pct_done = 100 * progress
     tok_per_sec = int(TOTAL_BATCH_SIZE / dt)
     mfu = 100 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
-    remaining = max(0, TIME_BUDGET - total_training_time)
+    remaining = budget_remaining(BUDGET, step + 1, total_training_time)
 
-    print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
+    print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.1f}% | epoch: {epoch} | remaining: {remaining}    ", end="", flush=True)
 
     # GC management (Python's GC causes ~500ms stalls)
     if step == 0:
@@ -640,7 +694,7 @@ while True:
     step += 1
 
     # Time's up — but only stop after warmup steps so we don't count compilation
-    if step > 10 and total_training_time >= TIME_BUDGET:
+    if budget_finished(BUDGET, step, total_training_time):
         break
 
 print()  # newline after \r training log
@@ -674,7 +728,7 @@ print(f"depth:            {DEPTH}")
 # Spike (plan 17a): one line for the log, and the export for spike/onnx_check.py.
 import json
 print("SPIKE_TRAIN " + json.dumps({
-    "attn": ATTN, "time_budget": TIME_BUDGET, "val_bpb": val_bpb,
+    "attn": ATTN, "budget": {"kind": type(BUDGET).__name__, **asdict(BUDGET)}, "val_bpb": val_bpb,
     "training_seconds": total_training_time, "startup_seconds": startup_time,
     "eval_seconds": eval_seconds, "total_seconds": t_end - t_start,
     "steps": step, "total_tokens": total_tokens,
@@ -687,4 +741,4 @@ if os.environ.get("AR_EXPORT_DIR"):
     from prepare import get_token_bytes
     from spike.export import export
     x, y, _ = next(make_dataloader(tokenizer, 8, MAX_SEQ_LEN, "val"))  # the first 8 rows evaluate_bpb scores
-    export(model._orig_mod, x.cpu(), y.cpu(), get_token_bytes("cpu"), os.environ["AR_EXPORT_DIR"])
+    export(model._orig_mod, x.cpu(), y.cpu(), get_token_bytes("cpu"), os.environ["AR_EXPORT_DIR"], train_val_bpb=val_bpb)
