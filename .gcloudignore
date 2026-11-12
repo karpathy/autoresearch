@@ -1,0 +1,8 @@
+# What `gcloud builds submit` leaves out of the spike's image source (plan 17a of
+# pi-autoresearch-serverless): .gitignore's files, git's own, and what the image doesn't need.
+.gcloudignore
+.git
+#!include:.gitignore
+progress.png
+analysis.ipynb
+spike/results/

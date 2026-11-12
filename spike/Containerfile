@@ -1,0 +1,26 @@
+# Spike (pi-autoresearch-serverless, plan 17a): upstream's environment from its uv.lock (torch
+# 2.9.1+cu128 on Python 3.10), onnx for the export, the data and tokenizer of prepare.py's default
+# (10 training shards and the val shard), and the scorer's own environment at /opt/scorer: Python 3.12
+# with onnxruntime's CUDA provider (CUDA 13, which Cloud Run's driver 580 supports; no wheel for 3.10).
+FROM python:3.10-bookworm
+
+COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /uvx /usr/local/bin/
+ENV UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never PYTHONUNBUFFERED=1
+WORKDIR /app
+
+COPY pyproject.toml uv.lock .python-version ./
+RUN uv sync --frozen --no-install-project \
+ && uv pip install --python .venv/bin/python onnx==1.23.2 onnxscript==0.7.2 onnx-ir==1.1.0
+
+RUN UV_PYTHON_DOWNLOADS=automatic uv venv --python 3.12 /opt/scorer \
+ && uv pip install --python /opt/scorer/bin/python "onnxruntime-gpu[cuda,cudnn]==1.31.1" onnx==1.23.2 numpy
+
+COPY prepare.py ./
+RUN .venv/bin/python prepare.py --num-shards 10
+
+COPY train.py ./
+COPY spike/ spike/
+
+# Cloud Run mounts the driver's libraries here.
+ENV PATH=/app/.venv/bin:$PATH LD_LIBRARY_PATH=/usr/local/nvidia/lib64 ORT_DISABLE_TELEMETRY=1
+CMD ["bash", "spike/smoke.sh"]

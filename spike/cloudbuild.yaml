@@ -1,0 +1,11 @@
+# Spike (pi-autoresearch-serverless, plan 17a): the image, built as ar-build (spike/cloud.sh build).
+steps:
+  - name: gcr.io/cloud-builders/docker
+    env: ["DOCKER_BUILDKIT=1"]
+    args: ["build", "--tag", "${_IMAGE}", "--file", "spike/Containerfile", "."]
+images: ["${_IMAGE}"]
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+  diskSizeGb: 100
+timeout: 3600s

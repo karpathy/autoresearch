@@ -17,13 +17,41 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kernels import get_kernel
-cap = torch.cuda.get_device_capability()
-# varunneal's FA3 is Hopper only, use kernels-community on non-Hopper GPUs
-repo = "varunneal/flash-attention-3" if cap == (9, 0) else "kernels-community/flash-attn3"
-fa3 = get_kernel(repo).flash_attn_interface
+from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
 from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
+
+# Spike (pi-autoresearch-serverless, plan 17a): FlashAttention-3 has no kernel for the RTX PRO 6000
+# (sm_120), so attention is PyTorch's own, picked by AR_ATTN: "flex" (FlexAttention, a block mask per
+# window) or "sdpa" (SDPA: is_causal for the long window, a boolean band mask for a short one).
+ATTN = os.environ.get("AR_ATTN", "flex")
+assert ATTN in ("flex", "sdpa"), ATTN
+TIME_BUDGET = int(os.environ.get("AR_TIME_BUDGET", TIME_BUDGET))
+
+
+def window_mask(impl, left, T, device):
+    """FA3's window (left, 0): query i attends to keys j with i - left <= j <= i."""
+    if impl == "flex":
+        def mask_mod(b, h, q_idx, kv_idx):
+            return (q_idx >= kv_idx) & (q_idx - kv_idx <= left)
+        return create_block_mask(mask_mod, B=None, H=None, Q_LEN=T, KV_LEN=T, device=device)
+    if left >= T - 1:
+        return None  # the whole causal context: SDPA's is_causal
+    i = torch.arange(T, device=device)
+    d = i[:, None] - i[None, :]
+    return (d >= 0) & (d <= left)
+
+
+def attention(q, k, v, impl, mask):
+    """q, k, v as FA3 takes them, (B, T, H, D); the output too."""
+    q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+    if impl == "flex":
+        y = flex_attention(q, k, v, block_mask=mask)
+    elif mask is None:
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+    else:
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+    return y.transpose(1, 2)
 
 # ---------------------------------------------------------------------------
 # GPT Model
@@ -73,6 +101,7 @@ class CausalSelfAttention(nn.Module):
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 32
         self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+        self.attn_impl, self.attn_mask = None, None  # set by GPT.set_attention, before compiling
 
     def forward(self, x, ve, cos_sin, window_size):
         B, T, C = x.size()
@@ -90,7 +119,7 @@ class CausalSelfAttention(nn.Module):
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)
 
-        y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        y = attention(q, k, v, self.attn_impl, self.attn_mask)
         y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
@@ -204,6 +233,15 @@ class GPT(nn.Module):
             window_sizes.append(char_to_window[char])
         window_sizes[-1] = (long_window, 0)
         return window_sizes
+
+    def set_attention(self, impl, T, device):
+        """Each layer's attention and mask, for sequences of T tokens: before torch.compile, and
+        again for the export (spike, plan 17a)."""
+        masks = {}
+        for block, (left, _) in zip(self.transformer.h, self.window_sizes):
+            if left not in masks:
+                masks[left] = window_mask(impl, left, T, device)
+            block.attn.attn_impl, block.attn.attn_mask = impl, masks[left]
 
     def estimate_flops(self):
         """Estimated FLOPs per token (forward + backward)."""
@@ -483,6 +521,8 @@ with torch.device("meta"):
     model = GPT(config)
 model.to_empty(device=device)
 model.init_weights()
+model.set_attention(ATTN, MAX_SEQ_LEN, device)
+print(f"Attention: {ATTN}")
 
 param_counts = model.num_scaling_params()
 print("Parameter counts:")
@@ -609,8 +649,10 @@ total_tokens = step * TOTAL_BATCH_SIZE
 
 # Final eval
 model.eval()
+t_eval = time.time()
 with autocast_ctx:
     val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+eval_seconds = time.time() - t_eval
 
 # Final summary
 t_end = time.time()
@@ -628,3 +670,21 @@ print(f"total_tokens_M:   {total_tokens / 1e6:.1f}")
 print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
+
+# Spike (plan 17a): one line for the log, and the export for spike/onnx_check.py.
+import json
+print("SPIKE_TRAIN " + json.dumps({
+    "attn": ATTN, "time_budget": TIME_BUDGET, "val_bpb": val_bpb,
+    "training_seconds": total_training_time, "startup_seconds": startup_time,
+    "eval_seconds": eval_seconds, "total_seconds": t_end - t_start,
+    "steps": step, "total_tokens": total_tokens,
+    "steady_tokens_per_sec": TOTAL_BATCH_SIZE * (step - 10) / total_training_time if total_training_time > 0 else 0,
+    "h100_mfu_percent": steady_state_mfu, "peak_vram_mb": peak_vram_mb,
+    "device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
+    "torch": torch.__version__, "num_params": num_params,
+}), flush=True)
+if os.environ.get("AR_EXPORT_DIR"):
+    from prepare import get_token_bytes
+    from spike.export import export
+    x, y, _ = next(make_dataloader(tokenizer, 8, MAX_SEQ_LEN, "val"))  # the first 8 rows evaluate_bpb scores
+    export(model._orig_mod, x.cpu(), y.cpu(), get_token_bytes("cpu"), os.environ["AR_EXPORT_DIR"])
