@@ -725,7 +725,7 @@ print(f"num_steps:        {step}")
 print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
 
-# Spike (plan 17a): one line for the log, and the export for spike/onnx_check.py.
+# Spike (plan 17a): one line for the log, the weights (AR_WEIGHTS) and the export for spike/onnx_check.py.
 import json
 print("SPIKE_TRAIN " + json.dumps({
     "attn": ATTN, "budget": {"kind": type(BUDGET).__name__, **asdict(BUDGET)}, "val_bpb": val_bpb,
@@ -737,6 +737,8 @@ print("SPIKE_TRAIN " + json.dumps({
     "device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
     "torch": torch.__version__, "num_params": num_params,
 }), flush=True)
+if os.environ.get("AR_WEIGHTS"):  # Trial 4: the trained weights, for spike/grad_check.py
+    torch.save(model._orig_mod.state_dict(), os.environ["AR_WEIGHTS"])
 if os.environ.get("AR_EXPORT_DIR"):
     from prepare import get_token_bytes
     from spike.export import export

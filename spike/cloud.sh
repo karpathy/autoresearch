@@ -5,8 +5,9 @@
 #
 #   spike/cloud.sh setup          ar-build may push to the region's repository (once; idempotent)
 #   spike/cloud.sh build          the image, by Cloud Build as ar-build, into that repository
-#   spike/cloud.sh run            the job (re)defined on that image, one execution waited on, its log
-#                                 and its conditions (the image's import, the start) saved
+#   spike/cloud.sh run [SCRIPT]   the job (re)defined on that image to run spike/SCRIPT.sh (smoke, the
+#                                 default, or diagnose: Trial 4), one execution waited on, its log and
+#                                 its conditions (the image's import, the start) saved
 #   spike/cloud.sh logs EXECUTION an execution's log and conditions, again, into spike/results/
 #
 # The image's tag is a hash of what it is built from, so `run` finds what `build` made.
@@ -44,9 +45,12 @@ build)
         --config spike/cloudbuild.yaml --substitutions "_IMAGE=$IMAGE" .
     ;;
 run)
+    script=${2:-smoke}
+    case "$script" in smoke|diagnose) ;; *) echo "run: smoke or diagnose, not $script"; exit 2 ;; esac
     gcloud run jobs deploy "$JOB" --project "$PROJECT" --region "$REGION" --image "$IMAGE" \
+        --command bash --args "spike/$script.sh" \
         --gpu 1 --gpu-type nvidia-rtx-pro-6000 --no-gpu-zonal-redundancy --cpu 20 --memory 80Gi \
-        --tasks 1 --max-retries 0 --task-timeout 30m \
+        --tasks 1 --max-retries 0 --task-timeout 45m \
         --service-account "ar-job@$PROJECT.iam.gserviceaccount.com" \
         --set-env-vars "AR_STEPS=${AR_STEPS:-953}"
     gcloud run jobs execute "$JOB" --project "$PROJECT" --region "$REGION" --wait || echo "the execution failed: $?"
@@ -63,7 +67,7 @@ logs)
     logs "$2"
     ;;
 *)
-    sed -n '2,12p' "$0"
+    sed -n '2,13p' "$0"
     exit 2
     ;;
 esac

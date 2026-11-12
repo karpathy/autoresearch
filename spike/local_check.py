@@ -5,7 +5,10 @@ model of train.py's own code on the CPU (depth 2, so one short window and one lo
 0. train.py's budget: N steps follow upstream's schedule exactly, at the step time that ends a
    time budget after N steps.
 1. FlexAttention and SDPA give the same logits, eagerly, and compiled if torch.compile works here.
-2. The export (spike/export.py) and spike/onnx_check.py, on onnxruntime's CPU provider, with its
+2. spike/grad_check.py's functions (Trial 4), in float32 and eagerly: the attention op and one
+   backward of the model, Flex and SDPA each within 1e-4 of float64 on every output and gradient.
+   This checks the grad check itself (its float64 reference's window, its comparisons) before the GPU.
+3. The export (spike/export.py) and spike/onnx_check.py, on onnxruntime's CPU provider, with its
    full eval (the scorer's nats head) on the export's rows.
 
     .venv/bin/python spike/local_check.py [OUT_DIR] [DEPTH]
@@ -77,6 +80,30 @@ def budget_failures(code):
     return failures[:10]
 
 
+def grad_check_failures(code, config, lefts):
+    """spike/grad_check.py on the CPU in float32: what it compares to float64 must agree to 1e-4."""
+    from spike.grad_check import Precision, attention_errors, model_errors, summary
+
+    cpu = torch.device("cpu")
+    result = {"attention": attention_errors(code, 1, T, 2, 128, lefts, cpu, Precision.FLOAT32, compile=False, backends=())}
+    g = torch.Generator().manual_seed(1)
+    x, y = (torch.randint(0, V, (1, T), generator=g) for _ in range(2))
+    result["model"] = model_errors(code, config, x, y, None, Precision.FLOAT32, compile=False)
+    print(summary(result), flush=True)
+    failures = []
+    for key, r in result["attention"]["results"].items():
+        if "error" in r:
+            failures.append(f"grad_check attention {key}: {r['error']}")
+        failures += [f"grad_check attention {key} {t}: {e:.3g} > 1e-4" for t, e in r.get("rel", {}).items() if e > 1e-4]
+    for impl in ("flex", "sdpa"):
+        r = result["model"][impl]
+        if "error" in r:
+            failures.append(f"grad_check model {impl}: {r['error']}")
+        elif r["max"] > 1e-4:
+            failures.append(f"grad_check model {impl}: {r['worst']} {r['max']:.3g} > 1e-4")
+    return failures
+
+
 def main(out_dir, depth):
     code = train_model_code()
     torch.manual_seed(0)
@@ -110,6 +137,8 @@ def main(out_dir, depth):
         if key in report and report[key] > 1e-4:
             failures.append(f"{key} {report[key]:.3g} > 1e-4")
     print("attention: " + json.dumps(report), flush=True)
+
+    failures += grad_check_failures(code, config, sorted({left for left, _ in model.window_sizes}))
 
     from spike.export import export
 
