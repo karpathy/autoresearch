@@ -14,7 +14,6 @@
  "workloads/bax-fastapi-credit-card-F1_targeted_v1.py": "3d833ecdc2d1fd4d523e0886d52ac9fdd32a8f816b254a387e44f8ab46227677",
  "findings/bax-fastapi-credit-card-F1.yaml": "1431543d4175ee189a467e7b4b1742d26547b06554a01f5287e23926ea444813",
  "findings/campaign.yaml": "ea012d382899971e678964ab73ffacff8ebdda1fafd0cf0219a489c93adab745",
- "frozen/workload_frozen.py": "18694d789c07f9c1ecad8fcab36ed0c74e622bb0908f36d08ca79f63bd77c15c",
  "apps/credit-card-fastapi/instrumented/aging_probe.py": "f7c7dc2b2b7c8e188f7b815e200fb3d70baafad771b32442a46c99b159042be6",
  "apps/credit-card-fastapi/instrumented/app.py": "8bf95147cf9a67657ada9cee9f419820896f8f0eec1adfc8eb8d74d4fd9d83d7",
  "apps/credit-card-fastapi/instrumented/app.yaml": "0a998317b8bcf63ad90318a8f825ae56bbddaecf98379ed4b6bb27f432ac3a9f",
