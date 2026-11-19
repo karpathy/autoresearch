@@ -229,6 +229,7 @@ consulta de um telefone com `ORDER BY` e serializa a resposta com os mesmos byte
 |---|---|---|---|
 | Stall do `ps` | Não existe no Credit Card. Existe só no app Monitor (`monitor-flask`), injetado pelo `aging_probe.py` **do Monitor** (`AGING_INJECT_PS_HANG_PROB`); o `campaign.yaml` da credit-card não define `env` | **Não implementado** | Correto não implementar: não faz parte deste cenário (confirmado pelo Cesar). O nosso amostrador psutil (`harness/instance.py`) não injeta nada |
 | Instâncias | Uma, `python app.py` na porta fixa 5000 | Quatro em paralelo, `uvicorn app:app` em porta livre, uma por slot | Os 4 braços rodam ao mesmo tempo |
+| Log do servidor | `python app.py` → `uvicorn.run()` com os padrões: `log_level=info`, **log de acesso ligado** (uma linha por requisição) | Igual: `uvicorn app:app --log-level info --access-log`, gravado em `results/<run>/<braço>/app.log` (antes era `--log-level warning`, sem log de acesso) | Paridade: o log de acesso custa CPU e E/S por requisição dentro do mesmo processo, então entra no custo medido. Ocupa ~8 MB/h por braço (~31 req/s × ~75 B), ~70 MB numa confirmação de 8 h |
 | Máquinas | Cliente e app em máquinas separadas (artigo) | Mesma máquina, pinados em núcleos distintos | Ver Pendências |
 
 ## Pendências (revisar com o Cesar)

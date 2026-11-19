@@ -6,7 +6,8 @@ Cesar (aging_probe.py: AGING_INSTRUMENT=1 e AGING_INSTRUMENT_LOG). A memória e 
 filhos vêm do psutil, de fora da app.
 
 Diferença para o Cesar: ele sobe `python app.py` na porta fixa 5000 (app.yaml); aqui são 4
-instâncias em paralelo, então sobe-se o mesmo `app:app` pelo uvicorn em porta livre.
+instâncias em paralelo, então sobe-se o mesmo `app:app` pelo uvicorn em porta livre, com o mesmo nível de
+log (info) e o log de acesso ligado, como o uvicorn.run() do app.py.
 """
 
 import json
@@ -84,8 +85,11 @@ class Instance:
         if self.instrument:
             env.update({"AGING_INSTRUMENT": "1", "AGING_INSTRUMENT_LOG": str(self.instr_out),
                         "AGING_SNAPSHOT_INTERVAL": str(SNAPSHOT_S)})
+        # Paridade com o Cesar: ele roda `python app.py`, que chama uvicorn.run(app, host=..., port=5000) com os
+        # padrões do uvicorn (log_level="info", access_log=True): uma linha de log de acesso por requisição.
+        # Aqui o mesmo app:app e os mesmos níveis de log, explícitos; só host e porta mudam (4 instâncias).
         cmd = [str(VENV_PY), "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(self.port),
-               "--log-level", "warning"]
+               "--log-level", "info", "--access-log"]
         if self.cpus and shutil.which("taskset"):
             cmd = ["taskset", "-c", str(self.cpus)] + cmd
         log = open(self.log_out, "ab")
