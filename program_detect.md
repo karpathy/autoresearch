@@ -29,7 +29,8 @@ crescendo com o tempo, com o tamanho da resposta crescendo junto, enquanto os co
 - Você **não escreve código de carga**. Cada candidato é um dict com `name`, `hypothesis` e `args`, e `args`
   são flags literais do `F1_targeted_v1`: `new_pair_rate`, `hot_phones`, `grow_workers`, `refresh_rate`,
   `ref_sizes`, `ref_rate`, `probe_interval`, `key_space`. O juiz roda o script do Cesar, fixo, com a semente
-  dele. As faixas permitidas estão em `workload.py` e em `harness/load.py`.
+  da rodada (`--seed`, a mesma para os 4 braços; ver "Sementes"). As faixas permitidas estão em `workload.py` e
+  em `harness/load.py`.
 - Desenhar candidatos como **ablações ou variações de um fator**: taxa de pares novos, concentração em um ou
   dois telefones quentes, taxa de sondagem. Registre qual fator cada um testa.
 
@@ -62,6 +63,10 @@ crescendo com o tempo, com o tamanho da resposta crescendo junto, enquanto os co
 - **Também reportados** (`evaluate.json` e a linha do resumo): tamanho de resposta de `retrieve_hot`, RSS do
   processo (MK + Sen, com as inclinações das duas metades), `ratio_vs_reference`, `ttd_min` (tempo até a
   detecção estável) e `db_rows`.
+- **`ratio_vs_reference`** (`ratio=` na saída) é a inclinação do candidato dividida pela inclinação da
+  referência **da mesma rodada**. Só existe se o candidato e a referência forem elegíveis; senão é `NA`. É ele,
+  e não o score bruto, que decide o keep entre rodadas (ver "O laço"), porque cada rodada tem uma semente
+  diferente.
 - Os limiares (50%, 25%, 5 MB/h do RSS) foram fixados antes dos controles; `prepare.py controls` (R0 e R0b)
   diz se eles são adequados: nos controles nada deve subir. Os controles são **negativos**: não há controle
   positivo neste cenário, então "não achamos aging" não é uma afirmação sobre sensibilidade.
@@ -89,9 +94,19 @@ ledger com `"atalho": true`. Esses casos são resultado de pesquisa.
 O Bash do Claude Code tem limite de 10 minutos por chamada. Por isso a rodada roda em segundo plano:
 
 ```
-python prepare.py detect --background      # imprime run_id
-python prepare.py wait <run_id>             # bloqueia até 9 min; repita até sair o resumo
+python prepare.py detect --seed <semente da rodada> --background   # imprime run_id
+python prepare.py wait <run_id>                                    # bloqueia até 9 min; repita até sair o resumo
 ```
+
+### Sementes
+
+Cada rodada usa uma **semente nova**, em sequência: rodada 1 = `101`, rodada 2 = `102`, …, rodada 8 = `108`.
+Nunca omita `--seed` (o padrão do juiz é 1, que não pertence a esta sequência). Rodadas que falham ou são
+invalidadas **também consomem a semente**: a próxima rodada usa a semente seguinte, nunca uma já usada.
+
+A semente vale para os 4 braços da rodada. Por isso a referência (R1, no 4º slot) vira, a cada rodada, uma
+**réplica com semente independente**: ela mostra se o sintoma do F1 aparece independentemente dos cartões que
+a semente gera. Os candidatos de uma rodada só são comparáveis entre si e com a referência daquela rodada.
 
 A saída final traz uma linha por braço:
 `arm=... valid=... score_hot_latency_ms_per_h=... hot_lat_slope=... hr_p=... hot_bytes_slope=... rss_slope=... ref_change[...] ttd_min=... ratio=... flags=...`.
@@ -104,31 +119,42 @@ mostram tendência.
 `results.tsv`, separado por tabulação, com estas colunas:
 
 ```
-commit	run_id	arm	score_hot_latency_ms_per_h	hr_p	ratio_vs_reference	ttd_min	status	flags	hypothesis
+commit	run_id	seed	arm	score_hot_latency_ms_per_h	hr_p	ratio_vs_reference	ttd_min	status	flags	hypothesis
 ```
 
 `status` é `keep`, `discard`, `invalid` ou `baseline`. Registre uma linha por braço, incluindo a referência.
+`seed` é a semente passada em `--seed` naquela rodada (a mesma para os 4 braços).
 
 `ledger.jsonl` recebe uma linha **antes** de cada rodada, com
-`{"run_id": null, "commit": ..., "status": "started", "candidates": [{"name", "hypothesis", "fator_testado"}], "ts"}`,
-e outra **depois**, com `{"run_id", "status": "completed"|"failed", "interpretacao", "fator_testado", "atalho": bool, "ts"}`.
+`{"run_id": null, "commit": ..., "seed": ..., "status": "started", "candidates": [{"name", "hypothesis", "fator_testado"}], "ts"}`,
+e outra **depois**, com `{"run_id", "seed", "status": "completed"|"failed"|"referencia_sem_sintoma", "interpretacao", "fator_testado", "atalho": bool, "ts"}`.
 
 ## O laço
 
 Orçamento: **8 rodadas**, cerca de 8,5 h numa noite, ou até o humano interromper. Rodadas que falham também contam.
 
-1. Veja o estado do git e o histórico em `results.tsv` e `ledger.jsonl`.
+1. Veja o estado do git e o histórico em `results.tsv` e `ledger.jsonl`. A semente desta rodada é `100 + n`,
+   onde `n` é o número de linhas `started` já no ledger mais 1 (rodadas que falharam contam).
 2. Escreva até 3 candidatos em `workload.py`. Cada um precisa de uma hipótese **falsificável** e do fator testado.
 3. `git commit -am "<resumo das hipóteses>"`
-4. Registre `started` no ledger.
-5. Rode `detect --background` e `wait` até sair o resumo.
-6. Registre o resultado no `results.tsv` e `completed` no ledger, com a sua interpretação.
-7. **Primeira rodada:** se o `workload.py` não mudou desde o commit base, ela serve como referência. O melhor
-   candidato elegível vira o "melhor anterior" (keep), e não há commit para desfazer.
-   **Keep** (nas demais): se algum candidato elegível tiver `score` maior que o melhor anterior por pelo menos
-   10%, mantenha o commit. A margem evita selecionar ruído, lição do Piloto 2.
-8. **Discard**: caso contrário, `git reset --hard HEAD~1`. As linhas no `results.tsv` e no ledger continuam lá.
-9. Repita até acabar o orçamento.
+4. Registre `started` no ledger, com a `seed`.
+5. Rode `detect --seed <semente> --background` e `wait` até sair o resumo.
+6. Registre o resultado no `results.tsv` e `completed` no ledger, com a `seed` e a sua interpretação.
+7. **Referência sem sintoma:** se a referência da rodada não for elegível (o `ratio` de todos os braços sai
+   `NA`), nenhum candidato daquela rodada vira keep. Registre a linha final do ledger com
+   `"status": "referencia_sem_sintoma"`, marque os candidatos como `discard` no `results.tsv` e desfaça o commit
+   (passo 9). A rodada consumiu a semente.
+8. **Keep pela razão, não pelo score bruto.** Como cada rodada tem semente própria, o score em ms/h **não** é
+   comparável entre rodadas. Compare o `ratio_vs_reference` (`ratio=`), que é relativo à referência da mesma
+   rodada.
+   - **Primeira rodada:** o candidato elegível com o **maior `ratio`** vira o "melhor anterior" (keep). Se o
+     `workload.py` não mudou desde o commit base, não há candidato além da referência e não há commit para
+     desfazer; o "melhor anterior" fica definido na primeira rodada que tiver candidato com `ratio`.
+   - **Demais rodadas:** mantenha o commit se algum candidato elegível tiver `ratio` **pelo menos 10% maior**
+     que o `ratio` do melhor anterior (`ratio_novo ≥ 1,10 × ratio_melhor`). A margem evita selecionar ruído,
+     lição do Piloto 2.
+9. **Discard**: caso contrário, `git reset --hard HEAD~1`. As linhas no `results.tsv` e no ledger continuam lá.
+10. Repita até acabar o orçamento (rodada 8 = semente 108).
 
 **Critério de simplicidade** (como no autoresearch original): com resultados equivalentes, prefira o candidato
 com menos `args` fora do padrão. Complexidade gratuita não vale.
@@ -139,18 +165,24 @@ com menos `args` fora do padrão. Complexidade gratuita não vale.
 - Não declare melhoria maior que o ruído. Se existir `results/<run_controls>/round.json` (`prepare.py controls`)
   ou um teste A/A (`workload_aa.py`), compare com a dispersão entre as cópias idênticas antes de afirmar um efeito.
 - Runs `--smoke` (2 min) servem só para testar o fluxo. Não tire conclusões a partir delas.
+- Nunca reutilize uma semente nem pule uma para "refazer" uma rodada ruim.
 
 ## Ao final
 
 Pare e escreva `summary_detect.md` com:
 
-- a tabela de todas as rodadas;
+- a tabela de todas as rodadas, com a semente de cada uma;
+- a **tabela da referência R1 por rodada**: `seed`, `hot_lat_slope`, `hot_lat_change`, `hr_p` e elegível
+  (sim/não). É a evidência de que o sintoma do F1 se repete com sementes independentes; diga em quantas das
+  rodadas a referência foi elegível;
 - o melhor candidato e o porquê (qual fator acelera o sintoma);
 - a evidência de que o mecanismo foi ativado (tamanho de resposta e `db_rows` crescendo) e de que o controle
   interno ficou plano;
 - todos os atalhos observados;
-- as limitações: janela de 60 min, uma semente por rodada, app e cliente na mesma máquina (pinados em núcleos
-  distintos), cenário sem controle positivo.
+- as limitações: janela de 60 min, uma semente por rodada (sementes diferentes entre rodadas); cada candidato
+  roda com uma única semente, app e cliente na mesma máquina (pinados em núcleos distintos), cenário sem
+  controle positivo.
 
-Não declare aging confirmado. A confirmação é humana: `prepare.py confirm --phase detect` (as quatro rodadas
-R0, R0b, R1 e o candidato, 8 h cada) e depois `prepare.py freeze`, que gera a carga congelada para a Campanha 2.
+Não declare aging confirmado. A confirmação é humana: `prepare.py confirm --phase detect --seed <semente>`
+(as quatro rodadas R0, R0b, R1 e o candidato, 8 h cada, com uma semente própria; se for repetida, cada
+repetição usa uma semente distinta) e depois `prepare.py freeze`, que gera a carga congelada para a Campanha 2.

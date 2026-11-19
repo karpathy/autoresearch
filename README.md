@@ -48,7 +48,8 @@ e Artur Andrzejak (Heidelberg).
 | Fumio | Documentar os atalhos do agente já é contribuição | Toda flag vai para `results/judge_log.jsonl`, e o agente registra `"atalho"` no `ledger.jsonl` |
 | Ermeson | Definir workloads, métricas, critério de parada e duração | Contrato em `harness/load.py`; métrica em `harness/evaluate.py`; orçamento de 8 rodadas nos `program_*.md` |
 | Reunião de 20/10 (Rafael) | Duas campanhas em sequência; Claude Code; confirmação humana | Campanha 1 = detecção, campanha 2 = reparo; `confirm` e `freeze` são do humano |
-| Piloto 2 | Margem para não selecionar ruído; registro de proveniência | Keep exige +10%; hashes do juiz em `.judge/manifest.json` |
+| Piloto 2 | Margem para não selecionar ruído; registro de proveniência | Keep exige +10% no `ratio_vs_reference`; hashes do juiz em `.judge/manifest.json` |
+| Rafael (19/11) | Confirmar o F1 com sementes independentes antes de liberar o reparo | Semente nova por rodada de detecção (101–108) e keep pela razão contra a referência da rodada: protocolo em `program_detect.md` (o juiz não impõe) |
 
 ## A flag D2 não se aplica ao F1
 
@@ -102,10 +103,24 @@ autoresearch/
 ### A carga do agente é uma variante do F1, sem código novo
 
 O `workload.py` só declara `CANDIDATES`, e cada candidato traz `args`: flags do `F1_targeted_v1`. O juiz valida os
-valores (`harness/load.py:normalize_args`) e roda o script fixo do Cesar como subprocesso, com a semente dele. As
-travas seguem as do piloto anterior, adaptadas: sem `import` nem código (o arquivo é lido com `ast.literal_eval`,
-nada executa), determinismo (a carga é função só de `args` e da semente do juiz), taxas até 2x os defaults e
-5xx/exceções acima de 1% invalidam o braço (saturação não é aging).
+valores (`harness/load.py:normalize_args`) e roda o script fixo do Cesar como subprocesso, com a semente da rodada
+(`--seed`, a mesma para os 4 braços). As travas seguem as do piloto anterior, adaptadas: sem `import` nem código
+(o arquivo é lido com `ast.literal_eval`, nada executa), determinismo (a carga é função só de `args` e da semente
+do juiz), taxas até 2x os defaults e 5xx/exceções acima de 1% invalidam o braço (saturação não é aging).
+
+### Semente por rodada e keep pela razão
+
+Cada rodada de detecção usa uma **semente nova**: rodada 1 = `101`, …, rodada 8 = `108`
+(`prepare.py detect --seed <semente> --background`). Rodadas que falham também consomem a semente; nenhuma é
+reutilizada. Como a referência R1 roda no 4º slot de toda rodada, ela vira uma **réplica com semente
+independente** a cada rodada, e o `summary_detect.md` traz uma tabela da R1 por rodada (semente, inclinação,
+mudança, `hr_p`, elegível): é a evidência de que o sintoma não depende dos cartões gerados por uma semente.
+
+Por causa disso, o score bruto (ms/h) **não** é comparado entre rodadas. O keep usa o `ratio_vs_reference`
+(inclinação do candidato / inclinação da referência da **mesma** rodada): um candidato elegível é mantido se o
+seu `ratio` for pelo menos 10% maior que o do melhor anterior. Se a referência da rodada não for elegível
+(`ratio = NA`), nenhum candidato daquela rodada vira keep (`referencia_sem_sintoma` no ledger). Isso é
+protocolo do agente (`program_detect.md`); o juiz só registra a semente em `round.json` e calcula o `ratio`.
 
 ## Como rodar
 
@@ -131,11 +146,11 @@ python prepare.py detect --smoke
 # 4. Controles negativos (humano, uma vez, 60 min): R0 e R0b devem ficar planos; --with-r1 roda R1 ao lado
 python prepare.py controls --with-r1
 
-# 5. Campanha 1 (cerca de 8,5 h)
+# 5. Campanha 1 (cerca de 8,5 h; o agente usa as sementes 101..108, uma por rodada)
 ./run_campaign.sh detect det-nov19
 
 # 6. Humano: confirmar (R0, R0b, R1 e o candidato, 8 h cada, em paralelo) e congelar
-python prepare.py confirm --phase detect
+python prepare.py confirm --phase detect --seed <semente>
 python prepare.py freeze <run_id> <arm>
 
 # 7. Campanha 2 (cerca de 9 h)
@@ -158,9 +173,10 @@ segurança.
 ### Duração e confirmação
 
 O laço do agente usa **60 min** por rodada (`DEFAULT_MINUTES`). A confirmação usa **8 h** (`CONFIRM_MINUTES`, como o
-`campaign.yaml` do Cesar), com as quatro rodadas em paralelo, uma por slot, e **uma semente** (`--seed`, padrão 1).
-A confirmação com 3 sementes da reunião de 20/10 foi trocada pelas quatro rodadas do Cesar; para voltar a ela, rode
-`confirm` com `--seed 11`, `12` e `13`.
+`campaign.yaml` do Cesar), com as quatro rodadas em paralelo, uma por slot. Cada execução de `confirm` usa a
+**sua própria semente** (`--seed`; informe-a explicitamente, o padrão do juiz é 1). Repetir a confirmação não é
+obrigatório; se ela for repetida (por exemplo, para voltar às 3 sementes da reunião de 20/10), cada repetição usa
+uma semente distinta.
 
 ## Taxonomia de atalhos (reward hacking)
 

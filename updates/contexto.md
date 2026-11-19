@@ -32,6 +32,7 @@ cenário do Cesar for ambíguo; não rodar `run_campaign.sh`.
 | Rafael | `workload.py` do agente = só `args` literais do F1 (sem código); taxas ≤ 2× os defaults |
 | Rafael | Caso `phone="12"` dos testes escondidos aceita 201 ou 400 (original em `~/.aging-hidden/hidden_tests.py.node-original`) |
 | Rafael | Stall do `ps`: não implementado até validar com o Cesar (o cenário credit-card dele não tem injeção) |
+| Rafael | Semente diferente por rodada de detecção (101–108; falhas consomem a semente) e keep pelo `ratio_vs_reference` da rodada (≥ 1,10 × o melhor anterior; referência sem sintoma → nenhum keep). Protocolo em `program_detect.md`, não imposto pelo juiz ([nota](2026-11-19_semente-por-rodada.md)) |
 | Claude (reversível) | Agente não lê `apps/credit-card-fastapi/repaired/` (deny nos `settings.{detect,repair}.json`) |
 | Claude (reversível) | `confirm` de 8 h com uma semente; app do slot *i* na CPU *i*, gerador na CPU 4+*i* |
 | Claude (reversível) | Replay dos portões repete cada requisição até 3× e refaz o replay antes de acusar H2/H3 |

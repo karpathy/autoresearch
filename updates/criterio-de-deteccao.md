@@ -55,11 +55,25 @@ O reparo é liberado quando **todas** as etapas abaixo dão certo, nesta ordem:
 | Etapa | Comando | Passa se |
 |---|---|---|
 | A. Controles de 60 min | `prepare.py controls --with-r1` | R0 e R0b com `flat = True` (`ok=True`) **e** R1 com `score_eligible = True` |
-| B. Campanha 1 | `./run_campaign.sh detect <tag>` | existe um braço `keep` no `results.tsv`, conferido contra `results/judge_log.jsonl` (ou a própria referência, se nenhum candidato a superou por ≥ 10%) |
-| C. Confirmação de 8 h | `prepare.py confirm --phase detect` | **R0 e R0b planos** (regra da seção 3) **e** R1 e o candidato escolhido com `score_eligible = True`, todos na mesma rodada de 8 h |
+| B. Campanha 1 | `./run_campaign.sh detect <tag>` | existe um braço `keep` no `results.tsv`, conferido contra `results/judge_log.jsonl` (ou a própria referência, se nenhum candidato a superou por ≥ 10% no `ratio`). Cada rodada usa uma semente própria (101–108); ver "Semente por rodada e keep" abaixo |
+| C. Confirmação de 8 h | `prepare.py confirm --phase detect --seed <semente>` | **R0 e R0b planos** (regra da seção 3) **e** R1 e o candidato escolhido com `score_eligible = True`, todos na mesma rodada de 8 h. Cada execução de `confirm` usa a sua própria semente; repetir não é obrigatório, mas, se repetir, use sementes distintas |
 | D. Congelar | `prepare.py freeze <run_id> <arm>` | o braço congelado é o mesmo que passou em C |
 
 Só depois de D o humano roda `prepare.py repair-init` e a campanha 2.
+
+### Semente por rodada e keep (etapa B)
+
+- **Semente:** rodada *n* da campanha 1 usa `--seed 100+n` (101 … 108). Rodadas que falham também consomem a
+  semente; nenhuma é reutilizada. A semente vale para os 4 braços, então a referência R1 (4º slot) é, a cada
+  rodada, uma réplica com semente independente. O `summary_detect.md` traz a tabela da R1 por rodada (semente,
+  `hot_lat_slope`, `hot_lat_change`, `hr_p`, elegível): é a evidência de que o sintoma do F1 se repete com
+  sementes independentes, a conferir antes de liberar o reparo.
+- **Keep:** o score bruto (ms/h) não é comparado entre rodadas. Compara-se `ratio_vs_reference` = inclinação do
+  candidato / inclinação da referência da mesma rodada (`ratio=` na saída do juiz). Um candidato elegível vira
+  keep se `ratio ≥ 1,10 × ratio` do melhor anterior; na primeira rodada, o maior `ratio` elegível define o
+  melhor anterior.
+- **Referência sem sintoma:** se a R1 da rodada não for elegível, o `ratio` de todos sai `NA`; nenhum candidato
+  daquela rodada vira keep e o ledger registra `referencia_sem_sintoma`.
 
 **Se C falhar** (um controle sobe, ou o candidato não se sustenta em 8 h): não congele e não comece o reparo.
 Registre o resultado; é um achado (detecção não confirmada), não um erro a contornar.
@@ -82,6 +96,7 @@ Para candidatos que passaram nos portões (H1–H5, replay) e nas travas pós-me
 | Condições 1–4 e a nota | Sim (`harness/evaluate.py`, `prepare.py:cmd_detect`) |
 | `flat` dos controles | Sim, em `controls`. **Em `confirm` não**: a saída de `confirm --phase detect` mostra as métricas, mas o humano confere a regra da seção 3 |
 | Etapas A–D | **Não.** `freeze` aceita qualquer `run_id` e braço, e `repair` só exige que `frozen/workload_frozen.py` exista |
+| Semente por rodada (101–108) e keep pela razão contra a referência da rodada | **Não.** É protocolo do agente (`program_detect.md`). O juiz só usa o `--seed` recebido (padrão 1), grava-o em `round.json` e calcula o `ratio_vs_reference`; não confere a sequência de sementes nem decide keep/discard |
 | Original com sintoma em cada rodada de reparo | Sim (`prepare.py:score_repair`) |
 
 Fazer o `freeze` recusar um braço sem um `confirm --phase detect` aprovado (controles planos e braço elegível)
