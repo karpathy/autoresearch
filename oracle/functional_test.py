@@ -1,59 +1,33 @@
-"""Teste funcional público (adaptado de chas42/generated-software-llm/scripts/tests/test_credit_card_service.py).
+"""Oráculo funcional público: o teste do repositório do Cesar, sem alteração
+(oracle/test_credit_card_service.py, cópia de reference/tests/test_credit_card_service.py).
 
-O agente pode ler este arquivo. Ele não pode editá-lo.
+O agente pode ler estes arquivos. Ele não pode editá-los. O teste do Cesar fala com
+http://localhost:<port>; o juiz passa a porta da instância.
 """
 
-import http.client
-import json
-import sys
+import importlib.util
+import logging
+from pathlib import Path
+
+_TEST = Path(__file__).resolve().parent / "test_credit_card_service.py"
 
 
-def post(port, path, body):
-    c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-    c.request("POST", path, body=json.dumps(body), headers={"Content-Type": "application/json"})
-    r = c.getresponse()
-    data = r.read()
-    c.close()
-    try:
-        return r.status, json.loads(data or b"null")
-    except json.JSONDecodeError:
-        return r.status, None
-
-
-def associate(port, cc, phone):
-    s, _ = post(port, "/associate_card", {"credit_card": cc, "phone": phone})
-    return 200 <= s < 300
-
-
-def retrieve(port, phones):
-    s, j = post(port, "/retrieve_cards", {"phone_numbers": phones})
-    if not 200 <= s < 300:
-        return []
-    return sorted((j or {}).get("card_numbers", []))
+class _App:
+    def __init__(self, port):
+        self.port = port
+        self.logger = logging.getLogger("functional")
 
 
 def run(port):
-    """Retorna lista de falhas (vazia = passou)."""
+    """Lista de falhas (vazia = passou), no mesmo formato dos testes escondidos."""
+    spec = importlib.util.spec_from_file_location("cesar_functional", _TEST)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
     fails = []
-    for cc, ph in [("4111111111111111", "+5511988887777"),
-                   ("4111111111111111", "+1(800)123-4567"),
-                   ("5500000000000004", "+1(800)123-4567")]:
-        if not associate(port, cc, ph):
-            fails.append(f"associate {cc} {ph}")
-    checks = [
-        (["+5511988887777"], ["4111111111111111"]),
-        (["+5511988887777", "+1(800)123-4567"], ["4111111111111111"]),
-        (["+5511988887777", "+1(800)123-4567", "+44 2079460958"], []),
-        (["+1(800)123-4567"], ["4111111111111111", "5500000000000004"]),
-    ]
-    for phones, expected in checks:
-        got = retrieve(port, phones)
-        if got != expected:
-            fails.append(f"retrieve {phones}: esperado {expected}, obtido {got}")
+    for name in sorted(n for n in dir(mod) if n.startswith("func_test")):
+        try:
+            if not getattr(mod, name)(_App(port)):
+                fails.append(f"{name} falhou")
+        except Exception as e:
+            fails.append(f"{name}: {type(e).__name__}: {e}")
     return fails
-
-
-if __name__ == "__main__":
-    f = run(int(sys.argv[1]) if len(sys.argv) > 1 else 3000)
-    print("OK" if not f else "FALHOU:\n" + "\n".join(f))
-    sys.exit(1 if f else 0)

@@ -39,7 +39,7 @@ _VPY = ROOT / ".cache" / "venv" / "bin" / "python"
 if _VPY.exists() and Path(sys.prefix).resolve() != (ROOT / ".cache" / "venv").resolve():
     os.execv(str(_VPY), [str(_VPY), *sys.argv])
 
-from harness.instance import Instance, NODE_MODULES, copy_app, copy_writable  # noqa: E402
+from harness.instance import Instance, copy_writable  # noqa: E402
 from harness.load import BASELINE, LoadRun, validate_spec, WorkloadError  # noqa: E402
 from harness.evaluate import evaluate_arm, ALPHA, MIN_EFFECT_MB_PER_H  # noqa: E402
 from harness import gates  # noqa: E402

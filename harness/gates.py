@@ -134,7 +134,7 @@ def replay(app_dir, trace, workdir):
                 c.close()
                 c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
         c.close()
-        db = inst.db_state()
+        db = inst.db_state(full=True)
     finally:
         inst.stop()
     return {"responses": out, "db": db}
