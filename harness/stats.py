@@ -78,3 +78,40 @@ def percentile(values, q):
     v = sorted(values)
     idx = min(len(v) - 1, max(0, int(round(q / 100.0 * (len(v) - 1)))))
     return v[idx]
+
+
+def trend_hr(x, y):
+    """MK com modificação de Hamed-Rao (autocorrelação) + Sen's slope, como em analyze_run.py do Cesar.
+
+    x em horas, y em unidades quaisquer. Usa pymannkendall (a mesma biblioteca do Cesar), que fica
+    no venv travado. `mk_p_upward` é o p unilateral de alta derivado do teste de Hamed-Rao.
+    """
+    import warnings
+    import numpy as np
+    import pymannkendall as mk
+
+    warnings.filterwarnings("ignore", category=RuntimeWarning, module="pymannkendall")
+    n = len(y)
+    out = {"n": n, "first": y[0] if n else None, "last": y[-1] if n else None,
+           "median": percentile(y, 50) if n else None, "sen_slope_per_h": 0.0,
+           "mk_p_upward": 1.0, "mk_hr_p": 1.0, "mk_hr_z": 0.0, "trend": "no trend", "sen_change_pct": None}
+    if n < 10:
+        return out
+    out["sen_slope_per_h"] = sen_slope(x, y)
+    span = x[-1] - x[0]
+    out["sen_change_pct"] = (out["sen_slope_per_h"] * span / abs(out["median"]) * 100.0) if out["median"] else None
+    arr = np.asarray(y, dtype=float)
+    if np.allclose(arr, arr[0]):
+        out["trend"] = "constant"
+        return out
+    try:
+        r = mk.hamed_rao_modification_test(arr)
+        p, z = float(r.p), float(r.z)
+        if p != p:  # NaN: autocovariância degenerada em série quase constante
+            return out
+        out["mk_hr_p"], out["mk_hr_z"] = p, z
+        out["mk_p_upward"] = p / 2.0 if z > 0 else 1.0 - p / 2.0
+        out["trend"] = ("increasing" if z > 0 else "decreasing") if p < 0.05 else "no trend"
+    except Exception:
+        pass
+    return out
