@@ -30,7 +30,7 @@ Uma nota por mudança relevante, mais recente no topo. Cada nota diz o que mudou
 1. **Rodada de 60 min dos controles (refazer, foi interrompida):** confirmar que R1 sobe em `retrieve_hot` e que R0/R0b ficam planos, como no
    resultado do Cesar. Os limiares da detecção (abaixo) são de partida e podem precisar de ajuste por causa dela.
 2. **Validar com o Cesar:** (a) D2 desligada no F1; (b) nota baseada na latência e no tamanho de resposta de
-   `retrieve_hot`, além do RSS; (c) stall do `ps` no nosso monitor. O cenário dele para a credit-card não tem
+   `retrieve_hot`, além do RSS; (c) stall do `ps`: **resolvido, não se aplica** ao Credit Card (só existe no Monitor). O cenário dele para a credit-card não tem
    injeção; nada foi implementado.
 3. **O critério de liberação do reparo ainda não é imposto pelo código:** `freeze` aceita qualquer braço, e nada
    impede o `repair-init` antes das duas confirmações aprovadas. Ver

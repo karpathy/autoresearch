@@ -30,7 +30,7 @@ injetado.
 - **Testes escondidos:** o caso `phone="12"` aceita 201 ou 400. A app do Cesar responde 201 e o OpenAPI não define
   formato de telefone. O original fica em `~/.aging-hidden/hidden_tests.py.node-original`.
 - **Stall do `ps`:** não implementado. O cenário do Cesar para a credit-card não tem injeção (o stall é do app
-  `monitor-flask`). Fica pendente de validação com o Cesar.
+  `monitor-flask`). Validado depois com o Cesar: não se aplica ao Credit Card (fica no `aging_probe.py` do Monitor), então está correto não implementar.
 
 ## Decisões tomadas por mim (reversíveis)
 

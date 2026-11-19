@@ -223,13 +223,19 @@ confirmada. Detalhes em [`updates/criterio-de-deteccao.md`](updates/criterio-de-
 O `repaired/` do Cesar passa em todos os portões (H1–H5 e replay idêntico: ele só adiciona um índice coberto, usa
 consulta de um telefone com `ORDER BY` e serializa a resposta com os mesmos bytes).
 
+## Diferenças em relação ao cenário do Cesar
+
+| Ponto | Cesar | Aqui | Por quê |
+|---|---|---|---|
+| Stall do `ps` | Não existe no Credit Card. Existe só no app Monitor (`monitor-flask`), injetado pelo `aging_probe.py` **do Monitor** (`AGING_INJECT_PS_HANG_PROB`); o `campaign.yaml` da credit-card não define `env` | **Não implementado** | Correto não implementar: não faz parte deste cenário (confirmado pelo Cesar). O nosso amostrador psutil (`harness/instance.py`) não injeta nada |
+| Instâncias | Uma, `python app.py` na porta fixa 5000 | Quatro em paralelo, `uvicorn app:app` em porta livre, uma por slot | Os 4 braços rodam ao mesmo tempo |
+| Máquinas | Cliente e app em máquinas separadas (artigo) | Mesma máquina, pinados em núcleos distintos | Ver Pendências |
+
 ## Pendências (revisar com o Cesar)
 
-1. **Stall do `ps` (ambiente):** o cenário do Cesar para o `credit-card-fastapi` **não tem injeção nenhuma** (o
-   `campaign.yaml` dele não define `env`). O stall do `ps` existe só para o app Monitor (`monitor-flask`, via
-   `AGING_INJECT_PS_HANG_PROB`), não no `harness/monitor.py`, que é só um amostrador psutil. Nada foi implementado
-   aqui; a decisão de reproduzi-lo no nosso monitor depende de validação com o Cesar.
-2. **D2 desligada no F1:** o crescimento de linhas conta como aging. Validar com o Cesar.
+1. **Stall do `ps`:** resolvido, não se aplica ao Credit Card (ver "Diferenças em relação ao cenário do Cesar").
+2. **D2 desligada no F1:** confirmado pelo Cesar. O crescimento de linhas é exigido pela spec e conta como
+   **ativação**, não como aging (ver "A flag D2 não se aplica ao F1").
 3. **Nota:** a nota passa a usar a latência e o tamanho de resposta de `retrieve_hot`, além do RSS. Os limiares
    (mudança de 50% na latência, 25% no controle interno, 5 MB/h no RSS) são de partida e precisam ser
    conferidos com os controles (`prepare.py controls`) e com o A/A.
