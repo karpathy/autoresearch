@@ -1,172 +1,198 @@
-"""Gerador de carga fixo (fechado, estilo JMeter) e validação do contrato da carga.
+"""Carga fixa: scripts do Cesar rodados como subprocesso, com o contrato dele, mais as travas do juiz.
 
-O agente descreve a carga em workload.py; este módulo executa e impõe limites.
-Os limites existem para impedir reward hacking na detecção: o agente não pode
-"achar aging" só saturando a máquina, mandando payloads gigantes ou saindo da API.
+Contrato do Cesar (harness/run_diagnostic.py):
+    script --base-url URL --duration S --seed N --out client.csv [flags]
+    client.csv: ts,endpoint,status,latency_ms,resp_bytes[,phase]
+
+Quem escreve a carga:
+- Referência (4º slot, R1) e controles (R0, R0b): scripts do Cesar, intactos, em workloads/.
+- O agente (detecção) NÃO escreve código: workload.py declara CANDIDATES, cada um com `args`,
+  flags do F1_targeted_v1. O juiz valida os valores aqui e roda o script fixo com a semente dele.
+  Assim a carga do agente é uma variante do F1 que obedece ao mesmo contrato, sem código novo.
+
+Limites contra reward hacking na detecção (o agente não pode "achar aging" só saturando a máquina):
+  taxas não acima de 2x os defaults do Cesar; 5xx/exceções acima de 1% invalidam o braço.
 """
 
-import http.client
-import json
-import random
-import threading
+import csv
+import subprocess
 import time
 from collections import defaultdict
+from pathlib import Path
+
+import psutil
 
 from .stats import percentile
 
-# ---- Contrato fixo (derivado do OpenAPI do prompt BaxBench e do artigo) ----
-ALLOWED_PATHS = {"/associate_card", "/retrieve_cards"}
-MAX_THREADS = 10            # artigo: 10 threads concorrentes
-MIN_THINK_TIME_S = 0.01     # artigo: intervalo de 0,01 s entre requisições
-MAX_BODY_BYTES = 2048
-MAX_PHONE_LIST = 10
-BUCKET_S = 5.0
-REQUEST_TIMEOUT_S = 10.0
+ROOT = Path(__file__).resolve().parent.parent
+VENV_PY = ROOT / ".cache" / "venv" / "bin" / "python"
+TARGETED = "workloads/bax-fastapi-credit-card-F1_targeted_v1.py"
+CONTROL = "workloads/bax-fastapi-credit-card-F1_control.py"
+BUCKET_S = 60.0         # janela de agregação do cliente (o Cesar usa 60 s em analyze_run.py)
+RATE_FACTOR = 2.0       # taxas até 2x os defaults do F1_targeted_v1
 
 
 class WorkloadError(ValueError):
     pass
 
 
+# Defaults do F1_targeted_v1 (argparse do script). O script em si é fixo e hasheado no manifesto.
+DEFAULTS = {
+    "hot_phones": 1, "new_pair_rate": 10.0, "grow_workers": 2, "key_space": 0,
+    "refresh_rate": 2.0, "ref_sizes": (4, 200), "ref_rate": 2.0, "probe_interval": 2.0,
+}
+# flags que só o juiz define (sem isso o agente trocaria semente, destino ou duração)
+JUDGE_ONLY = {"base_url", "duration", "seed", "out", "timeout", "phone_prefix", "progress_every"}
+MAX_REF_SIZES = 3
+MAX_TOTAL_RATE = RATE_FACTOR * (10.0 + 2.0 + 2.0 + (1 + 2) / 2.0)  # 31 req/s: todos os fluxos juntos
+
+
+def _num(v, name):
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        raise WorkloadError(f"args.{name} deve ser número")
+    return v
+
+
+def normalize_args(args):
+    """Valida `args` de um candidato e devolve o dict completo (defaults + valores)."""
+    if not isinstance(args, dict):
+        raise WorkloadError("args deve ser um dict")
+    bad = sorted(set(args) - set(DEFAULTS))
+    if bad:
+        hint = " (só o juiz define)" if set(bad) <= JUDGE_ONLY else f" (permitidos: {sorted(DEFAULTS)})"
+        raise WorkloadError(f"args fora do contrato: {bad}{hint}")
+    a = dict(DEFAULTS)
+    a.update(args)
+    d = DEFAULTS
+    if not (isinstance(a["hot_phones"], int) and 1 <= a["hot_phones"] <= RATE_FACTOR * d["hot_phones"]):
+        raise WorkloadError(f"hot_phones deve ser int em [1, {int(RATE_FACTOR * d['hot_phones'])}]")
+    if not (isinstance(a["grow_workers"], int) and 1 <= a["grow_workers"] <= RATE_FACTOR * d["grow_workers"]):
+        raise WorkloadError(f"grow_workers deve ser int em [1, {int(RATE_FACTOR * d['grow_workers'])}]")
+    if not (isinstance(a["key_space"], int) and 0 <= a["key_space"] <= 100000):
+        raise WorkloadError("key_space deve ser int em [0, 100000] (0 = cartões sempre novos)")
+    for k in ("new_pair_rate", "refresh_rate", "ref_rate"):
+        if not 0 <= _num(a[k], k) <= RATE_FACTOR * d[k]:
+            raise WorkloadError(f"{k} deve estar em [0, {RATE_FACTOR * d[k]:g}] (2x o default do Cesar)")
+    if not _num(a["new_pair_rate"], "new_pair_rate") > 0:
+        raise WorkloadError("new_pair_rate deve ser > 0")
+    if not _num(a["probe_interval"], "probe_interval") >= d["probe_interval"] / RATE_FACTOR:
+        raise WorkloadError(f"probe_interval deve ser >= {d['probe_interval'] / RATE_FACTOR:g} s (2x a taxa do Cesar)")
+    rs = a["ref_sizes"]
+    if isinstance(rs, list):
+        rs = tuple(rs)
+    if not (isinstance(rs, tuple) and 1 <= len(rs) <= MAX_REF_SIZES
+            and all(isinstance(x, int) and not isinstance(x, bool) and 1 <= x <= 2 * max(d["ref_sizes"]) for x in rs)):
+        raise WorkloadError(f"ref_sizes deve ser uma tupla de 1 a {MAX_REF_SIZES} ints em [1, {2 * max(d['ref_sizes'])}]")
+    a["ref_sizes"] = rs
+    total = (a["new_pair_rate"] + a["refresh_rate"] + a["ref_rate"]
+             + (a["hot_phones"] + len(rs)) / a["probe_interval"])
+    if total > MAX_TOTAL_RATE + 1e-9:
+        raise WorkloadError(f"taxa nominal total {total:.1f} req/s acima de {MAX_TOTAL_RATE:g} (2x a do Cesar)")
+    return a
+
+
 def validate_spec(spec):
-    for key in ("name", "hypothesis", "threads", "think_time_s", "request"):
+    for key in ("name", "hypothesis", "args"):
         if key not in spec:
             raise WorkloadError(f"candidato sem campo obrigatório '{key}'")
-    if not isinstance(spec["threads"], int) or not 1 <= spec["threads"] <= MAX_THREADS:
-        raise WorkloadError(f"threads deve estar em [1, {MAX_THREADS}]")
-    if not isinstance(spec["think_time_s"], (int, float)) or spec["think_time_s"] < MIN_THINK_TIME_S:
-        raise WorkloadError(f"think_time_s deve ser >= {MIN_THINK_TIME_S}")
-    if not callable(spec["request"]):
-        raise WorkloadError("request deve ser uma função request(rng, i)")
-    # Amostra a função antes de usar para pegar violações cedo.
-    rng = random.Random(0)
-    for i in range(200):
-        check_request(spec["request"](rng, i))
+    if not isinstance(spec["name"], str) or not spec["name"].replace("_", "").replace("-", "").isalnum():
+        raise WorkloadError("name deve ser alfanumérico (com _ ou -)")
+    spec["_args"] = normalize_args(spec["args"])
 
 
-def check_request(req):
-    if not (isinstance(req, tuple) and len(req) == 2):
-        raise WorkloadError("request(rng, i) deve retornar (path, body_dict)")
-    path, body = req
-    if path not in ALLOWED_PATHS:
-        raise WorkloadError(f"caminho fora do contrato: {path}")
-    if not isinstance(body, dict):
-        raise WorkloadError("body deve ser dict (JSON)")
-    raw = json.dumps(body).encode()
-    if len(raw) > MAX_BODY_BYTES:
-        raise WorkloadError(f"body maior que {MAX_BODY_BYTES} bytes")
-    pn = body.get("phone_numbers")
-    if isinstance(pn, list) and len(pn) > MAX_PHONE_LIST:
-        raise WorkloadError(f"phone_numbers com mais de {MAX_PHONE_LIST} itens")
-    return path, raw
+def args_to_argv(args):
+    """args normalizados -> flags do script do Cesar (só o que difere do default, para o log ficar legível)."""
+    argv = []
+    for k, v in args.items():
+        if v == DEFAULTS[k]:
+            continue
+        flag = "--" + k.replace("_", "-")
+        argv += [flag, ",".join(map(str, v)) if isinstance(v, tuple) else str(v)]
+    return argv
 
 
-# ---- Baseline do artigo (carga do JMX credit_card_test, com 10 threads e 0,01 s) ----
-def _baseline_request(rng, i):
-    if i % 2 == 0:
-        return "/associate_card", {"credit_card": "4111111111111111", "phone": "+5511988887777"}
-    return "/retrieve_cards", {"phone_numbers": ["+5511988887777"]}
+def same_as_default(spec):
+    """Candidato com os mesmos parâmetros do F1_targeted_v1 padrão não é hipótese nova (D4)."""
+    return normalize_args(spec.get("args", {})) == DEFAULTS
 
 
-BASELINE = {
-    "name": "baseline_artigo",
-    "hypothesis": "Carga do artigo: alterna associate/retrieve com o mesmo par cartão/telefone.",
-    "threads": 10,
-    "think_time_s": 0.01,
-    "request": _baseline_request,
-}
+# ---- braços fixos: a referência e os controles do Cesar (campaign.yaml) ----
+BASELINE = {"name": "F1_targeted_v1_referencia", "script": TARGETED, "args": {},
+            "hypothesis": "R1 do Cesar: F1_targeted_v1 com os parâmetros padrão."}
+R0 = {"name": "R0", "script": CONTROL, "args": {}, "argv": [],
+      "hypothesis": "R0 do Cesar: F1_control (1 par fixo, laço fechado). Controle negativo."}
+R0B = {"name": "R0b", "script": TARGETED, "args": {"key_space": 4}, "argv": ["--key-space", "4"],
+       "hypothesis": "R0b do Cesar: F1_targeted_v1 --key-space 4 (mesma carga, nada acumula). Controle negativo."}
 
 
-class LoadRun:
-    """Executa uma carga fechada contra uma porta e agrega por janelas de 5 s."""
+def spec_argv(spec):
+    return spec["argv"] if "argv" in spec else args_to_argv(normalize_args(spec.get("args", {})))
 
-    def __init__(self, spec, port, seconds, seed):
-        self.spec = spec
-        self.port = port
-        self.seconds = seconds
-        self.seed = seed
-        self.lock = threading.Lock()
-        self.buckets = defaultdict(lambda: {"n": 0, "err5xx": 0, "exc": 0, "c4xx": 0,
-                                            "lat": [], "ops": defaultdict(int)})
-        self.violation = None
-        self.t0 = None
 
-    def _worker(self, tid, deadline):
-        rng = random.Random(self.seed * 1000 + tid)
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=REQUEST_TIMEOUT_S)
-        i = tid
-        think = self.spec["think_time_s"]
-        threads = self.spec["threads"]
-        while time.time() < deadline:
+def spec_script(spec):
+    return spec.get("script", TARGETED)
+
+
+def run_script(spec, base_url, seconds, seed, run_dir, cpus=None):
+    """Roda o script do Cesar como subprocesso e devolve {"exit", "client_csv", "loadgen_cpu_p95", ...}.
+    Ambiente mínimo: o script não vê variáveis do agente nem do juiz."""
+    run_dir = Path(run_dir)
+    out = run_dir / "client.csv"
+    cmd = [str(VENV_PY), str(ROOT / spec_script(spec)), "--base-url", base_url, "--duration", str(seconds),
+           "--seed", str(seed), "--out", str(out), *spec_argv(spec)]
+    if cpus:
+        cmd = ["taskset", "-c", cpus] + cmd
+    env = {"PATH": "/usr/bin:/bin", "PYTHONUNBUFFERED": "1", "HOME": str(run_dir)}
+    cpu = []
+    with open(run_dir / "workload.log", "w") as wl:
+        proc = subprocess.Popen(cmd, stdout=wl, stderr=subprocess.STDOUT, env=env, cwd=run_dir)
+        try:
+            p = psutil.Process(proc.pid)
+            p.cpu_percent(None)
+        except psutil.Error:
+            p = None
+        deadline = time.time() + seconds + 120
+        while proc.poll() is None and time.time() < deadline:
+            time.sleep(5)
             try:
-                path, raw = check_request(self.spec["request"](rng, i))
-            except Exception as e:  # violação do contrato invalida o braço
-                self.violation = f"{type(e).__name__}: {e}"
-                return
-            i += threads
-            t_send = time.time()
-            status = None
-            try:
-                conn.request("POST", path, body=raw, headers={"Content-Type": "application/json"})
-                resp = conn.getresponse()
-                resp.read()
-                status = resp.status
-            except Exception:
-                conn.close()
-                conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=REQUEST_TIMEOUT_S)
-            lat = (time.time() - t_send) * 1000
-            b = int((t_send - self.t0) // BUCKET_S)
-            with self.lock:
-                bk = self.buckets[b]
-                bk["n"] += 1
-                bk["ops"][path] += 1
-                if status is None:
-                    bk["exc"] += 1
-                elif status >= 500:
-                    bk["err5xx"] += 1
-                elif status >= 400:
-                    bk["c4xx"] += 1
-                bk["lat"].append(lat)
-            time.sleep(think)
-        conn.close()
+                if p:
+                    cpu.append(p.cpu_percent(None))
+            except psutil.Error:
+                pass
+        if proc.poll() is None:
+            proc.kill()
+            exit_code = "timeout"
+        else:
+            exit_code = proc.returncode
+    return {"exit": exit_code, "client_csv": str(out), "cmd": cmd,
+            "loadgen_cpu_p95": percentile(cpu, 95) if cpu else None}
 
-    def run(self):
-        self.t0 = time.time()
-        deadline = self.t0 + self.seconds
-        ths = [threading.Thread(target=self._worker, args=(k, deadline), daemon=True)
-               for k in range(self.spec["threads"])]
-        for t in ths:
-            t.start()
-        for t in ths:
-            t.join(timeout=self.seconds + REQUEST_TIMEOUT_S + 30)
-        return self.summary()
 
-    def summary(self):
-        rows = []
-        tot = {"n": 0, "err5xx": 0, "exc": 0, "c4xx": 0}
-        ops = defaultdict(int)
-        for b in sorted(self.buckets):
-            bk = self.buckets[b]
-            rows.append({
-                "t": (b + 1) * BUCKET_S,
-                "n": bk["n"],
-                "throughput_rps": bk["n"] / BUCKET_S,
-                "p50_ms": percentile(bk["lat"], 50),
-                "p95_ms": percentile(bk["lat"], 95),
-                "err5xx": bk["err5xx"], "exc": bk["exc"], "c4xx": bk["c4xx"],
-            })
-            for k in tot:
-                tot[k] += bk[k]
-            for k, v in bk["ops"].items():
-                ops[k] += v
-        n = max(1, tot["n"])
-        return {
-            "buckets": rows,
-            "requests": tot["n"],
-            "error_rate": (tot["err5xx"] + tot["exc"]) / n,
-            "server_error_rate": tot["err5xx"] / n,
-            "exception_rate": tot["exc"] / n,
-            "client_error_rate": tot["c4xx"] / n,
-            "ops": dict(ops),
-            "violation": self.violation,
-        }
+def read_client(path):
+    """client.csv -> lista de (ts, endpoint, status, latency_ms, resp_bytes, phase)."""
+    rows = []
+    try:
+        with open(path, newline="") as f:
+            for r in csv.DictReader(f):
+                try:
+                    rows.append((float(r["ts"]), r["endpoint"], int(r["status"]), float(r["latency_ms"]),
+                                 int(r["resp_bytes"]), r.get("phase", "")))
+                except (KeyError, ValueError):
+                    continue  # linha truncada no fim (o script faz flush a cada 1 s)
+    except OSError:
+        pass
+    return rows
+
+
+def summarize_client(rows, t0):
+    """Totais e taxas de erro do cliente (a série por endpoint é calculada em evaluate.py)."""
+    n = len(rows)
+    exc = sum(1 for r in rows if r[2] == 0)
+    e5 = sum(1 for r in rows if r[2] >= 500)
+    c4 = sum(1 for r in rows if 400 <= r[2] < 500)
+    ops = defaultdict(int)
+    for r in rows:
+        ops[r[1]] += 1
+    return {"requests": n, "ops": dict(ops), "exception_rate": exc / max(1, n), "server_error_rate": e5 / max(1, n),
+            "client_error_rate": c4 / max(1, n), "error_rate": (exc + e5) / max(1, n),
+            "achieved_rps": n / max(1.0, (rows[-1][0] - t0) if rows else 1.0)}
