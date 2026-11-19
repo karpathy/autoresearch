@@ -124,14 +124,20 @@ class Instance:
                         mi = p.memory_full_info()
                         ch = len(p.children(recursive=True))
                         self.max_children = max(self.max_children, ch)
-                        db = sum((self.code_dir / (DB_NAME + s)).stat().st_size
-                                 for s in ("", "-wal") if (self.code_dir / (DB_NAME + s)).exists())
+                        db = 0
+                        for suf in ("", "-wal"):  # o -wal pode sumir entre o exists() e o stat() (checkpoint)
+                            try:
+                                db += (self.code_dir / (DB_NAME + suf)).stat().st_size
+                            except OSError:
+                                pass
                         f.write(f"{time.time()-self.t0:.2f},{p.pid},{mi.rss},{mi.vms},{mi.uss},{p.num_fds()},"
                                 f"{p.num_threads()},{p.cpu_percent(None)},{ch},{db}\n")
                     f.flush()
                 except psutil.Error:
                     f.write(f"{time.time()-self.t0:.2f},DEAD,,,,,,,,\n")
                     return
+                except OSError:
+                    continue  # amostra perdida, a próxima compensa
 
     def alive(self):
         return self.proc is not None and self.proc.poll() is None

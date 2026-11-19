@@ -22,6 +22,7 @@ MIN_LATENCY_CHANGE_PCT = 50.0   # latência de retrieve_hot: mudança implícita
 MAX_REF_CHANGE_PCT = 25.0       # controle interno: acima disso, drift global e não crescimento por linha
 CHECKPOINT_MIN = 5           # para calcular o tempo até a detecção
 HOT = "retrieve_hot"
+CONTROL_READ = "retrieve_cards"  # o F1_control (R0) tem uma única leitura, sem telefone quente nem de referência
 REFS = ("retrieve_ref4", "retrieve_ref200")
 ASSOC = "associate_card"
 
@@ -142,7 +143,9 @@ def evaluate_arm(name, probe, client_rows, t0, load, db_state, pids_seen, alive_
     # --- cliente: retrieve_hot (sintoma) e retrieve_ref* (controle interno), MK Hamed-Rao + Sen ---
     # um telefone quente: "retrieve_hot"; vários: "retrieve_hot1", "retrieve_hot2"... (script do Cesar).
     # O braço é pontuado pelo telefone quente de maior inclinação de latência (determinístico).
-    hot_eps = sorted({r[1] for r in client_rows if r[1] == HOT or (r[1].startswith(HOT) and r[1][len(HOT):].isdigit())}) or [HOT]
+    hot_eps = sorted({r[1] for r in client_rows if r[1] == HOT or (r[1].startswith(HOT) and r[1][len(HOT):].isdigit())})
+    if not hot_eps:  # R0: a única leitura faz o papel do telefone quente (um par fixo: deve ficar plana)
+        hot_eps = [CONTROL_READ if any(r[1] == CONTROL_READ for r in client_rows) else HOT]
     ep_tr = {}
     for ep in tuple(hot_eps) + REFS + (ASSOC,):
         w = client_windows(client_rows, t0, total_s, ep)
