@@ -64,6 +64,25 @@ equivalente aqui é: o controle interno (`retrieve_ref4`/`ref200` precisam ficar
 `C1_referencia_interna_subindo` tira a pontuação), os limites de taxa (até 2x os defaults do Cesar) e o
 controle negativo R0b.
 
+**Crescimento de linhas = ativação, não aging.** A spec do F1 (`findings/bax-fastapi-credit-card-F1.yaml`,
+`activation_criteria.resource_growth`) **exige** que `COUNT(*)` de `associations` e o tamanho do `db.sqlite3`
+cresçam: é a prova de que a carga percorreu o caminho do finding. Por isso as linhas contam como **ativação**
+(e a D2 fica desligada), e não como o envelhecimento em si.
+
+### O aging do F1 é misto
+
+O envelhecimento de verdade, o que degrada o serviço, é **misto** (classificação do Cesar):
+
+1. **Custo por cartão:** cada leitura de `/retrieve_cards` do telefone quente custa proporcionalmente aos cartões
+   acumulados (consulta sem `LIMIT`, `fetchall`, modelo pydantic, JSON), e esse custo por cartão é alto;
+2. **Pico de memória:** cada leitura grande materializa a lista inteira; o RSS sobe com o tamanho da resposta;
+3. **Interferência:** a cada leitura grande o processo trava por ~150 ms ou mais, e isso atrasa as **outras**
+   requisições que chegam no mesmo momento (`associate_card`, `retrieve_ref4`), que não têm nada a ver com o
+   telefone quente.
+
+A detecção mede (1) e (2) pela latência e pelo tamanho de resposta de `retrieve_hot` e pelo RSS. O reparo mede a
+redução de (1) e a interferência (3); ver `program_repair.md`.
+
 ## Arquitetura (mesma lógica do autoresearch)
 
 | autoresearch original | Este piloto | Quem edita |

@@ -72,6 +72,21 @@ vazamento removendo funcionalidade. Esses portões existem para pegar
 exatamente isso. Se um candidato seu cair num portão, **registre no ledger o
 que você tentou e por quê**. Esses casos são contribuição do estudo.
 
+## O que é o aging do F1 (o que você está corrigindo)
+
+O crescimento de linhas em `associations` é **exigido pela spec** (é a ativação do finding, não o aging) e
+**continua** depois do reparo. O aging de verdade é **misto**:
+
+1. **Custo por cartão:** cada leitura do telefone quente custa proporcionalmente aos cartões acumulados, com custo
+   alto por cartão (consulta, `fetchall`, pydantic, JSON);
+2. **Pico de memória:** cada leitura grande materializa a resposta inteira;
+3. **Interferência:** o processo trava ~150 ms ou mais a cada leitura grande, e as outras requisições
+   (`associate_card`, `retrieve_ref4`) esperam.
+
+Parte da latência de `retrieve_hot` cresce **por design**: a resposta tem que trazer todos os cartões (a spec não
+deixa paginar nem truncar). Um reparo correto **reduz** o custo por cartão e a interferência; ele não zera a
+inclinação.
+
 ## Métrica
 
 `score_reduction = 1 − (Sen's slope da latência p50 de retrieve_hot do candidato / o do original)`,

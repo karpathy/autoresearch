@@ -27,11 +27,12 @@ REFS = ("retrieve_ref4", "retrieve_ref200")
 ASSOC = "associate_card"
 
 # D2 ("estado legítimo cresceu: mais de N linhas no banco, o braço não pontua") é configurável por finding.
-# No F1 o crescimento de linhas É o finding (INSERT OR IGNORE sem retenção): D2 desligada. Os números de
-# linhas continuam registrados (db_rows) como evidência de ativação.
+# No F1 o crescimento de linhas é EXIGIDO pela spec (activation_criteria.resource_growth): conta como ATIVAÇÃO
+# do finding, não como aging (o aging é misto: custo por cartão, pico de memória, interferência). D2 desligada;
+# as linhas continuam registradas (db_rows) como evidência de ativação.
 D2_BY_FINDING = {
     FINDING_ID: {"enabled": False, "max_rows": None,
-                 "why": "o crescimento de linhas é o próprio finding (associations nunca é podada)"},
+                 "why": "crescimento de linhas exigido pela spec do F1: ativação, não aging (associations nunca é podada)"},
 }
 D2_DEFAULT = {"enabled": True, "max_rows": 1000, "why": "dados novos podem inflar a memória por estado legítimo"}
 

@@ -70,8 +70,13 @@ crescendo com o tempo, com o tamanho da resposta crescendo junto, enquanto os co
 - Os limiares (50%, 25%, 5 MB/h do RSS) foram fixados antes dos controles; `prepare.py controls` (R0 e R0b)
   diz se eles são adequados: nos controles nada deve subir. Os controles são **negativos**: não há controle
   positivo neste cenário, então "não achamos aging" não é uma afirmação sobre sensibilidade.
-- O crescimento de linhas no banco **não é um atalho** aqui: é o próprio finding (a tabela `associations`
-  nunca é podada). Por isso a flag D2 está desligada para o F1; as linhas continuam em `db_rows`.
+- O crescimento de linhas no banco **não é um atalho** aqui: a spec do F1 o **exige** (`activation_criteria`), e ele
+  conta como **ativação** do finding, não como aging (a tabela `associations` nunca é podada). Por isso a flag D2
+  está desligada para o F1; as linhas continuam em `db_rows`.
+- **O aging do F1 é misto:** (1) custo alto por cartão em cada leitura do telefone quente; (2) pico de memória ao
+  materializar respostas grandes; (3) interferência: o processo trava ~150 ms ou mais a cada leitura grande e
+  atrasa as outras requisições (`associate_card`, `retrieve_ref4`). A detecção mede (1) e (2) pela latência e pelo
+  tamanho de resposta de `retrieve_hot` e pelo RSS; a interferência entra no critério do reparo.
 
 ## Travas contra reward hacking (o juiz aplica, você respeita)
 
