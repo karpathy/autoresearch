@@ -90,7 +90,7 @@ redução de (1) e a interferência (3); ver `program_repair.md`.
 | `prepare.py` (avaliação fixa) | `prepare.py` + `harness/` + `oracle/` | Ninguém durante a campanha |
 | `train.py` | Detecção: `workload.py`. Reparo: `candidates/v1..v3/` | Agente |
 | `program.md` | `program_detect.md`, `program_repair.md` | Humano |
-| `val_bpb` | Detecção: Sen's slope da latência de `retrieve_hot` (ms/h), com Hamed-Rao. Reparo: redução dessa inclinação em relação ao original | Juiz |
+| `val_bpb` | Detecção: Sen's slope da latência de `retrieve_hot` (ms/h), com Hamed-Rao (+ tamanho de resposta e RSS). Reparo: redução dessa inclinação em relação ao original; `fixed` exige redução ≥ 0,30 **e** interferência (p95 de `associate_card` e `ref4`) não pior que a do original +10% (parâmetros provisórios; ver `program_repair.md`). O tamanho de `retrieve_hot` não entra no reparo | Juiz |
 | Execução de 5 min | Execução de 60 min, 4 em paralelo | Juiz |
 
 ```

@@ -45,6 +45,7 @@ from harness.load import (BASELINE, R0, R0B, WorkloadError, normalize_args, read
                           same_as_default, summarize_client, validate_spec)
 from harness.evaluate import evaluate_arm, ALPHA, FINDING_ID, MIN_EFFECT_MB_PER_H  # noqa: E402
 from harness import gates  # noqa: E402
+from harness import evaluate as E  # noqa: E402
 from harness.workload_check import load_workload  # noqa: E402
 
 APP = "credit-card-fastapi"
@@ -363,6 +364,10 @@ def print_detect(run_id, rows):
               f"ref_change[{refs}] ttd_min={fmt(r.get('time_to_detect_min'))} ratio={fmt(r.get('ratio_vs_reference'))} "
               f"req={r.get('requests')} err={fmt(r.get('error_rate'), 4)} db_rows={r.get('db_rows')} "
               f"{ref4_diag_str(r)} flags={','.join(r.get('flags', [])) or '-'}")
+        if "interference_R0b_floor_p95" in r:  # confirm --phase repair
+            fl = " ".join(f"{k}={fmt(v, 1)}ms" for k, v in r["interference_R0b_floor_p95"].items())
+            print(f"    {interference_str(r.get('interference_vs_R1'))} interference_ok={r.get('interference_ok', '-')} "
+                  f"piso_R0b_p95[{fl}]")
 
 
 # ---------------------------------------------------------------- congelar (humano)
@@ -461,9 +466,30 @@ def _p50_median(ev, ep):
     return (((ev.get("client") or {}).get(ep) or {}).get("p50") or {}).get("median")
 
 
+def interference_check(o, ev):
+    """Interferência do candidato contra o original da mesma rodada e semente: p95 (nível final) de
+    associate_card e retrieve_ref4. ok se p95_candidato <= p95_original x (1 + FIXED_P95_TOL) nos dois."""
+    out, ok = {}, True
+    for ep in E.INTERFERENCE_EPS:
+        a = ((o.get("interference") or {}).get(ep) or {}).get("p95_level_ms")
+        b = ((ev.get("interference") or {}).get(ep) or {}).get("p95_level_ms")
+        if a is None or b is None:
+            out[ep] = {"orig_p95": a, "cand_p95": b, "ok": None}
+            ok = None if ok is not False else False
+            continue
+        this = b <= a * (1 + E.FIXED_P95_TOL)
+        out[ep] = {"orig_p95": a, "cand_p95": b, "reduction": (1 - b / a) if a > 0 else None, "ok": this}
+        if not this:
+            ok = False
+    return out, ok
+
+
 def score_repair(res, v, gate):
-    """Nota do reparo: redução da inclinação da latência de retrieve_hot em relação ao original.
-    O RSS é reportado (e entra se o original tinha tendência de RSS), mas não é o único critério."""
+    """Nota do reparo: redução da inclinação da latência de retrieve_hot em relação ao original (score_reduction,
+    usada no keep). O tamanho de resposta de retrieve_hot NÃO entra (a spec não deixa mudar), e não se exige zerar
+    a inclinação (parte dela cresce por design). fixed = redução >= FIXED_MIN_REDUCTION (ou a latência deixa de
+    subir) E interferência (p95 de associate_card e ref4) não pior que a do original + FIXED_P95_TOL.
+    O RSS é reportado."""
     o = res.get("original", {})
     if v == "original":
         return {"arm": "original", "valid": o.get("valid"), "hot_latency": o.get("hot_latency_p50"),
@@ -497,11 +523,23 @@ def score_repair(res, v, gate):
         return row
     reduction = 1 - (s1 / s0)
     row["score_reduction"] = reduction
-    row["fixed"] = (not ev.get("latency_up")) or reduction >= 0.8
+    row["interference"], interf_ok = interference_check(o, ev)
+    row["slope_ok"] = (not ev.get("latency_up")) or reduction >= E.FIXED_MIN_REDUCTION
+    row["interference_ok"] = interf_ok
+    row["fixed"] = bool(row["slope_ok"] and interf_ok)
+    row["fixed_params"] = {"FIXED_MIN_REDUCTION": E.FIXED_MIN_REDUCTION, "FIXED_P95_TOL": E.FIXED_P95_TOL,
+                           "calibrado": False}
     if o.get("rss_upward_significant"):
         r0, r1 = o["rss_mb"]["sen_slope_per_h"], ev["rss_mb"]["sen_slope_per_h"]
         row["rss_reduction"] = 1 - (r1 / r0) if r0 > 0 else None
     return row
+
+
+def interference_str(d):
+    if not d:
+        return "interf=-"
+    return "interf[" + " ".join(f"{ep.replace('retrieve_', '').replace('_card', '')}_p95={fmt(x.get('orig_p95'), 1)}->"
+                                f"{fmt(x.get('cand_p95'), 1)}ms" for ep, x in d.items()) + "]"
 
 
 def print_repair(run_id, rows):
@@ -512,6 +550,7 @@ def print_repair(run_id, rows):
               f"fixed={r.get('fixed', '-')} hot_lat_slope={fmt(lat.get('sen_slope_per_h'))} "
               f"hr_p={fmt(lat.get('mk_p_upward'), 5)} rss_slope={fmt(rss.get('sen_slope_per_h'))} "
               f"rss_reduction={fmt(r.get('rss_reduction'))} rps={fmt(r.get('achieved_rps'), 1)} "
+              f"{interference_str(r.get('interference'))} "
               f"diff_lines={r.get('diff_lines', '-')} flags={','.join(r.get('flags', [])) or '-'}")
 
 
@@ -573,6 +612,14 @@ def cmd_confirm(a):
     res = run_arms(arms, minutes, run_dir, a.smoke)
     rows = list(res.values())
     ref4_vs_control(rows)
+    if a.phase == "repair":
+        # interferência de cada braço contra o R1 (original) da mesma execução, com o R0b como piso de referência
+        r1, r0b = res.get("R1", {}), res.get("R0b", {})
+        floor = {ep: ((r0b.get("interference") or {}).get(ep) or {}).get("p95_level_ms") for ep in E.INTERFERENCE_EPS}
+        for r in rows:
+            if r.get("arm") not in ("R1", "R0b"):
+                r["interference_vs_R1"], r["interference_ok"] = interference_check(r1, r)
+            r["interference_R0b_floor_p95"] = floor
     rec = {"event": f"confirm-{a.phase}", "run_id": run_id, "commit": git_head(), "smoke": a.smoke,
            "minutes": minutes, "seed": a.seed, "arms": rows}
     (run_dir / "round.json").write_text(json.dumps(rec, indent=1, ensure_ascii=False))

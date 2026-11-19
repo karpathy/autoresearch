@@ -90,12 +90,31 @@ inclinação.
 ## Métrica
 
 `score_reduction = 1 − (Sen's slope da latência p50 de retrieve_hot do candidato / o do original)`,
-calculada na mesma rodada e sob a mesma carga. Maior é melhor; 1,0 significa que a tendência
-sumiu. `fixed=True` quando a latência do candidato deixa de subir de forma significativa (Hamed-Rao, p ≥ 0,01) ou a
-redução é de pelo menos 80%. Só candidatos que passaram em todos os portões recebem score, e só se o original
-mostrou o sintoma na rodada (senão `original_sem_tendencia_nesta_rodada`). O RSS é reportado
-(`rss_reduction`) mas não é o critério: no F1 o crescimento de linhas continua, e a resposta continua
-crescendo com ele; o que dá para consertar é o custo por linha.
+calculada na mesma rodada, sob a mesma carga e a mesma semente. Maior é melhor. É a nota usada no **keep**. Só
+candidatos que passaram em todos os portões recebem score, e só se o original mostrou o sintoma na rodada (senão
+`original_sem_tendencia_nesta_rodada`).
+
+**O que NÃO entra:** o **tamanho de resposta** de `retrieve_hot` (a spec não deixa mudar; o replay H3 exige
+resposta idêntica) e o RSS, que é só reportado (`rss_reduction`). Também **não se exige zerar** a inclinação:
+parte da latência de `retrieve_hot` cresce por design, porque a resposta traz todos os cartões.
+
+**`fixed=True`** exige as duas condições:
+
+1. **Inclinação:** `score_reduction ≥ FIXED_MIN_REDUCTION` (ou a latência do candidato deixa de subir de forma
+   significativa);
+2. **Interferência:** o p95 de `associate_card` **e** o de `retrieve_ref4` do candidato não pioram:
+   `p95_candidato ≤ p95_original × (1 + FIXED_P95_TOL)`, na mesma rodada e semente. O p95 é calculado por janela
+   de 60 s ao longo da execução, e o nível comparado é a mediana dos p95 na última hora (ou na última metade da
+   série, se ela for menor que 2 h). Ver `interference` no `round.json` e `interf[...]` no resumo.
+
+| Parâmetro | Valor | Estado | Conta |
+|---|---|---|---|
+| `FIXED_MIN_REDUCTION` | 0,30 | **provisório, NÃO calibrado** | o `repaired/` do Cesar, dentro da spec, reduziu a inclinação em ~43% (8 h). 0,43 × 0,7 (folga de 30% para o ruído entre sementes e rodadas de 60 min, ainda não medido) = 0,301 → 0,30. O critério antigo (≥ 0,8) reprovava todo reparo válido |
+| `FIXED_P95_TOL` | 0,10 | **provisório, NÃO calibrado** | tolerância para não reprovar um bom reparo por poucos ms de ruído |
+
+Os dois ficam em `harness/evaluate.py` e precisam ser calibrados com uma rodada de reparo que tenha o
+`repaired/` do Cesar como candidato (redução e dispersão em 60 min). Na confirmação de 8 h
+(`confirm --phase repair`), o p95 do **R0b** (sem acúmulo) é reportado como **piso de referência** da interferência.
 
 ## Execução
 
@@ -105,7 +124,7 @@ python prepare.py wait <run_id>        # repita até sair o resumo (cerca de 65 
 ```
 
 O resumo traz uma linha por braço:
-`arm=... gates=... score_reduction=... fixed=... hot_lat_slope=... hr_p=... rss_slope=... rss_reduction=... rps=... diff_lines=... flags=...`.
+`arm=... gates=... score_reduction=... fixed=... hot_lat_slope=... hr_p=... rss_slope=... rss_reduction=... rps=... interf[associate_p95=orig->cand ref4_p95=orig->cand] diff_lines=... flags=...`.
 O detalhe dos portões fica em `results/<run_id>/round.json`, que mostra só a
 contagem dos testes escondidos.
 

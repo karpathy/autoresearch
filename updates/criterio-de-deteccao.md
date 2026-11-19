@@ -106,7 +106,12 @@ naquela rodada** (`score_eligible = True` sob a carga congelada). Senão, todos 
 Para candidatos que passaram nos portões (H1–H5, replay) e nas travas pós-medição (H6, H7):
 
 - `score_reduction = 1 − Sen(latência retrieve_hot do candidato) / Sen(do original)`;
-- `fixed = True` se a latência do candidato **deixa de satisfazer a condição 2** **ou** se a redução é ≥ 0,8.
+- `fixed = True` se (a) a redução é ≥ `FIXED_MIN_REDUCTION` (0,30, provisório) **ou** a latência do candidato deixa
+  de satisfazer a condição 2, **e** (b) a **interferência** não piora: p95 de `associate_card` e de `retrieve_ref4`
+  do candidato ≤ p95 do original × (1 + `FIXED_P95_TOL`) (0,10, provisório), na mesma rodada e semente;
+- o tamanho de resposta de `retrieve_hot` **não** entra (a spec não deixa mudar), e não se exige zerar a inclinação
+  (parte dela cresce por design). Os dois parâmetros **não estão calibrados**: conta e plano em
+  `program_repair.md` ("Métrica"). O reparo do Cesar (~43% em 8 h) passa no critério de inclinação.
 
 ## O que o código impõe e o que não impõe
 

@@ -21,6 +21,20 @@ MIN_EFFECT_MB_PER_H = 5.0    # RSS: tamanho de efeito mínimo (A/A de 20/10 na v
 MIN_LATENCY_CHANGE_PCT = 50.0   # latência de retrieve_hot: mudança implícita do Sen ao longo da série
 MAX_REF_CHANGE_PCT = 25.0       # controle interno: acima disso, drift global e não crescimento por linha
 CHECKPOINT_MIN = 5           # para calcular o tempo até a detecção
+
+# ---- Critério de "fixed" do reparo (parâmetros PROVISÓRIOS, NÃO calibrados) ----
+# O reparo do Cesar (apps/credit-card-fastapi/repaired/), que fica dentro da spec, reduziu a inclinação da
+# latência de retrieve_hot em ~43% (8 h, dado do Cesar). Parte dessa latência cresce por design (a resposta
+# tem que trazer todos os cartões), então exigir 80% (regra antiga) reprovava todo reparo válido.
+# Conta: FIXED_MIN_REDUCTION = 0,43 (redução do repaired/) x 0,7 (folga de 30% para ruído entre sementes e
+# rodadas de 60 min, ainda não medido) = 0,301 -> 0,30. Calibrar com uma rodada de reparo com o repaired/ como
+# candidato (redução e dispersão em 60 min) antes de usar o fixed como resultado.
+FIXED_MIN_REDUCTION = 0.30
+# Interferência: p95 de associate_card e de retrieve_ref4 do candidato <= p95 do original x (1 + tolerância),
+# na mesma rodada e semente. 10%: provisório, NÃO calibrado (evita reprovar um bom reparo por poucos ms de ruído).
+FIXED_P95_TOL = 0.10
+INTERFERENCE_EPS = ("associate_card", "retrieve_ref4")
+INTERFERENCE_TAIL_MIN = 60.0   # nível = mediana dos p95 por janela na última hora (ou na última metade, se menor)
 HOT = "retrieve_hot"
 CONTROL_READ = "retrieve_cards"  # o F1_control (R0) tem uma única leitura, sem telefone quente nem de referência
 REFS = ("retrieve_ref4", "retrieve_ref200")
@@ -180,6 +194,16 @@ def evaluate_arm(name, probe, client_rows, t0, load, db_state, pids_seen, alive_
     out["ref4_diag"] = {"p50_change_pct": r4["p50"].get("sen_change_pct"), "p50_mk_p": r4["p50"].get("mk_p_upward"),
                         "p95_change_pct": r4["p95"].get("sen_change_pct"), "p95_mk_p": r4["p95"].get("mk_p_upward"),
                         "up": r4["p50"].get("mk_p_upward", 1.0) < ALPHA}
+    # interferência (critério do reparo): p95 por janela de 60 s de associate_card e retrieve_ref4 ao longo da
+    # execução inteira, com tendência (Sen) e nível final (mediana dos p95 na última hora ou na última metade)
+    out["interference"] = {}
+    for ep in INTERFERENCE_EPS:
+        xs, ys = client_windows(client_rows, t0, total_s, ep)["p95"]
+        tail_h = min(INTERFERENCE_TAIL_MIN / 60.0, (xs[-1] - xs[0]) / 2) if len(xs) > 1 else 0
+        tail = [v for x, v in zip(xs, ys) if xs and x >= xs[-1] - tail_h]
+        out["interference"][ep] = {"p95_level_ms": percentile(tail, 50) if tail else None, "tail_windows": len(tail),
+                                   "p95_sen_per_h": ep_tr[ep]["p95"].get("sen_slope_per_h"),
+                                   "p95_change_pct": ep_tr[ep]["p95"].get("sen_change_pct")}
     if len(ep_tr[hot_ep]["_p50_series"][0]) < 5:
         flags.append("sem_janelas_do_cliente")
 
