@@ -56,10 +56,28 @@ O reparo é liberado quando **todas** as etapas abaixo dão certo, nesta ordem:
 |---|---|---|
 | A. Controles de 60 min | `prepare.py controls --with-r1` | R0 e R0b com `flat = True` (`ok=True`) **e** R1 com `score_eligible = True` |
 | B. Campanha 1 | `./run_campaign.sh detect <tag>` | existe um braço `keep` no `results.tsv`, conferido contra `results/judge_log.jsonl` (ou a própria referência, se nenhum candidato a superou por ≥ 10% no `ratio`). Cada rodada usa uma semente própria (101–108); ver "Semente por rodada e keep" abaixo |
-| C. Confirmação de 8 h | `prepare.py confirm --phase detect --seed <semente>` | **R0 e R0b planos** (regra da seção 3) **e** R1 e o candidato escolhido com `score_eligible = True`, todos na mesma rodada de 8 h. Cada execução de `confirm` usa a sua própria semente; repetir não é obrigatório, mas, se repetir, use sementes distintas |
-| D. Congelar | `prepare.py freeze <run_id> <arm>` | o braço congelado é o mesmo que passou em C |
+| C. Congelar o candidato | `prepare.py freeze <run_id> <arm>` | o braço é o `keep` da etapa B. O congelamento ainda **não libera o reparo**: ele existe porque `confirm` lê a carga de `frozen/workload_frozen.py` |
+| D. Confirmação de 8 h, **duas execuções** | `prepare.py confirm --phase detect --seed 201` e depois `--seed 202` | **as duas** passam: em cada uma, **R0 e R0b planos** (regra da seção 3) **e** R1 e o candidato congelado com `score_eligible = True`. Ver "Confirmação: duas execuções" abaixo |
 
 Só depois de D o humano roda `prepare.py repair-init` e a campanha 2.
+
+### Confirmação: duas execuções, as duas precisam passar (etapa D)
+
+- **Duas execuções de `confirm --phase detect`**, com sementes distintas (201 e 202; nenhuma das sementes da
+  campanha 1). Cada execução sobe as quatro rodadas (R0, R0b, R1 e o candidato) em paralelo, com banco limpo, e
+  as quatro usam a **mesma semente** daquela execução.
+- **Mesma duração da execução que se confirma:** a confirmação é de 8 h, então as duas execuções têm 8 h. Só a
+  semente muda entre elas; a carga e a duração ficam fixas. O critério de subida (mudança ≥ 50%) depende do tamanho
+  da janela, por isso execuções de durações diferentes não são comparáveis.
+- **Unanimidade, não maioria:** o aging é confirmado só se **as duas** passarem. O efeito do F1 é grande (no
+  experimento de 8 h do Cesar, a latência de `retrieve_hot` foi de ~10 ms para ~1,3 s); se for aging real, deve
+  aparecer sempre. Uma execução negativa não é absorvida por maioria: ela indica um problema a investigar.
+- **Inválida ≠ negativa:**
+  - **inválida** é um problema de infraestrutura: `valid = False` em algum braço (D1, D3, H4, `sem_amostras`, app
+    caiu). Ela **não conta**: repete-se com a próxima semente (203, 204, …), sem reutilizar nenhuma;
+  - **negativa** é uma execução válida em que R0 ou R0b subiram, ou R1 ou o candidato não ficaram elegíveis. Com
+    uma negativa, **a detecção não está confirmada**.
+- Custo: cerca de 16 h de máquina (duas execuções de 8 h, cada uma com os quatro braços em paralelo).
 
 ### Semente por rodada e keep (etapa B)
 
@@ -75,8 +93,9 @@ Só depois de D o humano roda `prepare.py repair-init` e a campanha 2.
 - **Referência sem sintoma:** se a R1 da rodada não for elegível, o `ratio` de todos sai `NA`; nenhum candidato
   daquela rodada vira keep e o ledger registra `referencia_sem_sintoma`.
 
-**Se C falhar** (um controle sobe, ou o candidato não se sustenta em 8 h): não congele e não comece o reparo.
-Registre o resultado; é um achado (detecção não confirmada), não um erro a contornar.
+**Se D falhar** (uma das duas execuções válidas é negativa): não comece o reparo. A carga congelada em C não vale;
+remova `frozen/workload_frozen.py` e rode `prepare.py rehash` antes de qualquer outro passo. Registre o resultado; é
+um achado (detecção não confirmada), não um erro a contornar.
 
 ### Dentro de cada rodada de reparo
 
@@ -96,11 +115,13 @@ Para candidatos que passaram nos portões (H1–H5, replay) e nas travas pós-me
 | Condições 1–4 e a nota | Sim (`harness/evaluate.py`, `prepare.py:cmd_detect`) |
 | `flat` dos controles | Sim, em `controls`. **Em `confirm` não**: a saída de `confirm --phase detect` mostra as métricas, mas o humano confere a regra da seção 3 |
 | Etapas A–D | **Não.** `freeze` aceita qualquer `run_id` e braço, e `repair` só exige que `frozen/workload_frozen.py` exista |
+| Duas confirmações, ambas aprovadas (etapa D) | **Não.** `confirm` roda uma execução por chamada e não sabe das anteriores; o humano roda as duas e confere as duas antes de `repair-init` |
 | Semente por rodada (101–108) e keep pela razão contra a referência da rodada | **Não.** É protocolo do agente (`program_detect.md`). O juiz só usa o `--seed` recebido (padrão 1), grava-o em `round.json` e calcula o `ratio_vs_reference`; não confere a sequência de sementes nem decide keep/discard |
 | Original com sintoma em cada rodada de reparo | Sim (`prepare.py:score_repair`) |
 
-Fazer o `freeze` recusar um braço sem um `confirm --phase detect` aprovado (controles planos e braço elegível)
-é uma mudança pequena e ainda não foi feita.
+A ordem é **congelar (C) e depois confirmar (D)** porque o `confirm` atual lê a carga do candidato de
+`frozen/workload_frozen.py`. Fazer o `repair-init` recusar começar sem duas confirmações aprovadas (controles
+planos e braços elegíveis) é uma mudança pequena no juiz e ainda não foi feita.
 
 ## Limiares e o que os sustenta
 

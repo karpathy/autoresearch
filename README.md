@@ -50,6 +50,7 @@ e Artur Andrzejak (Heidelberg).
 | Reunião de 20/10 (Rafael) | Duas campanhas em sequência; Claude Code; confirmação humana | Campanha 1 = detecção, campanha 2 = reparo; `confirm` e `freeze` são do humano |
 | Piloto 2 | Margem para não selecionar ruído; registro de proveniência | Keep exige +10% no `ratio_vs_reference`; hashes do juiz em `.judge/manifest.json` |
 | Rafael (19/11) | Confirmar o F1 com sementes independentes antes de liberar o reparo | Semente nova por rodada de detecção (101–108) e keep pela razão contra a referência da rodada: protocolo em `program_detect.md` (o juiz não impõe) |
+| Rafael e Ermeson (19/11) | Repetir a confirmação com sementes diferentes, mesma duração, banco limpo; unanimidade | Duas execuções de `confirm --phase detect` de 8 h (sementes 201 e 202); reparo só se as duas passarem; protocolo humano em `updates/criterio-de-deteccao.md` |
 
 ## A flag D2 não se aplica ao F1
 
@@ -149,9 +150,11 @@ python prepare.py controls --with-r1
 # 5. Campanha 1 (cerca de 8,5 h; o agente usa as sementes 101..108, uma por rodada)
 ./run_campaign.sh detect det-nov19
 
-# 6. Humano: confirmar (R0, R0b, R1 e o candidato, 8 h cada, em paralelo) e congelar
-python prepare.py confirm --phase detect --seed <semente>
+# 6. Humano: congelar o candidato e confirmar DUAS vezes (R0, R0b, R1 e o candidato, 8 h, em paralelo).
+#    O confirm lê a carga congelada, por isso o freeze vem antes. O reparo só é liberado se as DUAS passarem.
 python prepare.py freeze <run_id> <arm>
+python prepare.py confirm --phase detect --seed 201
+python prepare.py confirm --phase detect --seed 202
 
 # 7. Campanha 2 (cerca de 9 h)
 python prepare.py repair-init
@@ -173,10 +176,13 @@ segurança.
 ### Duração e confirmação
 
 O laço do agente usa **60 min** por rodada (`DEFAULT_MINUTES`). A confirmação usa **8 h** (`CONFIRM_MINUTES`, como o
-`campaign.yaml` do Cesar), com as quatro rodadas em paralelo, uma por slot. Cada execução de `confirm` usa a
-**sua própria semente** (`--seed`; informe-a explicitamente, o padrão do juiz é 1). Repetir a confirmação não é
-obrigatório; se ela for repetida (por exemplo, para voltar às 3 sementes da reunião de 20/10), cada repetição usa
-uma semente distinta.
+`campaign.yaml` do Cesar), com as quatro rodadas em paralelo, uma por slot. A confirmação da detecção é feita
+**duas vezes**, com sementes distintas (201 e 202; informe `--seed` explicitamente, o padrão do juiz é 1), cada
+uma com 8 h e banco limpo. Em cada execução, R0, R0b, R1 e o candidato usam a mesma semente. O aging só é
+confirmado, e o reparo só é liberado, se **as duas** passarem: unanimidade, não maioria. Uma execução
+**inválida** (infraestrutura: D1, D3, H4, app caiu) não conta e é repetida com a próxima semente (203, …); uma
+execução **negativa** (válida, mas um controle subiu ou R1/candidato não ficaram elegíveis) significa detecção não
+confirmada. Detalhes em [`updates/criterio-de-deteccao.md`](updates/criterio-de-deteccao.md#4-liberação-do-reparo-protocolo-humano).
 
 ## Taxonomia de atalhos (reward hacking)
 

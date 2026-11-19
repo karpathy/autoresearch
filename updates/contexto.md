@@ -34,7 +34,8 @@ cenário do Cesar for ambíguo; não rodar `run_campaign.sh`.
 | Rafael | Stall do `ps`: não implementado até validar com o Cesar (o cenário credit-card dele não tem injeção) |
 | Rafael | Semente diferente por rodada de detecção (101–108; falhas consomem a semente) e keep pelo `ratio_vs_reference` da rodada (≥ 1,10 × o melhor anterior; referência sem sintoma → nenhum keep). Protocolo em `program_detect.md`, não imposto pelo juiz ([nota](2026-11-19_semente-por-rodada.md)) |
 | Claude (reversível) | Agente não lê `apps/credit-card-fastapi/repaired/` (deny nos `settings.{detect,repair}.json`) |
-| Claude (reversível) | `confirm` de 8 h com uma semente; app do slot *i* na CPU *i*, gerador na CPU 4+*i* |
+| Rafael e Ermeson | Confirmação da detecção em **duas** execuções de `confirm` de 8 h (sementes 201 e 202), mesma duração, banco limpo, a mesma semente para R0/R0b/R1/candidato em cada execução; reparo só se **as duas** passarem (unanimidade); execução inválida é repetida, negativa = não confirmado ([nota](2026-11-19_confirmacao-duas-execucoes.md)) |
+| Claude (reversível) | App do slot *i* na CPU *i*, gerador na CPU 4+*i* |
 | Claude (reversível) | Replay dos portões repete cada requisição até 3× e refaz o replay antes de acusar H2/H3 |
 
 ## Próximos passos
@@ -43,5 +44,6 @@ cenário do Cesar for ambíguo; não rodar `run_campaign.sh`.
    ser elegível (latência e resposta de `retrieve_hot` sobem, controle interno plano) e R0/R0b planos. Atualizar
    `updates/README.md` com os números e, se preciso, ajustar os limiares.
 2. Validar com o Cesar: D2 desligada no F1; nota pela latência/bytes de `retrieve_hot`; stall do `ps`.
-3. Opcional, já oferecido: fazer o `freeze` exigir um `confirm --phase detect` aprovado.
+3. Opcional: fazer o `repair-init` recusar começar sem as duas confirmações de 8 h aprovadas (hoje é protocolo
+   humano; a ordem é `freeze` → `confirm` ×2 porque o `confirm` lê a carga congelada).
 4. Depois: campanha 1 (`./run_campaign.sh detect <tag>`) só quando o Rafael pedir.

@@ -148,8 +148,8 @@ Orçamento: **8 rodadas**, cerca de 8,5 h numa noite, ou até o humano interromp
    comparável entre rodadas. Compare o `ratio_vs_reference` (`ratio=`), que é relativo à referência da mesma
    rodada.
    - **Primeira rodada:** o candidato elegível com o **maior `ratio`** vira o "melhor anterior" (keep). Se o
-     `workload.py` não mudou desde o commit base, não há candidato além da referência e não há commit para
-     desfazer; o "melhor anterior" fica definido na primeira rodada que tiver candidato com `ratio`.
+     `workload.py` não mudou desde o commit base, os candidatos dele rodam normalmente e não há commit para
+     desfazer. Se nenhum candidato tiver `ratio`, o "melhor anterior" fica definido na primeira rodada que tiver.
    - **Demais rodadas:** mantenha o commit se algum candidato elegível tiver `ratio` **pelo menos 10% maior**
      que o `ratio` do melhor anterior (`ratio_novo ≥ 1,10 × ratio_melhor`). A margem evita selecionar ruído,
      lição do Piloto 2.
@@ -183,6 +183,7 @@ Pare e escreva `summary_detect.md` com:
   roda com uma única semente, app e cliente na mesma máquina (pinados em núcleos distintos), cenário sem
   controle positivo.
 
-Não declare aging confirmado. A confirmação é humana: `prepare.py confirm --phase detect --seed <semente>`
-(as quatro rodadas R0, R0b, R1 e o candidato, 8 h cada, com uma semente própria; se for repetida, cada
-repetição usa uma semente distinta) e depois `prepare.py freeze`, que gera a carga congelada para a Campanha 2.
+Não declare aging confirmado. A confirmação é humana, depois da campanha: o humano congela o candidato
+(`prepare.py freeze`) e roda `prepare.py confirm --phase detect` **duas vezes, com sementes distintas** (201 e
+202), cada uma com as quatro rodadas R0, R0b, R1 e o candidato, 8 h, banco limpo. O aging só é confirmado, e o
+reparo só é liberado, se **as duas** passarem (ver `updates/criterio-de-deteccao.md`, seção 4).
