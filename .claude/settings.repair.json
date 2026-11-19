@@ -86,7 +86,9 @@
    "Bash(uvicorn:*)",
    "Bash(python -m:*)",
    "Bash(python3:*)",
-   "Bash(.cache/venv/bin/python:*)"
+   "Bash(.cache/venv/bin/python:*)",
+   "Bash(git push:*)",
+   "Bash(git remote:*)"
   ]
  }
 }

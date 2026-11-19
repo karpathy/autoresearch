@@ -4,6 +4,7 @@ Uma nota por mudança relevante, mais recente no topo. Cada nota diz o que mudou
 
 | Data | Nota | Resumo |
 |---|---|---|
+| 2026-11-19 | [contexto.md](contexto.md) | **Resumo do contexto para retomar o trabalho** (pedido, decisões, próximos passos) |
 | 2026-11-19 | [2026-11-19_alvo-cesar.md](2026-11-19_alvo-cesar.md) | Troca do alvo Node pelo cenário do Cesar (`credit-card-fastapi`, finding F1); juiz, carga, métrica e portões adaptados |
 | 2026-11-19 | [criterio-de-deteccao.md](criterio-de-deteccao.md) | **Quando a detecção é considerada positiva e libera a campanha de reparo** |
 
