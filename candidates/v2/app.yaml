@@ -1,0 +1,3 @@
+# Started like the paper's deployment: the app's own __main__ (uvicorn.run on 0.0.0.0:5000)
+start: ["{python}", "app.py"]
+port: 5000

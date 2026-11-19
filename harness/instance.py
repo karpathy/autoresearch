@@ -55,7 +55,7 @@ def copy_app(src, dst):
 
 
 class Instance:
-    def __init__(self, app_src, workdir, sample_s=5.0, instrument=True):
+    def __init__(self, app_src, workdir, sample_s=5.0, instrument=True, cpus=None):
         self.app_src = Path(app_src)
         self.workdir = Path(workdir)
         self.code_dir = self.workdir / "app"
@@ -66,6 +66,7 @@ class Instance:
         self.log_out = self.workdir / "app.log"
         self.sample_s = sample_s
         self.instrument = instrument
+        self.cpus = cpus  # taskset do servidor (como --app-cpus do Cesar); None = sem pinagem
         self._stop = threading.Event()
         self._sampler = None
         self.pids_seen = set()
@@ -85,6 +86,8 @@ class Instance:
                         "AGING_SNAPSHOT_INTERVAL": str(SNAPSHOT_S)})
         cmd = [str(VENV_PY), "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(self.port),
                "--log-level", "warning"]
+        if self.cpus and shutil.which("taskset"):
+            cmd = ["taskset", "-c", str(self.cpus)] + cmd
         log = open(self.log_out, "ab")
         self.proc = subprocess.Popen(cmd, cwd=self.code_dir, env=env, stdout=log, stderr=subprocess.STDOUT)
         deadline = time.time() + timeout

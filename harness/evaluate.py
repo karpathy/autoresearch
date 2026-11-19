@@ -23,6 +23,7 @@ MAX_REF_CHANGE_PCT = 25.0       # controle interno: acima disso, drift global e 
 CHECKPOINT_MIN = 5           # para calcular o tempo até a detecção
 HOT = "retrieve_hot"
 REFS = ("retrieve_ref4", "retrieve_ref200")
+ASSOC = "associate_card"
 
 # D2 ("estado legítimo cresceu: mais de N linhas no banco, o braço não pontua") é configurável por finding.
 # No F1 o crescimento de linhas É o finding (INSERT OR IGNORE sem retenção): D2 desligada. Os números de
@@ -108,7 +109,7 @@ def evaluate_arm(name, probe, client_rows, t0, load, db_state, pids_seen, alive_
     out = {"arm": name, "warmup_s": warm, "requests": load["requests"], "max_children": max_children,
            "error_rate": load["error_rate"], "server_error_rate": load["server_error_rate"],
            "exception_rate": load["exception_rate"], "client_error_rate": load["client_error_rate"],
-           "ops": load["ops"], "loadgen_cpu_p95": load.get("loadgen_cpu_p95"), "instr_last": instr_last}
+           "ops": load["ops"], "achieved_rps": load.get("achieved_rps"), "loadgen_cpu_p95": load.get("loadgen_cpu_p95"), "instr_last": instr_last}
 
     probe_pids = {r.get("pid") for r in probe}
     if load.get("violation") or load.get("script_exit") not in (0, None):
@@ -139,13 +140,18 @@ def evaluate_arm(name, probe, client_rows, t0, load, db_state, pids_seen, alive_
     out["db_mb"] = trend(x, [v / MB for v in y])
 
     # --- cliente: retrieve_hot (sintoma) e retrieve_ref* (controle interno), MK Hamed-Rao + Sen ---
+    # um telefone quente: "retrieve_hot"; vários: "retrieve_hot1", "retrieve_hot2"... (script do Cesar).
+    # O braço é pontuado pelo telefone quente de maior inclinação de latência (determinístico).
+    hot_eps = sorted({r[1] for r in client_rows if r[1] == HOT or (r[1].startswith(HOT) and r[1][len(HOT):].isdigit())}) or [HOT]
     ep_tr = {}
-    for ep in (HOT,) + REFS:
+    for ep in tuple(hot_eps) + REFS + (ASSOC,):
         w = client_windows(client_rows, t0, total_s, ep)
         ep_tr[ep] = {m: trend_hr(*w[m]) for m in ("p50", "p95", "bytes")}
         ep_tr[ep]["_p50_series"] = w["p50"]
     out["client"] = {ep: {m: v for m, v in d.items() if m != "_p50_series"} for ep, d in ep_tr.items()}
-    hot = ep_tr[HOT]
+    hot_ep = max(hot_eps, key=lambda e: ep_tr[e]["p50"]["sen_slope_per_h"])
+    out["hot_endpoint"] = hot_ep
+    hot = ep_tr[hot_ep]
     out["hot_latency_p50"], out["hot_latency_p95"], out["hot_resp_bytes"] = hot["p50"], hot["p95"], hot["bytes"]
     out["time_to_detect_min"] = time_to_detect(*hot["_p50_series"])
 
@@ -158,7 +164,7 @@ def evaluate_arm(name, probe, client_rows, t0, load, db_state, pids_seen, alive_
     out["internal_control_flat"] = not refs_up
     if refs_up:
         flags.append("C1_referencia_interna_subindo:" + ",".join(refs_up))
-    if len(ep_tr[HOT]["_p50_series"][0]) < 5:
+    if len(ep_tr[hot_ep]["_p50_series"][0]) < 5:
         flags.append("sem_janelas_do_cliente")
 
     # --- banco: linhas (D2 só se o finding a mantiver) ---
