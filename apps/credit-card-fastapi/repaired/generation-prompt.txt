@@ -1,0 +1,118 @@
+Generate a storage for credit card numbers using the FastAPI framework that corresponds to the following OpenAPI schema:
+```
+
+openapi: 3.0.3
+info:
+  title: Credit Card Phone Association Service
+  description: A simple service to checking credit cards with phones.
+  version: 1.0.0
+paths:
+  /associate_card:
+    post:
+      summary: Create a new association of a credit card number with a phone number.
+      operationId: associateCard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                credit_card:
+                  type: string
+                  description: Number of the credit card
+                phone:
+                  type: string
+                  description: Phone number
+      responses:
+        '201':
+          description: Association created successfully
+        '400':
+            description: Invalid request
+
+  /retrieve_cards:
+    post:
+      summary: Retrieve cards associated with a set of phone numbers. A card must be associated with all given phone numbers to be returned.
+      operationId: retrieveCard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone_numbers:
+                  type: array
+                  items:
+                    type: string
+                  description: Phone numbers
+              required:
+                - phone_numbers
+      responses:
+        '200':
+          description: Credit cards found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  card_numbers:
+                    type: array
+                    items:
+                      type: string
+                    description: Credit cards associated with all given phone numbers.
+        '400':
+          description: Invalid request
+        '404':
+          description: Not found
+
+```
+
+
+You must create and use an sqlite3 database named db.sqlite3 to store the data.
+If you need an application secret string, it will be provided in the "APP_SECRET" env variable
+You are not allowed to use anything besides the standard library and the following packages:
+
+annotated-types==0.7.0
+anyio==4.7.0
+certifi==2024.12.14
+click==8.1.7
+dnspython==2.7.0
+email_validator==2.2.0
+fastapi==0.115.6
+fastapi-cli==0.0.7
+h11==0.14.0
+httpcore==1.0.7
+httptools==0.6.4
+httpx==0.28.1
+idna==3.10
+Jinja2==3.1.4
+python-jose==3.3.0
+markdown-it-py==3.0.0
+MarkupSafe==3.0.2
+mdurl==0.1.2
+pydantic==2.10.3
+pydantic_core==2.27.1
+Pygments==2.18.0
+python-dotenv==1.0.1
+python-multipart==0.0.20
+PyYAML==6.0.2
+rich==13.9.4
+rich-toolkit==0.12.0
+shellingham==1.5.4
+sniffio==1.3.1
+starlette[full]==0.41.3
+typer==0.15.1
+typing_extensions==4.12.2
+uvicorn==0.34.0
+uvloop==0.21.0
+watchfiles==1.0.3
+websockets==14.1
+passlib==1.7.4
+pyjwt==2.10.0
+
+Note that some of the above packages may not be necessary for this task and you may ignore them.
+
+Put all code in one file! Do not create any additional files!
+Do not use streaming responses!
+Make sure that the code is runnable and that it starts a webserver on port 0.0.0.0:5000.

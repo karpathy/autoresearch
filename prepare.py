@@ -4,7 +4,7 @@ Papel equivalente ao prepare.py do karpathy/autoresearch: medição e avaliaçã
 fixas. O agente edita workload.py (detecção) ou candidates/vN/ (reparo).
 
 Comandos (todos a partir da raiz do repositório):
-  python prepare.py setup --zip <project-bolt-credit-card.zip>   # humano, uma vez
+  python prepare.py setup --src <llm-aging-detection-agents>     # humano, uma vez
   python prepare.py detect [--minutes 60] [--seed 1] [--background]
   python prepare.py freeze <run_id> <arm>                          # humano, fim da detecção
   python prepare.py repair-init                                    # cria candidates/v1..v3
@@ -30,11 +30,14 @@ import tempfile
 import threading
 import time
 import uuid
-import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
+# depois do setup, tudo roda no venv travado (mesmas versões do Cesar), mesmo que o agente chame "python prepare.py"
+_VPY = ROOT / ".cache" / "venv" / "bin" / "python"
+if _VPY.exists() and Path(sys.prefix).resolve() != (ROOT / ".cache" / "venv").resolve():
+    os.execv(str(_VPY), [str(_VPY), *sys.argv])
 
 from harness.instance import Instance, NODE_MODULES, copy_app, copy_writable  # noqa: E402
 from harness.load import BASELINE, LoadRun, validate_spec, WorkloadError  # noqa: E402
@@ -42,8 +45,24 @@ from harness.evaluate import evaluate_arm, ALPHA, MIN_EFFECT_MB_PER_H  # noqa: E
 from harness import gates  # noqa: E402
 from harness.workload_check import load_workload, check_determinism  # noqa: E402
 
-APP = "credit-card"
-ORIGINAL = ROOT / "apps" / APP / "original"
+APP = "credit-card-fastapi"
+APPS = ROOT / "apps" / APP
+INSTRUMENTED = APPS / "instrumented"   # alvo da detecção e base do reparo (código do Cesar + sonda)
+REPAIRED = APPS / "repaired"           # reparo de referência do Cesar: só para comparar, nunca entra num braço do agente
+ORIGINAL = INSTRUMENTED                # nome histórico: "o código que o reparo tenta melhorar"
+VENV = ROOT / ".cache" / "venv"
+VENV_PY = VENV / "bin" / "python"
+CESAR_REPO_DEFAULT = ROOT.parent / "llm-aging-detection-agents"
+# arquivos copiados do repo do Cesar, exatamente como ele os usou (origem -> destino)
+CESAR_FILES = {
+    "findings/bax-fastapi-credit-card-F1.yaml": "findings/bax-fastapi-credit-card-F1.yaml",
+    "apps/credit-card-fastapi/campaign.yaml": "findings/campaign.yaml",
+    "reference/tests/test_credit_card_service.py": "oracle/test_credit_card_service.py",
+    "workloads/bax-fastapi-credit-card-F1_targeted_v1.py": "workloads/bax-fastapi-credit-card-F1_targeted_v1.py",
+    "workloads/bax-fastapi-credit-card-F1_targeted_v1.md": "workloads/bax-fastapi-credit-card-F1_targeted_v1.md",
+    "workloads/bax-fastapi-credit-card-F1_control.py": "workloads/bax-fastapi-credit-card-F1_control.py",
+}
+HARNESS_REQS = ["psutil", "httpx", "requests", "pymannkendall", "numpy", "pyyaml"]
 CANDS = ROOT / "candidates"
 FROZEN = ROOT / "frozen" / "workload_frozen.py"
 RESULTS = ROOT / "results"
@@ -54,7 +73,7 @@ SLOTS = 4                       # 4 instâncias em paralelo (decisão de 20/10)
 DEFAULT_MINUTES = 60            # janela da reunião: sinal em ~1 h, não 48 h
 CONFIRM_SEEDS = (11, 12, 13)
 CONTROL_RATES = (0.0, 2.5, 5.0, 10.0)  # MiB/h injetados por harness/leak_inject.js
-FIXED_GLOBS = ["prepare.py", "harness/*.py", "harness/*.js", "oracle/*.py"]
+FIXED_GLOBS = ["prepare.py", "harness/*.py", "oracle/*.py", "workloads/*.py", "findings/*.yaml"]
 HIDDEN_KEY = "@hidden/hidden_tests.py"  # fora do repo: harness/gates.py:HIDDEN
 
 
@@ -69,7 +88,11 @@ def fixed_files():
         files += sorted(ROOT.glob(g))
     if FROZEN.exists():
         files.append(FROZEN)
-    files += sorted(p for p in ORIGINAL.rglob("*") if p.is_file() and "node_modules" not in p.parts)
+    for app in (INSTRUMENTED, REPAIRED):
+        files += sorted(p for p in app.rglob("*") if p.is_file() and "__pycache__" not in p.parts
+                        and p.suffix != ".pyc" and not p.name.startswith("db.sqlite3"))
+    if (APPS / "SOURCE.json").exists():
+        files.append(APPS / "SOURCE.json")
     if gates.HIDDEN.exists():
         files.append(gates.HIDDEN)
     return files
@@ -122,32 +145,60 @@ def git_head():
 
 
 # ---------------------------------------------------------------- setup
+def _git_out(repo, *args):
+    return subprocess.check_output(["git", "-C", str(repo), *args], text=True, stderr=subprocess.DEVNULL).strip()
+
+
 def cmd_setup(a):
     if MANIFEST.exists() and not a.force:
         sys.exit("setup já feito. Use --force apenas como humano, fora da campanha.")
-    with zipfile.ZipFile(a.zip) as z:
-        tmp = Path(tempfile.mkdtemp())
-        z.extractall(tmp)
-    src = next(p.parent for p in tmp.rglob("package.json") if "node_modules" not in p.parts)
-    if ORIGINAL.exists():
-        shutil.rmtree(ORIGINAL)
-    shutil.copytree(src, ORIGINAL, ignore=shutil.ignore_patterns("node_modules", "uptime_db", ".bolt"))
-    build = Path(tempfile.mkdtemp())
-    shutil.copy(ORIGINAL / "package.json", build)
-    if (ORIGINAL / "package-lock.json").exists():
-        shutil.copy(ORIGINAL / "package-lock.json", build)
-    print("npm install (dependências travadas do app original)...")
-    subprocess.check_call(["npm", "install", "--omit=dev", "--no-audit", "--no-fund"], cwd=build)
-    NODE_MODULES.parent.mkdir(exist_ok=True)
-    if NODE_MODULES.exists():
-        shutil.rmtree(NODE_MODULES)
-    shutil.move(str(build / "node_modules"), NODE_MODULES)
-    print("Conferindo oráculos contra o original...")
-    rep = gates.functional_and_hidden(ORIGINAL, Path(tempfile.mkdtemp()))
-    if any(rep):
-        sys.exit(f"O ORIGINAL falha nos oráculos; revise os testes: {rep}")
+    src = Path(a.src).expanduser().resolve()
+    cc = src / "apps" / APP
+    if not (cc / "instrumented" / "app.py").exists():
+        sys.exit(f"{cc}/instrumented/app.py não encontrado: passe --src <clone de chas42/llm-aging-detection-agents>")
+    # o repo do Cesar é só LIDO; tudo que o juiz usa é copiado para cá e entra no manifesto
+    for variant in ("instrumented", "repaired"):
+        dst = APPS / variant
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(cc / variant, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "db.sqlite3*"))
+    for rel_src, rel_dst in CESAR_FILES.items():
+        (ROOT / rel_dst).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src / rel_src, ROOT / rel_dst)
+    try:
+        commit, dirty = _git_out(src, "rev-parse", "HEAD"), bool(_git_out(src, "status", "--porcelain"))
+    except Exception:
+        commit, dirty = "desconhecido", None
+    (APPS / "SOURCE.json").write_text(json.dumps({
+        "repo": "https://github.com/chas42/llm-aging-detection-agents", "commit": commit, "dirty": dirty,
+        "copied": sorted(CESAR_FILES) + [f"apps/{APP}/instrumented", f"apps/{APP}/repaired"]}, indent=1))
+    print("venv travado (requirements.txt da app + dependências do juiz)...")
+    if VENV.exists():
+        shutil.rmtree(VENV)
+    VENV.parent.mkdir(exist_ok=True)
+    # sem ensurepip (python3-venv ausente) o venv nasce sem pip: instalamos de fora com `pip --python`
+    subprocess.check_call([sys.executable, "-m", "venv", "--without-pip", str(VENV)])
+    pip = [sys.executable, "-m", "pip", "--python", str(VENV_PY)]
+    subprocess.check_call(pip + ["install", "-q", "-r", str(INSTRUMENTED / "requirements.txt")])
+    subprocess.check_call(pip + ["install", "-q", *HARNESS_REQS])
+    with open(VENV.parent / "venv-freeze.txt", "w") as f:
+        subprocess.check_call(pip + ["freeze"], stdout=f)
     m = write_manifest()
-    print(f"setup ok: {len(m)} arquivos fixos no manifesto")
+    print(f"setup (cópia + venv) ok: {len(m)} arquivos fixos no manifesto. "
+          "Próximo: python prepare.py check-oracles (sobe a app e roda os oráculos nas duas variantes).")
+
+
+def cmd_check_oracles(a):
+    """Oráculo funcional + testes escondidos contra instrumented e repaired do Cesar (ambos devem passar)."""
+    bad = {}
+    for name, app in (("instrumented", INSTRUMENTED), ("repaired", REPAIRED)):
+        rep = gates.functional_and_hidden(app, Path(tempfile.mkdtemp()))
+        print(f"{name}: funcional={rep[0] or 'ok'} escondidos={rep[1] or 'ok'} persistência={rep[2] or 'ok'}")
+        if any(rep):
+            bad[name] = rep
+    if bad:
+        sys.exit("oráculos falham contra o código do Cesar; revise os testes escondidos antes de seguir")
+    print("check-oracles: ok")
 
 
 # ---------------------------------------------------------------- utilidades
@@ -546,7 +597,8 @@ def cmd_wait(a):
 def main():
     ap = argparse.ArgumentParser()
     sp = ap.add_subparsers(dest="cmd", required=True)
-    s = sp.add_parser("setup"); s.add_argument("--zip", required=True); s.add_argument("--force", action="store_true")
+    s = sp.add_parser("setup"); s.add_argument("--src", default=str(CESAR_REPO_DEFAULT)); s.add_argument("--force", action="store_true")
+    sp.add_parser("check-oracles")
     for name in ("detect", "repair"):
         s = sp.add_parser(name)
         s.add_argument("--minutes", type=float, default=DEFAULT_MINUTES)
@@ -568,7 +620,7 @@ def main():
     s = sp.add_parser("wait"); s.add_argument("run_id"); s.add_argument("--max-seconds", type=int, default=540)
     sp.add_parser("verify")
     a = ap.parse_args()
-    {"setup": cmd_setup, "detect": cmd_detect, "repair": cmd_repair, "confirm": cmd_confirm,
+    {"setup": cmd_setup, "check-oracles": cmd_check_oracles, "detect": cmd_detect, "repair": cmd_repair, "confirm": cmd_confirm,
      "control": cmd_control, "rehash": cmd_rehash, "freeze": cmd_freeze, "repair-init": cmd_repair_init, "promote": cmd_promote,
      "wait": cmd_wait, "verify": lambda _: verify()}[a.cmd](a)
 

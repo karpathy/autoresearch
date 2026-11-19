@@ -1,0 +1,90 @@
+id: bax-fastapi-credit-card-F1
+app: corpus/bax-fastapi-credit-card/src
+entrypoint: app:app            # app.py also self-starts with uvicorn on 0.0.0.0:5000
+source_report: inputs/ai_review_r1.md, inputs/ai_review_r2.md, inputs/ai_review_r3.md, inputs/tool_findings.json
+source_findings: ["r1:CR-4", "r1:FA-3", "r1:CR-5", "r2:CR-4", "r2:FA-4", "r3:CR-4", "r3:CR-5", "r3:FA-4", "semgrep-aging:aging-py-insert-without-retention"]
+provenance:
+  ai_reviews: ["r1:Finding 3", "r2:Finding 3", "r3:Finding 3", "r3:Finding 4"]
+  tools: ["semgrep-aging:aging-py-insert-without-retention"]
+classification: conditional
+
+mechanism:
+  summary: >-
+    Every POST /associate_card with a new (credit_card, phone) pair adds one row to `associations`
+    plus entries in three B-trees (UNIQUE auto-index, idx_assoc_phone, idx_assoc_card); nothing in
+    the application ever deletes or expires rows, so the database grows for the life of the
+    deployment. POST /retrieve_cards then reads, groups, sorts and fetchall()s every row matching
+    the requested phones with no LIMIT, so its per-request CPU, memory and response size grow with
+    the number of cards accumulated on those phones. Write-side accumulation and read-side
+    unbounded cost are merged here as one causal chain validated by one workload.
+  resource: >-
+    Persistent rows/index entries in db.sqlite3 (file size, row count); derived per-request cost of
+    /retrieve_cards (rows matched, temp B-tree sort, materialized result list, response bytes).
+  trigger: >-
+    Sustained POST /associate_card with distinct (card, phone) pairs, with a subset of "hot" phones
+    receiving many distinct cards, interleaved with POST /retrieve_cards probing those hot phones.
+  gap: >-
+    No DELETE/TTL/retention path anywhere (created_at column is never read); no cap on cards per
+    phone; no LIMIT or pagination on the retrieve query; result fully materialized by fetchall().
+  suspect_code:
+    - function: associate_card
+      file: app.py
+      lines: 128-140
+    - function: retrieve_cards
+      file: app.py
+      lines: 148-167
+    - function: "init_db (schema: UNIQUE + two secondary indexes, created_at never used)"
+      file: app.py
+      lines: 29-41
+
+aging_elements:
+  repeatable_trigger: >-
+    associate_card (app.py:128-137) executes `INSERT OR IGNORE INTO associations (credit_card, phone)`
+    on every request; reachable by plain HTTP, any number of times.
+  accumulation_or_exhaustion: >-
+    Each new distinct pair persists a row (AUTOINCREMENT id, created_at) and three index entries
+    (app.py:31-41); data survives process restarts because it lives in db.sqlite3. INSERT OR IGNORE
+    with UNIQUE(credit_card, phone) means only distinct pairs accumulate.
+  insufficient_bounding: >-
+    No DELETE, UPDATE or cleanup statement exists in app.py; no per-phone cap; the retrieve query
+    (app.py:152-159) has no LIMIT and line 162 calls fetchall(); field lengths are unbounded
+    (app.py:83-100), so large values add to row/index size.
+  plausible_degradation: >-
+    retrieve_cards cost is proportional to the rows matched by `phone IN (...)` via the non-covering
+    idx_assoc_phone (table lookup per row), plus GROUP BY/COUNT(DISTINCT)/ORDER BY temp structures and
+    a Python list + Pydantic model + JSON of all matching cards (app.py:162-167); as hot phones accrue
+    cards, latency, transient memory and response size of the same probe request rise. Per-request
+    connections (app.py:49) start with an empty SQLite page cache, so a growing file leans on the OS
+    page cache. Inserts degrade only logarithmically (B-tree depth). Disk exhaustion is the far end.
+
+controllability:
+  level: workload
+  notes: >-
+    HTTP traffic alone suffices, but the workload must (a) send distinct (card, phone) pairs (repeats
+    are ignored by INSERT OR IGNORE and accumulate nothing) and (b) concentrate many distinct cards on
+    a small set of probe phones for the read-side cost to grow visibly; with uniformly spread phones
+    lookups stay ~O(log N) and degradation is very slow. Condition: key diversity and phone fan-out.
+
+activation_criteria:
+  path_executed: >-
+    Instrumentation shows INSERT OR IGNORE in associate_card with rowcount=1 (new row) for most
+    calls, and retrieve_cards executing the IN/GROUP BY query on the probe phones with rows matched
+    per call recorded (len(rows)).
+  resource_growth: >-
+    SELECT COUNT(*) FROM associations and db.sqlite3 file size grow monotonically and roughly
+    linearly with distinct inserts; rows returned per probe /retrieve_cards grow with time (e.g. from
+    tens to tens of thousands over the run); no decrease at any point, including after idle periods.
+  control_contrast: >-
+    Control A: same request rate but associate_card always re-sends the same small set of pairs
+    (rowcount=0) -> row count, file size and probe latency stay flat. Control B: retrieve-only load
+    on a fixed, pre-seeded table -> probe latency and RSS stay flat over the same duration.
+
+expected_symptoms:
+  - "client latency (p50/p99) of POST /retrieve_cards for the hot probe phones increases with elapsed time"
+  - "response body size of POST /retrieve_cards for hot phones increases"
+  - "process RSS peaks / transient allocation per retrieve request increase (high-water RSS creeps up)"
+  - "db.sqlite3 disk usage grows without bound"
+  - "slight, logarithmic increase in POST /associate_card latency"
+
+priority: 2
+stability: "3/3 reviews (r3 splits the read side into a separate non-aging finding) + semgrep-aging"

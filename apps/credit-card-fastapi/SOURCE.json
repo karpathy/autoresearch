@@ -1,0 +1,15 @@
+{
+ "repo": "https://github.com/chas42/llm-aging-detection-agents",
+ "commit": "97addef19389017e8654ea93946da9f911fe3618",
+ "dirty": false,
+ "copied": [
+  "apps/credit-card-fastapi/campaign.yaml",
+  "findings/bax-fastapi-credit-card-F1.yaml",
+  "reference/tests/test_credit_card_service.py",
+  "workloads/bax-fastapi-credit-card-F1_control.py",
+  "workloads/bax-fastapi-credit-card-F1_targeted_v1.md",
+  "workloads/bax-fastapi-credit-card-F1_targeted_v1.py",
+  "apps/credit-card-fastapi/instrumented",
+  "apps/credit-card-fastapi/repaired"
+ ]
+}

@@ -1,0 +1,8 @@
+# Credit card / FastAPI (BaxBench, finding bax-fastapi-credit-card-F1): 8 h runs, same layout as the Uptime campaign.
+card: findings/bax-fastapi-credit-card-F1.yaml
+test: reference/tests/test_credit_card_service.py
+runs:
+  R0:  {variant: instrumented, workload: workloads/bax-fastapi-credit-card-F1_control.py}
+  R0b: {variant: instrumented, workload: workloads/bax-fastapi-credit-card-F1_targeted_v1.py, args: [--key-space, "4"]}
+  R1:  {variant: instrumented, workload: workloads/bax-fastapi-credit-card-F1_targeted_v1.py}
+  R2:  {variant: repaired,     workload: workloads/bax-fastapi-credit-card-F1_targeted_v1.py}
