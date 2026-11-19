@@ -107,8 +107,17 @@ def trend_hr(x, y):
     try:
         r = mk.hamed_rao_modification_test(arr)
         p, z = float(r.p), float(r.z)
-        if p != p:  # NaN: autocovariância degenerada em série quase constante
-            return out
+        out["mk_method"] = "hamed_rao"
+        if p != p:
+            # NaN: a correção de Hamed-Rao degenerou (variância corrigida negativa). Acontece em série quase
+            # constante e também em série monótona quase determinística com empates (ex.: tamanho de resposta
+            # inteiro crescendo devagar). Tratar como "sem tendência" seria um falso negativo silencioso (o C1
+            # deixaria passar o tamanho dos refs subindo 40%; ver tests/test_c1.py). Cai para o MK original.
+            r = mk.original_test(arr)
+            p, z = float(r.p), float(r.z)
+            out["mk_method"] = "original_hr_degenerado"
+            if p != p:
+                return out
         out["mk_hr_p"], out["mk_hr_z"] = p, z
         out["mk_p_upward"] = p / 2.0 if z > 0 else 1.0 - p / 2.0
         out["trend"] = ("increasing" if z > 0 else "decreasing") if p < 0.05 else "no trend"

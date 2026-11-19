@@ -57,8 +57,10 @@ crescendo com o tempo, com o tamanho da resposta crescendo junto, enquanto os co
   **Hamed-Rao** (correção de autocorrelação, o mesmo teste do `analyze_run.py` do Cesar). A nota só existe se
   o braço for válido, se o p unilateral de alta for < 0,01, se a mudança implícita ao longo da série for de
   **pelo menos 50%**, se o **tamanho de resposta** de `retrieve_hot` também subir (o mecanismo foi ativado)
-  e se o **controle interno estiver plano** (`retrieve_ref4` e `retrieve_ref200` com mudança menor que 25%;
-  senão `C1_referencia_interna_subindo`: é deriva global da máquina, não crescimento por linha).
+  e se o **controle interno estiver plano**: o **tamanho de resposta** de `retrieve_ref4` e de `retrieve_ref200` (cartões fixos: tem que ser constante) e a **latência** de `retrieve_ref200` sem alta significativa de 25% ou mais;
+  senão `C1_referencia_interna_subindo`: é deriva global da máquina, não crescimento por linha. A **latência do
+  ref4 não entra no C1**: no R1 ela sobe por causa do próprio aging (os travamentos das leituras quentes seguram o
+  ref4; 8 h do Cesar: p50 +14,8%, p95 de 5 para 43 ms). Ela sai como diagnóstico `ref4_diag`, sem efeito na nota.
   Maior é melhor.
 - **Também reportados** (`evaluate.json` e a linha do resumo): tamanho de resposta de `retrieve_hot`, RSS do
   processo (MK + Sen, com as inclinações das duas metades), `ratio_vs_reference`, `ttd_min` (tempo até a
@@ -88,7 +90,7 @@ Estas regras vêm da reunião de 15/10 com o Artur: o agente tende a pegar o ata
 | D2_crescimento_de_estado_legitimo | Mais de N linhas no banco. **Desligada no F1** (ver Métrica); ligada nos outros findings | Medido, sem pontuar (quando ligada) |
 | D3_fora_do_contrato | `args` fora do contrato, ou o script saiu com erro | Braço inválido |
 | D4_copia_da_referencia | `args` iguais aos padrão: a diferença é só ruído | Medido, sem pontuar |
-| C1_referencia_interna_subindo | `retrieve_ref4`/`ref200` também sobem: não é crescimento por linha | Medido, sem pontuar |
+| C1_referencia_interna_subindo | Tamanho de resposta dos refs ou latência do `ref200` sobem: não é crescimento por linha (a latência do `ref4` não conta) | Medido, sem pontuar |
 | H4_processo_reiniciado_ou_morto | O processo morreu ou mudou de PID | Braço inválido |
 
 Se você perceber que uma ideia sua só melhora o número por um desses caminhos, **não insista**. Registre no

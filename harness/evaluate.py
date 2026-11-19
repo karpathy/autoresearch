@@ -24,6 +24,14 @@ CHECKPOINT_MIN = 5           # para calcular o tempo até a detecção
 HOT = "retrieve_hot"
 CONTROL_READ = "retrieve_cards"  # o F1_control (R0) tem uma única leitura, sem telefone quente nem de referência
 REFS = ("retrieve_ref4", "retrieve_ref200")
+# Regra C1 (deriva global). Entram só os sinais que o próprio aging do F1 não move:
+# - o TAMANHO de resposta dos dois refs (cartões fixos: tem que ser constante);
+# - a LATÊNCIA do ref200.
+# A latência do ref4 SAI do C1: no R1 ela sobe por causa do próprio aging (os travamentos de ~150 ms das leituras
+# quentes seguram as requisições do ref4; 8 h do Cesar: ref4 p50 +14,8%, p = 0,0002, p95 de 5 para 43 ms), e com
+# uma máquina mais lenta passaria de 25% e tiraria da nota o braço com o sintoma mais forte. Ela continua medida
+# como diagnóstico (ref4_diag aqui; comparação com o R0b da mesma semente em prepare.py:ref4_vs_control).
+C1_SIGNALS = (("retrieve_ref4", "bytes"), ("retrieve_ref200", "bytes"), ("retrieve_ref200", "p50"))
 ASSOC = "associate_card"
 
 # D2 ("estado legítimo cresceu: mais de N linhas no banco, o braço não pontua") é configurável por finding.
@@ -163,11 +171,15 @@ def evaluate_arm(name, probe, client_rows, t0, load, db_state, pids_seen, alive_
     out["bytes_up"] = significant_up(hot["bytes"], MIN_LATENCY_CHANGE_PCT)    # ativação: o telefone quente cresce
     out["rss_upward_significant"] = (out["rss_mb"]["mk_p_upward"] < ALPHA
                                      and out["rss_mb"]["sen_slope_per_h"] >= MIN_EFFECT_MB_PER_H)
-    refs_up = [ep for ep in REFS if significant_up(ep_tr[ep]["p50"], MAX_REF_CHANGE_PCT)
-               or significant_up(ep_tr[ep]["bytes"], MAX_REF_CHANGE_PCT)]
+    refs_up = [f"{ep}.{m}" for ep, m in C1_SIGNALS if significant_up(ep_tr[ep][m], MAX_REF_CHANGE_PCT)]
     out["internal_control_flat"] = not refs_up
     if refs_up:
         flags.append("C1_referencia_interna_subindo:" + ",".join(refs_up))
+    # diagnóstico, sem efeito na nota: a latência do ref4 (sobe no R1 por interferência, não por deriva)
+    r4 = ep_tr["retrieve_ref4"]
+    out["ref4_diag"] = {"p50_change_pct": r4["p50"].get("sen_change_pct"), "p50_mk_p": r4["p50"].get("mk_p_upward"),
+                        "p95_change_pct": r4["p95"].get("sen_change_pct"), "p95_mk_p": r4["p95"].get("mk_p_upward"),
+                        "up": r4["p50"].get("mk_p_upward", 1.0) < ALPHA}
     if len(ep_tr[hot_ep]["_p50_series"][0]) < 5:
         flags.append("sem_janelas_do_cliente")
 

@@ -60,7 +60,7 @@ próprio finding**: `associations` nunca é podada e a latência de `retrieve_ho
 Manter a D2 ligada zeraria toda carga que ativa o finding. Por isso a D2 é **configurável por finding**
 (`D2_BY_FINDING` em `harness/evaluate.py`) e está **desligada** para `bax-fastapi-credit-card-F1`. O número de
 linhas continua registrado (`db_rows`) como evidência de que o mecanismo foi ativado. O que sobra contra o atalho
-equivalente aqui é: o controle interno (`retrieve_ref4`/`ref200` precisam ficar planos, senão a flag
+equivalente aqui é: o controle interno (tamanho de resposta dos refs e latência do `ref200` precisam ficar planos, senão a flag
 `C1_referencia_interna_subindo` tira a pontuação), os limites de taxa (até 2x os defaults do Cesar) e o
 controle negativo R0b.
 
@@ -211,7 +211,7 @@ confirmada. Detalhes em [`updates/criterio-de-deteccao.md`](updates/criterio-de-
 | Detecção | D2 | Inflar o banco com dados novos. **Configurável por finding; desligada no F1** (ver acima) |
 | Detecção | D3 | Sair do contrato (`args` fora das faixas) ou o script falhar |
 | Detecção | D4 | Candidato igual à referência: a diferença é só ruído |
-| Detecção | C1 | `retrieve_ref4`/`ref200` também sobem: deriva global, não crescimento por linha |
+| Detecção | C1 | Tamanho de resposta dos refs ou latência do `ref200` sobem: deriva global, não crescimento por linha. A latência do `ref4` saiu do C1 (sobe por interferência do aging) e virou diagnóstico, comparada com o R0b da mesma semente |
 | Reparo | H1 | Remover ou alterar funcionalidade |
 | Reparo | H2 | Abandonar a persistência (memória ou cache em vez do SQLite) |
 | Reparo | H3 | Mudar respostas da API (inclusive paginar ou truncar `/retrieve_cards`) |

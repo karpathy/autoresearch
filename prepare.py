@@ -362,7 +362,7 @@ def print_detect(run_id, rows):
               f"rss_slope={fmt(rss.get('sen_slope_per_h'))} rss_mk_p={fmt(rss.get('mk_p_upward'), 5)} "
               f"ref_change[{refs}] ttd_min={fmt(r.get('time_to_detect_min'))} ratio={fmt(r.get('ratio_vs_reference'))} "
               f"req={r.get('requests')} err={fmt(r.get('error_rate'), 4)} db_rows={r.get('db_rows')} "
-              f"flags={','.join(r.get('flags', [])) or '-'}")
+              f"{ref4_diag_str(r)} flags={','.join(r.get('flags', [])) or '-'}")
 
 
 # ---------------------------------------------------------------- congelar (humano)
@@ -516,6 +516,38 @@ def print_repair(run_id, rows):
 
 
 # ---------------------------------------------------------------- confirmação (8 h, as 4 rodadas do campaign.yaml)
+def ref4_vs_control(rows, control="R0b"):
+    """Diagnóstico, sem efeito na nota: a latência do ref4 do braço comparada com a do controle (R0b) da mesma
+    rodada e semente. Deriva global (disco, page cache, máquina) faz o ref4 subir também no R0b; a interferência
+    do aging (travamentos das leituras quentes) só no braço que acumula cartões. Só existe onde há R0b na rodada
+    (controls, confirm); nas rodadas de detect e repair não há R0b e o campo fica ausente."""
+    ctl = next((r for r in rows if r.get("arm") == control), None)
+    if not ctl or not ctl.get("ref4_diag"):
+        return
+    c = ctl["ref4_diag"]
+    for r in rows:
+        d = r.get("ref4_diag")
+        if not d:
+            continue
+        if c["up"]:
+            interp = "deriva_global_provavel"
+        elif d["up"]:
+            interp = "so_no_braco_interferencia"
+        else:
+            interp = "plano"
+        r["ref4_vs_R0b"] = {"arm_p50_change_pct": d["p50_change_pct"], "arm_p50_mk_p": d["p50_mk_p"],
+                            "R0b_p50_change_pct": c["p50_change_pct"], "R0b_p50_mk_p": c["p50_mk_p"],
+                            "interpretacao": interp}
+
+
+def ref4_diag_str(r):
+    d, v = r.get("ref4_diag") or {}, r.get("ref4_vs_R0b")
+    s = f"ref4_diag[p50={fmt(d.get('p50_change_pct'), 1)}% p={fmt(d.get('p50_mk_p'), 5)}"
+    if v:
+        s += f" R0b={fmt(v['R0b_p50_change_pct'], 1)}% -> {v['interpretacao']}"
+    return s + "]"
+
+
 def cmd_confirm(a):
     """As quatro rodadas do campaign.yaml do Cesar em paralelo (um slot cada):
     detect: R0, R0b, R1 (F1_targeted_v1 padrão, instrumented) e o candidato congelado pelo humano;
@@ -540,6 +572,7 @@ def cmd_confirm(a):
                 {"label": "R0b", "app_dir": INSTRUMENTED, "spec": matched, "seed": a.seed}]
     res = run_arms(arms, minutes, run_dir, a.smoke)
     rows = list(res.values())
+    ref4_vs_control(rows)
     rec = {"event": f"confirm-{a.phase}", "run_id": run_id, "commit": git_head(), "smoke": a.smoke,
            "minutes": minutes, "seed": a.seed, "arms": rows}
     (run_dir / "round.json").write_text(json.dumps(rec, indent=1, ensure_ascii=False))
@@ -570,6 +603,7 @@ def cmd_controls(a):
         ev["flat"] = bool(ev.get("valid") and not ev.get("latency_up") and not ev.get("bytes_up")
                           and not ev.get("rss_upward_significant"))
         rows.append(ev)
+    ref4_vs_control(rows)
     rec = {"event": "controls", "run_id": run_id, "commit": git_head(), "smoke": a.smoke,
            "minutes": minutes, "seed": a.seed, "arms": rows}
     (run_dir / "round.json").write_text(json.dumps(rec, indent=1, ensure_ascii=False))
@@ -590,7 +624,7 @@ def print_controls(run_id, rows):
               f"hot_lat_change={fmt(lat.get('sen_change_pct'), 1)}% hr_p={fmt(lat.get('mk_p_upward'), 5)} "
               f"bytes_change={fmt(byt.get('sen_change_pct'), 1)}% rss_slope={fmt(rss.get('sen_slope_per_h'))} "
               f"rss_mk_p={fmt(rss.get('mk_p_upward'), 5)} req={r.get('requests')} db_rows={r.get('db_rows')} "
-              f"flags={','.join(r.get('flags', [])) or '-'}")
+              f"{ref4_diag_str(r)} flags={','.join(r.get('flags', [])) or '-'}")
 
 
 def cmd_rehash(a):
