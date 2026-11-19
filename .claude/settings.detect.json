@@ -55,9 +55,6 @@
    "Bash(python prepare.py freeze:*)",
    "Bash(python prepare.py confirm:*)",
    "Bash(python prepare.py rehash:*)",
-   "Bash(python prepare.py control:*)",
-   "Bash(npm:*)",
-   "Bash(node:*)",
    "Bash(pip:*)",
    "Bash(curl:*)",
    "Bash(wget:*)",
@@ -69,7 +66,18 @@
    "Edit(./candidates/**)",
    "Write(./candidates/**)",
    "Bash(python prepare.py repair:*)",
-   "Bash(python prepare.py promote:*)"
+   "Bash(python prepare.py promote:*)",
+   "Bash(python prepare.py controls:*)",
+   "Bash(python prepare.py check-oracles:*)",
+   "Read(./apps/credit-card-fastapi/repaired/**)",
+   "Edit(./workloads/**)",
+   "Write(./workloads/**)",
+   "Edit(./findings/**)",
+   "Write(./findings/**)",
+   "Bash(uvicorn:*)",
+   "Bash(python -m:*)",
+   "Bash(python3:*)",
+   "Bash(.cache/venv/bin/python:*)"
   ]
  }
 }
