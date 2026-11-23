@@ -38,8 +38,6 @@ crescendo com o tempo, com o tamanho da resposta crescendo junto, enquanto os co
 
 - Editar `prepare.py`, `harness/`, `oracle/`, `apps/`, `workloads/`, `findings/`, `frozen/`, `.judge/`,
   `.claude/` ou este arquivo. O juiz confere hashes a cada rodada e aborta se algum mudar (`H5`).
-- Ler `oracle/hidden/`, os testes escondidos fora do repositório ou `apps/credit-card-fastapi/repaired/`
-  (a correção de referência do Cesar, que serve só para o humano comparar na campanha 2).
 - Escrever em `workload.py` qualquer coisa além de docstring e `NOME = <literal>`: nada de `import`,
   função, chamada, `lambda`, compreensão ou expressão. O juiz lê o arquivo como dados (`ast.literal_eval`);
   uma violação invalida a rodada inteira (flag D3). `seed`, `base_url`, `duration`, `out` e `timeout`
@@ -78,7 +76,8 @@ crescendo com o tempo, com o tamanho da resposta crescendo junto, enquanto os co
 - **O aging do F1 é misto:** (1) custo alto por cartão em cada leitura do telefone quente; (2) pico de memória ao
   materializar respostas grandes; (3) interferência: o processo trava ~150 ms ou mais a cada leitura grande e
   atrasa as outras requisições (`associate_card`, `retrieve_ref4`). A detecção mede (1) e (2) pela latência e pelo
-  tamanho de resposta de `retrieve_hot` e pelo RSS; a interferência entra no critério do reparo.
+  tamanho de resposta de `retrieve_hot` e pelo RSS; a interferência (p95 de `associate_card` e `retrieve_ref4`)
+  é registrada como diagnóstico.
 
 ## Travas contra reward hacking (o juiz aplica, você respeita)
 
@@ -169,8 +168,8 @@ com menos `args` fora do padrão. Complexidade gratuita não vale.
 ## Honestidade dos registros
 
 - Timestamps do ledger vêm de `date -Iseconds`. Nunca invente horários.
-- Não declare melhoria maior que o ruído. Se existir `results/<run_controls>/round.json` (`prepare.py controls`)
-  ou um teste A/A (`workload_aa.py`), compare com a dispersão entre as cópias idênticas antes de afirmar um efeito.
+- Não declare melhoria maior que o ruído. Se existir `results/<run_controls>/round.json` (`prepare.py controls`),
+  compare com a dispersão entre os controles antes de afirmar um efeito.
 - Runs `--smoke` (2 min) servem só para testar o fluxo. Não tire conclusões a partir delas.
 - Nunca reutilize uma semente nem pule uma para "refazer" uma rodada ruim.
 
@@ -192,5 +191,5 @@ Pare e escreva `summary_detect.md` com:
 
 Não declare aging confirmado. A confirmação é humana, depois da campanha: o humano congela o candidato
 (`prepare.py freeze`) e roda `prepare.py confirm --phase detect` **duas vezes, com sementes distintas** (201 e
-202), cada uma com as quatro rodadas R0, R0b, R1 e o candidato, 8 h, banco limpo. O aging só é confirmado, e o
-reparo só é liberado, se **as duas** passarem (ver `updates/criterio-de-deteccao.md`, seção 4).
+202), cada uma com as quatro rodadas R0, R0b, R1 e o candidato, 8 h, banco limpo. O aging só é confirmado se
+**as duas** passarem (ver `program.md`, Fase 2). Esta versão não tem campanha de reparo.

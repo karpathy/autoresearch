@@ -4,6 +4,7 @@ Uma nota por mudança relevante, mais recente no topo. Cada nota diz o que mudou
 
 | Data | Nota | Resumo |
 |---|---|---|
+| 2026-11-23 | [2026-11-23_somente-deteccao.md](2026-11-23_somente-deteccao.md) | **Versão só de detecção**: reparo, portões, R2 e testes escondidos removidos (decisão com o Cesar em 22/11) |
 | 2026-11-19 | [2026-11-19_confirmacao-duas-execucoes.md](2026-11-19_confirmacao-duas-execucoes.md) | **Confirmação de 8 h em duas execuções** (sementes 201 e 202); reparo só se as duas passarem |
 | 2026-11-19 | [2026-11-19_semente-por-rodada.md](2026-11-19_semente-por-rodada.md) | **Semente diferente por rodada de detecção (101–108)** e keep pela razão contra a referência da rodada |
 | 2026-11-19 | [contexto.md](contexto.md) | **Resumo do contexto para retomar o trabalho** (pedido, decisões, próximos passos) |

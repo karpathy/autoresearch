@@ -9,7 +9,6 @@
   "workloads/bax-fastapi-credit-card-F1_control.py",
   "workloads/bax-fastapi-credit-card-F1_targeted_v1.md",
   "workloads/bax-fastapi-credit-card-F1_targeted_v1.py",
-  "apps/credit-card-fastapi/instrumented",
-  "apps/credit-card-fastapi/repaired"
+  "apps/credit-card-fastapi/instrumented"
  ]
 }

@@ -189,16 +189,18 @@ exigida pela spec).
 
 ## 9. Mudanças no repositório
 
-**Remover ou desativar (reparo):**
+**Remover (feito na branch `deteccao-f1`):**
 
-- `program_repair.md`, `.claude/settings.repair.json`;
-- comandos `repair`, `repair-init`, `promote` e `confirm --phase repair` em `prepare.py`; `score_repair`,
-  `interference_check`, `diff_lines`, `reference_replay` e os parâmetros `FIXED_MIN_REDUCTION` e `FIXED_P95_TOL`;
-- portões de reparo em `harness/gates.py` (o `functional_and_hidden` continua só no `check-oracles`, sem os testes
-  escondidos);
-- `apps/credit-card-fastapi/repaired` do manifesto e das cópias do `setup`;
-- testes escondidos (`~/.aging-hidden`) do manifesto;
-- `tests/test_repair_fixed.py`.
+- `program_repair.md`, `.claude/settings.repair.json`, `apps/credit-card-fastapi/repaired/`,
+  `tests/test_repair_fixed.py`, `workload_aa.py` e `docs/METODOLOGIA.md` (desenho antigo, com reparo);
+- em `prepare.py`: comandos `repair`, `repair-init`, `promote` e `confirm --phase repair`; `score_repair`,
+  `interference_check`, `diff_lines`, `reference_replay`; o `repaired/` no `setup`, no `check-oracles` e no
+  manifesto; os testes escondidos (`~/.aging-hidden`) no manifesto;
+- `harness/gates.py` substituído por `harness/functional_check.py` (só o teste funcional do Cesar, usado pelo
+  `check-oracles`);
+- em `harness/evaluate.py`: `FIXED_MIN_REDUCTION` e `FIXED_P95_TOL` (a medida de interferência continua, como
+  diagnóstico e para a Fase 4);
+- `run_campaign.sh` aceita só a fase `detect`; permissões e `.gitignore` sem as entradas do reparo.
 
 **Adicionar:**
 
@@ -217,8 +219,8 @@ exigida pela spec).
 - `program_detect.md`: N_MIN rodadas sem parada antecipada; congelar e confirmar deixam de ser instruções ao
   humano; o agente não lê o código da app nem o card do F1 (se isso for decidido);
 - `.claude/settings.detect.json`: negar leitura de `apps/` e `findings/` (se decidido);
-- `README.md`, `docs/METODOLOGIA.md`, `updates/criterio-de-deteccao.md` e a figura: tirar o reparo e incluir o
-  orquestrador e a Fase 4.
+- `updates/criterio-de-deteccao.md` e a figura: tirar o reparo e incluir o orquestrador e a Fase 4 (o `README.md`
+  já foi ajustado).
 
 ## 10. Limitações
 

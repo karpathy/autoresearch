@@ -22,17 +22,8 @@ MIN_LATENCY_CHANGE_PCT = 50.0   # latência de retrieve_hot: mudança implícita
 MAX_REF_CHANGE_PCT = 25.0       # controle interno: acima disso, drift global e não crescimento por linha
 CHECKPOINT_MIN = 5           # para calcular o tempo até a detecção
 
-# ---- Critério de "fixed" do reparo (parâmetros PROVISÓRIOS, NÃO calibrados) ----
-# O reparo do Cesar (apps/credit-card-fastapi/repaired/), que fica dentro da spec, reduziu a inclinação da
-# latência de retrieve_hot em ~43% (8 h, dado do Cesar). Parte dessa latência cresce por design (a resposta
-# tem que trazer todos os cartões), então exigir 80% (regra antiga) reprovava todo reparo válido.
-# Conta: FIXED_MIN_REDUCTION = 0,43 (redução do repaired/) x 0,7 (folga de 30% para ruído entre sementes e
-# rodadas de 60 min, ainda não medido) = 0,301 -> 0,30. Calibrar com uma rodada de reparo com o repaired/ como
-# candidato (redução e dispersão em 60 min) antes de usar o fixed como resultado.
-FIXED_MIN_REDUCTION = 0.30
-# Interferência: p95 de associate_card e de retrieve_ref4 do candidato <= p95 do original x (1 + tolerância),
-# na mesma rodada e semente. 10%: provisório, NÃO calibrado (evita reprovar um bom reparo por poucos ms de ruído).
-FIXED_P95_TOL = 0.10
+# Interferência (diagnóstico): p95 por janela de associate_card e retrieve_ref4, que as leituras grandes do
+# telefone quente atrasam. Medida em todo braço; usada na investigação de causas (program.md, Fase 4).
 INTERFERENCE_EPS = ("associate_card", "retrieve_ref4")
 INTERFERENCE_TAIL_MIN = 60.0   # nível = mediana dos p95 por janela na última hora (ou na última metade, se menor)
 HOT = "retrieve_hot"
@@ -194,7 +185,7 @@ def evaluate_arm(name, probe, client_rows, t0, load, db_state, pids_seen, alive_
     out["ref4_diag"] = {"p50_change_pct": r4["p50"].get("sen_change_pct"), "p50_mk_p": r4["p50"].get("mk_p_upward"),
                         "p95_change_pct": r4["p95"].get("sen_change_pct"), "p95_mk_p": r4["p95"].get("mk_p_upward"),
                         "up": r4["p50"].get("mk_p_upward", 1.0) < ALPHA}
-    # interferência (critério do reparo): p95 por janela de 60 s de associate_card e retrieve_ref4 ao longo da
+    # interferência (diagnóstico; Fase 4 do program.md): p95 por janela de 60 s de associate_card e retrieve_ref4 ao longo da
     # execução inteira, com tendência (Sen) e nível final (mediana dos p95 na última hora ou na última metade)
     out["interference"] = {}
     for ep in INTERFERENCE_EPS:

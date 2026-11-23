@@ -3,9 +3,7 @@ results.tsv
 ledger.jsonl
 logs/
 .cache/
-.judge/replay_ref_*.json
 __pycache__/
 *.pyc
 .claude/settings.json
-oracle/hidden/
 .claude/settings.local.json

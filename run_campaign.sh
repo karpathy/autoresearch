@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Lança uma campanha com o Claude Code em modo headless.
-# Uso: ./run_campaign.sh detect <tag>    |    ./run_campaign.sh repair <tag>
+# Uso: ./run_campaign.sh detect <tag>   (esta versão é só de detecção; ver program.md)
 set -euo pipefail
-PHASE="${1:?detect|repair}"; TAG="${2:?tag da campanha}"
+PHASE="${1:?detect}"; TAG="${2:?tag da campanha}"
+[ "$PHASE" = "detect" ] || { echo "fase desconhecida: $PHASE (só detect)"; exit 2; }
 cd "$(dirname "$0")"
 python prepare.py verify
 cp ".claude/settings.${PHASE}.json" .claude/settings.json
