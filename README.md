@@ -20,6 +20,7 @@ Responsáveis: Rafael, Cesar e Ermeson (UFRPE). Colaboração com Fumio Machida 
 |---|---|---|
 | [`program.md`](program.md) | o agente | só as instruções de execução e as regras das campanhas `detect` e `causas` |
 | [`docs/DESENHO-EXPERIMENTAL.md`](docs/DESENHO-EXPERIMENTAL.md) | as pessoas do projeto | perguntas de pesquisa, fases, critérios, parâmetros, custo, limitações |
+| [`docs/AMEACAS-A-VALIDADE.md`](docs/AMEACAS-A-VALIDADE.md) | as pessoas do projeto | prováveis ameaças à validade e o que falta mitigar |
 | [`updates/`](updates/README.md) | as pessoas do projeto | uma nota por mudança, com o porquê |
 
 ## Fluxo do experimento
