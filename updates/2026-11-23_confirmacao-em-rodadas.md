@@ -13,7 +13,7 @@ Humano dispara
  └─ Campanha de detecção: até 8 rodadas de 60 min
       Rodada n: uma carga dá aging
       Rodadas n+1 e n+2: repetem essa carga (verificação)
-        ├─ as 3 rodadas dão aging ──► aging confirmado + carga congelada
+        ├─ as 3 rodadas dão aging ──► aging confirmado + carga congelada (a detecção para aqui)
         │     └─ Campanha de causas: variações de um fator contra a carga confirmada ──► relatório final
         └─ alguma não dá aging ──► a campanha volta a procurar nas rodadas que restam
       Fim do orçamento sem confirmar ──► relatório: aging não confirmado
@@ -32,8 +32,8 @@ pelo humano). A referência é a carga confirmada; o resto segue a nota
 
 ## Pontos a fechar antes de implementar
 
-1. **Ao confirmar, a detecção para** e passa para as causas, ou continua até as 8 rodadas procurando uma carga
-   mais forte?
+1. ~~Ao confirmar, a detecção para?~~ **Decidido (Rafael, 23/11): sim.** Ao confirmar, a campanha de detecção
+   termina e o orquestrador dispara a campanha de causas.
 2. **Orçamento:** se o aging aparecer tarde (rodada 7 ou 8), permitir que as 2 rodadas de verificação passem das 8
    (até 10). Recomendado.
 3. **Controles R0 e R0b** nas rodadas de verificação: recomendado (é o que cumpre "R1 e seus controles com a
