@@ -128,18 +128,18 @@ def evaluate_arm(name, probe, client_rows, t0, load, db_state, pids_seen, alive_
 
     probe_pids = {r.get("pid") for r in probe}
     if load.get("violation") or load.get("script_exit") not in (0, None):
-        flags.append("D3_fora_do_contrato")
+        flags.append("D3_out_of_contract")
     if (load["exception_rate"] > MAX_EXCEPTION_RATE or load["server_error_rate"] > MAX_SERVER_ERROR_RATE
             or (load.get("loadgen_cpu_p95") or 0) > MAX_LOADGEN_CPU):
-        flags.append("D1_saturacao_ou_erros")
+        flags.append("D1_saturation_or_errors")
     if not alive_at_end or len(probe_pids | set(pids_seen)) > 1:
-        flags.append("H4_processo_reiniciado_ou_morto")
+        flags.append("H4_process_restarted_or_dead")
     if max_children > 0:
         # Só o PID principal é medido: memória em filhos escapa do RSS e um filho
         # reciclado é rejuvenescimento, não correção.
-        flags.append("H4_processo_filho")
+        flags.append("H4_child_process")
     if len(probe) < 10:
-        flags.append("sem_amostras_suficientes")
+        flags.append("insufficient_samples")
 
     # --- servidor: RSS (MK + Sen) ---
     x, y = _series(probe, "rss", warm)
@@ -185,7 +185,7 @@ def evaluate_arm(name, probe, client_rows, t0, load, db_state, pids_seen, alive_
     refs_up = [f"{ep}.{m}" for ep, m in C1_SIGNALS if significant_up(ep_tr[ep][m], MAX_REF_CHANGE_PCT)]
     out["internal_control_flat"] = not refs_up
     if refs_up:
-        flags.append("C1_referencia_interna_subindo:" + ",".join(refs_up))
+        flags.append("C1_internal_reference_rising:" + ",".join(refs_up))
     # diagnóstico, sem efeito na nota: a latência do ref4 (sobe no R1 por interferência, não por deriva)
     r4 = ep_tr["retrieve_ref4"]
     out["ref4_diag"] = {"p50_change_pct": r4["p50"].get("sen_change_pct"), "p50_mk_p": r4["p50"].get("mk_p_upward"),
@@ -202,7 +202,7 @@ def evaluate_arm(name, probe, client_rows, t0, load, db_state, pids_seen, alive_
                                    "p95_sen_per_h": ep_tr[ep]["p95"].get("sen_slope_per_h"),
                                    "p95_change_pct": ep_tr[ep]["p95"].get("sen_change_pct")}
     if len(ep_tr[hot_ep]["_p50_series"][0]) < 5:
-        flags.append("sem_janelas_do_cliente")
+        flags.append("no_client_windows")
 
     # --- banco: linhas (D2 só se o finding a mantiver) ---
     rows = sum((db_state or {}).get("counts", {}).values()) if db_state else 0
@@ -211,7 +211,7 @@ def evaluate_arm(name, probe, client_rows, t0, load, db_state, pids_seen, alive_
     pol = d2_policy(finding)
     out["d2_enabled"] = pol["enabled"]
     if pol["enabled"] and rows > pol["max_rows"]:
-        flags.append("D2_crescimento_de_estado_legitimo")
+        flags.append("D2_legitimate_state_growth")
 
     out["flags"] = flags
     out["valid"] = not any(f.startswith(("D1", "D3", "H4", "sem_")) for f in flags)

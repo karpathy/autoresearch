@@ -38,7 +38,7 @@ rodada, ou o contrário. Já está em Pendências, mas é ameaça à validade do
 
 **P3 — O gerador depende do estado.** O `Pacer` (`F1_targeted_v1.py:42-63`) descarta slots perdidos quando o
 servidor atrasa: a taxa realizada cai justamente quando o sistema degrada (menos linhas inseridas, menos
-sondas). Não é malha fechada pura, mas a carga deixa de ser controlada. *Correção:* reportar por braço a taxa
+sondas). O gerador é malha fechada com ritmo fixo (workers fixos, docstring do script); a carga deixa de ser controlada. *Correção:* reportar por braço a taxa
 realizada/planejada de cada fluxo e invalidar (ou marcar) abaixo de ~90%.
 
 **P4 — Limiares sem calibração e mudança implícita dependente da duração.**

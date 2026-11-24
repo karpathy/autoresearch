@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from harness import orchestrator as O  # noqa: E402
 from harness.load import normalize_args  # noqa: E402
 
-REF = "F1_targeted_v1_referencia"
+REF = "F1_targeted_v1_reference"
 
 
 class Sim:
@@ -32,7 +32,7 @@ class Sim:
 
     def agent_round(self, kind, round, seed, campaign_n=None):
         self.calls.append((kind, round, seed, campaign_n))
-        if kind == "causas":
+        if kind == "causes":
             return {"run_id": f"causes-{campaign_n}-{round}", "arms": [], "candidates": {}}
         name = self.eligible_at.get(round)
         arms = [{"arm": REF, "score_eligible": True}]
@@ -45,7 +45,7 @@ class Sim:
 
     def run_check(self, spec, seed):
         self.calls.append(("check", spec["name"], seed))
-        return {"run_id": f"check-{seed}", "decision": self.checks.pop(0) if self.checks else "negativa"}
+        return {"run_id": f"check-{seed}", "decision": self.checks.pop(0) if self.checks else "negative"}
 
     def freeze(self, spec, source):
         self.calls.append(("freeze", spec["name"]))
@@ -62,87 +62,87 @@ def kinds(sim, kind):
     return [c for c in sim.calls if c[0] == kind]
 
 
-def test_fase0_falha_para_antes_da_busca():
+def test_phase0_failure_stops_before_search():
     sim = Sim(controls_ok=False)
     st = sim.orch().run()
-    assert st["status"] == "sem_calibracao" and not kinds(sim, "detect"), sim.calls
+    assert st["status"] == "no_calibration" and not kinds(sim, "detect"), sim.calls
 
 
-def test_sem_aging_roda_8_buscas():
+def test_no_aging_runs_8_searches():
     sim = Sim()
     st = sim.orch().run()
     det = kinds(sim, "detect")
-    assert st["status"] == "aging_nao_confirmado"
+    assert st["status"] == "aging_not_confirmed"
     assert [c[1] for c in det] == list(range(1, 9)) and [c[2] for c in det] == list(range(101, 109))
     assert not kinds(sim, "check") and ("summary", "detect", None) in sim.calls
 
 
-def test_confirma_na_rodada_2_roda_causas_e_retoma():
-    sim = Sim(eligible_at={2: "c2"}, checks=["positiva", "positiva"])
+def test_confirms_in_round_2_runs_causes_and_resumes():
+    sim = Sim(eligible_at={2: "c2"}, checks=["positive", "positive"])
     st = sim.orch().run()
-    assert st["status"] == "aging_confirmado"
+    assert st["status"] == "aging_confirmed"
     assert [c[2] for c in kinds(sim, "check")] == [103, 104]           # verificação nas rodadas 3 e 4
     assert ("freeze", "c2") in sim.calls
-    causas = kinds(sim, "causas")
-    assert len(causas) == 6 and [c[2] for c in causas] == list(range(301, 307))
+    causes_calls = kinds(sim, "causes")
+    assert len(causes_calls) == 6 and [c[2] for c in causes_calls] == list(range(301, 307))
     assert [c[1] for c in kinds(sim, "detect")] == [1, 2, 5, 6, 7, 8]  # retoma nas rodadas que restam
     order = [c[0] for c in sim.calls]
-    assert order.index("causas") < max(i for i, k in enumerate(order) if k == "detect")  # causas antes da retomada
-    assert ("summary", "causas", 1) in sim.calls
+    assert order.index("causes") < max(i for i, k in enumerate(order) if k == "detect")  # causes antes da retomada
+    assert ("summary", "causes", 1) in sim.calls
 
 
-def test_verificacao_negativa_volta_a_busca():
-    sim = Sim(eligible_at={3: "c3"}, checks=["positiva", "negativa"])
+def test_negative_verification_returns_to_search():
+    sim = Sim(eligible_at={3: "c3"}, checks=["positive", "negative"])
     st = sim.orch().run()
-    assert st["status"] == "aging_nao_confirmado" and not kinds(sim, "causas")
+    assert st["status"] == "aging_not_confirmed" and not kinds(sim, "causes")
     assert [c[1] for c in kinds(sim, "detect")] == [1, 2, 3, 6, 7, 8]
 
 
 def test_aging_tarde_estende_ate_10():
-    sim = Sim(eligible_at={8: "c8"}, checks=["positiva", "positiva"])
+    sim = Sim(eligible_at={8: "c8"}, checks=["positive", "positive"])
     st = sim.orch().run()
-    assert st["status"] == "aging_confirmado"
+    assert st["status"] == "aging_confirmed"
     assert [c[2] for c in kinds(sim, "check")] == [109, 110]
 
 
-def test_sem_orcamento_para_verificar():
+def test_no_budget_to_verify():
     # elegível na 8, verificação 9 inválida, repetição 10 positiva, mas falta a segunda positiva (rodada 11)
-    sim = Sim(eligible_at={8: "c8"}, checks=["invalida", "positiva"])
+    sim = Sim(eligible_at={8: "c8"}, checks=["invalid", "positive"])
     st = sim.orch().run()
-    assert st["status"] == "aging_nao_confirmado"
+    assert st["status"] == "aging_not_confirmed"
     assert [c[2] for c in kinds(sim, "check")] == [109, 110]
-    assert st["rounds"][-1]["decision"] == "sem_orcamento"
+    assert st["rounds"][-1]["decision"] == "no_budget"
 
 
 def test_invalida_repete_uma_vez():
-    sim = Sim(eligible_at={1: "c1"}, checks=["invalida", "positiva", "positiva"])
+    sim = Sim(eligible_at={1: "c1"}, checks=["invalid", "positive", "positive"])
     st = sim.orch().run()
-    assert st["status"] == "aging_confirmado" and [c[2] for c in kinds(sim, "check")] == [102, 103, 104]
+    assert st["status"] == "aging_confirmed" and [c[2] for c in kinds(sim, "check")] == [102, 103, 104]
 
 
-def test_duas_invalidas_nao_confirma():
-    sim = Sim(eligible_at={1: "c1"}, checks=["invalida", "invalida"])
+def test_two_invalid_do_not_confirm():
+    sim = Sim(eligible_at={1: "c1"}, checks=["invalid", "invalid"])
     st = sim.orch().run()
-    assert st["status"] == "aging_nao_confirmado" and len(kinds(sim, "check")) == 2
+    assert st["status"] == "aging_not_confirmed" and len(kinds(sim, "check")) == 2
 
 
-def test_segunda_carga_confirmada_ganha_campanha_propria():
-    sim = Sim(eligible_at={1: "a", 4: "b"}, checks=["positiva"] * 4,
+def test_second_confirmed_workload_gets_own_campaign():
+    sim = Sim(eligible_at={1: "a", 4: "b"}, checks=["positive"] * 4,
               args={"a": {"new_pair_rate": 15.0}, "b": {"new_pair_rate": 18.0}})
     st = sim.orch().run()
     assert [c["load"]["name"] for c in st["confirmed"]] == ["a", "b"]
-    seeds = [c[2] for c in kinds(sim, "causas")]
+    seeds = [c[2] for c in kinds(sim, "causes")]
     assert seeds == list(range(301, 307)) + list(range(311, 317))
 
 
-def test_mesma_carga_ja_confirmada_nao_reverifica():
-    sim = Sim(eligible_at={1: "a", 4: "a2"}, checks=["positiva"] * 4,
+def test_already_confirmed_workload_not_reverified():
+    sim = Sim(eligible_at={1: "a", 4: "a2"}, checks=["positive"] * 4,
               args={"a": {"new_pair_rate": 15.0}, "a2": {"new_pair_rate": 15.0}})
     st = sim.orch().run()
     assert len(st["confirmed"]) == 1 and len(kinds(sim, "check")) == 2
 
 
-def test_rodada_do_agente_que_falha_consome_a_semente():
+def test_failed_agent_round_consumes_seed():
     class S(Sim):
         def agent_round(self, kind, round, seed, campaign_n=None):
             if kind == "detect" and round == 2:
@@ -151,33 +151,33 @@ def test_rodada_do_agente_que_falha_consome_a_semente():
             return super().agent_round(kind, round, seed, campaign_n)
     sim = S()
     st = sim.orch().run()
-    assert [r["status"] for r in st["rounds"]][1] == "falhou" and len(kinds(sim, "detect")) == 8
+    assert [r["status"] for r in st["rounds"]][1] == "failed" and len(kinds(sim, "detect")) == 8
 
 
-def test_decisao_da_verificacao():
+def test_verification_decision():
     import prepare
 
     def arm(name, valid=True, eligible=False, lat=False, byt=False, rss=False):
         return {"arm": name, "valid": valid, "score_eligible": eligible, "latency_up": lat, "bytes_up": byt,
                 "rss_upward_significant": rss}
-    ok = [arm("R1", eligible=True), arm("carga", eligible=True), arm("R0"), arm("R0b")]
-    assert prepare.check_decision(ok) == "positiva"
-    assert prepare.check_decision([arm("R1", eligible=True), arm("carga"), arm("R0"), arm("R0b")]) == "negativa"
-    assert prepare.check_decision([arm("R1", eligible=True), arm("carga", eligible=True), arm("R0", lat=True),
-                                   arm("R0b")]) == "negativa"
-    assert prepare.check_decision([arm("R1", eligible=True), arm("carga", eligible=True), arm("R0"),
-                                   arm("R0b", valid=False)]) == "invalida"
+    ok = [arm("R1", eligible=True), arm("workload", eligible=True), arm("R0"), arm("R0b")]
+    assert prepare.check_decision(ok) == "positive"
+    assert prepare.check_decision([arm("R1", eligible=True), arm("workload"), arm("R0"), arm("R0b")]) == "negative"
+    assert prepare.check_decision([arm("R1", eligible=True), arm("workload", eligible=True), arm("R0", lat=True),
+                                   arm("R0b")]) == "negative"
+    assert prepare.check_decision([arm("R1", eligible=True), arm("workload", eligible=True), arm("R0"),
+                                   arm("R0b", valid=False)]) == "invalid"
     assert prepare.controls_ok([dict(arm("R0"), flat=True), dict(arm("R0b"), flat=True),
                                 arm("R1", eligible=True)])
     assert not prepare.controls_ok([dict(arm("R0"), flat=False), dict(arm("R0b"), flat=True),
                                     arm("R1", eligible=True)])
 
 
-def test_relatorio():
-    sim = Sim(eligible_at={2: "c2"}, checks=["positiva", "positiva"])
+def test_report():
+    sim = Sim(eligible_at={2: "c2"}, checks=["positive", "positive"])
     st = sim.orch().run()
     md = O.report_markdown(st, "teste")
-    assert "aging_confirmado" in md and "c2" in md and "summary_causas_1.md" in md
+    assert "aging_confirmed" in md and "c2" in md and "summary_causes_1.md" in md
 
 
 if __name__ == "__main__":

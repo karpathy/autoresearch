@@ -58,7 +58,7 @@ R0b planos. Veredito: `ACTIVATED_WITH_AGING`, aging misto (custo por cartão, pi
 ```mermaid
 flowchart TD
     H[Humano dispara: ./run_experiment.sh tag] --> A
-    A[Fase 0. Controles 60 min: R0, R0b, R1] -- R0 ou R0b sobem, ou R1 não sobe --> X0[Fim: sem_calibracao]
+    A[Fase 0. Controles 60 min: R0, R0b, R1] -- R0 ou R0b sobem, ou R1 não sobe --> X0[Fim: no_calibration]
     A -- ok --> B[Rodada de busca do agente: R1 + até 3 candidatos]
     B -- nenhum candidato elegível --> N{Rodadas de busca restantes?}
     B -- candidato elegível --> V[2 rodadas de verificação: R1, carga, R0, R0b, mesma semente]
@@ -72,7 +72,7 @@ flowchart TD
 
 Tudo depois do disparo roda sem intervenção humana. Quem decide cada passagem é o **orquestrador**
 (`harness/orchestrator.py`, `prepare.py experiment`), código fixo com hash no manifesto. O agente só propõe cargas,
-uma rodada por chamada, nas campanhas `detect` e `causas`, e escreve os resumos.
+uma rodada por chamada, nas campanhas `detect` e `causes`, e escreve os resumos.
 
 ### Rodadas e sementes
 
@@ -83,14 +83,14 @@ As rodadas são numeradas em sequência, e a rodada *n* usa a semente 100 + *n* 
 | Fase 0 | juiz | R0, R0b, R1 | 1 rodada, semente 100 |
 | Busca | agente (`detect`) | referência (R1) + até 3 candidatos | até a rodada 8 |
 | Verificação | juiz | R1, a carga candidata, R0, R0b | até a rodada 10 |
-| Causas | agente (`causas`) | carga confirmada + até 3 variações | 6 rodadas por carga; campanha *j*, rodada *r*: semente 300 + 10(*j*−1) + *r* |
+| Causas | agente (`causes`) | carga confirmada + até 3 variações | 6 rodadas por carga; campanha *j*, rodada *r*: semente 300 + 10(*j*−1) + *r* |
 
 ### Fase 0. Controles negativos (calibração)
 
 - **Juiz:** `run_controls`, 60 min, R0, R0b e R1 em paralelo, semente 100.
 - **Passa se:** R0 e R0b com `flat = True` (válidos e sem latência, tamanho ou RSS subindo) **e** R1 com
   `score_eligible = True`.
-- **Falha:** o experimento termina com `sem_calibracao`; nenhuma detecção posterior valeria.
+- **Falha:** o experimento termina com `no_calibration`; nenhuma detecção posterior valeria.
 
 ### Busca (agente, campanha `detect`)
 
@@ -107,18 +107,18 @@ As rodadas são numeradas em sequência, e a rodada *n* usa a semente 100 + *n* 
 
 - **2 rodadas**, nas rodadas seguintes à busca que achou a carga: R1, a carga, R0 e R0b, com a mesma semente,
   banco limpo, 60 min (a mesma duração da rodada que se confirma).
-- **Decisão automática** (`prepare.check_decision`): `invalida` se algum braço for inválido (infraestrutura);
-  `positiva` se R0 e R0b ficarem planos e R1 e a carga forem elegíveis; `negativa` nos outros casos.
-- **Confirmado** quando as 2 rodadas dão `positiva` (com a rodada que achou a carga, 3 de 3). Uma `invalida` é
-  repetida uma vez; uma `negativa` encerra a verificação e a busca continua.
+- **Decisão automática** (`prepare.check_decision`): `invalid` se algum braço for inválido (infraestrutura);
+  `positive` se R0 e R0b ficarem planos e R1 e a carga forem elegíveis; `negative` nos outros casos.
+- **Confirmado** quando as 2 rodadas dão `positive` (com a rodada que achou a carga, 3 de 3). Uma `invalid` é
+  repetida uma vez; uma `negative` encerra a verificação e a busca continua.
 - **Orçamento:** a verificação pode passar da rodada 8, até a rodada 10. Se não couber, a carga fica sem
-  confirmar (`sem_orcamento`).
+  confirmar (`no_budget`).
 
-### Causas (agente, campanha `causas`)
+### Causas (agente, campanha `causes`)
 
 - **Disparo:** logo após a confirmação, o orquestrador congela a carga (`frozen/workload_frozen.py`) e chama o agente
   para 6 rodadas e um resumo. **Toda carga confirmada ganha a sua campanha.**
-- **Referência:** a carga congelada (`referencia_congelada`). **Variações:** até 3 por rodada, cada uma mudando
+- **Referência:** a carga congelada (`frozen_reference`). **Variações:** até 3 por rodada, cada uma mudando
   **exatamente um** `arg` (o juiz recusa as outras, D3), com **duas réplicas** de sementes diferentes.
 - **Medidas** (razão variação ÷ referência da mesma rodada): `lat_ratio`, `bytes_ratio`, `cost_ratio` (custo por
   MB), `assoc_p95_ratio` e `ref4_p95_ratio`. **Efeito** declarado quando a razão fica do mesmo lado de 1, a pelo
@@ -131,8 +131,8 @@ As rodadas são numeradas em sequência, e a rodada *n* usa a semente 100 + *n* 
 - Terminada a campanha de causas, a busca **retoma** nas rodadas que restam (até a rodada 8).
 - Ao fim do orçamento, o orquestrador pede ao agente o `summary_detect.md` e grava
   `results/experiment-<tag>/state.json` e `relatorio.md` (Fase 0, cada rodada com tipo, semente e decisão, cargas
-  confirmadas e campanhas de causas). Status final: `sem_calibracao`, `aging_nao_confirmado` ou
-  `aging_confirmado`.
+  confirmadas e campanhas de causas). Status final: `no_calibration`, `aging_not_confirmed` ou
+  `aging_confirmed`.
 
 ## 5. Medição e critérios (sem mudança em relação ao juiz atual)
 
@@ -177,7 +177,7 @@ exigida pela spec).
 | `MIN_LATENCY_CHANGE_PCT` / `MAX_REF_CHANGE_PCT` | 50% / 25% | `harness/evaluate.py`; provisórios, calibrar com a Fase 0 |
 | `MIN_EFFECT_MB_PER_H` (RSS, secundário) | 5 MB/h | herdado da versão Node; calibrar |
 | Limiar para declarar efeito (causas) | 20% nas duas réplicas | `program.md` |
-| Leitura do agente | só `program.md`, `workload.py`, `frozen/`, `results/` e os próprios registros | `.claude/settings.{detect,causas}.json` |
+| Leitura do agente | só `program.md`, `workload.py`, `frozen/`, `results/` e os próprios registros | `.claude/settings.{detect,causes}.json` |
 
 ## 8. Custo de máquina
 

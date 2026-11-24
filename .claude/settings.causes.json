@@ -19,12 +19,12 @@
    "Write(./workload.py)",
    "Bash(python prepare.py causes:*)",
    "Read(./frozen/**)",
-   "Edit(./results_causas.tsv)",
-   "Write(./results_causas.tsv)",
-   "Edit(./ledger_causas.jsonl)",
-   "Write(./ledger_causas.jsonl)",
-   "Edit(./summary_causas_*.md)",
-   "Write(./summary_causas_*.md)"
+   "Edit(./results_causes.tsv)",
+   "Write(./results_causes.tsv)",
+   "Edit(./ledger_causes.jsonl)",
+   "Write(./ledger_causes.jsonl)",
+   "Edit(./summary_causes_*.md)",
+   "Write(./summary_causes_*.md)"
   ],
   "deny": [
    "Read(./apps/**)",

@@ -115,7 +115,7 @@ def trend_hr(x, y):
             # deixaria passar o tamanho dos refs subindo 40%; ver tests/test_c1.py). Cai para o MK original.
             r = mk.original_test(arr)
             p, z = float(r.p), float(r.z)
-            out["mk_method"] = "original_hr_degenerado"
+            out["mk_method"] = "original_hr_degenerate"
             if p != p:
                 return out
         out["mk_hr_p"], out["mk_hr_z"] = p, z

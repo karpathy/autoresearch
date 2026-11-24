@@ -1,22 +1,22 @@
-"""Juiz fixo do AutoResearch-Aging. O AGENTE NÃO PODE EDITAR ESTE ARQUIVO.
+"""Fixed judge of AutoResearch-Aging. THE AGENT MUST NOT EDIT THIS FILE.
 
-Papel equivalente ao prepare.py do karpathy/autoresearch: medição e avaliação
-fixas. O agente edita só workload.py. Esta versão é só de detecção (ver program.md): não há reparo.
+Same role as prepare.py in karpathy/autoresearch: fixed measurement and evaluation. The agent only edits
+workload.py. This version covers detection and causes only (see program.md); there is no repair.
 
-Comandos (todos a partir da raiz do repositório):
-  python prepare.py setup --src <llm-aging-detection-agents>     # humano, uma vez
-  python prepare.py check-oracles                                  # humano: teste funcional do Cesar na app
-  python prepare.py experiment --tag <tag> [--smoke]               # experimento completo (orquestrador), sem humano
-  -- peças usadas pelo orquestrador (também à mão, para depurar):
-  python prepare.py controls [--minutes 60] [--with-r1]            # Fase 0: R0 e R0b do Cesar (+ R1)
-  python prepare.py detect [--minutes 60] [--seed 101] [--background] # rodada de busca (o agente roda)
-  python prepare.py check-load --run <run_id> --arm <arm> --seed <s> # rodada de verificação (R1, carga, R0, R0b)
-  python prepare.py freeze <run_id> <arm>                          # congela a carga de um braço
-  python prepare.py causes [--minutes 60] [--seed 301] [--background] # rodada de causas (o agente roda)
-  python prepare.py rehash                                         # humano: refaz o manifesto após mudar o juiz
-  python prepare.py wait <run_id>                                  # bloqueia até 9 min
-  python prepare.py verify                                         # confere hashes do juiz
-Use --smoke (2 min) só para checar o fluxo; smoke nunca entra no ranking.
+Commands (run from the repository root):
+  python prepare.py setup --src <llm-aging-detection-agents>          # human, once
+  python prepare.py check-oracles                                       # human: César's functional test on the app
+  python prepare.py experiment --tag <tag> [--smoke]                    # full experiment (orchestrator), no human
+  -- pieces used by the orchestrator (also runnable by hand, for debugging):
+  python prepare.py controls [--minutes 60] [--with-r1]                 # phase 0: R0 and R0b (+ R1)
+  python prepare.py detect [--minutes 60] [--seed 101] [--background]   # search round (run by the agent)
+  python prepare.py check-load --run <run_id> --arm <arm> --seed <s>    # verification round (R1, workload, R0, R0b)
+  python prepare.py freeze <run_id> <arm>                               # freeze the workload of one arm
+  python prepare.py causes [--minutes 60] [--seed 301] [--background]   # causes round (run by the agent)
+  python prepare.py rehash                                              # human: rebuild the manifest after editing the judge
+  python prepare.py wait <run_id>                                       # blocks up to 9 min
+  python prepare.py verify                                              # check the judge hashes
+Use --smoke (2 min) only to check the flow; smoke runs never count.
 """
 
 import argparse
@@ -34,7 +34,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
-# depois do setup, tudo roda no venv travado (mesmas versões do Cesar), mesmo que o agente chame "python prepare.py"
+# After setup, always run inside the pinned venv, even if the agent calls "python prepare.py".
 _VPY = ROOT / ".cache" / "venv" / "bin" / "python"
 if _VPY.exists() and Path(sys.prefix).resolve() != (ROOT / ".cache" / "venv").resolve():
     os.execv(str(_VPY), [str(_VPY), *sys.argv])
@@ -48,11 +48,11 @@ from harness.workload_check import load_workload  # noqa: E402
 
 APP = "credit-card-fastapi"
 APPS = ROOT / "apps" / APP
-INSTRUMENTED = APPS / "instrumented"   # alvo do experimento (código do Cesar + sonda aging_probe.py)
+INSTRUMENTED = APPS / "instrumented"
 VENV = ROOT / ".cache" / "venv"
 VENV_PY = VENV / "bin" / "python"
 CESAR_REPO_DEFAULT = ROOT.parent / "llm-aging-detection-agents"
-# arquivos copiados do repo do Cesar, exatamente como ele os usou (origem -> destino)
+# Files copied unchanged from César's repository (source -> destination).
 CESAR_FILES = {
     "findings/bax-fastapi-credit-card-F1.yaml": "findings/bax-fastapi-credit-card-F1.yaml",
     "apps/credit-card-fastapi/campaign.yaml": "findings/campaign.yaml",
@@ -67,12 +67,15 @@ RESULTS = ROOT / "results"
 JUDGE_DIR = ROOT / ".judge"
 MANIFEST = JUDGE_DIR / "manifest.json"
 JUDGE_LOG = RESULTS / "judge_log.jsonl"
-SLOTS = 4                       # 4 instâncias em paralelo (decisão de 20/10)
-DEFAULT_MINUTES = 60            # janela da reunião: sinal em ~1 h, não 48 h
+SLOTS = 4
+DEFAULT_MINUTES = 60
 FIXED_GLOBS = ["prepare.py", "harness/*.py", "oracle/*.py", "workloads/*.py", "findings/*.yaml"]
+AGENT_TIMEOUT_S = 3 * 3600
+CAUSES_REF = "frozen_reference"
+CHECK_LOAD = "workload"
 
 
-# ---------------------------------------------------------------- integridade
+# ---------------------------------------------------------------- integrity
 def _sha(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 
@@ -107,13 +110,13 @@ def write_manifest():
 
 def verify(quiet=False):
     if not MANIFEST.exists():
-        sys.exit("manifesto ausente: rode 'python prepare.py setup' (humano)")
+        sys.exit("manifest missing: run 'python prepare.py setup' (human)")
     m = json.loads(MANIFEST.read_text())
     now = {_key(p) for p in fixed_files()}
     bad = [k for k, v in m.items() if not _path(k).exists() or _sha(_path(k)) != v]
     bad += sorted(now - set(m))
     if bad:
-        log_judge({"event": "juiz_alterado", "files": bad, "flag": "H5_juiz_ou_oraculo_alterado"})
+        log_judge({"event": "judge_modified", "files": bad, "flag": "H5_judge_or_oracle_modified"})
         sys.exit("ABORTED: fixed files changed -> " + ", ".join(bad))
     if not quiet:
         print("verify: ok", len(m), "fixed files intact")
@@ -141,12 +144,12 @@ def _git_out(repo, *args):
 
 def cmd_setup(a):
     if MANIFEST.exists() and not a.force:
-        sys.exit("setup já feito. Use --force apenas como humano, fora da campanha.")
+        sys.exit("setup already done. Use --force only as a human, outside a campaign.")
     src = Path(a.src).expanduser().resolve()
     cc = src / "apps" / APP
     if not (cc / "instrumented" / "app.py").exists():
-        sys.exit(f"{cc}/instrumented/app.py não encontrado: passe --src <clone de chas42/llm-aging-detection-agents>")
-    # o repo do Cesar é só LIDO; tudo que o juiz usa é copiado para cá e entra no manifesto
+        sys.exit(f"{cc}/instrumented/app.py not found: pass --src <clone of chas42/llm-aging-detection-agents>")
+    # César's repository is only read; everything the judge uses is copied here and hashed.
     if INSTRUMENTED.exists():
         shutil.rmtree(INSTRUMENTED)
     shutil.copytree(cc / "instrumented", INSTRUMENTED, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "db.sqlite3*"))
@@ -156,15 +159,15 @@ def cmd_setup(a):
     try:
         commit, dirty = _git_out(src, "rev-parse", "HEAD"), bool(_git_out(src, "status", "--porcelain"))
     except Exception:
-        commit, dirty = "desconhecido", None
+        commit, dirty = "unknown", None
     (APPS / "SOURCE.json").write_text(json.dumps({
         "repo": "https://github.com/chas42/llm-aging-detection-agents", "commit": commit, "dirty": dirty,
         "copied": sorted(CESAR_FILES) + [f"apps/{APP}/instrumented"]}, indent=1))
-    print("venv travado (requirements.txt da app + dependências do juiz)...")
+    print("pinned venv (app requirements.txt + judge dependencies)...")
     if VENV.exists():
         shutil.rmtree(VENV)
     VENV.parent.mkdir(exist_ok=True)
-    # sem ensurepip (python3-venv ausente) o venv nasce sem pip: instalamos de fora com `pip --python`
+    # Without ensurepip the venv has no pip, so packages are installed from outside with `pip --python`.
     subprocess.check_call([sys.executable, "-m", "venv", "--without-pip", str(VENV)])
     pip = [sys.executable, "-m", "pip", "--python", str(VENV_PY)]
     subprocess.check_call(pip + ["install", "-q", "-r", str(INSTRUMENTED / "requirements.txt")])
@@ -172,20 +175,20 @@ def cmd_setup(a):
     with open(VENV.parent / "venv-freeze.txt", "w") as f:
         subprocess.check_call(pip + ["freeze"], stdout=f)
     m = write_manifest()
-    print(f"setup (cópia + venv) ok: {len(m)} arquivos fixos no manifesto. "
-          "Próximo: python prepare.py check-oracles (sobe a app e roda o teste funcional do Cesar).")
+    print(f"setup ok: {len(m)} fixed files in the manifest. "
+          "Next: python prepare.py check-oracles (starts the app and runs César's functional test).")
 
 
 def cmd_check_oracles(a):
-    """Teste funcional do Cesar contra a app instrumented: confirma que a cópia funciona antes de medir."""
+    """César's functional test against the instrumented app: checks the copy works before measuring."""
     fails = functional_check(INSTRUMENTED, Path(tempfile.mkdtemp()))
-    print(f"instrumented: funcional={fails or 'ok'}")
+    print(f"instrumented: functional={fails or 'ok'}")
     if fails:
-        sys.exit("o teste funcional do Cesar falha contra a app copiada; revise o setup antes de seguir")
+        sys.exit("César's functional test fails against the copied app; check the setup before going on")
     print("check-oracles: ok")
 
 
-# ---------------------------------------------------------------- utilidades
+# ---------------------------------------------------------------- utilities
 def frozen_spec():
     if not FROZEN.exists():
         sys.exit("frozen/workload_frozen.py missing: the orchestrator freezes the confirmed workload")
@@ -204,15 +207,14 @@ def frozen_spec():
 
 
 def pins(i):
-    """Pinagem como a do Cesar (app num núcleo, gerador em outros), por slot: app i -> CPU i, carga -> CPU 4+i.
-    Só com >= 8 núcleos e taskset; senão sem pinagem (a saturação do gerador é medida de qualquer forma)."""
+    """CPU pinning per slot (app i -> CPU i, load generator -> CPU 4+i), only with >= 8 cores and taskset."""
     if (os.cpu_count() or 0) >= 8 and shutil.which("taskset"):
         return str(i), str(4 + i)
     return None, None
 
 
 def run_arms(arms, minutes, run_dir, smoke):
-    """arms: lista de dicts {label, app_dir, spec, seed}. Roda todos em paralelo, um slot por braço."""
+    """arms: list of {label, app_dir, spec, seed}. Runs all of them in parallel, one slot per arm."""
     seconds = int(minutes * 60)
     sample_s = 2.0 if smoke else 5.0
     results = {}
@@ -227,10 +229,10 @@ def run_arms(arms, minutes, run_dir, smoke):
             inst.start_sampler()
             t0 = time.time()
             ran = run_script(arm["spec"], f"http://127.0.0.1:{port}", seconds, arm["seed"], wd, cpus=load_cpu)
-            time.sleep(sample_s * 1.5)  # última amostra
+            time.sleep(sample_s * 1.5)
             alive, pids, children = inst.alive(), set(inst.pids_seen), inst.max_children
         except Exception as e:
-            results[arm["label"]] = {"arm": arm["label"], "valid": False, "flags": [f"erro: {e}"]}
+            results[arm["label"]] = {"arm": arm["label"], "valid": False, "flags": [f"error: {e}"]}
             inst.stop()
             return
         inst.stop()
@@ -277,33 +279,44 @@ def hot_slope(ev):
     return (ev.get("hot_latency_p50") or {}).get("sen_slope_per_h")
 
 
-# ---------------------------------------------------------------- detecção
+def _ratio(num, den):
+    return (num / den) if (num is not None and den not in (None, 0)) else None
+
+
+def _load_candidates(path, reserved):
+    """Reads and validates CANDIDATES from a workload file; raises WorkloadError (D3) on any violation."""
+    wl = load_workload(path)
+    cands = wl.get("CANDIDATES")
+    if not isinstance(cands, list) or not 1 <= len(cands) <= SLOTS - 1:
+        raise WorkloadError(f"CANDIDATES must be a list of 1 to {SLOTS - 1} items (1 slot is the reference)")
+    if not all(isinstance(c, dict) for c in cands):
+        raise WorkloadError("each candidate must be a dict")
+    names = [c.get("name") for c in cands]
+    if len(set(names)) != len(names) or reserved in names:
+        raise WorkloadError("candidate names must be unique and different from the reference")
+    for c in cands:
+        validate_spec(c)
+    return cands
+
+
+def _reject(event, run_id, run_dir, error):
+    rec = {"event": event, "run_id": run_id, "commit": git_head(), "valid": False,
+           "flag": "D3_out_of_contract", "error": str(error)}
+    log_judge(rec)
+    (run_dir / "STATUS").write_text("done")
+    (run_dir / "round.json").write_text(json.dumps(rec, indent=1, ensure_ascii=False))
+    print("INVALID:", error)
+
+
+# ---------------------------------------------------------------- detection
 def cmd_detect(a):
     verify(quiet=True)
     minutes = 2 if a.smoke else a.minutes
     run_id, run_dir = new_run_dir("detect" + ("-smoke" if a.smoke else ""), a.run_id)
     try:
-        wl = load_workload(ROOT / "workload.py")
-        if not isinstance(wl.get("CANDIDATES"), list):
-            raise WorkloadError("workload.py must define CANDIDATES as a list")
-        cands = list(wl["CANDIDATES"])
-        if not 1 <= len(cands) <= SLOTS - 1:
-            raise WorkloadError(f"CANDIDATES must have 1 to {SLOTS - 1} items (1 slot is the reference)")
-        if not all(isinstance(c, dict) for c in cands):
-            raise WorkloadError("each candidate must be a dict")
-        names = [c.get("name") for c in cands]
-        if len(set(names)) != len(names) or BASELINE["name"] in names:
-            raise WorkloadError("candidate names must be unique and different from the reference")
-        for c in cands:
-            validate_spec(c)
+        cands = _load_candidates(ROOT / "workload.py", BASELINE["name"])
     except Exception as e:
-        rec = {"event": "detect", "run_id": run_id, "commit": git_head(), "valid": False,
-               "flag": "D3_fora_do_contrato", "error": str(e)}
-        log_judge(rec)
-        (run_dir / "STATUS").write_text("done")
-        (run_dir / "round.json").write_text(json.dumps(rec, indent=1, ensure_ascii=False))
-        print("INVALID:", e)
-        return
+        return _reject("detect", run_id, run_dir, e)
     if a.background:
         return background(sys.argv[1:], run_id, run_dir)
     shutil.copy(ROOT / "workload.py", run_dir / "workload.py")
@@ -316,7 +329,7 @@ def cmd_detect(a):
     copies = {c["name"] for c in cands if same_as_default(c)}
     for label, ev in res.items():
         if label in copies:
-            ev.setdefault("flags", []).append("D4_copia_da_referencia")
+            ev.setdefault("flags", []).append("D4_copy_of_reference")
         slope = hot_slope(ev)
         eligible = ev.get("score_eligible") and not any(f.startswith(("D2", "D4")) for f in ev.get("flags", []))
         ev["score_latency_ms_per_h"] = slope if eligible and label != BASELINE["name"] else None
@@ -349,36 +362,39 @@ def print_detect(run_id, rows, header=True):
               f"{ref4_diag_str(r)} flags={','.join(r.get('flags', [])) or '-'}")
 
 
-# ---------------------------------------------------------------- congelar (humano)
+# ---------------------------------------------------------------- freeze
 def freeze_spec(spec, source):
-    """Congela uma carga (spec de um candidato) em frozen/workload_frozen.py e refaz o manifesto."""
+    """Freezes a candidate workload in frozen/workload_frozen.py and rebuilds the manifest."""
     clean = {k: v for k, v in spec.items() if not k.startswith("_")}
     FROZEN.parent.mkdir(exist_ok=True)
-    FROZEN.write_text('"""Carga congelada."""\n\n'
+    FROZEN.write_text('"""Frozen workload."""\n\n'
                       f"CANDIDATES = [{clean!r}]\n\nFROZEN_ARM = {clean['name']!r}\n"
                       f"FROZEN_FROM = {json.dumps(source, ensure_ascii=False)!r}\n")
     write_manifest()
 
 
+def round_spec(run_id, arm):
+    """Spec of one arm of a past search round, read from the workload.py saved with that round."""
+    wl = load_workload(RESULTS / run_id / "workload.py")
+    for c in wl.get("CANDIDATES", []):
+        if c.get("name") == arm:
+            validate_spec(c)
+            return c
+    sys.exit(f"arm {arm} not found in {run_id}")
+
+
 def cmd_freeze(a):
     freeze_spec(round_spec(a.run_id, a.arm), {"run_id": a.run_id, "arm": a.arm})
-    print(f"carga congelada: {a.arm} de {a.run_id}; manifesto atualizado")
+    print(f"frozen workload: {a.arm} from {a.run_id}; manifest updated")
 
 
-# ---------------------------------------------------------------- causas (fase 4 do program.md)
-CAUSES_REF = "referencia_congelada"
-
-
-def _ratio(num, den):
-    return (num / den) if (num is not None and den not in (None, 0)) else None
-
-
+# ---------------------------------------------------------------- causes
 def _interf_level(ev, ep):
     return ((ev.get("interference") or {}).get(ep) or {}).get("p95_level_ms")
 
 
 def compare_to_reference(ref, ev):
-    """Efeito de uma variação de um fator contra a carga congelada da mesma rodada e semente (razões cand/ref)."""
+    """Effect of a one-factor variation against the frozen workload of the same round and seed (variant/ref)."""
     byt = lambda e: (e.get("hot_resp_bytes") or {}).get("sen_slope_per_h")  # noqa: E731
     return {"lat_ratio": _ratio(hot_slope(ev), hot_slope(ref)),
             "bytes_ratio": _ratio(byt(ev), byt(ref)),
@@ -388,34 +404,16 @@ def compare_to_reference(ref, ev):
 
 
 def cmd_causes(a):
-    """Rodada da fase de causas: slot 0 = carga congelada (referência); slots 1..3 = variações que mudam
-    exatamente um arg. Mede o efeito de cada fator contra a referência da mesma rodada e semente."""
+    """Causes round: slot 0 = frozen workload (reference); slots 1..3 = variations changing exactly one arg."""
     verify(quiet=True)
     minutes = 2 if a.smoke else a.minutes
     run_id, run_dir = new_run_dir("causes" + ("-smoke" if a.smoke else ""), a.run_id)
     ref_spec = dict(frozen_spec(), name=CAUSES_REF)
     try:
-        wl = load_workload(ROOT / "workload.py")
-        cands = wl.get("CANDIDATES")
-        if not isinstance(cands, list) or not 1 <= len(cands) <= SLOTS - 1:
-            raise WorkloadError(f"CANDIDATES must be a list of 1 to {SLOTS - 1} items (1 slot is the reference)")
-        if not all(isinstance(c, dict) for c in cands):
-            raise WorkloadError("each candidate must be a dict")
-        names = [c.get("name") for c in cands]
-        if len(set(names)) != len(names) or CAUSES_REF in names:
-            raise WorkloadError("candidate names must be unique and different from the reference")
-        factors = {}
-        for c in cands:
-            validate_spec(c)
-            factors[c["name"]] = one_factor_diff(ref_spec, c)
+        cands = _load_candidates(ROOT / "workload.py", CAUSES_REF)
+        factors = {c["name"]: one_factor_diff(ref_spec, c) for c in cands}
     except Exception as e:
-        rec = {"event": "causes", "run_id": run_id, "commit": git_head(), "valid": False,
-               "flag": "D3_fora_do_contrato", "error": str(e)}
-        log_judge(rec)
-        (run_dir / "STATUS").write_text("done")
-        (run_dir / "round.json").write_text(json.dumps(rec, indent=1, ensure_ascii=False))
-        print("INVALID:", e)
-        return
+        return _reject("causes", run_id, run_dir, e)
     if a.background:
         return background(sys.argv[1:], run_id, run_dir)
     shutil.copy(ROOT / "workload.py", run_dir / "workload.py")
@@ -457,12 +455,10 @@ def print_causes(run_id, rows, ref_ok):
               f"err={fmt(r.get('error_rate'), 4)} flags={','.join(r.get('flags', [])) or '-'}")
 
 
-# ---------------------------------------------------------------- diagnóstico do ref4 e rodada de verificação
+# ---------------------------------------------------------------- ref4 diagnostic, controls and verification
 def ref4_vs_control(rows, control="R0b"):
-    """Diagnóstico, sem efeito na nota: a latência do ref4 do braço comparada com a do controle (R0b) da mesma
-    rodada e semente. Deriva global (disco, page cache, máquina) faz o ref4 subir também no R0b; a interferência
-    do aging (travamentos das leituras quentes) só no braço que acumula cartões. Só existe onde há R0b na rodada
-    (controls, check-load); nas rodadas de detect não há R0b e o campo fica ausente."""
+    """Diagnostic only (no effect on scores): ref4 latency of each arm against R0b in the same round and seed.
+    Global drift raises ref4 in R0b too; interference from the aging raises it only in the accumulating arm."""
     ctl = next((r for r in rows if r.get("arm") == control), None)
     if not ctl or not ctl.get("ref4_diag"):
         return
@@ -472,107 +468,52 @@ def ref4_vs_control(rows, control="R0b"):
         if not d:
             continue
         if c["up"]:
-            interp = "deriva_global_provavel"
+            interp = "likely_global_drift"
         elif d["up"]:
-            interp = "so_no_braco_interferencia"
+            interp = "interference_arm_only"
         else:
-            interp = "plano"
+            interp = "flat"
         r["ref4_vs_R0b"] = {"arm_p50_change_pct": d["p50_change_pct"], "arm_p50_mk_p": d["p50_mk_p"],
                             "R0b_p50_change_pct": c["p50_change_pct"], "R0b_p50_mk_p": c["p50_mk_p"],
-                            "interpretacao": interp}
+                            "interpretation": interp}
 
 
 def ref4_diag_str(r):
     d, v = r.get("ref4_diag") or {}, r.get("ref4_vs_R0b")
     s = f"ref4_diag[p50={fmt(d.get('p50_change_pct'), 1)}% p={fmt(d.get('p50_mk_p'), 5)}"
     if v:
-        s += f" R0b={fmt(v['R0b_p50_change_pct'], 1)}% -> {v['interpretacao']}"
+        s += f" R0b={fmt(v['R0b_p50_change_pct'], 1)}% -> {v['interpretation']}"
     return s + "]"
 
 
-CHECK_LOAD = "carga"
-
-
 def flat(ev):
-    """Controle plano: válido e sem latência, tamanho de resposta ou RSS subindo (mesmos limiares da nota)."""
+    """Flat control: valid, with no rising latency, response size or RSS (same thresholds as the score)."""
     return bool(ev.get("valid") and not ev.get("latency_up") and not ev.get("bytes_up")
                 and not ev.get("rss_upward_significant"))
 
 
-def check_decision(rows):
-    """Decisão automática de uma rodada de verificação (R1, carga, R0, R0b, mesma semente):
-    invalida se algum braço for inválido (infraestrutura); positiva se R0 e R0b ficarem planos e R1 e a carga
-    forem elegíveis; negativa nos outros casos."""
-    by = {r.get("arm"): r for r in rows}
-    if len(by) < 4 or not all(r.get("valid") for r in by.values()):
-        return "invalida"
-    if (flat(by.get("R0", {})) and flat(by.get("R0b", {})) and by.get("R1", {}).get("score_eligible")
-            and by.get(CHECK_LOAD, {}).get("score_eligible")):
-        return "positiva"
-    return "negativa"
-
-
-def run_check(spec, seed, minutes=DEFAULT_MINUTES, smoke=False, run_id=None, source=None):
-    """Rodada de verificação: a carga candidata ao lado de R1, R0 e R0b, todos com a mesma semente e banco limpo."""
-    verify(quiet=True)
-    minutes = 2 if smoke else minutes
-    run_id, run_dir = new_run_dir("check" + ("-smoke" if smoke else ""), run_id)
-    load = {k: v for k, v in spec.items() if not k.startswith("_")}
-    load["name"] = CHECK_LOAD
-    arms = [{"label": "R1", "app_dir": INSTRUMENTED, "spec": BASELINE, "seed": seed},
-            {"label": CHECK_LOAD, "app_dir": INSTRUMENTED, "spec": load, "seed": seed},
-            {"label": "R0", "app_dir": INSTRUMENTED, "spec": R0, "seed": seed},
-            {"label": "R0b", "app_dir": INSTRUMENTED, "spec": R0B, "seed": seed}]
-    res = run_arms(arms, minutes, run_dir, smoke)
-    rows = [res[x["label"]] for x in arms]
-    for r in rows:
-        if r.get("arm") in ("R0", "R0b"):
-            r["flat"] = flat(r)
-    ref4_vs_control(rows)
-    decision = check_decision(rows)
-    rec = {"event": "check", "run_id": run_id, "commit": git_head(), "smoke": smoke, "minutes": minutes,
-           "seed": seed, "load_args": spec.get("args", {}), "load_name": spec.get("name"), "source": source,
-           "decision": decision, "arms": rows}
-    (run_dir / "round.json").write_text(json.dumps(rec, indent=1, ensure_ascii=False))
-    log_judge({k: v for k, v in rec.items() if k != "arms"} | {"summary": [
-        {"arm": r["arm"], "valid": r.get("valid"), "eligible": r.get("score_eligible"), "flat": r.get("flat"),
-         "flags": r.get("flags")} for r in rows]})
-    (run_dir / "STATUS").write_text("done")
-    print_check(run_id, rows, decision)
-    return {"run_id": run_id, "decision": decision}
-
-
-def print_check(run_id, rows, decision):
-    print(f"---\nrun_id: {run_id}\ndecision: {decision}")
-    print_detect(run_id, rows, header=False)
-
-
-def round_spec(run_id, arm):
-    """Spec de um braço de uma rodada de busca já feita (lido do workload.py salvo na rodada)."""
-    wl = load_workload(RESULTS / run_id / "workload.py")
-    for c in wl.get("CANDIDATES", []):
-        if c.get("name") == arm:
-            validate_spec(c)
-            return c
-    sys.exit(f"braço {arm} não encontrado em {run_id}")
-
-
-def cmd_check(a):
-    spec = round_spec(a.run, a.arm)
-    run_check(spec, a.seed, a.minutes, a.smoke, a.run_id, source={"run_id": a.run, "arm": a.arm})
-
-
-# ---------------------------------------------------------------- controles negativos (humano)
 def controls_ok(rows):
-    """Fase 0 passa se R0 e R0b ficarem planos e R1 for elegível."""
+    """Phase 0 passes if R0 and R0b stay flat and R1 is eligible."""
     by = {r.get("arm"): r for r in rows}
     return bool(by.get("R0", {}).get("flat") and by.get("R0b", {}).get("flat")
                 and by.get("R1", {}).get("score_eligible"))
 
 
+def check_decision(rows):
+    """Automatic decision of a verification round (R1, workload, R0, R0b, same seed): invalid if any arm is
+    invalid (infrastructure); positive if R0 and R0b stay flat and R1 and the workload are eligible; else negative."""
+    by = {r.get("arm"): r for r in rows}
+    if len(by) < 4 or not all(r.get("valid") for r in by.values()):
+        return "invalid"
+    if (flat(by.get("R0", {})) and flat(by.get("R0b", {})) and by.get("R1", {}).get("score_eligible")
+            and by.get(CHECK_LOAD, {}).get("score_eligible")):
+        return "positive"
+    return "negative"
+
+
 def run_controls(seed, minutes=DEFAULT_MINUTES, smoke=False, with_r1=True, run_id=None):
-    """R0 (F1_control) e R0b (F1_targeted_v1 --key-space 4), com R1 ao lado. NÃO há controle positivo.
-    Se um controle "detectar" aging, os limiares do juiz estão frouxos e nenhuma detecção vale."""
+    """R0 (F1_control) and R0b (F1_targeted_v1 --key-space 4), with R1 alongside. There is no positive control:
+    if a control "detects" aging, the judge thresholds are too loose and no detection is valid."""
     verify(quiet=True)
     minutes = 2 if smoke else minutes
     run_id, run_dir = new_run_dir("controls" + ("-smoke" if smoke else ""), run_id)
@@ -612,7 +553,7 @@ def print_controls(run_id, rows):
     for r in rows:
         lat, byt, rss = r.get("hot_latency_p50") or {}, r.get("hot_resp_bytes") or {}, r.get("rss_mb") or {}
         ok = r["flat"] == r["expected_flat"]
-        print(f"arm={r['arm']} valid={r.get('valid')} esperado={'plano' if r['expected_flat'] else 'sobe'} "
+        print(f"arm={r['arm']} valid={r.get('valid')} expected={'flat' if r['expected_flat'] else 'rising'} "
               f"flat={r['flat']} ok={ok} hot_lat_slope={fmt(lat.get('sen_slope_per_h'))} "
               f"hot_lat_change={fmt(lat.get('sen_change_pct'), 1)}% hr_p={fmt(lat.get('mk_p_upward'), 5)} "
               f"bytes_change={fmt(byt.get('sen_change_pct'), 1)}% rss_slope={fmt(rss.get('sen_slope_per_h'))} "
@@ -620,17 +561,54 @@ def print_controls(run_id, rows):
               f"{ref4_diag_str(r)} flags={','.join(r.get('flags', [])) or '-'}")
 
 
+def run_check(spec, seed, minutes=DEFAULT_MINUTES, smoke=False, run_id=None, source=None):
+    """Verification round: the candidate workload next to R1, R0 and R0b, all with the same seed and a clean DB."""
+    verify(quiet=True)
+    minutes = 2 if smoke else minutes
+    run_id, run_dir = new_run_dir("check" + ("-smoke" if smoke else ""), run_id)
+    load = {k: v for k, v in spec.items() if not k.startswith("_")}
+    load["name"] = CHECK_LOAD
+    arms = [{"label": "R1", "app_dir": INSTRUMENTED, "spec": BASELINE, "seed": seed},
+            {"label": CHECK_LOAD, "app_dir": INSTRUMENTED, "spec": load, "seed": seed},
+            {"label": "R0", "app_dir": INSTRUMENTED, "spec": R0, "seed": seed},
+            {"label": "R0b", "app_dir": INSTRUMENTED, "spec": R0B, "seed": seed}]
+    res = run_arms(arms, minutes, run_dir, smoke)
+    rows = [res[x["label"]] for x in arms]
+    for r in rows:
+        if r.get("arm") in ("R0", "R0b"):
+            r["flat"] = flat(r)
+    ref4_vs_control(rows)
+    decision = check_decision(rows)
+    rec = {"event": "check", "run_id": run_id, "commit": git_head(), "smoke": smoke, "minutes": minutes,
+           "seed": seed, "load_args": spec.get("args", {}), "load_name": spec.get("name"), "source": source,
+           "decision": decision, "arms": rows}
+    (run_dir / "round.json").write_text(json.dumps(rec, indent=1, ensure_ascii=False))
+    log_judge({k: v for k, v in rec.items() if k != "arms"} | {"summary": [
+        {"arm": r["arm"], "valid": r.get("valid"), "eligible": r.get("score_eligible"), "flat": r.get("flat"),
+         "flags": r.get("flags")} for r in rows]})
+    (run_dir / "STATUS").write_text("done")
+    print_check(run_id, rows, decision)
+    return {"run_id": run_id, "decision": decision}
+
+
+def print_check(run_id, rows, decision):
+    print(f"---\nrun_id: {run_id}\ndecision: {decision}")
+    print_detect(run_id, rows, header=False)
+
+
+def cmd_check(a):
+    spec = round_spec(a.run, a.arm)
+    run_check(spec, a.seed, a.minutes, a.smoke, a.run_id, source={"run_id": a.run, "arm": a.arm})
+
+
 def cmd_rehash(a):
     if not MANIFEST.exists():
-        sys.exit("manifesto ausente: rode 'python prepare.py setup' (humano)")
+        sys.exit("manifest missing: run 'python prepare.py setup' (human)")
     m = write_manifest()
-    print(f"manifesto refeito: {len(m)} arquivos fixos")
+    print(f"manifest rebuilt: {len(m)} fixed files")
 
 
-# ---------------------------------------------------------------- experimento (orquestrador)
-AGENT_TIMEOUT_S = 3 * 3600   # uma chamada do agente = uma rodada (~62 min) ou um resumo
-
-
+# ---------------------------------------------------------------- experiment (orchestrator)
 def _judge_records():
     if not JUDGE_LOG.exists():
         return []
@@ -644,7 +622,7 @@ def _judge_records():
 
 
 def find_round(event, seed, after_ts):
-    """A rodada (round.json + candidatos) que o agente rodou com esta semente depois de after_ts, ou None."""
+    """The round (round.json + candidates) the agent ran with this seed after after_ts, or None."""
     for rec in reversed(_judge_records()):
         if rec.get("ts", "") < after_ts:
             break
@@ -660,7 +638,7 @@ def find_round(event, seed, after_ts):
 
 
 def call_agent(campaign, prompt, tag):
-    """Uma chamada do agente (Claude Code headless) com as permissões da campanha."""
+    """One headless Claude Code call with the permissions of the campaign."""
     shutil.copy(ROOT / ".claude" / f"settings.{campaign}.json", ROOT / ".claude" / "settings.json")
     (ROOT / "logs").mkdir(exist_ok=True)
     log = ROOT / "logs" / f"{tag}-{campaign}-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
@@ -669,21 +647,21 @@ def call_agent(campaign, prompt, tag):
             subprocess.run(["claude", "-p", prompt, "--output-format", "stream-json", "--verbose"], cwd=ROOT,
                            stdout=f, stderr=subprocess.STDOUT, timeout=AGENT_TIMEOUT_S)
         except subprocess.TimeoutExpired:
-            f.write(b'\n{"orquestrador": "timeout da chamada do agente"}\n')
+            f.write(b'\n{"orchestrator": "agent call timed out"}\n')
 
 
 def cmd_experiment(a):
-    """Experimento completo, sem humano no meio: Fase 0 -> busca -> verificação -> causas -> retomada -> relatório."""
+    """Full experiment, no human in the middle: phase 0 -> search -> verification -> causes -> resume -> report."""
     from harness.load import normalize_args
     from harness import orchestrator as O
     verify(quiet=True)
     exp_dir = RESULTS / f"experiment-{a.tag}"
     if exp_dir.exists():
-        sys.exit(f"{exp_dir} já existe: use outra tag")
+        sys.exit(f"{exp_dir} already exists: use another tag")
     exp_dir.mkdir(parents=True)
     branch = f"autoresearch/{a.tag}"
     if subprocess.run(["git", "checkout", "-b", branch], cwd=ROOT).returncode != 0:
-        sys.exit(f"não foi possível criar a branch {branch}")
+        sys.exit(f"could not create branch {branch}")
     minutes, smoke = (2 if a.smoke else a.minutes), a.smoke
     log_judge({"event": "experiment_start", "tag": a.tag, "commit": git_head(), "smoke": smoke})
 
@@ -693,20 +671,19 @@ def cmd_experiment(a):
             prompt = f"Read program.md and run ONE round of the detect campaign. Round {round}, seed {seed}."
             event = "detect"
         else:
-            j = campaign_n
-            prompt = (f"Read program.md and run ONE round of the causas campaign. Campaign {j}, round {round} "
-                      f"of {O.CAUSES_ROUNDS}, seed {seed}.")
+            prompt = (f"Read program.md and run ONE round of the causes campaign. Campaign {campaign_n}, "
+                      f"round {round} of {O.CAUSES_ROUNDS}, seed {seed}.")
             event = "causes"
         if smoke:
             prompt += " Use --smoke."
-        call_agent("detect" if campaign == "detect" else "causas", prompt, a.tag)
+        call_agent("detect" if campaign == "detect" else "causes", prompt, a.tag)
         return find_round(event, seed, t0)
 
     def agent_summary(campaign, campaign_n=None):
         if campaign == "detect":
             call_agent("detect", "Read program.md and write the summary of the detect campaign.", a.tag)
         else:
-            call_agent("causas", f"Read program.md and write the summary of causas campaign {campaign_n}.", a.tag)
+            call_agent("causes", f"Read program.md and write the summary of the causes campaign {campaign_n}.", a.tag)
 
     def save(state):
         (exp_dir / "state.json").write_text(json.dumps(state, indent=1, ensure_ascii=False))
@@ -721,10 +698,10 @@ def cmd_experiment(a):
     (exp_dir / "relatorio.md").write_text(O.report_markdown(state, a.tag))
     log_judge({"event": "experiment_end", "tag": a.tag, "status": state["status"],
                "confirmed": [c["load"]["name"] for c in state["confirmed"]]})
-    print(f"experimento {a.tag}: {state['status']} · relatório em {exp_dir / 'relatorio.md'}")
+    print(f"experiment {a.tag}: {state['status']} · report in {exp_dir / 'relatorio.md'}")
 
 
-# ---------------------------------------------------------------- espera
+# ---------------------------------------------------------------- wait
 def cmd_wait(a):
     d = RESULTS / a.run_id
     deadline = time.time() + min(a.max_seconds, 540)
@@ -758,16 +735,16 @@ def main():
     s.add_argument("--smoke", action="store_true")
     s.add_argument("--background", action="store_true")
     s.add_argument("--run-id")
-    s = sp.add_parser("check-load", help="rodada de verificação de um braço de uma rodada de busca")
+    s = sp.add_parser("check-load", help="verification round for one arm of a search round")
     s.add_argument("--run", required=True); s.add_argument("--arm", required=True)
     s.add_argument("--seed", type=int, required=True); s.add_argument("--minutes", type=float, default=DEFAULT_MINUTES)
     s.add_argument("--smoke", action="store_true"); s.add_argument("--run-id")
-    s = sp.add_parser("experiment", help="experimento completo, sem humano no meio")
+    s = sp.add_parser("experiment", help="full experiment, no human in the middle")
     s.add_argument("--tag", required=True); s.add_argument("--minutes", type=float, default=DEFAULT_MINUTES)
     s.add_argument("--smoke", action="store_true")
     s = sp.add_parser("controls")
     s.add_argument("--minutes", type=float, default=DEFAULT_MINUTES); s.add_argument("--seed", type=int, default=100)
-    s.add_argument("--with-r1", action="store_true", help="roda R1 ao lado (contraste)")
+    s.add_argument("--with-r1", action="store_true", help="run R1 alongside (contrast)")
     s.add_argument("--smoke", action="store_true"); s.add_argument("--background", action="store_true")
     s.add_argument("--run-id")
     sp.add_parser("rehash")
@@ -782,9 +759,8 @@ def main():
     sp.add_parser("verify")
     a = ap.parse_args()
     {"setup": cmd_setup, "check-oracles": cmd_check_oracles, "detect": cmd_detect, "check-load": cmd_check,
-     "experiment": cmd_experiment,
-     "controls": cmd_controls, "rehash": cmd_rehash, "freeze": cmd_freeze, "causes": cmd_causes, "wait": cmd_wait,
-     "verify": lambda _: verify()}[a.cmd](a)
+     "experiment": cmd_experiment, "controls": cmd_controls, "rehash": cmd_rehash, "freeze": cmd_freeze,
+     "causes": cmd_causes, "wait": cmd_wait, "verify": lambda _: verify()}[a.cmd](a)
 
 
 if __name__ == "__main__":

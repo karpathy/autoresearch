@@ -18,7 +18,7 @@ Responsáveis: Rafael, Cesar e Ermeson (UFRPE). Colaboração com Fumio Machida 
 
 | Documento | Para quem | Conteúdo |
 |---|---|---|
-| [`program.md`](program.md) | o agente | só as instruções de execução e as regras das campanhas `detect` e `causas` |
+| [`program.md`](program.md) | o agente | só as instruções de execução e as regras das campanhas `detect` e `causes` |
 | [`docs/DESENHO-EXPERIMENTAL.md`](docs/DESENHO-EXPERIMENTAL.md) | as pessoas do projeto | perguntas de pesquisa, fases, critérios, parâmetros, custo, limitações |
 | [`docs/AMEACAS-A-VALIDADE.md`](docs/AMEACAS-A-VALIDADE.md) | as pessoas do projeto | prováveis ameaças à validade e o que falta mitigar |
 | [`updates/`](updates/README.md) | as pessoas do projeto | uma nota por mudança, com o porquê |
@@ -71,7 +71,7 @@ com hash no manifesto, nunca o agente.
    (`associate_card`, `retrieve_ref4`).
 
 A detecção mede (1) e (2) pela latência e pelo tamanho de resposta de `retrieve_hot` e pelo RSS. A campanha
-`causas` separa os componentes: razão da inclinação da latência, do tamanho da resposta, do **custo por MB** e da
+`causes` separa os componentes: razão da inclinação da latência, do tamanho da resposta, do **custo por MB** e da
 interferência (p95 de `associate_card` e `retrieve_ref4`).
 
 ### A flag D2 não se aplica ao F1
@@ -88,10 +88,10 @@ de taxa (até 2x os padrões) e o controle negativo R0b.
 |---|---|---|
 | `prepare.py` (avaliação fixa, não muda) | `prepare.py` + `harness/` + `oracle/`, com hash no manifesto | ninguém durante as campanhas |
 | `train.py` (o único arquivo que o agente edita) | `workload.py`: só literais, variantes da carga do Cesar | agente |
-| `program.md` (instruções do agente) | `program.md`: instruções de uma rodada das campanhas `detect` e `causas` e dos resumos | humano |
-| `val_bpb` (uma métrica) | `detect`: Sen's slope da latência de `retrieve_hot` (ms/h), com Hamed-Rao, e `ratio` contra a referência da rodada. `causas`: razões de cada variação contra a carga congelada | juiz |
+| `program.md` (instruções do agente) | `program.md`: instruções de uma rodada das campanhas `detect` e `causes` e dos resumos | humano |
+| `val_bpb` (uma métrica) | `detect`: Sen's slope da latência de `retrieve_hot` (ms/h), com Hamed-Rao, e `ratio` contra a referência da rodada. `causes`: razões de cada variação contra a carga congelada | juiz |
 | orçamento fixo de 5 min | 60 min por rodada, 4 instâncias em paralelo | juiz |
-| `results.tsv` sem commit; keep avança a branch, discard faz `git reset` | igual na `detect`; na `causas` não há keep nem discard | agente |
+| `results.tsv` sem commit; keep avança a branch, discard faz `git reset` | igual na `detect`; na `causes` não há keep nem discard | agente |
 | o agente roda o laço inteiro | um orquestrador fixo chama o agente uma rodada por vez e decide verificação, causas e retomada | ninguém |
 
 ```
@@ -117,7 +117,7 @@ autoresearch/
 ├── oracle/                     # teste funcional do Cesar e o executor
 ├── tests/                      # test_c1.py (controle interno), test_causes.py (causas), test_orchestrator.py (fluxo)
 ├── frozen/                     # carga confirmada congelada pelo orquestrador (campanha de causas atual)
-├── .claude/settings.{detect,causas}.json   # permissões do agente por campanha
+├── .claude/settings.{detect,causes}.json   # permissões do agente por campanha
 └── updates/                    # notas de mudança
 ```
 
@@ -140,7 +140,7 @@ melhor anterior em pelo menos 10%; empate dentro de 10% com menos parâmetros al
 simplicidade). O melhor candidato elegível de cada rodada (que não seja uma carga já confirmada) vai para a
 verificação.
 
-**`causas`:** 6 rodadas por carga confirmada. A referência é a carga congelada; cada variação muda **exatamente
+**`causes`:** 6 rodadas por carga confirmada. A referência é a carga congelada; cada variação muda **exatamente
 um** parâmetro (o juiz recusa as outras) e roda em duas réplicas. Um efeito é declarado quando a razão fica do
 mesmo lado de 1, a pelo menos 20% dele, nas duas réplicas. Hipóteses já testadas numa campanha anterior entram só
 no resumo.
@@ -166,7 +166,7 @@ git add -A && git commit -m "Setup do alvo do Cesar"
 
 # 3. Experimento completo, sem humano no meio
 nohup ./run_experiment.sh exp-nov23 &
-# relatório: results/experiment-exp-nov23/relatorio.md; resumos do agente: summary_detect.md, summary_causas_<N>.md
+# relatório: results/experiment-exp-nov23/relatorio.md; resumos do agente: summary_detect.md, summary_causes_<N>.md
 ```
 
 `run_experiment.sh` tira a permissão de escrita de `prepare.py`, `harness/`, `oracle/`, `apps/`, `workloads/` e
@@ -186,7 +186,7 @@ A verificação pode ir até a rodada 10.
 |---|---|---|
 | D1 | Saturar a máquina (timeouts, 5xx acima de 1%, gerador acima de 90% de um núcleo) e chamar isso de aging | Braço inválido |
 | D2 | Inflar o banco com dados novos. **Desligada no F1** | Não se aplica |
-| D3 | Sair do contrato (`args` fora das faixas, mais de um fator na campanha `causas`) ou o gerador falhar | Braço ou rodada inválida |
+| D3 | Sair do contrato (`args` fora das faixas, mais de um fator na campanha `causes`) ou o gerador falhar | Braço ou rodada inválida |
 | D4 | Candidato igual à referência | Medido, sem nota |
 | C1 | Tamanho de resposta dos refs ou latência do `ref200` sobem: deriva global, não crescimento por linha. A latência do `ref4` é só diagnóstico (sobe por interferência do próprio aging) | Medido, sem nota |
 | H4 | O processo da app morreu, mudou de PID ou abriu processos filhos | Braço inválido |
@@ -223,7 +223,7 @@ um desses caminhos (`"shortcut": true`). Esses casos também são resultado da p
 ## Pendências
 
 1. **Limiares** (50% na latência, 25% no controle interno, 5 MB/h no RSS, 20% para declarar efeito na
-   `causas`): valores de partida, a calibrar com a Fase 0 e com as primeiras campanhas.
+   `causes`): valores de partida, a calibrar com a Fase 0 e com as primeiras campanhas.
 2. **Nenhuma rodada real ainda:** o fluxo foi testado com juiz e agente simulados; falta o primeiro
    `./run_experiment.sh <tag> --smoke` com a app.
 3. **Sem controle positivo:** "não achamos aging" não mede a sensibilidade do juiz.

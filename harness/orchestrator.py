@@ -1,7 +1,7 @@
 """Orquestrador do experimento (fixo; o agente não edita nem lê).
 
 Encadeia, sem intervenção humana:
-  Fase 0: controles de 60 min (R0, R0b, R1)  -> falha: fim "sem_calibracao"
+  Fase 0: controles de 60 min (R0, R0b, R1)  -> falha: fim "no_calibration"
   Busca: rodadas do agente (campanha detect), uma por chamada, até MAX_SEARCH
   Verificação: quando um candidato fica elegível, as rodadas seguintes repetem a carga dele com R1, R0 e R0b
                (mesma semente nos 4 braços); confirmado quando VERIFY_ROUNDS rodadas válidas dão positivo
@@ -62,7 +62,7 @@ class Orchestrator:
     """Ações injetadas:
       run_controls(seed) -> {"run_id", "ok": bool}
       agent_round(kind, round, seed, campaign_n=None) -> dict da rodada ({"run_id", "arms", "candidates"}) ou None se falhou
-      run_check(spec, seed) -> {"run_id", "decision": "positiva"|"negativa"|"invalida"}
+      run_check(spec, seed) -> {"run_id", "decision": "positive"|"negative"|"invalid"}
       freeze(spec, source) -> None
       agent_summary(kind, campaign_n=None) -> None
       normalize(args) -> args normalizados (comparar cargas)
@@ -90,15 +90,15 @@ class Orchestrator:
         st["phase0"] = ctl
         self.save(st)
         if not ctl.get("ok"):
-            return self._finish("sem_calibracao")
+            return self._finish("no_calibration")
 
         confirmed_args = []
         n = 1
         while n <= self.max_search:
             seed = SEED_BASE + n
             rec = self.agent_round("detect", round=n, seed=seed)
-            self._log_round(n=n, seed=seed, kind="busca", run_id=(rec or {}).get("run_id"),
-                            status="ok" if rec else "falhou")
+            self._log_round(n=n, seed=seed, kind="search", run_id=(rec or {}).get("run_id"),
+                            status="ok" if rec else "failed")
             n += 1
             if not rec:
                 continue
@@ -117,31 +117,31 @@ class Orchestrator:
             self.save(st)
             for r in range(1, self.causes_rounds + 1):
                 cs = causes_seed(j, r)
-                crec = self.agent_round("causas", round=r, seed=cs, campaign_n=j)
+                crec = self.agent_round("causes", round=r, seed=cs, campaign_n=j)
                 entry["causes_rounds"].append({"round": r, "seed": cs, "run_id": (crec or {}).get("run_id"),
-                                               "status": "ok" if crec else "falhou"})
+                                               "status": "ok" if crec else "failed"})
                 self.save(st)
-            self.agent_summary("causas", campaign_n=j)
+            self.agent_summary("causes", campaign_n=j)
         self.agent_summary("detect")
-        return self._finish("aging_confirmado" if st["confirmed"] else "aging_nao_confirmado")
+        return self._finish("aging_confirmed" if st["confirmed"] else "aging_not_confirmed")
 
     def _verify(self, cand, source, n):
         """Roda as rodadas de verificação a partir da rodada n. Devolve (próxima rodada, confirmado?)."""
         positives, retries = 0, 0
         while positives < self.verify_rounds:
             if n > self.max_total:
-                self._log_round(n=None, seed=None, kind="verificacao", load=cand["name"], source=source,
-                                decision="sem_orcamento")
+                self._log_round(n=None, seed=None, kind="verification", load=cand["name"], source=source,
+                                decision="no_budget")
                 return n, False
             seed = SEED_BASE + n
             res = self.run_check(cand, seed)
             dec = res.get("decision")
-            self._log_round(n=n, seed=seed, kind="verificacao", load=cand["name"], source=source,
+            self._log_round(n=n, seed=seed, kind="verification", load=cand["name"], source=source,
                             run_id=res.get("run_id"), decision=dec)
             n += 1
-            if dec == "positiva":
+            if dec == "positive":
                 positives += 1
-            elif dec == "invalida" and retries < self.max_invalid_retries:
+            elif dec == "invalid" and retries < self.max_invalid_retries:
                 retries += 1
             else:
                 return n, False
@@ -165,7 +165,7 @@ def report_markdown(state, tag):
            f"- Início: {state.get('started')} · fim: {state.get('finished')}", ""]
     p0 = state.get("phase0") or {}
     out += ["## Fase 0: controles de 60 min", "",
-            f"- run_id: `{p0.get('run_id')}` · resultado: {'ok' if p0.get('ok') else 'falhou'}", ""]
+            f"- run_id: `{p0.get('run_id')}` · resultado: {'ok' if p0.get('ok') else 'failed'}", ""]
     out += ["## Rodadas", "", "| Rodada | Semente | Tipo | run_id | Carga verificada | Resultado |",
             "|---|---|---|---|---|---|"]
     for r in state.get("rounds", []):
@@ -179,7 +179,7 @@ def report_markdown(state, tag):
                 f"- args: `{json.dumps(c['load'].get('args', {}), ensure_ascii=False)}`",
                 f"- encontrada em: `{c['source']['run_id']}`",
                 f"- campanha de causas: {len(c['causes_rounds'])} rodadas "
-                f"(resumo do agente em `summary_causas_{c['campaign']}.md`)", ""]
+                f"(resumo do agente em `summary_causes_{c['campaign']}.md`)", ""]
     out += ["## Resumos do agente", "", "- `summary_detect.md`"]
-    out += [f"- `summary_causas_{c['campaign']}.md`" for c in state.get("confirmed", [])]
+    out += [f"- `summary_causes_{c['campaign']}.md`" for c in state.get("confirmed", [])]
     return "\n".join(out) + "\n"

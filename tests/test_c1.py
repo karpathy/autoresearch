@@ -88,7 +88,7 @@ def test_ref200_sobe_dispara():
     assert not ev["score_eligible"]
 
 
-def test_tamanho_dos_refs_sobe_dispara():
+def test_ref_size_rising_triggers():
     ev = run(ref4_change=0.0, ref_bytes_change=0.40)
     flag = c1(ev)
     assert flag and "retrieve_ref4.bytes" in flag[0] and "retrieve_ref200.bytes" in flag[0], ev["flags"]

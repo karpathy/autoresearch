@@ -10,10 +10,11 @@ o fluxo:
   (`harness/load.py`, `harness/workload_check.py`, `prepare.py`);
 - as hipóteses neutras dos braços fixos (referência, R0, R0b).
 
-**O que ficou igual, de propósito:** os identificadores produzidos pelo juiz (flags como `D1_saturacao_ou_erros`,
-`C1_referencia_interna_subindo`, status `referencia_sem_sintoma`, braço `referencia_congelada`, campos do
-`round.json`). Mudar esses nomes alteraria código, testes e dados já gravados; o `program.md` avisa que são
-identificadores e devem ser usados como estão.
+**Identificadores:** numa segunda etapa, os identificadores produzidos pelo juiz também passaram para o inglês
+(por exemplo `D3_out_of_contract`, `D4_copy_of_reference`, `frozen_reference`, decisões `positive` / `negative` /
+`invalid`, `no_budget`, campanha `causes` e `.claude/settings.causes.json`), com código, testes e documentos
+atualizados juntos. O `prepare.py` teve todos os comentários, docstrings e mensagens traduzidos e os comentários
+desnecessários removidos, sem mudar a lógica.
 
 **Campos dos registros do agente** (definidos só no `program.md`, sem código dependente) passaram para o inglês:
 `factor_tested`, `interpretation`, `shortcut`, `campaign`, `factor`, `value_ref`, `value_var`, `variations`,

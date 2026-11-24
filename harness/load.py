@@ -135,7 +135,7 @@ def one_factor_diff(ref_spec, cand_spec):
 
 # ---- braços fixos: a referência e os controles do Cesar (campaign.yaml) ----
 # As hipóteses ficam neutras de propósito: aparecem nos resultados que o agente lê.
-BASELINE = {"name": "F1_targeted_v1_referencia", "script": TARGETED, "args": {},
+BASELINE = {"name": "F1_targeted_v1_reference", "script": TARGETED, "args": {},
             "hypothesis": "Reference: workload with the default parameters."}
 R0 = {"name": "R0", "script": CONTROL, "args": {}, "argv": [],
       "hypothesis": "Negative control R0."}
