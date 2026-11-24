@@ -108,14 +108,23 @@ python prepare.py wait <run_id>                                   # bloqueia at�
 - Os detalhes de cada braço ficam em `results/<run_id>/<braço>/evaluation.json`; o resumo da rodada em
   `results/<run_id>/round.json`.
 - `--smoke` (2 min) serve só para testar se `workload.py` é aceito. Não tire conclusões de uma rodada smoke.
+- A duração (60 min) e o ambiente são fixos pelo juiz: todas as rodadas são comparáveis entre si. Você não
+  controla nem altera a duração.
+- **`workload.py` recusado:** se o comando responder `INVÁLIDO` na hora, nada foi medido. Corrija
+  `workload.py`, refaça o commit (`git commit --amend -a --no-edit`) e rode de novo **com a mesma semente**.
+- **Rodada travada:** se o `wait` continuar respondendo `running` 90 min depois do início, considere a rodada
+  falha (`failed`), registre e siga para a próxima semente.
+- **Contexto:** leia o resumo impresso pelo `wait` e, quando precisar, campos de `evaluation.json` ou
+  `round.json`. Não abra `client.csv`, `instrumentation.jsonl` nem `app.log` (são grandes e não são a medida).
+- Na coluna `commit` dos registros, use o hash curto (`git rev-parse --short=7 HEAD`).
 
 ## 5. Campanha `detect`
 
 **Objetivo:** encontrar, dentro do contrato, o candidato com a maior tendência de alta da latência de
 `retrieve_hot` em relação à referência.
 
-**Referência:** um braço de cada rodada roda a carga com todos os `args` no padrão. Os outros 3 braços são os
-seus candidatos.
+**Referência:** um braço de cada rodada roda a carga com todos os `args` no padrão. Os outros braços (até 3) são
+os seus candidatos.
 
 **Nota do braço:** `score_hot_latency_ms_per_h` = Sen's slope da latência p50 de `retrieve_hot` (ms/h), só se o
 braço for elegível e não tiver D4. **`ratio`** = inclinação do candidato ÷ inclinação da referência da mesma
@@ -132,9 +141,11 @@ tendência apareça cedo.
 
 1. Leia `results.tsv` e `ledger.jsonl`. A semente desta rodada é 100 + (linhas `started` no ledger + 1).
 2. Escreva de 1 a 3 candidatos em `workload.py`, cada um com uma hipótese falsificável e o fator que testa.
-3. `git commit -am "<resumo das hipóteses>"`.
-4. Registre `started` no ledger.
-5. Rode `detect --seed <semente> --background` e `wait` até sair o resumo.
+   **Na rodada 1, rode o `workload.py` como está**, sem alterar.
+3. `git commit -am "<resumo das hipóteses>"`. Na rodada 1 não há o que commitar nem, depois, commit a desfazer:
+   pule este passo e o `git reset` do passo 7.
+4. Rode `detect --seed <semente> --background`. Quando ele imprimir o `run_id`, registre `started` no ledger.
+5. Rode `wait` até sair o resumo.
 6. Registre uma linha por braço no `results.tsv` (inclusive a referência) e `completed` no ledger.
 7. **Keep ou discard:**
    - se a referência da rodada não for elegível, nenhum candidato vira keep: status do ledger
@@ -142,7 +153,11 @@ tendência apareça cedo.
    - na primeira rodada com algum `ratio`, o candidato com o maior `ratio` vira o melhor anterior (`keep`);
    - nas seguintes, mantenha o commit se algum candidato tiver `ratio ≥ 1,10 × ratio` do melhor anterior;
    - senão, `git reset --hard HEAD~1`. As linhas de `results.tsv` e do ledger continuam.
-8. Entre candidatos equivalentes, prefira o que tem menos `args` fora do padrão.
+8. **Simplicidade:** se um candidato com menos `args` fora do padrão ficar dentro de 10% do `ratio` do melhor
+   anterior, ele também vira keep e passa a ser o melhor anterior. Mudar um `arg` a mais por um ganho dentro do
+   ruído não vale.
+9. **Sem ideias:** combine candidatos que quase passaram, teste os extremos das faixas e volte a fatores pouco
+   testados. Não pare antes da rodada 8.
 
 **`results.tsv`** (separado por tabulação):
 
@@ -164,7 +179,7 @@ commit	run_id	seed	arm	score_hot_latency_ms_per_h	hr_p	ratio_vs_reference	ttd_mi
 - tabela de todas as rodadas, com a semente;
 - tabela da referência por rodada: `seed`, inclinação e mudança da latência de `retrieve_hot`, `hr_p`, elegível
   (sim/não), e em quantas rodadas ela foi elegível;
-- o melhor candidato (`run_id` e `name`) e o porquê;
+- o melhor braço (`run_id` e `name`) e o porquê; se nenhum candidato virou keep, o melhor braço é a referência;
 - evidência de que o tamanho de resposta de `retrieve_hot` subiu e de que o controle interno ficou plano;
 - todos os atalhos observados;
 - limitações: janela de 60 min, uma semente por rodada, cada candidato rodou com uma única semente.
@@ -179,8 +194,8 @@ arquivo não existir, pare e registre isso no resumo.
 
 **Objetivo:** descobrir quais fatores da carga mudam a tendência, comparando cada fator isoladamente.
 
-**Referência:** um braço de cada rodada roda a carga congelada (`referencia_congelada`). Os outros 3 braços são
-variações dela.
+**Referência:** um braço de cada rodada roda a carga congelada (`referencia_congelada`). Os outros braços (até 3)
+são variações dela.
 
 **Regra de um fator:** cada candidato difere da carga congelada em **exatamente um** `arg`. O juiz recusa a
 rodada inteira (D3) se algum candidato mudar zero ou mais de um.
@@ -201,7 +216,7 @@ referência for elegível e a variação válida):
 1. `git checkout -b autoresearch/<tag>`, com a tag recebida no comando.
 2. `python prepare.py verify` precisa responder `ok`.
 3. Leia `frozen/workload_frozen.py`.
-4. Crie `results_causas.tsv` (só o cabeçalho) e `ledger_causas.jsonl` (vazio).
+4. Crie `results_causas.tsv` (só o cabeçalho) e `ledger_causas.jsonl` (vazio). Nenhum dos dois entra em commit.
 
 **Laço: exatamente 6 rodadas**, sementes 301 a 306 (rodada *n* = 300 + *n*).
 
@@ -210,8 +225,9 @@ referência for elegível e a variação válida):
    esperada do efeito.
 3. **Réplica:** cada variação precisa rodar em **duas rodadas**, com sementes diferentes. Planeje as 6 rodadas
    para que todas as variações tenham as duas réplicas.
-4. `git commit -am "<variações>"` e registre `started` no ledger.
-5. Rode `causes --seed <semente> --background` e `wait` até sair o resumo.
+4. `git commit -am "<variações>"`.
+5. Rode `causes --seed <semente> --background`. Quando ele imprimir o `run_id`, registre `started` no ledger.
+   Depois rode `wait` até sair o resumo.
 6. Registre uma linha por braço no `results_causas.tsv` e `completed` no ledger. Não há keep nem discard: o
    commit fica.
 7. Se a referência da rodada não for elegível (`reference_ok: False`), registre `referencia_sem_sintoma`; as

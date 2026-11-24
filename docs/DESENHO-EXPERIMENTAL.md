@@ -84,10 +84,11 @@ com hash no manifesto). O agente só propõe cargas, nas Fases 1 e 4.
 - **Sementes:** rodada *n* usa `--seed 100 + n` (101 … 108), a mesma para os 4 braços da rodada.
 - **Slots de cada rodada:** slot 0 = R1 (referência); slots 1–3 = até 3 candidatos do agente.
 - **O que o agente pode mudar:** só os `args` do `F1_targeted_v1` (`new_pair_rate`, `hot_phones`, `grow_workers`,
-  `refresh_rate`, `ref_sizes`, `ref_rate`, `probe_interval`, `key_space`), com taxas até 2× os padrões e no
-  máximo 31 req/s no total. Sem código.
+  `refresh_rate`, `ref_rate`, `probe_interval`, `key_space`), com taxas até 2× os padrões e no máximo 31 req/s no
+  total. Sem código. `ref_sizes` fica fixo em (4, 200): é o controle interno.
 - **Keep:** um candidato elegível é mantido se `ratio_vs_reference ≥ 1,10 × ratio` do melhor anterior (razão
-  contra a R1 da mesma rodada). R1 da rodada sem sintoma → nenhum keep naquela rodada.
+  contra a R1 da mesma rodada). R1 da rodada sem sintoma → nenhum keep naquela rodada. Critério de simplicidade
+  (como no autoresearch): um candidato com menos `args` alterados que fique dentro de 10% do melhor também vira keep.
 - **Saída:** o melhor braço elegível da campanha (pode ser a própria R1, se nenhum candidato a superou). Se não
   houver nenhum braço elegível em nenhuma rodada, o experimento para com `SEM_AGING_DETECTADO`.
 
@@ -116,7 +117,7 @@ Só roda com `AGING_CONFIRMADO`.
 - **Candidatos:** até 3 variações da carga congelada, cada uma mudando **um único fator** (um `arg`). O agente
   escreve, para cada variação, a hipótese e a direção esperada do efeito.
 - **Réplica:** cada variação roda em **2 rodadas**, com sementes diferentes (301, 302, …). Um efeito só é
-  declarado se tiver a mesma direção nas duas.
+  declarado se a razão ficar do mesmo lado de 1, a pelo menos 20% dele (≥ 1,2 ou ≤ 0,8), nas duas.
 - **Medidas por variação, contra a referência da mesma rodada:**
   - razão da inclinação da latência de `retrieve_hot` (o sintoma);
   - razão da inclinação do tamanho de resposta (quanto o telefone quente acumulou);

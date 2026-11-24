@@ -1,49 +1,36 @@
 # Resumo do contexto (para retomar o trabalho)
 
-Última atualização: 2026-11-19. Leia isto antes de continuar numa sessão nova. Detalhes em
-[2026-11-19_alvo-cesar.md](2026-11-19_alvo-cesar.md) e [criterio-de-deteccao.md](criterio-de-deteccao.md).
+Última atualização: 2026-11-23. Comece por [2026-11-23_resumo-das-mudancas.md](2026-11-23_resumo-das-mudancas.md).
 
-## O pedido original
+## O que é o experimento
 
-Manter o **método** autoresearch (laço de detecção e reparo, juiz fixo, portões H1–H7, flags D1–D3, travas
-anti-trapaça, testes escondidos em `~/.aging-hidden`) e trocar o **alvo e o cenário** pelos do Cesar
-([chas42/llm-aging-detection-agents](https://github.com/chas42/llm-aging-detection-agents)), exatamente como ele usou:
-
-- app `apps/credit-card-fastapi` (instrumented e repaired) e finding `bax-fastapi-credit-card-F1`;
-- carga de referência `F1_targeted_v1`; controles negativos R0 (`F1_control`) e R0b (`--key-space 4`); sem controle positivo;
-- rodadas R0, R0b, R1 e R2 do `campaign.yaml`; nenhum bug injetado.
-
-Regras do Rafael: não editar o repo do Cesar; commits pequenos por etapa; perguntar em vez de inventar quando o
-cenário do Cesar for ambíguo; não rodar `run_campaign.sh`.
+O autoresearch (agente propõe, juiz fixo mede, laço mantém ou descarta) aplicado ao cenário do Cesar: app
+`credit-card-fastapi`, finding F1, carga `F1_targeted_v1`, controles negativos R0 e R0b. Escopo: **detectar,
+confirmar e explicar pela carga** o aging do F1. Reparo e análise de código ficam de fora (pesquisa do Cesar).
+Desenho em [`docs/DESENHO-EXPERIMENTAL.md`](../docs/DESENHO-EXPERIMENTAL.md); instruções do agente em
+[`program.md`](../program.md).
 
 ## Onde estamos
 
-- Branch `juiz-v2-bd0b0ad`, commits `19cc4bd` … (ver `git log bd0b0ad..HEAD`). As etapas 2 a 9 do plano estão
-  feitas e commitadas. A etapa 10 (validação) está em andamento.
-- O push para `origin` (`Rafaelmos/autoresearch`) foi bloqueado pelo modo automático do Claude Code; a permissão
-  foi configurada em `.claude/settings.local.json` (só esta branch) e as campanhas negam `git push`.
-- O repo do Cesar **não** existe em `../llm-aging-detection-agents`; foi clonado só para leitura num diretório
-  temporário da sessão. Para um novo `setup`, clone-o ao lado deste repo.
+- Branch `deteccao-f1`, local em `C:\Users\rafae\Documents\GitHub\autoresearch-deteccao-f1`, **sem push**.
+- A branch `juiz-v2-bd0b0ad` (versão com reparo) continua no GitHub, sem estas mudanças.
+- Nenhuma medição com a app foi feita nesta branch; para rodar, o preparo (`setup`) tem de ser feito no Linux/WSL
+  com o repo do Cesar clonado ao lado.
 
-## Decisões
+## Decisões vigentes
 
 | Quem | Decisão |
 |---|---|
-| Rafael | `workload.py` do agente = só `args` literais do F1 (sem código); taxas ≤ 2× os defaults |
-| Rafael | Caso `phone="12"` dos testes escondidos aceita 201 ou 400 (original em `~/.aging-hidden/hidden_tests.py.node-original`) |
-| Rafael e Cesar | Stall do `ps`: **não se aplica** ao Credit Card (só existe no `aging_probe.py` do Monitor); correto não implementar |
-| Rafael | Semente diferente por rodada de detecção (101–108; falhas consomem a semente) e keep pelo `ratio_vs_reference` da rodada (≥ 1,10 × o melhor anterior; referência sem sintoma → nenhum keep). Protocolo em `program_detect.md`, não imposto pelo juiz ([nota](2026-11-19_semente-por-rodada.md)) |
-| Claude (reversível) | Agente não lê `apps/credit-card-fastapi/repaired/` (deny nos `settings.{detect,repair}.json`) |
-| Rafael e Ermeson | Confirmação da detecção em **duas** execuções de `confirm` de 8 h (sementes 201 e 202), mesma duração, banco limpo, a mesma semente para R0/R0b/R1/candidato em cada execução; reparo só se **as duas** passarem (unanimidade); execução inválida é repetida, negativa = não confirmado ([nota](2026-11-19_confirmacao-duas-execucoes.md)) |
-| Claude (reversível) | App do slot *i* na CPU *i*, gerador na CPU 4+*i* |
-| Claude (reversível) | Replay dos portões repete cada requisição até 3× e refaz o replay antes de acusar H2/H3 |
+| Rafael e Cesar (22/11) | O autoresearch roda sozinho, com um número mínimo de rodadas, e foca em causar o aging; reparo fora |
+| Rafael (23/11) | Investigação de causas só por comparação entre cargas, um fator por vez, duas réplicas |
+| Rafael (23/11) | `program.md` só com instruções; o agente não lê código da app, card do F1, cargas do Cesar, juiz nem docs |
+| Rafael e Ermeson (19/11) | Semente por rodada (101–108); confirmação em duas execuções de 8 h (201, 202), unanimidade |
+| Rafael | `workload.py` só com `args` literais; taxas ≤ 2× os padrões; `ref_sizes` fixo (controle interno) |
+| Rafael e Cesar | D2 desligada no F1 (crescimento de linhas é ativação); stall do `ps` não se aplica |
 
 ## Próximos passos
 
-1. Ler o resultado da rodada de 60 min de R0, R0b e R1 (`results/controls-1119-0743-9b5e/round.json`): R1 deve
-   ser elegível (latência e resposta de `retrieve_hot` sobem, controle interno plano) e R0/R0b planos. Atualizar
-   `updates/README.md` com os números e, se preciso, ajustar os limiares.
-2. Validado com o Cesar: D2 desligada no F1 (ativação, não aging); stall do `ps` não se aplica. Ajustes dele em andamento (C1, interferência no reparo, log de acesso).
-3. Opcional: fazer o `repair-init` recusar começar sem as duas confirmações de 8 h aprovadas (hoje é protocolo
-   humano; a ordem é `freeze` → `confirm` ×2 porque o `confirm` lê a carga congelada).
-4. Depois: campanha 1 (`./run_campaign.sh detect <tag>`) só quando o Rafael pedir.
+1. Rodar os controles de 60 min (Fase 0) e calibrar os limiares.
+2. Confirmar com o Cesar: `N_MIN = 8`, `N_CAUSAS = 6` e a restrição de leitura do agente.
+3. Implementar o orquestrador e a decisão automática no `confirm`, se for mantido o desenho totalmente autônomo.
+4. Campanhas só quando o Rafael pedir.

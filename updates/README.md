@@ -4,36 +4,29 @@ Uma nota por mudança relevante, mais recente no topo. Cada nota diz o que mudou
 
 | Data | Nota | Resumo |
 |---|---|---|
-| 2026-11-23 | [2026-11-23_somente-deteccao.md](2026-11-23_somente-deteccao.md) | **Versão só de detecção**: reparo, portões, R2 e testes escondidos removidos (decisão com o Cesar em 22/11) |
-| 2026-11-19 | [2026-11-19_confirmacao-duas-execucoes.md](2026-11-19_confirmacao-duas-execucoes.md) | **Confirmação de 8 h em duas execuções** (sementes 201 e 202); reparo só se as duas passarem |
-| 2026-11-19 | [2026-11-19_semente-por-rodada.md](2026-11-19_semente-por-rodada.md) | **Semente diferente por rodada de detecção (101–108)** e keep pela razão contra a referência da rodada |
-| 2026-11-19 | [contexto.md](contexto.md) | **Resumo do contexto para retomar o trabalho** (pedido, decisões, próximos passos) |
-| 2026-11-19 | [2026-11-19_alvo-cesar.md](2026-11-19_alvo-cesar.md) | Troca do alvo Node pelo cenário do Cesar (`credit-card-fastapi`, finding F1); juiz, carga, métrica e portões adaptados |
-| 2026-11-19 | [criterio-de-deteccao.md](criterio-de-deteccao.md) | **Quando a detecção é considerada positiva e libera a campanha de reparo** |
+| 2026-11-23 | [2026-11-23_resumo-das-mudancas.md](2026-11-23_resumo-das-mudancas.md) | **Comece por aqui:** tudo que mudou da `juiz-v2-bd0b0ad` para a `deteccao-f1` |
+| 2026-11-23 | [2026-11-23_program-md-e-autoresearch.md](2026-11-23_program-md-e-autoresearch.md) | `program.md` só com instruções do agente, leitura restrita e conferência com o `karpathy/autoresearch` |
+| 2026-11-23 | [2026-11-23_fase4-causas.md](2026-11-23_fase4-causas.md) | Fase 4: investigação de causas pela carga (`prepare.py causes`, um fator por vez, custo por MB) |
+| 2026-11-23 | [2026-11-23_somente-deteccao.md](2026-11-23_somente-deteccao.md) | Versão só de detecção: reparo, portões, R2 e testes escondidos removidos |
+| 2026-11-23 | [contexto.md](contexto.md) | Resumo do contexto para retomar o trabalho |
+| 2026-11-19 | [2026-11-19_confirmacao-duas-execucoes.md](2026-11-19_confirmacao-duas-execucoes.md) | Confirmação de 8 h em duas execuções (sementes 201 e 202) |
+| 2026-11-19 | [2026-11-19_semente-por-rodada.md](2026-11-19_semente-por-rodada.md) | Semente diferente por rodada de detecção (101–108) e keep pela razão |
+| 2026-11-19 | [2026-11-19_alvo-cesar.md](2026-11-19_alvo-cesar.md) | Troca do alvo Node pelo cenário do Cesar (`credit-card-fastapi`, finding F1) |
+| 2026-11-19 | [criterio-de-deteccao.md](criterio-de-deteccao.md) | Critério de detecção (as seções sobre reparo são do desenho anterior) |
 
-## Estado atual (2026-11-19)
+As notas de 19/11 descrevem o desenho anterior, com reparo, e ficam como histórico.
 
-**Branch:** `juiz-v2-bd0b0ad`, com push. Commits desta mudança: `19cc4bd` em diante (ver `git log bd0b0ad..HEAD`).
+## Estado atual (2026-11-23)
+
+**Branch:** `deteccao-f1` (local, sem push), criada a partir de `juiz-v2-bd0b0ad` @ `75a657e`.
 
 | Peça | Estado |
 |---|---|
-| Alvo | `apps/credit-card-fastapi/{instrumented,repaired}`, copiados do repo do Cesar (commit `97addef`, em `apps/credit-card-fastapi/SOURCE.json`) |
-| venv | `.cache/venv`, com o `requirements.txt` do Cesar + dependências do juiz; `prepare.py` se re-executa nele |
-| Oráculos | `check-oracles` passa em `instrumented` e `repaired` (funcional do Cesar, escondidos, persistência) |
-| Detecção (campanha 1) | Código pronto; smoke de 2 min ok. Protocolo: semente 101–108 por rodada e keep pelo `ratio_vs_reference` ([nota](2026-11-19_semente-por-rodada.md)). **A campanha em si não foi rodada** |
-| Controles R0/R0b | Smoke de 2 min ok (R0 e R0b planos, R1 sobe). A rodada de 60 min (`results/controls-1119-0743-9b5e`) foi **interrompida a pedido em ~18 min**; nos dados parciais, R0 e R0b planos e R1 elegível. **A rodada completa de 60 min não foi feita** |
-| Reparo (campanha 2) | Código pronto; smoke de 2 min dos portões ok. Não rodado |
-| Confirmação 8 h | Código pronto (`confirm`, R0/R0b/R1/R2). Protocolo: **duas execuções** (sementes 201 e 202), as duas precisam passar ([nota](2026-11-19_confirmacao-duas-execucoes.md)). Não rodada |
-| `run_campaign.sh` | Não rodado |
-
-### O que está pendente
-
-1. **Rodada de 60 min dos controles (refazer, foi interrompida):** confirmar que R1 sobe em `retrieve_hot` e que R0/R0b ficam planos, como no
-   resultado do Cesar. Os limiares da detecção (abaixo) são de partida e podem precisar de ajuste por causa dela.
-2. **Validar com o Cesar:** (a) D2 desligada no F1; (b) nota baseada na latência e no tamanho de resposta de
-   `retrieve_hot`, além do RSS; (c) stall do `ps`: **resolvido, não se aplica** ao Credit Card (só existe no Monitor). O cenário dele para a credit-card não tem
-   injeção; nada foi implementado.
-3. **O critério de liberação do reparo ainda não é imposto pelo código:** `freeze` aceita qualquer braço, e nada
-   impede o `repair-init` antes das duas confirmações aprovadas. Ver
-   [criterio-de-deteccao.md](criterio-de-deteccao.md#o-que-o-código-impõe-e-o-que-não-impõe).
-4. **Sem controle positivo neste cenário:** um resultado negativo não diz nada sobre a sensibilidade do juiz.
+| Alvo | `apps/credit-card-fastapi/instrumented`, copiado do repo do Cesar (commit `97addef`) |
+| Juiz de detecção | pronto; mesmo critério da `juiz-v2-bd0b0ad` |
+| Campanha `detect` | pronta (`program.md`, `settings.detect.json`); **não rodada** |
+| Confirmação 8 h | `confirm` pronto, protocolo de duas execuções; **não rodada** |
+| Campanha `causas` (Fase 4) | pronta (`prepare.py causes`, `settings.causas.json`); testada só com rodada simulada |
+| Controles de 60 min | **por fazer** (a rodada da `juiz-v2-bd0b0ad` foi interrompida em ~18 min) |
+| Orquestrador | não implementado; as passagens entre fases são humanas |
+| Testes | `tests/test_c1.py` e `tests/test_causes.py` passam |
