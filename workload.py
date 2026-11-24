@@ -1,19 +1,19 @@
-"""Cargas candidatas da rodada. Formato, args e faixas: program.md, seção 3."""
+"""Candidate workloads for the round. Format, args and ranges: program.md, section 3."""
 
 CANDIDATES = [
     {
         "name": "pares_20_por_s",
-        "hypothesis": "Variar new_pair_rate muda a tendência da latência de retrieve_hot.",
+        "hypothesis": "Changing new_pair_rate changes the retrieve_hot latency trend.",
         "args": {"new_pair_rate": 20.0},
     },
     {
         "name": "dois_telefones_quentes",
-        "hypothesis": "Variar hot_phones muda a tendência da latência de retrieve_hot.",
+        "hypothesis": "Changing hot_phones changes the retrieve_hot latency trend.",
         "args": {"hot_phones": 2},
     },
     {
         "name": "sonda_a_cada_1s",
-        "hypothesis": "Variar probe_interval muda a tendência da latência de retrieve_hot.",
+        "hypothesis": "Changing probe_interval changes the retrieve_hot latency trend.",
         "args": {"probe_interval": 1.0},
     },
 ]

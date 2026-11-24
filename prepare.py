@@ -114,9 +114,9 @@ def verify(quiet=False):
     bad += sorted(now - set(m))
     if bad:
         log_judge({"event": "juiz_alterado", "files": bad, "flag": "H5_juiz_ou_oraculo_alterado"})
-        sys.exit("ABORTADO: arquivos fixos alterados -> " + ", ".join(bad))
+        sys.exit("ABORTED: fixed files changed -> " + ", ".join(bad))
     if not quiet:
-        print("verify: ok", len(m), "arquivos fixos íntegros")
+        print("verify: ok", len(m), "fixed files intact")
 
 
 def log_judge(rec):
@@ -188,11 +188,11 @@ def cmd_check_oracles(a):
 # ---------------------------------------------------------------- utilidades
 def frozen_spec():
     if not FROZEN.exists():
-        sys.exit("frozen/workload_frozen.py ausente: o humano roda 'prepare.py freeze' ao fim da detecção")
+        sys.exit("frozen/workload_frozen.py missing: the orchestrator freezes the confirmed workload")
     try:
         ns = load_workload(FROZEN)
     except WorkloadError as e:
-        sys.exit(f"carga congelada rejeitada: {e}")
+        sys.exit(f"frozen workload rejected: {e}")
     name = ns["FROZEN_ARM"]
     if name == BASELINE["name"]:
         return BASELINE
@@ -200,7 +200,7 @@ def frozen_spec():
         if c["name"] == name:
             validate_spec(c)
             return c
-    sys.exit(f"candidato congelado {name} não encontrado")
+    sys.exit(f"frozen candidate {name} not found")
 
 
 def pins(i):
@@ -285,15 +285,15 @@ def cmd_detect(a):
     try:
         wl = load_workload(ROOT / "workload.py")
         if not isinstance(wl.get("CANDIDATES"), list):
-            raise WorkloadError("workload.py deve definir CANDIDATES como lista")
+            raise WorkloadError("workload.py must define CANDIDATES as a list")
         cands = list(wl["CANDIDATES"])
         if not 1 <= len(cands) <= SLOTS - 1:
-            raise WorkloadError(f"CANDIDATES deve ter de 1 a {SLOTS - 1} itens (1 slot é da referência)")
+            raise WorkloadError(f"CANDIDATES must have 1 to {SLOTS - 1} items (1 slot is the reference)")
         if not all(isinstance(c, dict) for c in cands):
-            raise WorkloadError("cada candidato deve ser um dict")
+            raise WorkloadError("each candidate must be a dict")
         names = [c.get("name") for c in cands]
         if len(set(names)) != len(names) or BASELINE["name"] in names:
-            raise WorkloadError("nomes de candidatos devem ser únicos e diferentes da referência")
+            raise WorkloadError("candidate names must be unique and different from the reference")
         for c in cands:
             validate_spec(c)
     except Exception as e:
@@ -302,7 +302,7 @@ def cmd_detect(a):
         log_judge(rec)
         (run_dir / "STATUS").write_text("done")
         (run_dir / "round.json").write_text(json.dumps(rec, indent=1, ensure_ascii=False))
-        print("INVÁLIDO:", e)
+        print("INVALID:", e)
         return
     if a.background:
         return background(sys.argv[1:], run_id, run_dir)
@@ -398,12 +398,12 @@ def cmd_causes(a):
         wl = load_workload(ROOT / "workload.py")
         cands = wl.get("CANDIDATES")
         if not isinstance(cands, list) or not 1 <= len(cands) <= SLOTS - 1:
-            raise WorkloadError(f"CANDIDATES deve ser uma lista de 1 a {SLOTS - 1} itens (1 slot é da referência)")
+            raise WorkloadError(f"CANDIDATES must be a list of 1 to {SLOTS - 1} items (1 slot is the reference)")
         if not all(isinstance(c, dict) for c in cands):
-            raise WorkloadError("cada candidato deve ser um dict")
+            raise WorkloadError("each candidate must be a dict")
         names = [c.get("name") for c in cands]
         if len(set(names)) != len(names) or CAUSES_REF in names:
-            raise WorkloadError("nomes de candidatos devem ser únicos e diferentes da referência")
+            raise WorkloadError("candidate names must be unique and different from the reference")
         factors = {}
         for c in cands:
             validate_spec(c)
@@ -414,7 +414,7 @@ def cmd_causes(a):
         log_judge(rec)
         (run_dir / "STATUS").write_text("done")
         (run_dir / "round.json").write_text(json.dumps(rec, indent=1, ensure_ascii=False))
-        print("INVÁLIDO:", e)
+        print("INVALID:", e)
         return
     if a.background:
         return background(sys.argv[1:], run_id, run_dir)
@@ -690,12 +690,12 @@ def cmd_experiment(a):
     def agent_round(campaign, round, seed, campaign_n=None):
         t0 = time.strftime("%Y-%m-%dT%H:%M:%S")
         if campaign == "detect":
-            prompt = f"Leia program.md e execute UMA rodada da campanha detect. Rodada {round}, semente {seed}."
+            prompt = f"Read program.md and run ONE round of the detect campaign. Round {round}, seed {seed}."
             event = "detect"
         else:
             j = campaign_n
-            prompt = (f"Leia program.md e execute UMA rodada da campanha causas. Campanha {j}, rodada {round} "
-                      f"de {O.CAUSES_ROUNDS}, semente {seed}.")
+            prompt = (f"Read program.md and run ONE round of the causas campaign. Campaign {j}, round {round} "
+                      f"of {O.CAUSES_ROUNDS}, seed {seed}.")
             event = "causes"
         if smoke:
             prompt += " Use --smoke."
@@ -704,9 +704,9 @@ def cmd_experiment(a):
 
     def agent_summary(campaign, campaign_n=None):
         if campaign == "detect":
-            call_agent("detect", "Leia program.md e escreva o resumo da campanha detect.", a.tag)
+            call_agent("detect", "Read program.md and write the summary of the detect campaign.", a.tag)
         else:
-            call_agent("causas", f"Leia program.md e escreva o resumo da campanha causas {campaign_n}.", a.tag)
+            call_agent("causas", f"Read program.md and write the summary of causas campaign {campaign_n}.", a.tag)
 
     def save(state):
         (exp_dir / "state.json").write_text(json.dumps(state, indent=1, ensure_ascii=False))
@@ -744,7 +744,7 @@ def cmd_wait(a):
                 print(json.dumps(rec, ensure_ascii=False))
             return
         time.sleep(15)
-    print(f"status: running ({a.run_id}); chame wait novamente")
+    print(f"status: running ({a.run_id}); call wait again")
 
 
 def main():

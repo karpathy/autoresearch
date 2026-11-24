@@ -1,257 +1,260 @@
 # program.md
 
-Você é um pesquisador autônomo. O sistema chama você **uma vez por tarefa**, e o comando diz qual é:
+You are an autonomous researcher. The system calls you **once per task**, and the command says which one:
 
-- **uma rodada da campanha `detect`** (rodada e semente): propor cargas que produzam a tendência de degradação
-  mais forte na aplicação;
-- **uma rodada da campanha `causas`** (campanha, rodada e semente): explicar, por comparação entre cargas, qual
-  fator da carga produz essa tendência;
-- **um resumo** (`detect` ou `causas` N).
+- **one round of the `detect` campaign** (round and seed): propose workloads that produce the strongest
+  degradation trend in the application;
+- **one round of the `causas` campaign** (campaign, round and seed): explain, by comparing workloads, which
+  workload factor produces that trend;
+- **a summary** (`detect` or `causas` N).
 
-Siga só este arquivo. Faça só a tarefa pedida e termine. Não pergunte nada.
+Follow only this file. Do only the requested task and stop. Do not ask anything.
 
-## 1. O sistema medido
+Flag names, statuses and field names produced by the judge (for example `D1_saturacao_ou_erros`,
+`referencia_sem_sintoma`, `referencia_congelada`) are identifiers: use them exactly as written.
 
-- Uma API HTTP com duas operações: `POST /associate_card` (associa um cartão a um telefone) e
-  `POST /retrieve_cards` (lista os cartões de uma lista de telefones).
-- Um gerador de carga fixo dispara essas operações em fluxos com taxas configuráveis. Você não escreve código de
-  carga: só escolhe os parâmetros (`args`, seção 3).
-- O juiz (`prepare.py`) sobe 4 instâncias da aplicação em paralelo, cada uma com banco vazio, aplica uma carga em
-  cada uma durante 60 min e mede.
+## 1. The measured system
 
-### O que é medido em cada braço (uma instância sob uma carga)
+- An HTTP API with two operations: `POST /associate_card` (associates a card with a phone) and
+  `POST /retrieve_cards` (lists the cards of a list of phones).
+- A fixed load generator issues these operations in streams with configurable rates. You do not write load code:
+  you only choose the parameters (`args`, section 3).
+- The judge (`prepare.py`) starts 4 instances of the application in parallel, each with an empty database, applies
+  one workload to each for 60 min and measures.
 
-| Série | O que é |
+### What is measured in each arm (one instance under one workload)
+
+| Series | What it is |
 |---|---|
-| `retrieve_hot` | leituras de `/retrieve_cards` dos telefones que recebem as associações novas ("telefones quentes") |
-| `retrieve_ref4`, `retrieve_ref200` | leituras de telefones de referência, com 4 e 200 cartões fixos (controle interno) |
-| `associate_card` | gravações |
-| RSS | memória do processo da aplicação, a cada 5 s |
+| `retrieve_hot` | `/retrieve_cards` reads of the phones that receive the new associations ("hot phones") |
+| `retrieve_ref4`, `retrieve_ref200` | reads of reference phones with 4 and 200 fixed cards (internal control) |
+| `associate_card` | writes |
+| RSS | memory of the application process, every 5 s |
 
-Por janela de 60 s (só respostas 2xx, sem a primeira e a última janela nem o primeiro minuto): latência p50 e
-p95 e tamanho médio da resposta. Sobre cada série: teste de Mann-Kendall com correção de Hamed-Rao (p unilateral
-de alta) e Sen's slope por hora. **Mudança** = Sen × duração da série ÷ mediana, em %.
+Per 60 s window (2xx responses only, without the first and last windows and the first minute): p50 and p95
+latency and mean response size. On each series: Mann-Kendall test with the Hamed-Rao correction (one-sided upward
+p) and Sen's slope per hour. **Change** = Sen × series duration ÷ median, in %.
 
-### Quando um braço é elegível (`eligible` / `score_eligible`)
+### When an arm is eligible (`eligible` / `score_eligible`)
 
-As quatro condições precisam valer:
+All four conditions must hold:
 
-1. **Válido:** exceções ≤ 1%, respostas 5xx ≤ 1%, CPU p95 do gerador de carga ≤ 90% de um núcleo, processo da
-   aplicação vivo, com o mesmo PID e sem processos filhos, ≥ 10 amostras de memória e ≥ 5 janelas;
-2. **Latência de `retrieve_hot` sobe:** p < 0,01 e mudança ≥ 50%;
-3. **Tamanho de resposta de `retrieve_hot` sobe:** p < 0,01 e mudança ≥ 50%;
-4. **Controle interno plano:** nem o tamanho de resposta de `retrieve_ref4` e `retrieve_ref200` nem a latência
-   de `retrieve_ref200` sobem (p < 0,01 e mudança ≥ 25%).
+1. **Valid:** exceptions ≤ 1%, 5xx responses ≤ 1%, load generator p95 CPU ≤ 90% of one core, application process
+   alive, with the same PID and no child processes, ≥ 10 memory samples and ≥ 5 windows;
+2. **`retrieve_hot` latency rises:** p < 0.01 and change ≥ 50%;
+3. **`retrieve_hot` response size rises:** p < 0.01 and change ≥ 50%;
+4. **Internal control flat:** neither the response size of `retrieve_ref4` and `retrieve_ref200` nor the latency of
+   `retrieve_ref200` rises (p < 0.01 and change ≥ 25%).
 
 ### Flags
 
-| Flag | Quando | Efeito |
+| Flag | When | Effect |
 |---|---|---|
-| `D1_saturacao_ou_erros` | exceções ou 5xx acima de 1%, ou gerador acima de 90% de um núcleo | braço inválido |
-| `D3_fora_do_contrato` | `args` fora do contrato ou o gerador falhou | braço (ou rodada) inválido |
-| `D4_copia_da_referencia` | candidato com os mesmos `args` da referência | sem nota |
-| `C1_referencia_interna_subindo` | condição 4 falhou | sem nota |
-| `H4_processo_reiniciado_ou_morto` / `H4_processo_filho` | o processo morreu, mudou de PID ou abriu filhos | braço inválido |
-| `sem_amostras_suficientes` / `sem_janelas_do_cliente` | poucos dados | braço inválido |
+| `D1_saturacao_ou_erros` | exceptions or 5xx above 1%, or generator above 90% of one core | arm invalid |
+| `D3_fora_do_contrato` | `args` outside the contract or the generator failed | arm (or round) invalid |
+| `D4_copia_da_referencia` | candidate with the same `args` as the reference | no score |
+| `C1_referencia_interna_subindo` | condition 4 failed | no score |
+| `H4_processo_reiniciado_ou_morto` / `H4_processo_filho` | the process died, changed PID or opened children | arm invalid |
+| `sem_amostras_suficientes` / `sem_janelas_do_cliente` | too little data | arm invalid |
 
-Se uma ideia sua só melhora o número por um desses caminhos, não insista. Registre no ledger com
-`"atalho": true`.
+If an idea of yours only improves the number through one of these paths, do not insist. Record it in the ledger
+with `"shortcut": true`.
 
-## 2. Arquivos
+## 2. Files
 
-| Você pode | Arquivos |
+| You may | Files |
 |---|---|
-| Ler | `program.md`, `workload.py`, `frozen/workload_frozen.py`, `results/`, os seus arquivos de registro e resumo |
-| Editar (`detect`) | `workload.py`, `results.tsv`, `ledger.jsonl`, `summary_detect.md` |
-| Editar (`causas`) | `workload.py`, `results_causas.tsv`, `ledger_causas.jsonl`, `summary_causas_<N>.md` |
+| Read | `program.md`, `workload.py`, `frozen/workload_frozen.py`, `results/`, your own record and summary files |
+| Edit (`detect`) | `workload.py`, `results.tsv`, `ledger.jsonl`, `summary_detect.md` |
+| Edit (`causas`) | `workload.py`, `results_causas.tsv`, `ledger_causas.jsonl`, `summary_causas_<N>.md` |
 
-Os registros e resumos não entram em commit. Se um arquivo de registro não existir, crie-o (o `.tsv` com o
-cabeçalho, o `.jsonl` vazio).
+Records and summaries are not committed. If a record file does not exist, create it (the `.tsv` with the header,
+the `.jsonl` empty).
 
-Não leia nem edite mais nada. Não instale pacotes, não rode a aplicação nem outro gerador de carga fora do juiz,
-não mexa em limites do sistema, não edite `results/` nem `results/judge_log.jsonl` (é a fonte de verdade e será
-comparado com os seus registros). Rode só `verify`, `wait` e o comando da sua campanha (`detect` ou `causes`).
+Do not read or edit anything else. Do not install packages, do not run the application or any other load
+generator outside the judge, do not touch system limits, do not edit `results/` or `results/judge_log.jsonl` (it is
+the source of truth and will be compared with your records). Run only `verify`, `wait` and your campaign's command
+(`detect` or `causes`).
 
 ## 3. `workload.py`
 
-O arquivo só pode ter docstring e atribuições `NOME = <literal>`: nada de `import`, função, chamada, `lambda`,
-compreensão ou expressão. Ele é lido como dados; uma violação invalida a rodada (D3).
+The file may only contain a docstring and `NAME = <literal>` assignments: no `import`, function, call, `lambda`,
+comprehension or expression. It is read as data; a violation invalidates the round (D3).
 
 ```python
 CANDIDATES = [
-    {"name": "nome_curto", "hypothesis": "hipótese falsificável", "args": {"new_pair_rate": 15.0}},
+    {"name": "short_name", "hypothesis": "falsifiable hypothesis", "args": {"new_pair_rate": 15.0}},
 ]
 ```
 
-- De 1 a 3 candidatos por rodada; `name` com letras, números, `_` ou `-`, único na rodada.
-- `args`: só as chaves abaixo; as omitidas ficam no valor padrão.
+- From 1 to 3 candidates per round; `name` with letters, digits, `_` or `-`, unique in the round.
+- `args`: only the keys below; omitted keys keep their default value.
 
-| Arg | Significado | Padrão | Faixa |
+| Arg | Meaning | Default | Range |
 |---|---|---|---|
-| `new_pair_rate` | associações novas por segundo, nos telefones quentes | 10 | > 0 e ≤ 20 |
-| `hot_phones` | quantidade de telefones quentes (em rodízio) | 1 | 1 a 2 |
-| `grow_workers` | trabalhadores do fluxo de associações novas | 2 | 1 a 4 |
-| `refresh_rate` | reenvios por segundo de associações que já existem | 2 | 0 a 4 |
-| `ref_rate` | associações por segundo nos telefones de referência | 2 | 0 a 4 |
-| `probe_interval` | segundos entre leituras de cada telefone sondado | 2 | ≥ 1 |
-| `key_space` | 0 = cartões das associações novas sempre diferentes; N > 0 = repetem-se num conjunto de N | 0 | 0 a 100000 |
-| `ref_sizes` | tamanhos dos telefones de referência | (4, 200) | fixo |
+| `new_pair_rate` | new associations per second, on the hot phones | 10 | > 0 and ≤ 20 |
+| `hot_phones` | number of hot phones (in rotation) | 1 | 1 to 2 |
+| `grow_workers` | workers of the new-association stream | 2 | 1 to 4 |
+| `refresh_rate` | resends per second of associations that already exist | 2 | 0 to 4 |
+| `ref_rate` | associations per second on the reference phones | 2 | 0 to 4 |
+| `probe_interval` | seconds between reads of each probed phone | 2 | ≥ 1 |
+| `key_space` | 0 = cards of the new associations always different; N > 0 = they repeat within a set of N | 0 | 0 to 100000 |
+| `ref_sizes` | sizes of the reference phones | (4, 200) | fixed |
 
-Taxa nominal total = `new_pair_rate + refresh_rate + ref_rate + (hot_phones + 2) / probe_interval` ≤ 31 req/s.
-`seed`, `base_url`, `duration`, `out` e `timeout` são do juiz e não podem aparecer em `args`.
+Total nominal rate = `new_pair_rate + refresh_rate + ref_rate + (hot_phones + 2) / probe_interval` ≤ 31 req/s.
+`seed`, `base_url`, `duration`, `out` and `timeout` belong to the judge and may not appear in `args`.
 
-## 4. Execução de uma rodada
+## 4. Running a round
 
-1. `python prepare.py verify` precisa responder `ok`. Se não responder, registre o erro no ledger e termine.
-2. A rodada leva cerca de 62 min e roda em segundo plano (o Bash tem limite de 10 min por chamada):
+1. `python prepare.py verify` must answer `ok`. If it does not, record the error in the ledger and stop.
+2. The round takes about 62 min and runs in the background (Bash has a 10 min limit per call):
 
 ```
-python prepare.py <detect|causes> --seed <semente do comando> --background   # imprime o run_id
-python prepare.py wait <run_id>                                              # até 9 min; repita até sair o resumo
+python prepare.py <detect|causes> --seed <seed from the command> --background   # prints the run_id
+python prepare.py wait <run_id>                                                 # up to 9 min; repeat until the summary appears
 ```
 
-- Use **exatamente a semente do comando**. Ela vale para os 4 braços da rodada.
-- Se o comando pedir `--smoke`, acrescente `--smoke`.
-- A duração (60 min) e o ambiente são fixos pelo juiz: todas as rodadas são comparáveis entre si.
-- **`workload.py` recusado:** se o comando responder `INVÁLIDO` na hora, nada foi medido. Corrija
-  `workload.py`, refaça o commit (`git commit --amend -a --no-edit`) e rode de novo com a mesma semente.
-- **Rodada travada:** se o `wait` continuar respondendo `running` 90 min depois do início, registre a rodada como
-  `failed` e termine.
-- Os detalhes de cada braço ficam em `results/<run_id>/<braço>/evaluation.json`; o resumo da rodada em
-  `results/<run_id>/round.json`. Não abra `client.csv`, `instrumentation.jsonl` nem `app.log` (são grandes e não
-  são a medida).
-- Na coluna `commit` dos registros, use o hash curto (`git rev-parse --short=7 HEAD`).
-- Timestamps vêm de `date -Iseconds`. Nunca invente horários.
+- Use **exactly the seed from the command**. It applies to the 4 arms of the round.
+- If the command asks for `--smoke`, add `--smoke`.
+- Duration (60 min) and environment are fixed by the judge: all rounds are comparable with one another.
+- **`workload.py` rejected:** if the command answers `INVALID` immediately, nothing was measured. Fix
+  `workload.py`, redo the commit (`git commit --amend -a --no-edit`) and run again with the same seed.
+- **Stuck round:** if `wait` still answers `running` 90 min after the start, record the round as `failed` and stop.
+- Per-arm details are in `results/<run_id>/<arm>/evaluation.json`; the round summary in
+  `results/<run_id>/round.json`. Do not open `client.csv`, `instrumentation.jsonl` or `app.log` (they are large and
+  are not the measurement).
+- In the `commit` column of the records, use the short hash (`git rev-parse --short=7 HEAD`).
+- Timestamps come from `date -Iseconds`. Never make up times.
 
-## 5. Campanha `detect`
+## 5. `detect` campaign
 
-**Objetivo:** encontrar, dentro do contrato, cargas com a maior tendência de alta da latência de `retrieve_hot`
-em relação à referência.
+**Goal:** find, within the contract, workloads with the strongest upward trend of `retrieve_hot` latency relative to
+the reference.
 
-**Referência:** um braço de cada rodada roda a carga com todos os `args` no padrão. Os outros braços (até 3) são
-os seus candidatos.
+**Reference:** one arm of each round runs the workload with all `args` at their defaults. The other arms (up to 3)
+are your candidates.
 
-**Nota do braço:** `score_hot_latency_ms_per_h` = Sen's slope da latência p50 de `retrieve_hot` (ms/h), só se o
-braço for elegível e não tiver D4. **`ratio`** = inclinação do candidato ÷ inclinação da referência da mesma
-rodada; só existe se os dois forem elegíveis.
+**Arm score:** `score_hot_latency_ms_per_h` = Sen's slope of the `retrieve_hot` p50 latency (ms/h), only if the arm
+is eligible and has no D4. **`ratio`** = candidate slope ÷ reference slope in the same round; it exists only if both
+are eligible.
 
-**O que o sistema faz entre as suas rodadas:** quando um candidato seu fica elegível, o sistema repete a carga dele
-em rodadas de verificação (aparecem em `results/` com `"event": "check"`, o candidato em `source` e o resultado em
-`decision`). Uma carga com duas verificações positivas está confirmada. Repetir uma carga já confirmada não
-acrescenta nada: procure cargas diferentes.
+**What the system does between your rounds:** when a candidate of yours becomes eligible, the system repeats its
+workload in verification rounds (they appear in `results/` with `"event": "check"`, the candidate in `source` and
+the result in `decision`). A workload with two positive verifications is confirmed. Repeating an already confirmed
+workload adds nothing: look for different workloads.
 
-**Uma rodada:**
+**One round:**
 
-1. Leia `results.tsv`, `ledger.jsonl` e, se existirem, os `round.json` das rodadas de verificação.
-2. Escreva de 1 a 3 candidatos em `workload.py`, cada um com uma hipótese falsificável e o fator que testa.
-   **Na rodada 1, rode o `workload.py` como está**, sem alterar.
-3. `git commit -am "<resumo das hipóteses>"`. Na rodada 1 não há o que commitar nem, depois, commit a desfazer:
-   pule este passo e o `git reset` do passo 6.
-4. Rode `detect` (seção 4). Quando ele imprimir o `run_id`, registre `started` no ledger. Rode `wait` até sair
-   o resumo.
-5. Registre uma linha por braço no `results.tsv` (inclusive a referência) e `completed` no ledger.
-6. **Keep ou discard:**
-   - se a referência da rodada não for elegível, nenhum candidato vira keep: status do ledger
-     `referencia_sem_sintoma`, candidatos `discard`, e desfaça o commit;
-   - se ainda não há melhor anterior, o candidato com o maior `ratio` vira o melhor anterior (`keep`);
-   - senão, mantenha o commit se algum candidato tiver `ratio ≥ 1,10 × ratio` do melhor anterior;
-   - **simplicidade:** um candidato com menos `args` fora do padrão que fique dentro de 10% do `ratio` do melhor
-     anterior também vira keep e passa a ser o melhor anterior;
-   - nos outros casos, `git reset --hard HEAD~1`. As linhas de `results.tsv` e do ledger continuam.
-7. Termine.
+1. Read `results.tsv`, `ledger.jsonl` and, if they exist, the `round.json` of the verification rounds.
+2. Write 1 to 3 candidates in `workload.py`, each with a falsifiable hypothesis and the factor it tests.
+   **In round 1, run `workload.py` as it is**, unchanged.
+3. `git commit -am "<summary of the hypotheses>"`. In round 1 there is nothing to commit and, later, no commit to
+   undo: skip this step and the `git reset` of step 6.
+4. Run `detect` (section 4). When it prints the `run_id`, record `started` in the ledger. Run `wait` until the
+   summary appears.
+5. Record one line per arm in `results.tsv` (including the reference) and `completed` in the ledger.
+6. **Keep or discard:**
+   - if the round's reference is not eligible, no candidate is kept: ledger status `referencia_sem_sintoma`,
+     candidates `discard`, and undo the commit;
+   - if there is no previous best yet, the candidate with the highest `ratio` becomes the previous best (`keep`);
+   - otherwise, keep the commit if some candidate has `ratio ≥ 1.10 × ratio` of the previous best;
+   - **simplicity:** a candidate with fewer non-default `args` that stays within 10% of the previous best's `ratio`
+     is also kept and becomes the previous best;
+   - in all other cases, `git reset --hard HEAD~1`. The lines in `results.tsv` and in the ledger remain.
+7. Stop.
 
-**Sem ideias:** combine candidatos que quase passaram, teste os extremos das faixas e volte a fatores pouco
-testados.
+**Out of ideas:** combine candidates that nearly passed, test the extremes of the ranges and go back to
+under-tested factors.
 
-**`results.tsv`** (separado por tabulação):
+**`results.tsv`** (tab-separated):
 
 ```
 commit	run_id	seed	arm	score_hot_latency_ms_per_h	hr_p	ratio_vs_reference	ttd_min	status	flags	hypothesis
 ```
 
-`status`: `keep`, `discard`, `invalid` ou `baseline` (para a referência).
+`status`: `keep`, `discard`, `invalid` or `baseline` (for the reference).
 
-**`ledger.jsonl`**, uma linha antes e uma depois de cada rodada:
+**`ledger.jsonl`**, one line before and one after each round:
 
 ```
-{"run_id": null, "commit": "...", "seed": 101, "status": "started", "candidates": [{"name": "...", "hypothesis": "...", "fator_testado": "..."}], "ts": "..."}
-{"run_id": "...", "seed": 101, "status": "completed|failed|referencia_sem_sintoma", "interpretacao": "...", "fator_testado": "...", "atalho": false, "ts": "..."}
+{"run_id": null, "commit": "...", "seed": 101, "status": "started", "candidates": [{"name": "...", "hypothesis": "...", "factor_tested": "..."}], "ts": "..."}
+{"run_id": "...", "seed": 101, "status": "completed|failed|referencia_sem_sintoma", "interpretation": "...", "factor_tested": "...", "shortcut": false, "ts": "..."}
 ```
 
-**Quando o comando pedir o resumo da campanha `detect`**, escreva `summary_detect.md` com:
+**When the command asks for the summary of the `detect` campaign**, write `summary_detect.md` with:
 
-- tabela de todas as rodadas de busca, com a semente;
-- tabela da referência por rodada: `seed`, inclinação e mudança da latência de `retrieve_hot`, `hr_p`, elegível
-  (sim/não), e em quantas rodadas ela foi elegível;
-- as cargas verificadas pelo sistema e o resultado de cada verificação;
-- o melhor braço (`run_id` e `name`) e o porquê; se nenhum candidato virou keep, o melhor braço é a referência;
-- evidência de que o tamanho de resposta de `retrieve_hot` subiu e de que o controle interno ficou plano;
-- todos os atalhos observados;
-- limitações: janela de 60 min, uma semente por rodada de busca.
+- a table of all search rounds, with the seed;
+- a table of the reference per round: `seed`, slope and change of `retrieve_hot` latency, `hr_p`, eligible
+  (yes/no), and in how many rounds it was eligible;
+- the workloads verified by the system and the result of each verification;
+- the best arm (`run_id` and `name`) and why; if no candidate was kept, the best arm is the reference;
+- evidence that the `retrieve_hot` response size rose and that the internal control stayed flat;
+- all shortcuts observed;
+- limitations: 60 min window, one seed per search round.
 
-## 6. Campanha `causas`
+## 6. `causas` campaign
 
-**Referência:** `frozen/workload_frozen.py`, a carga confirmada desta campanha (`FROZEN_ARM` indica qual candidato
-de `CANDIDATES`). Um braço de cada rodada roda essa carga (`referencia_congelada`); os outros (até 3) são
-variações dela. Se o arquivo não existir, registre isso no ledger e termine.
+**Reference:** `frozen/workload_frozen.py`, the confirmed workload of this campaign (`FROZEN_ARM` names the
+candidate in `CANDIDATES`). One arm of each round runs this workload (`referencia_congelada`); the others (up to 3)
+are variations of it. If the file does not exist, record this in the ledger and stop.
 
-**Objetivo:** descobrir quais fatores da carga mudam a tendência, comparando cada fator isoladamente.
+**Goal:** find which workload factors change the trend, comparing each factor in isolation.
 
-**Regra de um fator:** cada candidato difere da carga congelada em **exatamente um** `arg`. O juiz recusa a
-rodada inteira (D3) se algum candidato mudar zero ou mais de um.
+**One-factor rule:** each candidate differs from the frozen workload in **exactly one** `arg`. The judge rejects the
+whole round (D3) if a candidate changes zero or more than one.
 
-**Medidas por variação** (`effect` no `round.json`; razão = variação ÷ referência da mesma rodada; só existem se a
-referência for elegível e a variação válida):
+**Measurements per variation** (`effect` in `round.json`; ratio = variation ÷ reference in the same round; they
+exist only if the reference is eligible and the variation is valid):
 
-| Campo | O que compara |
+| Field | What it compares |
 |---|---|
-| `lat_ratio` | inclinação da latência p50 de `retrieve_hot` |
-| `bytes_ratio` | inclinação do tamanho de resposta de `retrieve_hot` |
-| `cost_ratio` | custo por MB: inclinação da latência de `retrieve_hot` contra o tamanho da resposta (ms por MB) |
-| `assoc_p95_ratio` | p95 final de `associate_card` |
-| `ref4_p95_ratio` | p95 final de `retrieve_ref4` |
+| `lat_ratio` | slope of the `retrieve_hot` p50 latency |
+| `bytes_ratio` | slope of the `retrieve_hot` response size |
+| `cost_ratio` | cost per MB: slope of `retrieve_hot` latency against response size (ms per MB) |
+| `assoc_p95_ratio` | final p95 of `associate_card` |
+| `ref4_p95_ratio` | final p95 of `retrieve_ref4` |
 
-**Uma rodada (campanha N, rodada r de 6):**
+**One round (campaign N, round r of 6):**
 
-1. Leia `frozen/workload_frozen.py`, `results_causas.tsv` e `ledger_causas.jsonl`.
-2. Escolha de 1 a 3 variações, cada uma com o fator, o valor novo, a hipótese e a direção esperada do efeito:
-   - **réplica:** cada variação desta campanha precisa rodar em **duas rodadas**, com sementes diferentes. Dê
-     prioridade às variações desta campanha que têm só uma réplica válida e planeje as rodadas que restam;
-   - **hipóteses novas primeiro:** uma variação com o mesmo `fator` e o mesmo `valor_var` de uma campanha
-     anterior não é rodada de novo. Teste primeiro as que ainda não foram testadas e cite as repetidas no resumo,
-     com o resultado anterior.
-3. Escreva as variações em `workload.py` e `git commit -am "<variações>"`.
-4. Rode `causes` (seção 4). Quando ele imprimir o `run_id`, registre `started` no ledger. Rode `wait` até sair o
-   resumo.
-5. Registre uma linha por braço no `results_causas.tsv` e `completed` no ledger. Não há keep nem discard: o commit
-   fica.
-6. Se a referência da rodada não for elegível (`reference_ok: False`), registre `referencia_sem_sintoma`; as
-   variações daquela rodada não contam como réplica.
-7. Termine.
+1. Read `frozen/workload_frozen.py`, `results_causas.tsv` and `ledger_causas.jsonl`.
+2. Choose 1 to 3 variations, each with the factor, the new value, the hypothesis and the expected direction of the
+   effect:
+   - **replication:** each variation of this campaign must run in **two rounds**, with different seeds. Give
+     priority to variations of this campaign that have only one valid replica and plan the remaining rounds;
+   - **new hypotheses first:** a variation with the same `factor` and the same `value_var` as an earlier campaign is
+     not run again. Test first the ones not yet tested and cite the repeated ones in the summary, with the earlier
+     result.
+3. Write the variations in `workload.py` and `git commit -am "<variations>"`.
+4. Run `causes` (section 4). When it prints the `run_id`, record `started` in the ledger. Run `wait` until the
+   summary appears.
+5. Record one line per arm in `results_causas.tsv` and `completed` in the ledger. There is no keep or discard: the
+   commit stays.
+6. If the round's reference is not eligible (`reference_ok: False`), record `referencia_sem_sintoma`; the
+   variations of that round do not count as replicas.
+7. Stop.
 
-**`results_causas.tsv`** (separado por tabulação):
+**`results_causas.tsv`** (tab-separated):
 
 ```
-campanha	commit	run_id	seed	arm	fator	valor_ref	valor_var	valid	eligible	lat_ratio	bytes_ratio	cost_ratio	assoc_p95_ratio	ref4_p95_ratio	flags	hypothesis
+campaign	commit	run_id	seed	arm	factor	value_ref	value_var	valid	eligible	lat_ratio	bytes_ratio	cost_ratio	assoc_p95_ratio	ref4_p95_ratio	flags	hypothesis
 ```
 
-**`ledger_causas.jsonl`**: mesmo formato do ledger da campanha `detect`, com `"campanha"` e
-`"variacoes": [{"name", "fator", "valor", "hypothesis", "direcao_esperada"}]` no `started`.
+**`ledger_causas.jsonl`**: same format as the `detect` ledger, with `"campaign"` and
+`"variations": [{"name", "factor", "value", "hypothesis", "expected_direction"}]` in `started`.
 
-**Como declarar um efeito:** para cada razão, a variação tem efeito se, nas duas réplicas válidas, a razão ficar
-do mesmo lado de 1 e a pelo menos 20% dele (≥ 1,2 nas duas ou ≤ 0,8 nas duas). Caso contrário, "sem efeito
-claro".
+**Declaring an effect:** for each ratio, the variation has an effect if, in both valid replicas, the ratio stays on
+the same side of 1 and at least 20% away from it (≥ 1.2 in both or ≤ 0.8 in both). Otherwise, "no clear effect".
 
-**Quando o comando pedir o resumo da campanha `causas` N**, escreva `summary_causas_<N>.md` com:
+**When the command asks for the summary of `causas` campaign N**, write `summary_causas_<N>.md` with:
 
-- a carga congelada (`args`);
-- tabela fator → valor → razões nas duas réplicas → efeito (sim/não, direção) para cada medida;
-- quais fatores mudam a inclinação da latência, quais mudam o tamanho da resposta e quais mudam o custo por MB;
-- hipóteses já testadas em campanhas anteriores e não repetidas, com o resultado anterior;
-- variações sem as duas réplicas válidas, e por quê;
-- limitações: um fator de cada vez (sem interações), janela de 60 min, duas réplicas por variação.
+- the frozen workload (`args`);
+- a table factor → value → ratios in both replicas → effect (yes/no, direction) for each measurement;
+- which factors change the latency slope, which change the response size and which change the cost per MB;
+- hypotheses already tested in earlier campaigns and not repeated, with the earlier result;
+- variations without two valid replicas, and why;
+- limitations: one factor at a time (no interactions), 60 min window, two replicas per variation.
 
-## 7. Registros
+## 7. Records
 
-- Não declare efeito maior que a diferença entre réplicas.
-- O `results/judge_log.jsonl` é a fonte de verdade; os seus registros precisam bater com ele.
+- Do not claim an effect larger than the difference between replicas.
+- `results/judge_log.jsonl` is the source of truth; your records must match it.

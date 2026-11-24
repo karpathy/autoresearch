@@ -4,6 +4,7 @@ Uma nota por mudança relevante, mais recente no topo. Cada nota diz o que mudou
 
 | Data | Nota | Resumo |
 |---|---|---|
+| 2026-11-23 | [2026-11-23_traducao-ingles.md](2026-11-23_traducao-ingles.md) | Instruções, prompts e mensagens que o agente vê em inglês; regras e identificadores iguais |
 | 2026-11-23 | [2026-11-23_orquestrador.md](2026-11-23_orquestrador.md) | **Orquestrador implementado:** experimento completo sem humano no meio (`./run_experiment.sh <tag>`) |
 | 2026-11-23 | [2026-11-23_confirmacao-em-rodadas.md](2026-11-23_confirmacao-em-rodadas.md) | Decisão (implementada): confirmação dentro da campanha (3 rodadas), sem humano no meio; opção de 3 campanhas em stand-by |
 | 2026-11-23 | [2026-11-23_resumo-das-mudancas.md](2026-11-23_resumo-das-mudancas.md) | **Comece por aqui:** tudo que mudou da `juiz-v2-bd0b0ad` para a `deteccao-f1` |

@@ -192,7 +192,7 @@ A verificação pode ir até a rodada 10.
 | H4 | O processo da app morreu, mudou de PID ou abriu processos filhos | Braço inválido |
 
 Toda flag vai para `results/judge_log.jsonl`, e o agente marca no ledger as ideias que só melhoravam o número por
-um desses caminhos (`"atalho": true`). Esses casos também são resultado da pesquisa.
+um desses caminhos (`"shortcut": true`). Esses casos também são resultado da pesquisa.
 
 ## De onde vem cada decisão
 
@@ -203,7 +203,7 @@ um desses caminhos (`"atalho": true`). Esses casos também são resultado da pes
 | **Cesar** (`run_diagnostic.py`, `analyze_run.py`) | Contrato da carga, instrumentação, pinagem de CPU; Hamed-Rao + Sen em janelas de 60 s | `harness/load.py`, `harness/instance.py`, `harness/stats.py`, `harness/evaluate.py` |
 | **Cesar** (22/11) | O autoresearch roda sozinho, com um mínimo de rodadas, e foca em causar o aging; reparo fora | escopo desta branch; `docs/DESENHO-EXPERIMENTAL.md` |
 | Artur | Reward hacking; feedback em ~1 h; versões em paralelo | flags D1–D4, C1, H4; `DEFAULT_MINUTES = 60`; `SLOTS = 4` |
-| Fumio | Documentar os atalhos do agente é contribuição | `judge_log.jsonl` e `"atalho"` no ledger |
+| Fumio | Documentar os atalhos do agente é contribuição | `judge_log.jsonl` e `"shortcut"` no ledger |
 | Ermeson | Workloads, métricas, critério de parada e duração | `harness/load.py`, `harness/evaluate.py`, orçamentos no `program.md` |
 | Rafael e Ermeson (19/11) | Sementes independentes; confirmação repetida com parâmetros fixos, mesma duração, banco limpo, R1 e controles com a mesma semente, unanimidade | sementes 100 + *n*; verificação em 2 rodadas |
 | Rafael (23/11) | Sem humano no meio; confirmação nas rodadas seguintes (até a 10); cada carga confirmada ganha campanha de causas; a busca retoma depois | `harness/orchestrator.py`, `prepare.py experiment` |

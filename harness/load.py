@@ -49,58 +49,58 @@ MAX_TOTAL_RATE = RATE_FACTOR * (10.0 + 2.0 + 2.0 + (1 + 2) / 2.0)  # 31 req/s: t
 
 def _num(v, name):
     if isinstance(v, bool) or not isinstance(v, (int, float)):
-        raise WorkloadError(f"args.{name} deve ser número")
+        raise WorkloadError(f"args.{name} must be a number")
     return v
 
 
 def normalize_args(args):
     """Valida `args` de um candidato e devolve o dict completo (defaults + valores)."""
     if not isinstance(args, dict):
-        raise WorkloadError("args deve ser um dict")
+        raise WorkloadError("args must be a dict")
     bad = sorted(set(args) - set(DEFAULTS))
     if bad:
-        hint = " (só o juiz define)" if set(bad) <= JUDGE_ONLY else f" (permitidos: {sorted(DEFAULTS)})"
-        raise WorkloadError(f"args fora do contrato: {bad}{hint}")
+        hint = " (set by the judge only)" if set(bad) <= JUDGE_ONLY else f" (allowed: {sorted(DEFAULTS)})"
+        raise WorkloadError(f"args outside the contract: {bad}{hint}")
     a = dict(DEFAULTS)
     a.update(args)
     d = DEFAULTS
     if not (isinstance(a["hot_phones"], int) and 1 <= a["hot_phones"] <= RATE_FACTOR * d["hot_phones"]):
-        raise WorkloadError(f"hot_phones deve ser int em [1, {int(RATE_FACTOR * d['hot_phones'])}]")
+        raise WorkloadError(f"hot_phones must be an int in [1, {int(RATE_FACTOR * d['hot_phones'])}]")
     if not (isinstance(a["grow_workers"], int) and 1 <= a["grow_workers"] <= RATE_FACTOR * d["grow_workers"]):
-        raise WorkloadError(f"grow_workers deve ser int em [1, {int(RATE_FACTOR * d['grow_workers'])}]")
+        raise WorkloadError(f"grow_workers must be an int in [1, {int(RATE_FACTOR * d['grow_workers'])}]")
     if not (isinstance(a["key_space"], int) and 0 <= a["key_space"] <= 100000):
-        raise WorkloadError("key_space deve ser int em [0, 100000] (0 = cartões sempre novos)")
+        raise WorkloadError("key_space must be an int in [0, 100000] (0 = always new cards)")
     for k in ("new_pair_rate", "refresh_rate", "ref_rate"):
         if not 0 <= _num(a[k], k) <= RATE_FACTOR * d[k]:
-            raise WorkloadError(f"{k} deve estar em [0, {RATE_FACTOR * d[k]:g}] (2x o padrão)")
+            raise WorkloadError(f"{k} must be in [0, {RATE_FACTOR * d[k]:g}] (2x the default)")
     if not _num(a["new_pair_rate"], "new_pair_rate") > 0:
-        raise WorkloadError("new_pair_rate deve ser > 0")
+        raise WorkloadError("new_pair_rate must be > 0")
     if not _num(a["probe_interval"], "probe_interval") >= d["probe_interval"] / RATE_FACTOR:
-        raise WorkloadError(f"probe_interval deve ser >= {d['probe_interval'] / RATE_FACTOR:g} s (2x a taxa padrão)")
+        raise WorkloadError(f"probe_interval must be >= {d['probe_interval'] / RATE_FACTOR:g} s (2x the default rate)")
     rs = a["ref_sizes"]
     if isinstance(rs, list):
         rs = tuple(rs)
     if not (isinstance(rs, tuple) and 1 <= len(rs) <= MAX_REF_SIZES
             and all(isinstance(x, int) and not isinstance(x, bool) and 1 <= x <= 2 * max(d["ref_sizes"]) for x in rs)):
-        raise WorkloadError(f"ref_sizes deve ser uma tupla de 1 a {MAX_REF_SIZES} ints em [1, {2 * max(d['ref_sizes'])}]")
+        raise WorkloadError(f"ref_sizes must be a tuple of 1 to {MAX_REF_SIZES} ints in [1, {2 * max(d['ref_sizes'])}]")
     if tuple(sorted(rs)) != tuple(sorted(d["ref_sizes"])):
         # os telefones de referência são o controle interno (C1 e interferência leem retrieve_ref4/ref200):
         # mudá-los cegaria o controle, então não são um fator da carga
-        raise WorkloadError(f"ref_sizes é fixo em {d['ref_sizes']} (controle interno)")
+        raise WorkloadError(f"ref_sizes is fixed at {d['ref_sizes']} (internal control)")
     a["ref_sizes"] = rs
     total = (a["new_pair_rate"] + a["refresh_rate"] + a["ref_rate"]
              + (a["hot_phones"] + len(rs)) / a["probe_interval"])
     if total > MAX_TOTAL_RATE + 1e-9:
-        raise WorkloadError(f"taxa nominal total {total:.1f} req/s acima de {MAX_TOTAL_RATE:g} (2x a padrão)")
+        raise WorkloadError(f"total nominal rate {total:.1f} req/s above {MAX_TOTAL_RATE:g} (2x the default)")
     return a
 
 
 def validate_spec(spec):
     for key in ("name", "hypothesis", "args"):
         if key not in spec:
-            raise WorkloadError(f"candidato sem campo obrigatório '{key}'")
+            raise WorkloadError(f"candidate missing required field '{key}'")
     if not isinstance(spec["name"], str) or not spec["name"].replace("_", "").replace("-", "").isalnum():
-        raise WorkloadError("name deve ser alfanumérico (com _ ou -)")
+        raise WorkloadError("name must be alphanumeric (with _ or -)")
     spec["_args"] = normalize_args(spec["args"])
 
 
@@ -127,8 +127,8 @@ def one_factor_diff(ref_spec, cand_spec):
     cand = normalize_args(cand_spec.get("args", {}))
     diff = sorted(k for k in DEFAULTS if ref[k] != cand[k])
     if len(diff) != 1:
-        raise WorkloadError(f"{cand_spec.get('name')}: deve mudar exatamente 1 arg em relação à carga congelada "
-                            f"(mudou {len(diff)}: {diff})")
+        raise WorkloadError(f"{cand_spec.get('name')}: must change exactly 1 arg relative to the frozen workload "
+                            f"(changed {len(diff)}: {diff})")
     k = diff[0]
     return k, ref[k], cand[k]
 
@@ -136,11 +136,11 @@ def one_factor_diff(ref_spec, cand_spec):
 # ---- braços fixos: a referência e os controles do Cesar (campaign.yaml) ----
 # As hipóteses ficam neutras de propósito: aparecem nos resultados que o agente lê.
 BASELINE = {"name": "F1_targeted_v1_referencia", "script": TARGETED, "args": {},
-            "hypothesis": "Referência: carga com os parâmetros padrão."}
+            "hypothesis": "Reference: workload with the default parameters."}
 R0 = {"name": "R0", "script": CONTROL, "args": {}, "argv": [],
-      "hypothesis": "Controle negativo R0."}
+      "hypothesis": "Negative control R0."}
 R0B = {"name": "R0b", "script": TARGETED, "args": {"key_space": 4}, "argv": ["--key-space", "4"],
-       "hypothesis": "Controle negativo R0b."}
+       "hypothesis": "Negative control R0b."}
 
 
 def spec_argv(spec):

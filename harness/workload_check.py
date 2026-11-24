@@ -24,16 +24,16 @@ def check_ast(src):
     try:
         tree = ast.parse(src)
     except SyntaxError as e:
-        raise WorkloadError(f"workload.py não compila: {e}") from None
+        raise WorkloadError(f"workload.py does not compile: {e}") from None
     for node in tree.body:
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
             continue  # docstring
         if not (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)):
-            raise WorkloadError(f"workload.py só aceita docstring e `NOME = <literal>` no topo "
-                                f"(linha {node.lineno}: {type(node).__name__})")
+            raise WorkloadError(f"workload.py only accepts a docstring and `NAME = <literal>` at top level "
+                                f"(line {node.lineno}: {type(node).__name__})")
         for sub in ast.walk(node.value):
             if not isinstance(sub, ALLOWED_VALUE_NODES):
-                raise WorkloadError(f"só literais em workload.py (linha {sub.lineno}: {type(sub).__name__})")
+                raise WorkloadError(f"only literals in workload.py (line {sub.lineno}: {type(sub).__name__})")
     return tree
 
 
@@ -47,5 +47,5 @@ def load_workload(path):
             try:
                 ns[node.targets[0].id] = ast.literal_eval(node.value)
             except (ValueError, SyntaxError) as e:
-                raise WorkloadError(f"valor inválido em workload.py (linha {node.lineno}): {e}") from None
+                raise WorkloadError(f"invalid value in workload.py (line {node.lineno}): {e}") from None
     return ns
