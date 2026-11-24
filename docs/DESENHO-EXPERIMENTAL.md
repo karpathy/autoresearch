@@ -130,7 +130,7 @@ As rodadas são numeradas em sequência, e a rodada *n* usa a semente 100 + *n* 
 
 - Terminada a campanha de causas, a busca **retoma** nas rodadas que restam (até a rodada 8).
 - Ao fim do orçamento, o orquestrador pede ao agente o `summary_detect.md` e grava
-  `results/experiment-<tag>/state.json` e `relatorio.md` (Fase 0, cada rodada com tipo, semente e decisão, cargas
+  `results/experiment-<tag>/state.json` e `report.md` (Fase 0, cada rodada com tipo, semente e decisão, cargas
   confirmadas e campanhas de causas). Status final: `no_calibration`, `aging_not_confirmed` ou
   `aging_confirmed`.
 

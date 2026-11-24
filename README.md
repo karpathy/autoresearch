@@ -34,7 +34,7 @@ Humano dispara: ./run_experiment.sh <tag>
            ├─ as 2 positivas ──► aging confirmado ──► a busca pausa ──► Campanha de causas (6 rodadas)
            │                                                          └─ a busca retoma nas rodadas que restam
            └─ alguma negativa ──► a busca continua
- └─ Fim do orçamento ──► relatório final (results/experiment-<tag>/relatorio.md + resumos do agente)
+ └─ Fim do orçamento ──► relatório final (results/experiment-<tag>/report.md + resumos do agente)
 Humano lê o relatório
 ```
 
@@ -166,7 +166,7 @@ git add -A && git commit -m "Setup do alvo do Cesar"
 
 # 3. Experimento completo, sem humano no meio
 nohup ./run_experiment.sh exp-nov23 &
-# relatório: results/experiment-exp-nov23/relatorio.md; resumos do agente: summary_detect.md, summary_causes_<N>.md
+# relatório: results/experiment-exp-nov23/report.md; resumos do agente: summary_detect.md, summary_causes_<N>.md
 ```
 
 `run_experiment.sh` tira a permissão de escrita de `prepare.py`, `harness/`, `oracle/`, `apps/`, `workloads/` e

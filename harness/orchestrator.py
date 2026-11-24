@@ -159,27 +159,27 @@ def _now():
 
 
 def report_markdown(state, tag):
-    """Relatório final legível (o humano lê isto e os resumos do agente)."""
-    out = [f"# Relatório do experimento `{tag}`", "",
+    """Final human-readable report (the human reads this and the agent summaries)."""
+    out = [f"# Experiment report `{tag}`", "",
            f"- Status: **{state['status']}**",
-           f"- Início: {state.get('started')} · fim: {state.get('finished')}", ""]
+           f"- Started: {state.get('started')} · finished: {state.get('finished')}", ""]
     p0 = state.get("phase0") or {}
-    out += ["## Fase 0: controles de 60 min", "",
-            f"- run_id: `{p0.get('run_id')}` · resultado: {'ok' if p0.get('ok') else 'failed'}", ""]
-    out += ["## Rodadas", "", "| Rodada | Semente | Tipo | run_id | Carga verificada | Resultado |",
+    out += ["## Phase 0: 60 min controls", "",
+            f"- run_id: `{p0.get('run_id')}` · result: {'ok' if p0.get('ok') else 'failed'}", ""]
+    out += ["## Rounds", "", "| Round | Seed | Kind | run_id | Verified workload | Result |",
             "|---|---|---|---|---|---|"]
     for r in state.get("rounds", []):
         out.append(f"| {r.get('n')} | {r.get('seed')} | {r.get('kind')} | `{r.get('run_id')}` | "
                    f"{r.get('load', '-')} | {r.get('decision', r.get('status', '-'))} |")
-    out += ["", "## Agings confirmados", ""]
+    out += ["", "## Confirmed aging", ""]
     if not state.get("confirmed"):
-        out.append("Nenhum.")
+        out.append("None.")
     for c in state.get("confirmed", []):
-        out += [f"### Carga {c['campaign']}: `{c['load']['name']}`", "",
+        out += [f"### Workload {c['campaign']}: `{c['load']['name']}`", "",
                 f"- args: `{json.dumps(c['load'].get('args', {}), ensure_ascii=False)}`",
-                f"- encontrada em: `{c['source']['run_id']}`",
-                f"- campanha de causas: {len(c['causes_rounds'])} rodadas "
-                f"(resumo do agente em `summary_causes_{c['campaign']}.md`)", ""]
-    out += ["## Resumos do agente", "", "- `summary_detect.md`"]
+                f"- found in: `{c['source']['run_id']}`",
+                f"- causes campaign: {len(c['causes_rounds'])} rounds "
+                f"(agent summary in `summary_causes_{c['campaign']}.md`)", ""]
+    out += ["## Agent summaries", "", "- `summary_detect.md`"]
     out += [f"- `summary_causes_{c['campaign']}.md`" for c in state.get("confirmed", [])]
     return "\n".join(out) + "\n"

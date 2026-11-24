@@ -9,7 +9,7 @@ Implementa o desenho fechado em [2026-11-23_confirmacao-em-rodadas.md](2026-11-2
 ./run_experiment.sh <tag> --smoke    # fluxo inteiro com rodadas de 2 min, para testar
 ```
 
-O humano só dispara e lê `results/experiment-<tag>/relatorio.md` e os resumos do agente (`summary_detect.md`,
+O humano só dispara e lê `results/experiment-<tag>/report.md` e os resumos do agente (`summary_detect.md`,
 `summary_causas_<N>.md`).
 
 ## O que foi feito
@@ -17,7 +17,7 @@ O humano só dispara e lê `results/experiment-<tag>/relatorio.md` e os resumos 
 | Peça | Onde | O que faz |
 |---|---|---|
 | Orquestrador | `harness/orchestrator.py` | lógica do fluxo: Fase 0 → busca → verificação → causas → retomada → relatório; recebe as ações por injeção (juiz, agente, congelamento), por isso é testável sem a app |
-| Ligação ao juiz e ao agente | `prepare.py experiment` | cria a branch `autoresearch/<tag>`, chama o agente (`claude -p`) uma rodada por vez com as permissões da campanha, acha a rodada pelo `judge_log.jsonl` (evento e semente), grava `state.json` a cada passo e o `relatorio.md` no fim |
+| Ligação ao juiz e ao agente | `prepare.py experiment` | cria a branch `autoresearch/<tag>`, chama o agente (`claude -p`) uma rodada por vez com as permissões da campanha, acha a rodada pelo `judge_log.jsonl` (evento e semente), grava `state.json` a cada passo e o `report.md` no fim |
 | Fase 0 automática | `run_controls`, `controls_ok` | R0, R0b e R1, semente 100; passa se R0 e R0b planos e R1 elegível |
 | Rodada de verificação | `run_check`, `check_decision`, `prepare.py check-load` | R1, a carga, R0 e R0b com a mesma semente; decisão `positiva` / `negativa` / `invalida` |
 | Congelamento | `freeze_spec` | grava a carga confirmada em `frozen/workload_frozen.py` e refaz o manifesto |

@@ -695,10 +695,10 @@ def cmd_experiment(a):
         freeze=freeze_spec, agent_summary=agent_summary,
         normalize=normalize_args, save=save, reference_name=BASELINE["name"])
     state = orch.run()
-    (exp_dir / "relatorio.md").write_text(O.report_markdown(state, a.tag))
+    (exp_dir / "report.md").write_text(O.report_markdown(state, a.tag))
     log_judge({"event": "experiment_end", "tag": a.tag, "status": state["status"],
                "confirmed": [c["load"]["name"] for c in state["confirmed"]]})
-    print(f"experiment {a.tag}: {state['status']} · report in {exp_dir / 'relatorio.md'}")
+    print(f"experiment {a.tag}: {state['status']} · report in {exp_dir / 'report.md'}")
 
 
 # ---------------------------------------------------------------- wait

@@ -2,7 +2,7 @@
 # Dispara o experimento completo, sem humano no meio (ver docs/DESENHO-EXPERIMENTAL.md):
 #   Fase 0 (controles) -> busca (agente) -> verificação -> causas (agente) -> retomada -> relatório.
 # Uso: ./run_experiment.sh <tag> [--smoke]
-# O relatório sai em results/experiment-<tag>/relatorio.md, e os resumos do agente em summary_*.md.
+# O relatório sai em results/experiment-<tag>/report.md, e os resumos do agente em summary_*.md.
 set -euo pipefail
 TAG="${1:?tag do experimento}"; shift || true
 cd "$(dirname "$0")"
