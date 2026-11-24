@@ -4,6 +4,7 @@ Uma nota por mudança relevante, mais recente no topo. Cada nota diz o que mudou
 
 | Data | Nota | Resumo |
 |---|---|---|
+| 2026-11-23 | [2026-11-23_confirmacao-em-rodadas.md](2026-11-23_confirmacao-em-rodadas.md) | **Decisão, não implementada:** confirmação dentro da campanha (3 rodadas), sem humano no meio; opção de 3 campanhas em stand-by |
 | 2026-11-23 | [2026-11-23_resumo-das-mudancas.md](2026-11-23_resumo-das-mudancas.md) | **Comece por aqui:** tudo que mudou da `juiz-v2-bd0b0ad` para a `deteccao-f1` |
 | 2026-11-23 | [2026-11-23_program-md-e-autoresearch.md](2026-11-23_program-md-e-autoresearch.md) | `program.md` só com instruções do agente, leitura restrita e conferência com o `karpathy/autoresearch` |
 | 2026-11-23 | [2026-11-23_fase4-causas.md](2026-11-23_fase4-causas.md) | Fase 4: investigação de causas pela carga (`prepare.py causes`, um fator por vez, custo por MB) |
@@ -28,5 +29,5 @@ As notas de 19/11 descrevem o desenho anterior, com reparo, e ficam como histór
 | Confirmação 8 h | `confirm` pronto, protocolo de duas execuções; **não rodada** |
 | Campanha `causas` (Fase 4) | pronta (`prepare.py causes`, `settings.causas.json`); testada só com rodada simulada |
 | Controles de 60 min | **por fazer** (a rodada da `juiz-v2-bd0b0ad` foi interrompida em ~18 min) |
-| Orquestrador | não implementado; as passagens entre fases são humanas |
+| Orquestrador | não implementado; as passagens entre fases são humanas. Desenho decidido: [confirmação em rodadas](2026-11-23_confirmacao-em-rodadas.md) |
 | Testes | `tests/test_c1.py` e `tests/test_causes.py` passam |
