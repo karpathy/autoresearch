@@ -1,9 +1,9 @@
 {
- "prepare.py": "b20586db08d161be5dcd913416a42b6962c015256844bef16f03e9fd8bad48ce",
+ "prepare.py": "dfa543a45d57d57c66d10e2b50a0c003ea60c3491fa52c9067c10bb3bc896b6a",
  "harness/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
  "harness/evaluate.py": "cb0b8675d615ac74b3b60b1a9fe5f3a193abdad914950402f332e05046c8c491",
  "harness/functional_check.py": "2511dcc0445fe77887a6854638b0e3b9bceb012a8ed36a71e744ee3b4604db23",
- "harness/instance.py": "082f4b32f34003486bfffb6bfe76bb0beb456a2cbfc9ff61114e161bb8b5c509",
+ "harness/instance.py": "d7915ab20b4ac0629f0fbbecabccf672d8149980210b203de1edb01e2093ff60",
  "harness/load.py": "59b2d7697984d43ce2753bbdaca3bc0c6380a0a79cf2419ebad947e2015b9dec",
  "harness/orchestrator.py": "51d52624e685455db2a57a0961da618af5444155162a3dda4bdc17180f7bff4a",
  "harness/stats.py": "d167ac2c3e56706d866cca8c258d177522d256a5386a7d00c577ab0a6245ae0c",
@@ -20,5 +20,7 @@
  "apps/credit-card-fastapi/instrumented/app.yaml": "0a998317b8bcf63ad90318a8f825ae56bbddaecf98379ed4b6bb27f432ac3a9f",
  "apps/credit-card-fastapi/instrumented/generation-prompt.txt": "ab6eb48f255623303cfc30f783fe1497fe4de268bcf5fce39631645958e28381",
  "apps/credit-card-fastapi/instrumented/requirements.txt": "147b6ccdba1a45a3fb2373d487157aabd4b214abddbff2ee22d4a209c07842a2",
- "apps/credit-card-fastapi/SOURCE.json": "ba0d0d8cdf36510e4e92c79ad7cdd4903f1df1d9cf70fa7d749077bc5aca59a7"
+ "apps/credit-card-fastapi/SOURCE.json": "ba0d0d8cdf36510e4e92c79ad7cdd4903f1df1d9cf70fa7d749077bc5aca59a7",
+ "harness/remote.py": "147cdfbff630d0f3d1fa1fb890990785adc67a80608aa19716f3c289d1ea951b",
+ "harness/server_agent.py": "c3b57f3d44dc6c676c4e24f776bc04ec99d67e5ba5e2a888068ef5bc70c5f1c2"
 }

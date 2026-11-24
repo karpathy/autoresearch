@@ -40,6 +40,7 @@ if _VPY.exists() and Path(sys.prefix).resolve() != (ROOT / ".cache" / "venv").re
     os.execv(str(_VPY), [str(_VPY), *sys.argv])
 
 from harness.instance import Instance  # noqa: E402
+from harness.remote import Client, RemoteInstance, check_server_manifest, server_config  # noqa: E402
 from harness.load import (BASELINE, R0, R0B, WorkloadError, one_factor_diff, read_client, run_script,  # noqa: E402
                           same_as_default, summarize_client, validate_spec)
 from harness.evaluate import evaluate_arm  # noqa: E402
@@ -219,16 +220,27 @@ def run_arms(arms, minutes, run_dir, smoke):
     sample_s = 2.0 if smoke else 5.0
     results = {}
 
+    server = server_config()
+    client = None
+    if server:
+        client = Client(server["addr"], server["token"])
+        check_server_manifest(client, json.loads(MANIFEST.read_text()))
+
     def one(slot, arm):
         wd = run_dir / arm["label"]
-        app_cpu, load_cpu = pins(slot)
-        inst = Instance(arm["app_dir"], wd, sample_s=sample_s, cpus=app_cpu)
+        if client:
+            load_cpu = str(slot) if (os.cpu_count() or 0) >= SLOTS and shutil.which("taskset") else None
+            inst = RemoteInstance(client, server["host"], arm["app_dir"], wd, ROOT, sample_s=sample_s, slot=slot)
+        else:
+            app_cpu, load_cpu = pins(slot)
+            inst = Instance(arm["app_dir"], wd, sample_s=sample_s, cpus=app_cpu)
         try:
             inst.prepare()
             port = inst.start()
             inst.start_sampler()
             t0 = time.time()
-            ran = run_script(arm["spec"], f"http://127.0.0.1:{port}", seconds, arm["seed"], wd, cpus=load_cpu)
+            base_url = inst.base_url() if client else f"http://127.0.0.1:{port}"
+            ran = run_script(arm["spec"], base_url, seconds, arm["seed"], wd, cpus=load_cpu)
             time.sleep(sample_s * 1.5)
             alive, pids, children = inst.alive(), set(inst.pids_seen), inst.max_children
         except Exception as e:
@@ -243,7 +255,9 @@ def run_arms(arms, minutes, run_dir, smoke):
         ev = evaluate_arm(arm["label"], inst.probe_rows(), rows, t0, load, inst.db_state(), pids, alive, seconds,
                           children, instr_last=(snaps[-1]["metrics"] if snaps else None))
         ev.update({"spec_name": arm["spec"]["name"], "hypothesis": arm["spec"].get("hypothesis", ""),
-                   "seed": arm["seed"], "app_dir": str(arm["app_dir"]), "workload_cmd": ran["cmd"]})
+                   "seed": arm["seed"], "app_dir": str(arm["app_dir"]), "workload_cmd": ran["cmd"], "topology": "client-server" if client else "local"})
+        if client:
+            ev["clock"] = inst.clock
         (wd / "evaluation.json").write_text(json.dumps(ev, indent=1, ensure_ascii=False))
         results[arm["label"]] = ev
 

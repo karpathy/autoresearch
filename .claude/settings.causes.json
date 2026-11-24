@@ -39,7 +39,6 @@
    "Read(./tests/**)",
    "Read(./.judge/**)",
    "Read(./.claude/**)",
-   
    "Read(../**)",
    "Read(~/.aging-hidden/**)",
    "Read(./.cache/**)",
@@ -102,7 +101,10 @@
    "Bash(git checkout:*)",
    "Bash(git switch:*)",
    "Bash(git branch:*)",
-   "Read(./run_experiment.sh)"
+   "Read(./run_experiment.sh)",
+   "Bash(nc:*)",
+   "Bash(env:*)",
+   "Bash(printenv:*)"
   ]
  }
 }

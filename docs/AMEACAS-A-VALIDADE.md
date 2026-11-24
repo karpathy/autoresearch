@@ -18,7 +18,7 @@ software (construto, interna, conclusão, externa), com o que já mitiga cada um
 | Ameaça | O que já mitiga | O que falta |
 |---|---|---|
 | **Deriva da máquina** (disco, cache, ruído) | Controle interno (C1) e controles negativos na mesma rodada e semente | — |
-| **Cliente e app na mesma máquina** | Pinagem em núcleos distintos; CPU do gerador medida (D1) | Repetir com cliente em outra máquina, como o Cesar |
+| **Cliente e app na mesma máquina** | Pinagem em núcleos distintos; CPU do gerador medida (D1); modo cliente-servidor implementado ([`CLIENTE-SERVIDOR.md`](CLIENTE-SERVIDOR.md)) | Rodar de fato em duas máquinas, como o Cesar |
 | **Atalhos do agente** (saturar, sair do contrato) | Flags D1–D4, C1, H4; juiz com hash; permissões restritas | — |
 | **Viés do agente** (conhecer o mecanismo) | O agente não lê código da app, card do F1, cargas do Cesar nem documentação | Confirmar a restrição com o Cesar |
 | **Um fator por vez** na campanha de causas | Duas réplicas por variação | Interações entre fatores não são estudadas |

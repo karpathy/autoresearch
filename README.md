@@ -175,6 +175,10 @@ escrita com `chmod -R u+w`. Depois de alterar qualquer arquivo do juiz, rode `py
 `verify` aborta. As peças do fluxo também podem ser rodadas à mão para depurar (`controls`, `detect`,
 `check-load`, `freeze`, `causes`).
 
+**Duas máquinas (cliente-servidor):** com `AGING_SERVER=IP:8100` no cliente e `python -m harness.server_agent`
+no servidor, a app roda no servidor e a carga e o juiz no cliente. Configuração completa em
+[`docs/CLIENTE-SERVIDOR.md`](docs/CLIENTE-SERVIDOR.md). Sem a variável, tudo continua local.
+
 **Verificação:** 2 rodadas de 60 min logo depois da rodada de busca que achou a carga, com R1, a carga, R0 e R0b
 na mesma semente e banco limpo (regra do Ermeson). Confirmado só se **as duas** forem positivas. Uma rodada
 **inválida** (D1, D3, H4, app caiu) é repetida uma vez; uma **negativa** encerra a verificação e a busca continua.

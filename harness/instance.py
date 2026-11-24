@@ -56,10 +56,12 @@ def copy_app(src, dst):
 
 
 class Instance:
-    def __init__(self, app_src, workdir, sample_s=5.0, instrument=True, cpus=None):
+    def __init__(self, app_src, workdir, sample_s=5.0, instrument=True, cpus=None, host="127.0.0.1", port=None):
         self.app_src = Path(app_src)
         self.workdir = Path(workdir)
         self.code_dir = self.workdir / "app"
+        self.host = host  # "0.0.0.0" on the server machine (client-server topology)
+        self.fixed_port = port
         self.port = None
         self.proc = None
         self.psutil_out = self.workdir / "psutil.csv"
@@ -79,7 +81,7 @@ class Instance:
         copy_app(self.app_src, self.code_dir)
 
     def start(self, timeout=30):
-        self.port = free_port()
+        self.port = self.fixed_port or free_port()
         env = dict(os.environ)
         env.update({"APP_SECRET": "aging-autoresearch", "PYTHONUNBUFFERED": "1"})
         if self.instrument:
@@ -88,7 +90,7 @@ class Instance:
         # Paridade com o Cesar: ele roda `python app.py`, que chama uvicorn.run(app, host=..., port=5000) com os
         # padrões do uvicorn (log_level="info", access_log=True): uma linha de log de acesso por requisição.
         # Aqui o mesmo app:app e os mesmos níveis de log, explícitos; só host e porta mudam (4 instâncias).
-        cmd = [str(VENV_PY), "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(self.port),
+        cmd = [str(VENV_PY), "-m", "uvicorn", "app:app", "--host", self.host, "--port", str(self.port),
                "--log-level", "info", "--access-log"]
         if self.cpus and shutil.which("taskset"):
             cmd = ["taskset", "-c", str(self.cpus)] + cmd
