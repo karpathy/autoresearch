@@ -1,234 +1,244 @@
-# Desenho experimental: detecção autônoma de aging no F1 (`credit-card-fastapi`)
+# program.md
 
-Versão de trabalho, 23/11/2026. Substitui o desenho com campanha de reparo descrito em `docs/METODOLOGIA.md`.
-Origem da mudança: conversa com o Cesar em 22/11 (o autoresearch roda sozinho, com um número mínimo de rodadas,
-e foca em **causar** o envelhecimento; o reparo sai porque se sobrepõe à pesquisa dele).
+Você é um pesquisador autônomo. Você executa uma de duas campanhas, indicada no comando que o iniciou:
 
-## 1. Escopo
+- **`detect`**: encontrar a carga que produz a tendência de degradação mais forte na aplicação;
+- **`causas`**: explicar, por comparação entre cargas, qual fator da carga produz essa tendência.
 
-**Dentro:**
+Siga só este arquivo. Não pergunte nada: execute o laço até o fim do orçamento e escreva o resumo.
 
-1. O agente procura, sozinho, cargas que causem e evidenciem o aging do finding F1.
-2. O próprio sistema confirma o aging em duas execuções longas e independentes.
-3. Com o aging confirmado, o agente testa hipóteses sobre **o que na carga** causa o envelhecimento, só por
-   comparação entre cargas.
+## 1. O sistema medido
 
-**Fora:**
+- Uma API HTTP com duas operações: `POST /associate_card` (associa um cartão a um telefone) e
+  `POST /retrieve_cards` (lista os cartões de uma lista de telefones).
+- Um gerador de carga fixo dispara essas operações em fluxos com taxas configuráveis. Você não escreve código de
+  carga: só escolhe os parâmetros (`args`, seção 3).
+- O juiz (`prepare.py`) sobe 4 instâncias da aplicação em paralelo, cada uma com banco vazio, aplica uma carga em
+  cada uma durante 60 min e mede.
 
-- **Reparo** da aplicação (campanha 2, portões de reparo, `candidates/`, `promote`, nota `fixed`). É o tema da
-  pesquisa do Cesar.
-- **Análise de código** para achar a causa. Também é o tema do Cesar (findings gerados por agentes que leem o
-  código). Aqui a causa é investigada só pela carga, como caixa-preta.
-- **Intervenção humana no meio.** O humano prepara o ambiente antes e lê o resultado no fim.
+### O que é medido em cada braço (uma instância sob uma carga)
 
-## 2. Perguntas de pesquisa
-
-| # | Pergunta | Resposta vem de |
-|---|---|---|
-| RQ1 | Um agente autônomo, dentro de um contrato de carga, encontra uma carga que ativa e evidencia o aging do F1? | Fase 1 |
-| RQ2 | O aging encontrado se confirma em execuções longas e independentes? | Fase 2 |
-| RQ3 | Quais fatores da carga explicam o envelhecimento, comparando cargas que diferem em um fator só? | Fase 4 |
-| RQ4 | Que atalhos o agente tenta para melhorar a nota sem causar aging real? | Flags de todas as fases (sugestão do Fumio) |
-
-## 3. Alvo e cenário (do Cesar, sem alteração)
-
-Do repositório `chas42/llm-aging-detection-agents` (commit `97addef`):
-
-| Peça | Uso |
+| Série | O que é |
 |---|---|
-| `apps/credit-card-fastapi/instrumented` | Aplicação sob teste, com a instrumentação do Cesar (`aging_probe.py`) |
-| Finding `bax-fastapi-credit-card-F1` | Mecanismo: cada par cartão-telefone novo grava uma linha que nunca é apagada; a consulta do telefone lê todas as linhas, sem limite |
-| `F1_targeted_v1` (padrão) | Carga de referência **R1** |
-| `F1_control` | Controle negativo **R0**: um par fixo, laço fechado |
-| `F1_targeted_v1 --key-space 4` | Controle negativo pareado **R0b**: mesmas taxas, nada acumula |
-| Teste funcional (`test_credit_card_service.py`) | Validar a aplicação no setup |
+| `retrieve_hot` | leituras de `/retrieve_cards` dos telefones que recebem as associações novas ("telefones quentes") |
+| `retrieve_ref4`, `retrieve_ref200` | leituras de telefones de referência, com 4 e 200 cartões fixos (controle interno) |
+| `associate_card` | gravações |
+| RSS | memória do processo da aplicação, a cada 5 s |
 
-**Não usados:** `apps/credit-card-fastapi/repaired` (R2) e os testes escondidos, que só serviam aos portões de
-reparo.
+Por janela de 60 s (só respostas 2xx, sem a primeira e a última janela nem o primeiro minuto): latência p50 e
+p95 e tamanho médio da resposta. Sobre cada série: teste de Mann-Kendall com correção de Hamed-Rao (p unilateral
+de alta) e Sen's slope por hora. **Mudança** = Sen × duração da série ÷ mediana, em %.
 
-**Resultado de referência do Cesar (8 h, semente 42):** latência de `retrieve_hot` de ~10 ms para ~1,3 s; R0 e
-R0b planos. Veredito: `ACTIVATED_WITH_AGING`, aging misto (custo por cartão, pico de memória, interferência).
+### Quando um braço é elegível (`eligible` / `score_eligible`)
 
-## 4. Fluxo
+As quatro condições precisam valer:
 
-```mermaid
-flowchart TD
-    P[Preparação humana: setup, check-oracles, verify] --> A
-    A[Fase 0. Controles 60 min: R0, R0b, R1] -- R0 ou R0b sobem, ou R1 não sobe --> X0[Fim: SEM_CALIBRACAO]
-    A -- ok --> B[Fase 1. Campanha de detecção: N_MIN rodadas de 60 min]
-    B -- nenhum braço elegível --> X1[Fim: SEM_AGING_DETECTADO]
-    B -- melhor braço elegível --> C[Fase 2. Congela o melhor braço e roda 2 confirmações de 8 h]
-    C -- alguma execução negativa --> X2[Fim: AGING_NAO_CONFIRMADO]
-    C -- as duas passam --> D[Fase 3. Registro: AGING_CONFIRMADO + carga congelada]
-    D --> E[Fase 4. Investigação de causas: variações de um fator contra a carga congelada]
-    E --> F[Fim: AGING_CONFIRMADO + tabela de fatores]
+1. **Válido:** exceções ≤ 1%, respostas 5xx ≤ 1%, CPU p95 do gerador de carga ≤ 90% de um núcleo, processo da
+   aplicação vivo, com o mesmo PID e sem processos filhos, ≥ 10 amostras de memória e ≥ 5 janelas;
+2. **Latência de `retrieve_hot` sobe:** p < 0,01 e mudança ≥ 50%;
+3. **Tamanho de resposta de `retrieve_hot` sobe:** p < 0,01 e mudança ≥ 50%;
+4. **Controle interno plano:** nem o tamanho de resposta de `retrieve_ref4` e `retrieve_ref200` nem a latência
+   de `retrieve_ref200` sobem (p < 0,01 e mudança ≥ 25%).
+
+### Flags
+
+| Flag | Quando | Efeito |
+|---|---|---|
+| `D1_saturacao_ou_erros` | exceções ou 5xx acima de 1%, ou gerador acima de 90% de um núcleo | braço inválido |
+| `D3_fora_do_contrato` | `args` fora do contrato ou o gerador falhou | braço (ou rodada) inválido |
+| `D4_copia_da_referencia` | candidato com os mesmos `args` da referência | sem nota |
+| `C1_referencia_interna_subindo` | condição 4 falhou | sem nota |
+| `H4_processo_reiniciado_ou_morto` / `H4_processo_filho` | o processo morreu, mudou de PID ou abriu filhos | braço inválido |
+| `sem_amostras_suficientes` / `sem_janelas_do_cliente` | poucos dados | braço inválido |
+
+Se uma ideia sua só melhora o número por um desses caminhos, não insista. Registre no ledger com
+`"atalho": true`.
+
+## 2. Arquivos
+
+| Você pode | Arquivos |
+|---|---|
+| Ler | `program.md`, `workload.py`, `frozen/workload_frozen.py`, `results/`, os seus arquivos de registro e resumo |
+| Editar | `workload.py`, `results.tsv`, `ledger.jsonl`, `summary_detect.md` (campanha `detect`); `workload.py`, `results_causas.tsv`, `ledger_causas.jsonl`, `summary_causas.md` (campanha `causas`) |
+
+Não leia nem edite mais nada. Não instale pacotes, não rode a aplicação nem outro gerador de carga fora do juiz,
+não mexa em limites do sistema, não edite `results/` nem `results/judge_log.jsonl` (é a fonte de verdade e será
+comparado com os seus registros). Não rode `setup`, `freeze`, `confirm`, `controls`, `check-oracles` nem `rehash`.
+
+## 3. `workload.py`
+
+O arquivo só pode ter docstring e atribuições `NOME = <literal>`: nada de `import`, função, chamada, `lambda`,
+compreensão ou expressão. Ele é lido como dados; uma violação invalida a rodada (D3).
+
+```python
+CANDIDATES = [
+    {"name": "nome_curto", "hypothesis": "hipótese falsificável", "args": {"new_pair_rate": 15.0}},
+]
 ```
 
-Tudo a partir da Fase 0 roda sem intervenção humana. Quem decide cada passagem é o **orquestrador** (código fixo,
-com hash no manifesto). O agente só propõe cargas, nas Fases 1 e 4.
+- De 1 a 3 candidatos por rodada; `name` com letras, números, `_` ou `-`, único na rodada.
+- `args`: só as chaves abaixo; as omitidas ficam no valor padrão.
 
-### Fase 0. Controles negativos (calibração)
+| Arg | Significado | Padrão | Faixa |
+|---|---|---|---|
+| `new_pair_rate` | associações novas por segundo, nos telefones quentes | 10 | > 0 e ≤ 20 |
+| `hot_phones` | quantidade de telefones quentes (em rodízio) | 1 | 1 a 2 |
+| `grow_workers` | trabalhadores do fluxo de associações novas | 2 | 1 a 4 |
+| `refresh_rate` | reenvios por segundo de associações que já existem | 2 | 0 a 4 |
+| `ref_rate` | associações por segundo nos telefones de referência | 2 | 0 a 4 |
+| `probe_interval` | segundos entre leituras de cada telefone sondado | 2 | ≥ 1 |
+| `key_space` | 0 = cartões das associações novas sempre diferentes; N > 0 = repetem-se num conjunto de N | 0 | 0 a 100000 |
+| `ref_sizes` | tamanhos dos telefones de referência | (4, 200) | fixo |
 
-- **Comando:** `prepare.py controls --with-r1 --seed 1`, 60 min, R0, R0b e R1 em paralelo.
-- **Passa se:** R0 e R0b com `flat = True` (válidos e sem latência, tamanho ou RSS subindo) **e** R1 com
-  `score_eligible = True`.
-- **Falha:** o experimento para com `SEM_CALIBRACAO`. Os limiares estão frouxos ou o ambiente não reproduz o F1;
-  nenhuma detecção posterior valeria.
+Taxa nominal total = `new_pair_rate + refresh_rate + ref_rate + (hot_phones + 2) / probe_interval` ≤ 31 req/s.
+`seed`, `base_url`, `duration`, `out` e `timeout` são do juiz e não podem aparecer em `args`.
 
-### Fase 1. Campanha de detecção (agente)
+## 4. Execução e sementes
 
-- **Rodadas:** exatamente `N_MIN` rodadas de 60 min, sem parada antecipada, mesmo que o aging apareça cedo.
-  Proposta: `N_MIN = 8`. Rodadas que falham também contam.
-- **Sementes:** rodada *n* usa `--seed 100 + n` (101 … 108), a mesma para os 4 braços da rodada.
-- **Slots de cada rodada:** slot 0 = R1 (referência); slots 1–3 = até 3 candidatos do agente.
-- **O que o agente pode mudar:** só os `args` do `F1_targeted_v1` (`new_pair_rate`, `hot_phones`, `grow_workers`,
-  `refresh_rate`, `ref_sizes`, `ref_rate`, `probe_interval`, `key_space`), com taxas até 2× os padrões e no
-  máximo 31 req/s no total. Sem código.
-- **Keep:** um candidato elegível é mantido se `ratio_vs_reference ≥ 1,10 × ratio` do melhor anterior (razão
-  contra a R1 da mesma rodada). R1 da rodada sem sintoma → nenhum keep naquela rodada.
-- **Saída:** o melhor braço elegível da campanha (pode ser a própria R1, se nenhum candidato a superou). Se não
-  houver nenhum braço elegível em nenhuma rodada, o experimento para com `SEM_AGING_DETECTADO`.
+Cada rodada leva cerca de 62 min e roda em segundo plano (o Bash tem limite de 10 min por chamada):
 
-### Fase 2. Confirmação (automática)
+```
+python prepare.py <detect|causes> --seed <semente> --background   # imprime o run_id
+python prepare.py wait <run_id>                                   # bloqueia até 9 min; repita até sair o resumo
+```
 
-- O orquestrador congela o melhor braço (`freeze`) e roda `confirm --phase detect` **duas vezes**, com as
-  sementes 201 e 202. Cada execução: 8 h, R0, R0b, R1 e o candidato em paralelo, banco limpo, mesma semente nos
-  quatro.
-- **Execução válida e positiva:** R0 e R0b com `flat = True` **e** R1 e candidato com `score_eligible = True`.
-- **Execução inválida** (algum braço com `valid = False`: D1, D3, H4, poucas amostras, app caiu): não conta e é
-  repetida com a próxima semente (203, 204), até `MAX_REPETICOES_INVALIDAS` (proposta: 2).
-- **Decisão por unanimidade:** as duas execuções válidas precisam ser positivas. Uma negativa encerra com
-  `AGING_NAO_CONFIRMADO`.
+- Use sempre `--seed`. A semente vale para os 4 braços da rodada.
+- Cada rodada usa uma semente nova, em sequência. Rodadas que falham também consomem a semente. Nunca reutilize
+  nem pule uma semente.
+- Os detalhes de cada braço ficam em `results/<run_id>/<braço>/evaluation.json`; o resumo da rodada em
+  `results/<run_id>/round.json`.
+- `--smoke` (2 min) serve só para testar se `workload.py` é aceito. Não tire conclusões de uma rodada smoke.
 
-### Fase 3. Registro
+## 5. Campanha `detect`
 
-O orquestrador grava em `results/<experimento>/resultado.json`: veredito, carga congelada (`args`), as rodadas
-da Fase 1, as duas confirmações e os números principais (inclinação e mudança da latência de `retrieve_hot`,
-tamanho de resposta, RSS e diagnóstico do `ref4`, por braço).
+**Objetivo:** encontrar, dentro do contrato, o candidato com a maior tendência de alta da latência de
+`retrieve_hot` em relação à referência.
 
-### Fase 4. Investigação de causas (agente, só por carga)
+**Referência:** um braço de cada rodada roda a carga com todos os `args` no padrão. Os outros 3 braços são os
+seus candidatos.
 
-Só roda com `AGING_CONFIRMADO`.
+**Nota do braço:** `score_hot_latency_ms_per_h` = Sen's slope da latência p50 de `retrieve_hot` (ms/h), só se o
+braço for elegível e não tiver D4. **`ratio`** = inclinação do candidato ÷ inclinação da referência da mesma
+rodada; só existe se os dois forem elegíveis.
 
-- **Referência de cada rodada:** a **carga congelada** (não a R1), no slot 0.
-- **Candidatos:** até 3 variações da carga congelada, cada uma mudando **um único fator** (um `arg`). O agente
-  escreve, para cada variação, a hipótese e a direção esperada do efeito.
-- **Réplica:** cada variação roda em **2 rodadas**, com sementes diferentes (301, 302, …). Um efeito só é
-  declarado se tiver a mesma direção nas duas.
-- **Medidas por variação, contra a referência da mesma rodada:**
-  - razão da inclinação da latência de `retrieve_hot` (o sintoma);
-  - razão da inclinação do tamanho de resposta (quanto o telefone quente acumulou);
-  - **latência por MB de resposta** (custo por cartão: separa "acumulou mais" de "cada cartão custa mais");
-  - interferência: p95 de `associate_card` e de `retrieve_ref4`.
-- **Rodadas:** proposta de `N_CAUSAS = 6` rodadas de 60 min (até 9 variações, cada uma com 2 sementes).
-- **Saída:** `summary_causas.md` com a tabela fator → efeito (razão nas duas sementes, direção, consistente
-  sim/não) e a interpretação do agente.
+**Setup:**
 
-Exemplos de fatores que o agente pode testar (não entram no programa do agente, para não enviesá-lo):
+1. `git checkout -b autoresearch/<tag>`, com a tag recebida no comando.
+2. `python prepare.py verify` precisa responder `ok`. Se não responder, pare e registre o erro no resumo.
+3. Crie `results.tsv` (só o cabeçalho) e `ledger.jsonl` (vazio). Nenhum dos dois entra em commit.
 
-| Fator | Pergunta |
+**Laço: exatamente 8 rodadas**, sementes 101 a 108 (rodada *n* = 100 + *n*). Não pare antes, mesmo que a
+tendência apareça cedo.
+
+1. Leia `results.tsv` e `ledger.jsonl`. A semente desta rodada é 100 + (linhas `started` no ledger + 1).
+2. Escreva de 1 a 3 candidatos em `workload.py`, cada um com uma hipótese falsificável e o fator que testa.
+3. `git commit -am "<resumo das hipóteses>"`.
+4. Registre `started` no ledger.
+5. Rode `detect --seed <semente> --background` e `wait` até sair o resumo.
+6. Registre uma linha por braço no `results.tsv` (inclusive a referência) e `completed` no ledger.
+7. **Keep ou discard:**
+   - se a referência da rodada não for elegível, nenhum candidato vira keep: status do ledger
+     `referencia_sem_sintoma`, candidatos `discard`, e desfaça o commit;
+   - na primeira rodada com algum `ratio`, o candidato com o maior `ratio` vira o melhor anterior (`keep`);
+   - nas seguintes, mantenha o commit se algum candidato tiver `ratio ≥ 1,10 × ratio` do melhor anterior;
+   - senão, `git reset --hard HEAD~1`. As linhas de `results.tsv` e do ledger continuam.
+8. Entre candidatos equivalentes, prefira o que tem menos `args` fora do padrão.
+
+**`results.tsv`** (separado por tabulação):
+
+```
+commit	run_id	seed	arm	score_hot_latency_ms_per_h	hr_p	ratio_vs_reference	ttd_min	status	flags	hypothesis
+```
+
+`status`: `keep`, `discard`, `invalid` ou `baseline` (para a referência).
+
+**`ledger.jsonl`**, uma linha antes e uma depois de cada rodada:
+
+```
+{"run_id": null, "commit": "...", "seed": 101, "status": "started", "candidates": [{"name": "...", "hypothesis": "...", "fator_testado": "..."}], "ts": "..."}
+{"run_id": "...", "seed": 101, "status": "completed|failed|referencia_sem_sintoma", "interpretacao": "...", "fator_testado": "...", "atalho": false, "ts": "..."}
+```
+
+**`summary_detect.md`** ao final:
+
+- tabela de todas as rodadas, com a semente;
+- tabela da referência por rodada: `seed`, inclinação e mudança da latência de `retrieve_hot`, `hr_p`, elegível
+  (sim/não), e em quantas rodadas ela foi elegível;
+- o melhor candidato (`run_id` e `name`) e o porquê;
+- evidência de que o tamanho de resposta de `retrieve_hot` subiu e de que o controle interno ficou plano;
+- todos os atalhos observados;
+- limitações: janela de 60 min, uma semente por rodada, cada candidato rodou com uma única semente.
+
+Não declare a degradação confirmada: a confirmação é feita fora desta campanha.
+
+## 6. Campanha `causas`
+
+**Pré-condição:** `frozen/workload_frozen.py` existe. Ele contém a carga escolhida (`FROZEN_ARM` indica qual
+candidato de `CANDIDATES`; se for `F1_targeted_v1_referencia`, é a carga com todos os `args` no padrão). Se o
+arquivo não existir, pare e registre isso no resumo.
+
+**Objetivo:** descobrir quais fatores da carga mudam a tendência, comparando cada fator isoladamente.
+
+**Referência:** um braço de cada rodada roda a carga congelada (`referencia_congelada`). Os outros 3 braços são
+variações dela.
+
+**Regra de um fator:** cada candidato difere da carga congelada em **exatamente um** `arg`. O juiz recusa a
+rodada inteira (D3) se algum candidato mudar zero ou mais de um.
+
+**Medidas por variação** (`effect` no `round.json`; razão = variação ÷ referência da mesma rodada; só existem se a
+referência for elegível e a variação válida):
+
+| Campo | O que compara |
 |---|---|
-| `key_space` (0 → N) | o aging depende de pares **novos** acumulando? |
-| `new_pair_rate` | a inclinação acompanha a taxa de acúmulo? |
-| `hot_phones` (1 → 2) | concentrar os cartões num telefone importa? |
-| `probe_interval` | ler mais vezes piora a interferência sem mudar o acúmulo? |
-| `refresh_rate` | reenviar pares que já existem (ignorados pelo banco) tem efeito? |
+| `lat_ratio` | inclinação da latência p50 de `retrieve_hot` |
+| `bytes_ratio` | inclinação do tamanho de resposta de `retrieve_hot` |
+| `cost_ratio` | custo por MB: inclinação da latência de `retrieve_hot` contra o tamanho da resposta (ms por MB) |
+| `assoc_p95_ratio` | p95 final de `associate_card` |
+| `ref4_p95_ratio` | p95 final de `retrieve_ref4` |
 
-## 5. Medição e critérios (sem mudança em relação ao juiz atual)
+**Setup:**
 
-- **Cliente** (`client.csv` do script do Cesar): janelas de 60 s, só 2xx, sem a primeira e a última janela nem o
-  aquecimento. Por janela: p50, p95 e tamanho médio de `retrieve_hot`, `retrieve_ref4`, `retrieve_ref200` e
-  `associate_card`.
-- **Servidor** (psutil a cada 5 s): RSS, descritores, threads, filhos, tamanho do banco.
-- **Estatística:** Mann-Kendall com Hamed-Rao + Sen's slope; mudança implícita = `Sen × duração ÷ mediana`.
+1. `git checkout -b autoresearch/<tag>`, com a tag recebida no comando.
+2. `python prepare.py verify` precisa responder `ok`.
+3. Leia `frozen/workload_frozen.py`.
+4. Crie `results_causas.tsv` (só o cabeçalho) e `ledger_causas.jsonl` (vazio).
 
-Um braço é **detecção positiva** (`score_eligible`) quando:
+**Laço: exatamente 6 rodadas**, sementes 301 a 306 (rodada *n* = 300 + *n*).
 
-1. é válido: exceções ≤ 1%, 5xx ≤ 1%, CPU p95 do gerador ≤ 90%, processo vivo, mesmo PID, sem filhos,
-   ≥ 10 amostras e ≥ 5 janelas;
-2. a latência p50 de `retrieve_hot` sobe: p < 0,01 e mudança ≥ 50%;
-3. o tamanho de resposta de `retrieve_hot` sobe: p < 0,01 e mudança ≥ 50%;
-4. o controle interno fica plano: tamanho de `ref4` e `ref200` e latência de `ref200` sem subida ≥ 25% com
-   p < 0,01 (senão C1).
+1. Leia `results_causas.tsv` e `ledger_causas.jsonl`. A semente desta rodada é 300 + (linhas `started` + 1).
+2. Escreva de 1 a 3 variações em `workload.py`, cada uma com o fator, o valor novo, a hipótese e a direção
+   esperada do efeito.
+3. **Réplica:** cada variação precisa rodar em **duas rodadas**, com sementes diferentes. Planeje as 6 rodadas
+   para que todas as variações tenham as duas réplicas.
+4. `git commit -am "<variações>"` e registre `started` no ledger.
+5. Rode `causes --seed <semente> --background` e `wait` até sair o resumo.
+6. Registre uma linha por braço no `results_causas.tsv` e `completed` no ledger. Não há keep nem discard: o
+   commit fica.
+7. Se a referência da rodada não for elegível (`reference_ok: False`), registre `referencia_sem_sintoma`; as
+   variações daquela rodada não contam como réplica.
 
-Não pontuam: D4 (args iguais aos da referência). D2 fica desligada no F1 (o crescimento de linhas é a ativação
-exigida pela spec).
+**`results_causas.tsv`** (separado por tabulação):
 
-## 6. Travas contra atalhos
+```
+commit	run_id	seed	arm	fator	valor_ref	valor_var	valid	eligible	lat_ratio	bytes_ratio	cost_ratio	assoc_p95_ratio	ref4_p95_ratio	flags	hypothesis
+```
 
-| Trava | Como |
-|---|---|
-| Juiz fixo | `prepare.py`, `harness/`, `workloads/`, `findings/`, a app e o orquestrador com hash no manifesto; `verify` antes de cada medição |
-| Carga sem código | `workload.py` lido com `ast.literal_eval`; semente, URL e duração só do juiz |
-| Sem escrita | juiz, app, `.judge/` e `frozen/` sem permissão de escrita durante o experimento |
-| Permissões do agente | edita só `workload.py`, `results.tsv`, `ledger.jsonl` e os summaries; sem rede, pip, git push |
-| Decisões fora do agente | congelar, confirmar e dar o veredito são do orquestrador, não do agente |
-| Registro | toda flag (D1, D3, D4, C1, H4) vai para `results/judge_log.jsonl`; o agente marca atalhos no ledger |
+**`ledger_causas.jsonl`**: mesmo formato do ledger da campanha `detect`, com `"variacoes": [{"name", "fator", "valor", "hypothesis", "direcao_esperada"}]` no `started`.
 
-## 7. Parâmetros a fixar antes de rodar
+**Como declarar um efeito:** para cada razão, a variação tem efeito se, nas duas réplicas válidas, a razão ficar
+do mesmo lado de 1 e a pelo menos 20% dele (≥ 1,2 nas duas ou ≤ 0,8 nas duas). Caso contrário, registre "sem
+efeito claro".
 
-| Parâmetro | Proposta | Situação |
-|---|---|---|
-| `N_MIN` (rodadas da Fase 1) | 8 | decidir com o Cesar ("mínimo de rodadas") |
-| `N_CAUSAS` (rodadas da Fase 4) | 6 | decidir |
-| Confirmações | 2 × 8 h (sementes 201, 202), unanimidade | combinado com o Ermeson |
-| `MAX_REPETICOES_INVALIDAS` | 2 | decidir |
-| `MIN_LATENCY_CHANGE_PCT` / `MAX_REF_CHANGE_PCT` | 50% / 25% | provisórios; calibrar com a Fase 0 |
-| `MIN_EFFECT_MB_PER_H` (RSS, secundário) | 5 MB/h | herdado da versão Node; calibrar |
-| O agente pode ler o código da app e o card do F1? | **não**, nas duas fases | decidir com o Cesar (ver seção 9) |
+**`summary_causas.md`** ao final:
 
-## 8. Custo de máquina
+- a carga congelada (`args`);
+- tabela fator → valor → razões nas duas réplicas → efeito (sim/não, direção) para cada medida;
+- quais fatores mudam a inclinação da latência, quais mudam o tamanho da resposta e quais mudam o custo por MB;
+- variações sem as duas réplicas válidas, e por quê;
+- limitações: um fator de cada vez (sem interações), janela de 60 min, duas réplicas por variação.
 
-| Fase | Tempo |
-|---|---|
-| 0. Controles | ~1 h |
-| 1. Detecção | ~8,5 h (8 × ~62 min) |
-| 2. Confirmação | ~16 h (2 × 8 h), mais 8 h por execução inválida |
-| 4. Causas | ~6,5 h (6 × ~62 min) |
-| **Total** | **~32 h** |
+## 7. Registros
 
-## 9. Mudanças no repositório
-
-**Remover (feito na branch `deteccao-f1`):**
-
-- `program_repair.md`, `.claude/settings.repair.json`, `apps/credit-card-fastapi/repaired/`,
-  `tests/test_repair_fixed.py`, `workload_aa.py` e `docs/METODOLOGIA.md` (desenho antigo, com reparo);
-- em `prepare.py`: comandos `repair`, `repair-init`, `promote` e `confirm --phase repair`; `score_repair`,
-  `interference_check`, `diff_lines`, `reference_replay`; o `repaired/` no `setup`, no `check-oracles` e no
-  manifesto; os testes escondidos (`~/.aging-hidden`) no manifesto;
-- `harness/gates.py` substituído por `harness/functional_check.py` (só o teste funcional do Cesar, usado pelo
-  `check-oracles`);
-- em `harness/evaluate.py`: `FIXED_MIN_REDUCTION` e `FIXED_P95_TOL` (a medida de interferência continua, como
-  diagnóstico e para a Fase 4);
-- `run_campaign.sh` aceita só a fase `detect`; permissões e `.gitignore` sem as entradas do reparo.
-
-**Adicionar:**
-
-- **orquestrador** (`prepare.py experiment` ou `run_experiment.sh`): roda as Fases 0 a 4 em sequência, chama o
-  agente em modo headless nas Fases 1 e 4, decide cada passagem pelas regras das seções 4 e 5 e grava o
-  `resultado.json`. Entra no manifesto;
-- **decisão no `confirm`**: calcular `flat` dos controles e `score_eligible` dos braços e devolver
-  positiva / negativa / inválida (hoje só reporta);
-- **`program_causas.md`** e `.claude/settings.causas.json` para a Fase 4, com a regra de um fator por variação,
-  2 sementes por variação e a carga congelada como referência;
-- **referência configurável no `detect`**: na Fase 4, o slot 0 roda a carga congelada em vez da R1;
-- **métrica de custo por cartão** (latência por MB de resposta) no `evaluate.py`.
-
-**Ajustar:**
-
-- `program_detect.md`: N_MIN rodadas sem parada antecipada; congelar e confirmar deixam de ser instruções ao
-  humano; o agente não lê o código da app nem o card do F1 (se isso for decidido);
-- `.claude/settings.detect.json`: negar leitura de `apps/` e `findings/` (se decidido);
-- `updates/criterio-de-deteccao.md` e a figura: tirar o reparo e incluir o orquestrador e a Fase 4 (o `README.md`
-  já foi ajustado).
-
-## 10. Limitações
-
-- Sem controle positivo: um resultado negativo não mede a sensibilidade do juiz.
-- Limiares de detecção ainda não calibrados.
-- Cliente e aplicação na mesma máquina (o Cesar usou duas).
-- Na Fase 4, um fator de cada vez não captura interações entre fatores.
-- A semente só muda os números dos cartões e os pares reenviados; a variação entre execuções vem também da
-  própria execução (máquina, momento).
-- Um aging confirmado aqui é do F1, que já era conhecido: o estudo mede se o **agente** chega até ele e o
-  explica pela carga, não se descobre um aging novo.
+- Timestamps vêm de `date -Iseconds`. Nunca invente horários.
+- Não declare efeito maior que a diferença entre réplicas.
+- O `results/judge_log.jsonl` é a fonte de verdade; os seus registros precisam bater com ele.

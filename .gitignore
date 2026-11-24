@@ -1,6 +1,8 @@
 results/
 results.tsv
 ledger.jsonl
+results_causas.tsv
+ledger_causas.jsonl
 logs/
 .cache/
 __pycache__/

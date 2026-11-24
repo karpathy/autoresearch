@@ -121,7 +121,7 @@ Para candidatos que passaram nos portões (H1–H5, replay) e nas travas pós-me
 | `flat` dos controles | Sim, em `controls`. **Em `confirm` não**: a saída de `confirm --phase detect` mostra as métricas, mas o humano confere a regra da seção 3 |
 | Etapas A–D | **Não.** `freeze` aceita qualquer `run_id` e braço, e `repair` só exige que `frozen/workload_frozen.py` exista |
 | Duas confirmações, ambas aprovadas (etapa D) | **Não.** `confirm` roda uma execução por chamada e não sabe das anteriores; o humano roda as duas e confere as duas antes de `repair-init` |
-| Semente por rodada (101–108) e keep pela razão contra a referência da rodada | **Não.** É protocolo do agente (`program_detect.md`). O juiz só usa o `--seed` recebido (padrão 1), grava-o em `round.json` e calcula o `ratio_vs_reference`; não confere a sequência de sementes nem decide keep/discard |
+| Semente por rodada (101–108) e keep pela razão contra a referência da rodada | **Não.** É protocolo do agente (`program.md`). O juiz só usa o `--seed` recebido (padrão 1), grava-o em `round.json` e calcula o `ratio_vs_reference`; não confere a sequência de sementes nem decide keep/discard |
 | Original com sintoma em cada rodada de reparo | Sim (`prepare.py:score_repair`) |
 
 A ordem é **congelar (C) e depois confirmar (D)** porque o `confirm` atual lê a carga do candidato de

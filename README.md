@@ -13,7 +13,8 @@ Responsáveis: Rafael, Cesar e Ermeson (UFRPE). Colaboração com Fumio Machida 
 > **Escopo desta versão (branch `deteccao-f1`): só detecção.** O agente procura cargas que causem o aging do F1,
 > o aging é confirmado em duas execuções longas e, depois, o agente testa hipóteses sobre a causa **só pela
 > carga**. O **reparo** e a **análise de código** ficaram de fora porque são o tema da pesquisa do Cesar
-> (decisão de 22/11). O desenho completo do experimento está em [`program.md`](program.md). A versão com reparo
+> (decisão de 22/11). O desenho completo do experimento está em [`docs/DESENHO-EXPERIMENTAL.md`](docs/DESENHO-EXPERIMENTAL.md); as
+> instruções do agente, em [`program.md`](program.md). A versão com reparo
 > continua na branch `juiz-v2-bd0b0ad`.
 
 ## O cenário do Cesar (resumo)
@@ -41,15 +42,15 @@ Responsáveis: Rafael, Cesar e Ermeson (UFRPE). Colaboração com Fumio Machida 
 | **Cesar** (`harness/run_diagnostic.py`) | Contrato da carga (`--base-url --duration --seed --out`, `client.csv`), instrumentação por `AGING_INSTRUMENT=1`/`AGING_INSTRUMENT_LOG`, pinagem de CPU | `harness/load.py:run_script`, `harness/instance.py`, `prepare.py:pins` |
 | **Cesar** (`harness/analyze_run.py`) | Mann-Kendall com Hamed-Rao + Sen, janelas de 60 s, `retrieve_ref*` como controle interno | `harness/stats.py:trend_hr`, `harness/evaluate.py` |
 | **Cesar** (`harness/functional_check.py`) | Teste funcional contra a app em execução | `harness/functional_check.py`, `oracle/functional_test.py` |
-| **Cesar** (22/11) | O autoresearch roda sozinho, com um mínimo de rodadas, e foca em causar o aging; reparo fora (sobreposição) | `program.md` |
+| **Cesar** (22/11) | O autoresearch roda sozinho, com um mínimo de rodadas, e foca em causar o aging; reparo fora (sobreposição) | `docs/DESENHO-EXPERIMENTAL.md` |
 | Artur | Reward hacking: o agente satura a máquina ou sai do contrato para melhorar a métrica | Flags D1–D4 e C1 em `harness/evaluate.py` e `prepare.py` |
 | Artur | Feedback curto: sinal em cerca de 1 h, não 48 h | `DEFAULT_MINUTES = 60` (laço do agente) |
 | Artur | Várias versões em paralelo | `SLOTS = 4`: 3 candidatos + 1 referência por rodada |
 | Cesar (8 h por rodada) | Confirmação longa | `CONFIRM_MINUTES = 480` em `prepare.py confirm` |
 | Fumio | Documentar os atalhos do agente já é contribuição | Toda flag vai para `results/judge_log.jsonl`, e o agente registra `"atalho"` no `ledger.jsonl` |
-| Ermeson | Definir workloads, métricas, critério de parada e duração | Contrato em `harness/load.py`; métrica em `harness/evaluate.py`; orçamento em `program_detect.md` |
+| Ermeson | Definir workloads, métricas, critério de parada e duração | Contrato em `harness/load.py`; métrica em `harness/evaluate.py`; orçamento em `program.md` |
 | Piloto 2 | Margem para não selecionar ruído; registro de proveniência | Keep exige +10% no `ratio_vs_reference`; hashes do juiz em `.judge/manifest.json` |
-| Rafael (19/11) | Confirmar o F1 com sementes independentes | Semente nova por rodada de detecção (101–108) e keep pela razão contra a referência da rodada (`program_detect.md`; o juiz não impõe) |
+| Rafael (19/11) | Confirmar o F1 com sementes independentes | Semente nova por rodada de detecção (101–108) e keep pela razão contra a referência da rodada (`program.md`; o juiz não impõe) |
 | Rafael e Ermeson (19/11) | Repetir a confirmação com sementes diferentes, mesma duração, banco limpo; unanimidade | Duas execuções de `confirm` de 8 h (sementes 201 e 202); as duas precisam passar |
 
 ## A flag D2 não se aplica ao F1
@@ -76,7 +77,7 @@ O envelhecimento de verdade, o que degrada o serviço, é **misto** (classifica�
 
 A detecção mede (1) e (2) pela latência e pelo tamanho de resposta de `retrieve_hot` e pelo RSS. A interferência
 (3) é medida em todo braço como diagnóstico (p95 de `associate_card` e `retrieve_ref4`) e entra na investigação de
-causas (`program.md`, Fase 4).
+causas (fase `causas`, `prepare.py causes`).
 
 ## Arquitetura (mesma lógica do autoresearch)
 
@@ -84,14 +85,14 @@ causas (`program.md`, Fase 4).
 |---|---|---|
 | `prepare.py` (avaliação fixa) | `prepare.py` + `harness/` + `oracle/` | Ninguém durante a campanha |
 | `train.py` | `workload.py` | Agente |
-| `program.md` | `program.md` (desenho do experimento) e `program_detect.md` (instruções do agente na detecção) | Humano |
+| `program.md` | `program.md`: só as instruções do agente (campanhas `detect` e `causas`) | Humano |
 | `val_bpb` | Sen's slope da latência de `retrieve_hot` (ms/h), com Hamed-Rao (+ tamanho de resposta e RSS) | Juiz |
 | Execução de 5 min | Execução de 60 min, 4 em paralelo | Juiz |
 
 ```
 autoresearch/
-├── program.md              # desenho do experimento: fases, critérios, parâmetros
-├── program_detect.md       # instruções do agente na campanha de detecção
+├── program.md              # instruções do agente: campanhas detect e causas (a única coisa que ele lê de texto)
+├── docs/DESENHO-EXPERIMENTAL.md   # desenho do experimento, para as pessoas do projeto
 ├── prepare.py              # juiz: setup, check-oracles, controls, detect, freeze, confirm, wait, verify, rehash
 ├── apps/credit-card-fastapi/
 │   ├── instrumented/       # alvo (código do Cesar + aging_probe.py)
@@ -166,8 +167,13 @@ python prepare.py confirm --seed 201
 python prepare.py confirm --seed 202
 ```
 
-Hoje as passagens entre as fases são feitas pelo humano. O `program.md` prevê um orquestrador que encadeia as
-fases sozinho e a Fase 4 (investigação de causas); os dois ainda não estão implementados.
+```bash
+# 6. Fase 4: investigação de causas (cerca de 6,5 h; sementes 301..306), só com o aging confirmado
+./run_campaign.sh causas causas-nov23
+```
+
+Hoje as passagens entre as fases são feitas pelo humano. O desenho prevê um orquestrador que encadeia as fases
+sozinho; ele ainda não está implementado.
 
 `run_campaign.sh` tira a permissão de escrita de `prepare.py`, `harness/`, `oracle/`, `apps/`, `.judge/` e
 `frozen/`. Para rodar `freeze` ou `setup` depois disso, devolva a escrita com `chmod -R u+w`. Depois de alterar
@@ -185,7 +191,7 @@ sementes distintas (201 e 202; informe `--seed` explicitamente, o padrão do jui
 limpo. Em cada execução, os quatro braços usam a mesma semente. O aging só é confirmado se **as duas** passarem:
 unanimidade, não maioria. Uma execução **inválida** (infraestrutura: D1, D3, H4, app caiu) não conta e é repetida
 com a próxima semente (203, …); uma execução **negativa** (válida, mas um controle subiu ou R1/candidato não
-ficaram elegíveis) significa aging não confirmado. Detalhes em [`program.md`](program.md) e
+ficaram elegíveis) significa aging não confirmado. Detalhes em [`docs/DESENHO-EXPERIMENTAL.md`](docs/DESENHO-EXPERIMENTAL.md) e
 [`updates/criterio-de-deteccao.md`](updates/criterio-de-deteccao.md).
 
 ## Taxonomia de atalhos (reward hacking)
@@ -214,7 +220,7 @@ ficaram elegíveis) significa aging não confirmado. Detalhes em [`program.md`](
 1. **Limiares:** a nota usa a latência e o tamanho de resposta de `retrieve_hot`, além do RSS. Os limiares
    (mudança de 50% na latência, 25% no controle interno, 5 MB/h no RSS) são de partida e precisam ser conferidos
    com os controles (`prepare.py controls`).
-2. **Orquestrador e Fase 4:** previstos em `program.md`, ainda não implementados.
+2. **Orquestrador:** previsto em `docs/DESENHO-EXPERIMENTAL.md`, ainda não implementado.
 3. **Sem controle positivo:** "não achamos aging" não é afirmação sobre a sensibilidade do juiz. Só os controles
    negativos (R0 e R0b) existem neste cenário.
 4. **Cliente e app na mesma máquina:** no artigo eram máquinas separadas. Aqui app e gerador são pinados em

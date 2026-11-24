@@ -2,7 +2,7 @@
 
 **Objetivo:** seguir a decisão com o Cesar em 22/11: o autoresearch roda sozinho, com um número mínimo de rodadas,
 e foca em **causar** o aging do F1. O reparo e a análise de código saem do escopo, porque são o tema da pesquisa do
-Cesar. O desenho completo está em [`program.md`](../program.md).
+Cesar. O desenho completo está em [`docs/DESENHO-EXPERIMENTAL.md`](../docs/DESENHO-EXPERIMENTAL.md).
 
 ## O que saiu
 
@@ -28,6 +28,18 @@ Nenhuma medição com a app foi feita nesta pasta.
 
 ## O que ainda falta
 
-- Orquestrador que encadeia as fases sozinho e a Fase 4 (investigação de causas): previstos no `program.md`.
+- Orquestrador que encadeia as fases sozinho (a Fase 4 foi implementada depois, no mesmo dia: `prepare.py causes`).
 - Decidir com o Cesar: `N_MIN`, `N_CAUSAS` e se o agente pode ler o código da app e o card do F1.
 - As notas de 19/11 abaixo descrevem o desenho anterior, com reparo; ficam como histórico.
+
+## Atualização: Fase 4 e `program.md` único (23/11)
+
+- **Fase 4 implementada:** `prepare.py causes` roda a carga congelada como referência e até 3 variações de um
+  fator (o juiz recusa as outras), e grava as razões contra a referência (`lat_ratio`, `bytes_ratio`,
+  `cost_ratio`, `assoc_p95_ratio`, `ref4_p95_ratio`). Nova medida `hot_cost_ms_per_mb` em `evaluate.py`.
+  `ref_sizes` ficou fixo em (4, 200), porque é o controle interno.
+- **`program.md` só com instruções do agente** (campanhas `detect` e `causas`); o desenho foi para
+  `docs/DESENHO-EXPERIMENTAL.md` e o `program_detect.md` foi absorvido.
+- **Menos viés:** o agente só lê `program.md`, `workload.py`, `frozen/`, `results/` e os próprios registros; textos
+  que ele vê nos resultados ficaram neutros. `run_campaign.sh causas <tag>` lança a Fase 4.
+- **Verificado:** `tests/test_c1.py`, `tests/test_causes.py` e uma rodada `causes` simulada (sem a app).

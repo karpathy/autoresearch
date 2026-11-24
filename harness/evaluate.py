@@ -165,12 +165,18 @@ def evaluate_arm(name, probe, client_rows, t0, load, db_state, pids_seen, alive_
         w = client_windows(client_rows, t0, total_s, ep)
         ep_tr[ep] = {m: trend_hr(*w[m]) for m in ("p50", "p95", "bytes")}
         ep_tr[ep]["_p50_series"] = w["p50"]
-    out["client"] = {ep: {m: v for m, v in d.items() if m != "_p50_series"} for ep, d in ep_tr.items()}
+        ep_tr[ep]["_bytes_series"] = w["bytes"]
+    out["client"] = {ep: {m: v for m, v in d.items() if not m.startswith("_")} for ep, d in ep_tr.items()}
     hot_ep = max(hot_eps, key=lambda e: ep_tr[e]["p50"]["sen_slope_per_h"])
     out["hot_endpoint"] = hot_ep
     hot = ep_tr[hot_ep]
     out["hot_latency_p50"], out["hot_latency_p95"], out["hot_resp_bytes"] = hot["p50"], hot["p95"], hot["bytes"]
     out["time_to_detect_min"] = time_to_detect(*hot["_p50_series"])
+    # custo por MB de resposta: Sen's slope da latência p50 contra o tamanho médio da resposta (MB), janela a janela.
+    # Separa "a resposta ficou maior" (mais dados) de "cada MB ficou mais caro"; usado na fase de causas.
+    lat_y = hot["_p50_series"][1]
+    mb_x = [b / MB for b in hot["_bytes_series"][1]]
+    out["hot_cost_ms_per_mb"] = sen_slope(mb_x, lat_y) if len(lat_y) >= 5 and len(set(mb_x)) > 1 else None
 
     out["latency_up"] = significant_up(hot["p50"], MIN_LATENCY_CHANGE_PCT)
     out["bytes_up"] = significant_up(hot["bytes"], MIN_LATENCY_CHANGE_PCT)    # ativação: o telefone quente cresce

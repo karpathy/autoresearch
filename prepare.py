@@ -10,6 +10,7 @@ Comandos (todos a partir da raiz do repositório):
   python prepare.py detect [--minutes 60] [--seed 1] [--background]
   python prepare.py freeze <run_id> <arm>                          # congela a carga do melhor braço
   python prepare.py confirm [--minutes 480] [--seed 201]           # 8 h: R0, R0b, R1 e o candidato congelado
+  python prepare.py causes [--minutes 60] [--seed 301] [--background] # variações de 1 fator vs a carga congelada
   python prepare.py rehash                                         # humano: refaz o manifesto após mudar o juiz
   python prepare.py wait <run_id>                                  # bloqueia até 9 min
   python prepare.py verify                                         # confere hashes do juiz
@@ -37,7 +38,7 @@ if _VPY.exists() and Path(sys.prefix).resolve() != (ROOT / ".cache" / "venv").re
     os.execv(str(_VPY), [str(_VPY), *sys.argv])
 
 from harness.instance import Instance  # noqa: E402
-from harness.load import (BASELINE, R0, R0B, WorkloadError, read_client, run_script,  # noqa: E402
+from harness.load import (BASELINE, R0, R0B, WorkloadError, one_factor_diff, read_client, run_script,  # noqa: E402
                           same_as_default, summarize_client, validate_spec)
 from harness.evaluate import evaluate_arm  # noqa: E402
 from harness.functional_check import functional_check  # noqa: E402
@@ -357,6 +358,98 @@ def cmd_freeze(a):
     print(f"carga congelada: {a.arm} de {a.run_id}; manifesto atualizado")
 
 
+# ---------------------------------------------------------------- causas (fase 4 do program.md)
+CAUSES_REF = "referencia_congelada"
+
+
+def _ratio(num, den):
+    return (num / den) if (num is not None and den not in (None, 0)) else None
+
+
+def _interf_level(ev, ep):
+    return ((ev.get("interference") or {}).get(ep) or {}).get("p95_level_ms")
+
+
+def compare_to_reference(ref, ev):
+    """Efeito de uma variação de um fator contra a carga congelada da mesma rodada e semente (razões cand/ref)."""
+    byt = lambda e: (e.get("hot_resp_bytes") or {}).get("sen_slope_per_h")  # noqa: E731
+    return {"lat_ratio": _ratio(hot_slope(ev), hot_slope(ref)),
+            "bytes_ratio": _ratio(byt(ev), byt(ref)),
+            "cost_ratio": _ratio(ev.get("hot_cost_ms_per_mb"), ref.get("hot_cost_ms_per_mb")),
+            "assoc_p95_ratio": _ratio(_interf_level(ev, "associate_card"), _interf_level(ref, "associate_card")),
+            "ref4_p95_ratio": _ratio(_interf_level(ev, "retrieve_ref4"), _interf_level(ref, "retrieve_ref4"))}
+
+
+def cmd_causes(a):
+    """Rodada da fase de causas: slot 0 = carga congelada (referência); slots 1..3 = variações que mudam
+    exatamente um arg. Mede o efeito de cada fator contra a referência da mesma rodada e semente."""
+    verify(quiet=True)
+    minutes = 2 if a.smoke else a.minutes
+    run_id, run_dir = new_run_dir("causes" + ("-smoke" if a.smoke else ""), a.run_id)
+    ref_spec = dict(frozen_spec(), name=CAUSES_REF)
+    try:
+        wl = load_workload(ROOT / "workload.py")
+        cands = wl.get("CANDIDATES")
+        if not isinstance(cands, list) or not 1 <= len(cands) <= SLOTS - 1:
+            raise WorkloadError(f"CANDIDATES deve ser uma lista de 1 a {SLOTS - 1} itens (1 slot é da referência)")
+        if not all(isinstance(c, dict) for c in cands):
+            raise WorkloadError("cada candidato deve ser um dict")
+        names = [c.get("name") for c in cands]
+        if len(set(names)) != len(names) or CAUSES_REF in names:
+            raise WorkloadError("nomes de candidatos devem ser únicos e diferentes da referência")
+        factors = {}
+        for c in cands:
+            validate_spec(c)
+            factors[c["name"]] = one_factor_diff(ref_spec, c)
+    except Exception as e:
+        rec = {"event": "causes", "run_id": run_id, "commit": git_head(), "valid": False,
+               "flag": "D3_fora_do_contrato", "error": str(e)}
+        log_judge(rec)
+        (run_dir / "STATUS").write_text("done")
+        (run_dir / "round.json").write_text(json.dumps(rec, indent=1, ensure_ascii=False))
+        print("INVÁLIDO:", e)
+        return
+    if a.background:
+        return background(sys.argv[1:], run_id, run_dir)
+    shutil.copy(ROOT / "workload.py", run_dir / "workload.py")
+    arms = [{"label": CAUSES_REF, "app_dir": INSTRUMENTED, "spec": ref_spec, "seed": a.seed}]
+    arms += [{"label": c["name"], "app_dir": INSTRUMENTED, "spec": c, "seed": a.seed} for c in cands]
+    res = run_arms(arms, minutes, run_dir, a.smoke)
+    ref = res[CAUSES_REF]
+    ref_ok = bool(ref.get("valid") and ref.get("score_eligible"))
+    rows = []
+    for label, ev in res.items():
+        if label != CAUSES_REF:
+            k, v_ref, v_cand = factors[label]
+            ev["factor"] = {"arg": k, "reference": v_ref, "variant": v_cand}
+            ev["effect"] = compare_to_reference(ref, ev) if (ref_ok and ev.get("valid")) else None
+        rows.append(ev)
+    rec = {"event": "causes", "run_id": run_id, "commit": git_head(), "smoke": a.smoke, "minutes": minutes,
+           "seed": a.seed, "reference_ok": ref_ok, "frozen_args": ref_spec.get("args", {}), "arms": rows}
+    (run_dir / "round.json").write_text(json.dumps(rec, indent=1, ensure_ascii=False))
+    log_judge({k: v for k, v in rec.items() if k != "arms"} | {"summary": [
+        {"arm": r["arm"], "valid": r.get("valid"), "flags": r.get("flags"), "factor": r.get("factor"),
+         "effect": r.get("effect")} for r in rows]})
+    (run_dir / "STATUS").write_text("done")
+    print_causes(run_id, rows, ref_ok)
+
+
+def print_causes(run_id, rows, ref_ok):
+    print(f"---\nrun_id: {run_id}\nreference_ok: {ref_ok}")
+    for r in rows:
+        lat, byt = r.get("hot_latency_p50") or {}, r.get("hot_resp_bytes") or {}
+        f, e = r.get("factor") or {}, r.get("effect") or {}
+        fac = f"{f['arg']}:{f['reference']}->{f['variant']}" if f else "-"
+        print(f"arm={r['arm']} factor={fac} valid={r.get('valid')} eligible={r.get('score_eligible')} "
+              f"hot_lat_slope={fmt(lat.get('sen_slope_per_h'))} hot_lat_change={fmt(lat.get('sen_change_pct'), 1)}% "
+              f"hr_p={fmt(lat.get('mk_p_upward'), 5)} hot_bytes_slope={fmt(byt.get('sen_slope_per_h'), 0)} "
+              f"cost_ms_per_mb={fmt(r.get('hot_cost_ms_per_mb'), 1)} "
+              f"lat_ratio={fmt(e.get('lat_ratio'))} bytes_ratio={fmt(e.get('bytes_ratio'))} "
+              f"cost_ratio={fmt(e.get('cost_ratio'))} assoc_p95_ratio={fmt(e.get('assoc_p95_ratio'))} "
+              f"ref4_p95_ratio={fmt(e.get('ref4_p95_ratio'))} db_rows={r.get('db_rows')} "
+              f"err={fmt(r.get('error_rate'), 4)} flags={','.join(r.get('flags', [])) or '-'}")
+
+
 # ---------------------------------------------------------------- confirmação (8 h, as 4 rodadas do campaign.yaml)
 def ref4_vs_control(rows, control="R0b"):
     """Diagnóstico, sem efeito na nota: a latência do ref4 do braço comparada com a do controle (R0b) da mesma
@@ -475,7 +568,9 @@ def cmd_wait(a):
         st = (d / "STATUS").read_text().strip() if (d / "STATUS").exists() else "unknown"
         if st == "done":
             rec = json.loads((d / "round.json").read_text())
-            if rec.get("event") == "controls":
+            if rec.get("event") == "causes" and "arms" in rec:
+                print_causes(a.run_id, rec["arms"], rec.get("reference_ok"))
+            elif rec.get("event") == "controls":
                 print_controls(a.run_id, rec["arms"])
             elif "arms" in rec:
                 print_detect(a.run_id, rec["arms"])
@@ -508,11 +603,17 @@ def main():
     s.add_argument("--run-id")
     sp.add_parser("rehash")
     s = sp.add_parser("freeze"); s.add_argument("run_id"); s.add_argument("arm")
+    s = sp.add_parser("causes")
+    s.add_argument("--minutes", type=float, default=DEFAULT_MINUTES)
+    s.add_argument("--seed", type=int, default=1)
+    s.add_argument("--smoke", action="store_true")
+    s.add_argument("--background", action="store_true")
+    s.add_argument("--run-id")
     s = sp.add_parser("wait"); s.add_argument("run_id"); s.add_argument("--max-seconds", type=int, default=540)
     sp.add_parser("verify")
     a = ap.parse_args()
     {"setup": cmd_setup, "check-oracles": cmd_check_oracles, "detect": cmd_detect, "confirm": cmd_confirm,
-     "controls": cmd_controls, "rehash": cmd_rehash, "freeze": cmd_freeze, "wait": cmd_wait,
+     "controls": cmd_controls, "rehash": cmd_rehash, "freeze": cmd_freeze, "causes": cmd_causes, "wait": cmd_wait,
      "verify": lambda _: verify()}[a.cmd](a)
 
 
