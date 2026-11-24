@@ -6,7 +6,6 @@
    "Bash(git status:*)",
    "Bash(git add:*)",
    "Bash(git commit:*)",
-   "Bash(git checkout -b autoresearch/:*)",
    "Bash(git rev-parse:*)",
    "Bash(git log --oneline -n 20)",
    "Bash(date:*)",
@@ -24,8 +23,8 @@
    "Write(./results_causas.tsv)",
    "Edit(./ledger_causas.jsonl)",
    "Write(./ledger_causas.jsonl)",
-   "Edit(./summary_causas.md)",
-   "Write(./summary_causas.md)"
+   "Edit(./summary_causas_*.md)",
+   "Write(./summary_causas_*.md)"
   ],
   "deny": [
    "Read(./apps/**)",
@@ -40,7 +39,7 @@
    "Read(./tests/**)",
    "Read(./.judge/**)",
    "Read(./.claude/**)",
-   "Read(./run_campaign.sh)",
+   
    "Read(../**)",
    "Read(~/.aging-hidden/**)",
    "Read(./.cache/**)",
@@ -81,7 +80,6 @@
    "Write(./findings/**)",
    "Bash(python prepare.py setup:*)",
    "Bash(python prepare.py freeze:*)",
-   "Bash(python prepare.py confirm:*)",
    "Bash(python prepare.py rehash:*)",
    "Bash(python prepare.py controls:*)",
    "Bash(python prepare.py check-oracles:*)",
@@ -98,7 +96,13 @@
    "WebFetch",
    "WebSearch",
    "Bash(python prepare.py detect:*)",
-   "Bash(git reset:*)"
+   "Bash(git reset:*)",
+   "Bash(python prepare.py check-load:*)",
+   "Bash(python prepare.py experiment:*)",
+   "Bash(git checkout:*)",
+   "Bash(git switch:*)",
+   "Bash(git branch:*)",
+   "Read(./run_experiment.sh)"
   ]
  }
 }

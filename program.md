@@ -1,11 +1,14 @@
 # program.md
 
-Você é um pesquisador autônomo. Você executa uma de duas campanhas, indicada no comando que o iniciou:
+Você é um pesquisador autônomo. O sistema chama você **uma vez por tarefa**, e o comando diz qual é:
 
-- **`detect`**: encontrar a carga que produz a tendência de degradação mais forte na aplicação;
-- **`causas`**: explicar, por comparação entre cargas, qual fator da carga produz essa tendência.
+- **uma rodada da campanha `detect`** (rodada e semente): propor cargas que produzam a tendência de degradação
+  mais forte na aplicação;
+- **uma rodada da campanha `causas`** (campanha, rodada e semente): explicar, por comparação entre cargas, qual
+  fator da carga produz essa tendência;
+- **um resumo** (`detect` ou `causas` N).
 
-Siga só este arquivo. Não pergunte nada: execute o laço até o fim do orçamento e escreva o resumo.
+Siga só este arquivo. Faça só a tarefa pedida e termine. Não pergunte nada.
 
 ## 1. O sistema medido
 
@@ -59,11 +62,15 @@ Se uma ideia sua só melhora o número por um desses caminhos, não insista. Reg
 | Você pode | Arquivos |
 |---|---|
 | Ler | `program.md`, `workload.py`, `frozen/workload_frozen.py`, `results/`, os seus arquivos de registro e resumo |
-| Editar | `workload.py`, `results.tsv`, `ledger.jsonl`, `summary_detect.md` (campanha `detect`); `workload.py`, `results_causas.tsv`, `ledger_causas.jsonl`, `summary_causas.md` (campanha `causas`) |
+| Editar (`detect`) | `workload.py`, `results.tsv`, `ledger.jsonl`, `summary_detect.md` |
+| Editar (`causas`) | `workload.py`, `results_causas.tsv`, `ledger_causas.jsonl`, `summary_causas_<N>.md` |
+
+Os registros e resumos não entram em commit. Se um arquivo de registro não existir, crie-o (o `.tsv` com o
+cabeçalho, o `.jsonl` vazio).
 
 Não leia nem edite mais nada. Não instale pacotes, não rode a aplicação nem outro gerador de carga fora do juiz,
 não mexa em limites do sistema, não edite `results/` nem `results/judge_log.jsonl` (é a fonte de verdade e será
-comparado com os seus registros). Não rode `setup`, `freeze`, `confirm`, `controls`, `check-oracles` nem `rehash`.
+comparado com os seus registros). Rode só `verify`, `wait` e o comando da sua campanha (`detect` ou `causes`).
 
 ## 3. `workload.py`
 
@@ -93,35 +100,33 @@ CANDIDATES = [
 Taxa nominal total = `new_pair_rate + refresh_rate + ref_rate + (hot_phones + 2) / probe_interval` ≤ 31 req/s.
 `seed`, `base_url`, `duration`, `out` e `timeout` são do juiz e não podem aparecer em `args`.
 
-## 4. Execução e sementes
+## 4. Execução de uma rodada
 
-Cada rodada leva cerca de 62 min e roda em segundo plano (o Bash tem limite de 10 min por chamada):
+1. `python prepare.py verify` precisa responder `ok`. Se não responder, registre o erro no ledger e termine.
+2. A rodada leva cerca de 62 min e roda em segundo plano (o Bash tem limite de 10 min por chamada):
 
 ```
-python prepare.py <detect|causes> --seed <semente> --background   # imprime o run_id
-python prepare.py wait <run_id>                                   # bloqueia até 9 min; repita até sair o resumo
+python prepare.py <detect|causes> --seed <semente do comando> --background   # imprime o run_id
+python prepare.py wait <run_id>                                              # até 9 min; repita até sair o resumo
 ```
 
-- Use sempre `--seed`. A semente vale para os 4 braços da rodada.
-- Cada rodada usa uma semente nova, em sequência. Rodadas que falham também consomem a semente. Nunca reutilize
-  nem pule uma semente.
-- Os detalhes de cada braço ficam em `results/<run_id>/<braço>/evaluation.json`; o resumo da rodada em
-  `results/<run_id>/round.json`.
-- `--smoke` (2 min) serve só para testar se `workload.py` é aceito. Não tire conclusões de uma rodada smoke.
-- A duração (60 min) e o ambiente são fixos pelo juiz: todas as rodadas são comparáveis entre si. Você não
-  controla nem altera a duração.
+- Use **exatamente a semente do comando**. Ela vale para os 4 braços da rodada.
+- Se o comando pedir `--smoke`, acrescente `--smoke`.
+- A duração (60 min) e o ambiente são fixos pelo juiz: todas as rodadas são comparáveis entre si.
 - **`workload.py` recusado:** se o comando responder `INVÁLIDO` na hora, nada foi medido. Corrija
-  `workload.py`, refaça o commit (`git commit --amend -a --no-edit`) e rode de novo **com a mesma semente**.
-- **Rodada travada:** se o `wait` continuar respondendo `running` 90 min depois do início, considere a rodada
-  falha (`failed`), registre e siga para a próxima semente.
-- **Contexto:** leia o resumo impresso pelo `wait` e, quando precisar, campos de `evaluation.json` ou
-  `round.json`. Não abra `client.csv`, `instrumentation.jsonl` nem `app.log` (são grandes e não são a medida).
+  `workload.py`, refaça o commit (`git commit --amend -a --no-edit`) e rode de novo com a mesma semente.
+- **Rodada travada:** se o `wait` continuar respondendo `running` 90 min depois do início, registre a rodada como
+  `failed` e termine.
+- Os detalhes de cada braço ficam em `results/<run_id>/<braço>/evaluation.json`; o resumo da rodada em
+  `results/<run_id>/round.json`. Não abra `client.csv`, `instrumentation.jsonl` nem `app.log` (são grandes e não
+  são a medida).
 - Na coluna `commit` dos registros, use o hash curto (`git rev-parse --short=7 HEAD`).
+- Timestamps vêm de `date -Iseconds`. Nunca invente horários.
 
 ## 5. Campanha `detect`
 
-**Objetivo:** encontrar, dentro do contrato, o candidato com a maior tendência de alta da latência de
-`retrieve_hot` em relação à referência.
+**Objetivo:** encontrar, dentro do contrato, cargas com a maior tendência de alta da latência de `retrieve_hot`
+em relação à referência.
 
 **Referência:** um braço de cada rodada roda a carga com todos os `args` no padrão. Os outros braços (até 3) são
 os seus candidatos.
@@ -130,34 +135,33 @@ os seus candidatos.
 braço for elegível e não tiver D4. **`ratio`** = inclinação do candidato ÷ inclinação da referência da mesma
 rodada; só existe se os dois forem elegíveis.
 
-**Setup:**
+**O que o sistema faz entre as suas rodadas:** quando um candidato seu fica elegível, o sistema repete a carga dele
+em rodadas de verificação (aparecem em `results/` com `"event": "check"`, o candidato em `source` e o resultado em
+`decision`). Uma carga com duas verificações positivas está confirmada. Repetir uma carga já confirmada não
+acrescenta nada: procure cargas diferentes.
 
-1. `git checkout -b autoresearch/<tag>`, com a tag recebida no comando.
-2. `python prepare.py verify` precisa responder `ok`. Se não responder, pare e registre o erro no resumo.
-3. Crie `results.tsv` (só o cabeçalho) e `ledger.jsonl` (vazio). Nenhum dos dois entra em commit.
+**Uma rodada:**
 
-**Laço: exatamente 8 rodadas**, sementes 101 a 108 (rodada *n* = 100 + *n*). Não pare antes, mesmo que a
-tendência apareça cedo.
-
-1. Leia `results.tsv` e `ledger.jsonl`. A semente desta rodada é 100 + (linhas `started` no ledger + 1).
+1. Leia `results.tsv`, `ledger.jsonl` e, se existirem, os `round.json` das rodadas de verificação.
 2. Escreva de 1 a 3 candidatos em `workload.py`, cada um com uma hipótese falsificável e o fator que testa.
    **Na rodada 1, rode o `workload.py` como está**, sem alterar.
 3. `git commit -am "<resumo das hipóteses>"`. Na rodada 1 não há o que commitar nem, depois, commit a desfazer:
-   pule este passo e o `git reset` do passo 7.
-4. Rode `detect --seed <semente> --background`. Quando ele imprimir o `run_id`, registre `started` no ledger.
-5. Rode `wait` até sair o resumo.
-6. Registre uma linha por braço no `results.tsv` (inclusive a referência) e `completed` no ledger.
-7. **Keep ou discard:**
+   pule este passo e o `git reset` do passo 6.
+4. Rode `detect` (seção 4). Quando ele imprimir o `run_id`, registre `started` no ledger. Rode `wait` até sair
+   o resumo.
+5. Registre uma linha por braço no `results.tsv` (inclusive a referência) e `completed` no ledger.
+6. **Keep ou discard:**
    - se a referência da rodada não for elegível, nenhum candidato vira keep: status do ledger
      `referencia_sem_sintoma`, candidatos `discard`, e desfaça o commit;
-   - na primeira rodada com algum `ratio`, o candidato com o maior `ratio` vira o melhor anterior (`keep`);
-   - nas seguintes, mantenha o commit se algum candidato tiver `ratio ≥ 1,10 × ratio` do melhor anterior;
-   - senão, `git reset --hard HEAD~1`. As linhas de `results.tsv` e do ledger continuam.
-8. **Simplicidade:** se um candidato com menos `args` fora do padrão ficar dentro de 10% do `ratio` do melhor
-   anterior, ele também vira keep e passa a ser o melhor anterior. Mudar um `arg` a mais por um ganho dentro do
-   ruído não vale.
-9. **Sem ideias:** combine candidatos que quase passaram, teste os extremos das faixas e volte a fatores pouco
-   testados. Não pare antes da rodada 8.
+   - se ainda não há melhor anterior, o candidato com o maior `ratio` vira o melhor anterior (`keep`);
+   - senão, mantenha o commit se algum candidato tiver `ratio ≥ 1,10 × ratio` do melhor anterior;
+   - **simplicidade:** um candidato com menos `args` fora do padrão que fique dentro de 10% do `ratio` do melhor
+     anterior também vira keep e passa a ser o melhor anterior;
+   - nos outros casos, `git reset --hard HEAD~1`. As linhas de `results.tsv` e do ledger continuam.
+7. Termine.
+
+**Sem ideias:** combine candidatos que quase passaram, teste os extremos das faixas e volte a fatores pouco
+testados.
 
 **`results.tsv`** (separado por tabulação):
 
@@ -174,28 +178,24 @@ commit	run_id	seed	arm	score_hot_latency_ms_per_h	hr_p	ratio_vs_reference	ttd_mi
 {"run_id": "...", "seed": 101, "status": "completed|failed|referencia_sem_sintoma", "interpretacao": "...", "fator_testado": "...", "atalho": false, "ts": "..."}
 ```
 
-**`summary_detect.md`** ao final:
+**Quando o comando pedir o resumo da campanha `detect`**, escreva `summary_detect.md` com:
 
-- tabela de todas as rodadas, com a semente;
+- tabela de todas as rodadas de busca, com a semente;
 - tabela da referência por rodada: `seed`, inclinação e mudança da latência de `retrieve_hot`, `hr_p`, elegível
   (sim/não), e em quantas rodadas ela foi elegível;
+- as cargas verificadas pelo sistema e o resultado de cada verificação;
 - o melhor braço (`run_id` e `name`) e o porquê; se nenhum candidato virou keep, o melhor braço é a referência;
 - evidência de que o tamanho de resposta de `retrieve_hot` subiu e de que o controle interno ficou plano;
 - todos os atalhos observados;
-- limitações: janela de 60 min, uma semente por rodada, cada candidato rodou com uma única semente.
-
-Não declare a degradação confirmada: a confirmação é feita fora desta campanha.
+- limitações: janela de 60 min, uma semente por rodada de busca.
 
 ## 6. Campanha `causas`
 
-**Pré-condição:** `frozen/workload_frozen.py` existe. Ele contém a carga escolhida (`FROZEN_ARM` indica qual
-candidato de `CANDIDATES`; se for `F1_targeted_v1_referencia`, é a carga com todos os `args` no padrão). Se o
-arquivo não existir, pare e registre isso no resumo.
+**Referência:** `frozen/workload_frozen.py`, a carga confirmada desta campanha (`FROZEN_ARM` indica qual candidato
+de `CANDIDATES`). Um braço de cada rodada roda essa carga (`referencia_congelada`); os outros (até 3) são
+variações dela. Se o arquivo não existir, registre isso no ledger e termine.
 
 **Objetivo:** descobrir quais fatores da carga mudam a tendência, comparando cada fator isoladamente.
-
-**Referência:** um braço de cada rodada roda a carga congelada (`referencia_congelada`). Os outros braços (até 3)
-são variações dela.
 
 **Regra de um fator:** cada candidato difere da carga congelada em **exatamente um** `arg`. O juiz recusa a
 rodada inteira (D3) se algum candidato mudar zero ou mais de um.
@@ -211,50 +211,47 @@ referência for elegível e a variação válida):
 | `assoc_p95_ratio` | p95 final de `associate_card` |
 | `ref4_p95_ratio` | p95 final de `retrieve_ref4` |
 
-**Setup:**
+**Uma rodada (campanha N, rodada r de 6):**
 
-1. `git checkout -b autoresearch/<tag>`, com a tag recebida no comando.
-2. `python prepare.py verify` precisa responder `ok`.
-3. Leia `frozen/workload_frozen.py`.
-4. Crie `results_causas.tsv` (só o cabeçalho) e `ledger_causas.jsonl` (vazio). Nenhum dos dois entra em commit.
-
-**Laço: exatamente 6 rodadas**, sementes 301 a 306 (rodada *n* = 300 + *n*).
-
-1. Leia `results_causas.tsv` e `ledger_causas.jsonl`. A semente desta rodada é 300 + (linhas `started` + 1).
-2. Escreva de 1 a 3 variações em `workload.py`, cada uma com o fator, o valor novo, a hipótese e a direção
-   esperada do efeito.
-3. **Réplica:** cada variação precisa rodar em **duas rodadas**, com sementes diferentes. Planeje as 6 rodadas
-   para que todas as variações tenham as duas réplicas.
-4. `git commit -am "<variações>"`.
-5. Rode `causes --seed <semente> --background`. Quando ele imprimir o `run_id`, registre `started` no ledger.
-   Depois rode `wait` até sair o resumo.
-6. Registre uma linha por braço no `results_causas.tsv` e `completed` no ledger. Não há keep nem discard: o
-   commit fica.
-7. Se a referência da rodada não for elegível (`reference_ok: False`), registre `referencia_sem_sintoma`; as
+1. Leia `frozen/workload_frozen.py`, `results_causas.tsv` e `ledger_causas.jsonl`.
+2. Escolha de 1 a 3 variações, cada uma com o fator, o valor novo, a hipótese e a direção esperada do efeito:
+   - **réplica:** cada variação desta campanha precisa rodar em **duas rodadas**, com sementes diferentes. Dê
+     prioridade às variações desta campanha que têm só uma réplica válida e planeje as rodadas que restam;
+   - **hipóteses novas primeiro:** uma variação com o mesmo `fator` e o mesmo `valor_var` de uma campanha
+     anterior não é rodada de novo. Teste primeiro as que ainda não foram testadas e cite as repetidas no resumo,
+     com o resultado anterior.
+3. Escreva as variações em `workload.py` e `git commit -am "<variações>"`.
+4. Rode `causes` (seção 4). Quando ele imprimir o `run_id`, registre `started` no ledger. Rode `wait` até sair o
+   resumo.
+5. Registre uma linha por braço no `results_causas.tsv` e `completed` no ledger. Não há keep nem discard: o commit
+   fica.
+6. Se a referência da rodada não for elegível (`reference_ok: False`), registre `referencia_sem_sintoma`; as
    variações daquela rodada não contam como réplica.
+7. Termine.
 
 **`results_causas.tsv`** (separado por tabulação):
 
 ```
-commit	run_id	seed	arm	fator	valor_ref	valor_var	valid	eligible	lat_ratio	bytes_ratio	cost_ratio	assoc_p95_ratio	ref4_p95_ratio	flags	hypothesis
+campanha	commit	run_id	seed	arm	fator	valor_ref	valor_var	valid	eligible	lat_ratio	bytes_ratio	cost_ratio	assoc_p95_ratio	ref4_p95_ratio	flags	hypothesis
 ```
 
-**`ledger_causas.jsonl`**: mesmo formato do ledger da campanha `detect`, com `"variacoes": [{"name", "fator", "valor", "hypothesis", "direcao_esperada"}]` no `started`.
+**`ledger_causas.jsonl`**: mesmo formato do ledger da campanha `detect`, com `"campanha"` e
+`"variacoes": [{"name", "fator", "valor", "hypothesis", "direcao_esperada"}]` no `started`.
 
 **Como declarar um efeito:** para cada razão, a variação tem efeito se, nas duas réplicas válidas, a razão ficar
-do mesmo lado de 1 e a pelo menos 20% dele (≥ 1,2 nas duas ou ≤ 0,8 nas duas). Caso contrário, registre "sem
-efeito claro".
+do mesmo lado de 1 e a pelo menos 20% dele (≥ 1,2 nas duas ou ≤ 0,8 nas duas). Caso contrário, "sem efeito
+claro".
 
-**`summary_causas.md`** ao final:
+**Quando o comando pedir o resumo da campanha `causas` N**, escreva `summary_causas_<N>.md` com:
 
 - a carga congelada (`args`);
 - tabela fator → valor → razões nas duas réplicas → efeito (sim/não, direção) para cada medida;
 - quais fatores mudam a inclinação da latência, quais mudam o tamanho da resposta e quais mudam o custo por MB;
+- hipóteses já testadas em campanhas anteriores e não repetidas, com o resultado anterior;
 - variações sem as duas réplicas válidas, e por quê;
 - limitações: um fator de cada vez (sem interações), janela de 60 min, duas réplicas por variação.
 
 ## 7. Registros
 
-- Timestamps vêm de `date -Iseconds`. Nunca invente horários.
 - Não declare efeito maior que a diferença entre réplicas.
 - O `results/judge_log.jsonl` é a fonte de verdade; os seus registros precisam bater com ele.

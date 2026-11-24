@@ -8,10 +8,10 @@ Cesar (que acha a causa por análise de código).
 
 | Peça | Regra |
 |---|---|
-| Comando | `prepare.py causes --seed <s> [--background]`; lançado por `./run_campaign.sh causas <tag>` |
-| Referência | slot 0 = carga congelada (`referencia_congelada`), a mesma confirmada nas duas execuções de 8 h |
+| Comando | `prepare.py causes --seed <s> [--background]`; o agente roda, chamado pelo orquestrador uma rodada por vez |
+| Referência | slot 0 = carga congelada (`referencia_congelada`), a carga confirmada na verificação |
 | Variações | slots 1–3; cada uma muda **exatamente um** `arg` da carga congelada. Zero ou mais de um → a rodada inteira é recusada (D3), por `harness/load.py:one_factor_diff` |
-| Sementes | 301 a 306 (6 rodadas); cada variação roda em **duas réplicas** com sementes diferentes |
+| Sementes | campanha *j*, rodada *r*: 300 + 10(*j*−1) + *r* (a primeira usa 301 a 306); cada variação roda em **duas réplicas** com sementes diferentes |
 | Medidas (razão variação ÷ referência da mesma rodada) | `lat_ratio` (inclinação da latência de `retrieve_hot`), `bytes_ratio` (inclinação do tamanho da resposta), `cost_ratio` (custo por MB), `assoc_p95_ratio` e `ref4_p95_ratio` (interferência) |
 | Quando as razões existem | só se a referência da rodada for elegível (`reference_ok`) e a variação for válida |
 | Efeito declarado | a razão fica do mesmo lado de 1, a pelo menos 20% dele (≥ 1,2 ou ≤ 0,8), nas duas réplicas |

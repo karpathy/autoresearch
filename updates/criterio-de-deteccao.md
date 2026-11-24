@@ -1,5 +1,9 @@
 # Critério de detecção e liberação do reparo
 
+> **Histórico.** Este documento descreve o desenho de 19/11 (confirmação de 2 × 8 h, reparo). O critério de
+> elegibilidade de um braço continua o mesmo; o fluxo atual está em `docs/DESENHO-EXPERIMENTAL.md` e em
+> [2026-11-23_orquestrador.md](2026-11-23_orquestrador.md).
+
 A campanha de reparo (campanha 2) só tem sentido se a detecção mostrou o sintoma do finding F1 de forma
 robusta. Este documento define, sem ambiguidade, **quando um braço conta como detecção** e **quando o humano
 pode liberar o reparo**. Os números vêm do código (`harness/evaluate.py`, `prepare.py`); se o código mudar,

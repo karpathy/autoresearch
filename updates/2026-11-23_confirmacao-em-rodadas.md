@@ -1,6 +1,6 @@
 # 2026-11-23 — Confirmação dentro da campanha (opção 2) e opção 1 em stand-by
 
-**Status:** desenho fechado (todos os pontos decididos). **Ainda não implementado**: o código e o `program.md` seguem com a confirmação de
+**Status:** desenho fechado e **implementado** ([2026-11-23_orquestrador.md](2026-11-23_orquestrador.md)). Texto original: o código e o `program.md` seguem com a confirmação de
 2 × 8 h e com etapas humanas no meio.
 
 ## Decisão (Rafael, 23/11)

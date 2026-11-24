@@ -10,9 +10,10 @@ propõe, um juiz fixo mede, e o laço mantém ou descarta a proposta. O **alvo e
 Responsáveis: Rafael, Cesar e Ermeson (UFRPE). Colaboração com Fumio Machida (Tsukuba) e Artur Andrzejak
 (Heidelberg).
 
-> **Escopo (branch `deteccao-f1`): só detecção e explicação pela carga.** O agente procura cargas que causem o
-> aging do F1; o aging é confirmado em duas execuções longas; depois o agente testa, variando um fator da carga de
-> cada vez, o que causa o envelhecimento. O **reparo** e a **análise de código** ficam de fora: são o tema da
+> **Escopo (branch `deteccao-f1`): só detecção e explicação pela carga, sem humano no meio.** O agente procura
+> cargas que causem o aging do F1; o sistema confirma cada carga repetindo-a nas rodadas seguintes, com os
+> controles negativos ao lado; depois o agente testa, variando um fator da carga de cada vez, o que causa o
+> envelhecimento. O humano só dispara o experimento e lê o relatório final. O **reparo** e a **análise de código** ficam de fora: são o tema da
 > pesquisa do Cesar (decisão de 22/11). A versão com reparo continua na branch `juiz-v2-bd0b0ad`.
 
 | Documento | Para quem | Conteúdo |
@@ -24,23 +25,27 @@ Responsáveis: Rafael, Cesar e Ermeson (UFRPE). Colaboração com Fumio Machida 
 ## Fluxo do experimento
 
 ```
-Preparo (humano): setup, check-oracles, verify
-  └─ Fase 0. Controles 60 min (R0, R0b, R1) ──── R0/R0b sobem ou R1 não sobe ──► fim: sem calibração
-       └─ Fase 1. Campanha detect (agente, 8 rodadas de 60 min, sementes 101–108)
-            └─ Fase 2. freeze do melhor braço + confirm 2 × 8 h (sementes 201, 202) ── alguma negativa ──► fim: não confirmado
-                 └─ Fase 3. Registro: aging confirmado + carga congelada
-                      └─ Fase 4. Campanha causas (agente, 6 rodadas de 60 min, sementes 301–306) ──► tabela de fatores
+Humano dispara: ./run_experiment.sh <tag>
+ └─ Fase 0: controles de 60 min (R0, R0b, R1) ── falha ──► relatório: sem calibração
+ └─ Busca: rodadas de 60 min do agente (R1 + até 3 candidatos), até a rodada 8
+      um candidato fica elegível na rodada n
+      └─ Verificação: rodadas n+1 e n+2 repetem a carga com R1, R0 e R0b (mesma semente), até a rodada 10
+           ├─ as 2 positivas ──► aging confirmado ──► a busca pausa ──► Campanha de causas (6 rodadas)
+           │                                                          └─ a busca retoma nas rodadas que restam
+           └─ alguma negativa ──► a busca continua
+ └─ Fim do orçamento ──► relatório final (results/experiment-<tag>/relatorio.md + resumos do agente)
+Humano lê o relatório
 ```
 
-| Fase | Quem roda | Comando | Passa se |
+| Etapa | Quem roda | Braços | Passa se |
 |---|---|---|---|
-| 0. Controles | humano | `prepare.py controls --with-r1` | R0 e R0b planos, R1 elegível |
-| 1. Detecção | agente | `./run_campaign.sh detect <tag>` | existe um braço elegível (keep ou a referência) |
-| 2. Confirmação | humano | `prepare.py freeze <run_id> <arm>`, depois `confirm --seed 201` e `--seed 202` | as duas execuções: R0 e R0b planos, R1 e candidato elegíveis |
-| 4. Causas | agente | `./run_campaign.sh causas <tag>` | cada variação com duas réplicas válidas |
+| Fase 0 | juiz | R0, R0b, R1 (semente 100) | R0 e R0b planos, R1 elegível |
+| Busca | agente, uma rodada por chamada | referência + até 3 candidatos (sementes 101…) | algum candidato elegível dispara a verificação |
+| Verificação | juiz | R1, a carga, R0, R0b, mesma semente | 2 rodadas positivas: R0 e R0b planos, R1 e a carga elegíveis |
+| Causas | agente, uma rodada por chamada | carga confirmada + até 3 variações de um fator | cada variação com duas réplicas válidas |
 
-Hoje as passagens entre as fases são feitas pelo humano. Um orquestrador que encadeie tudo sozinho está previsto
-no desenho, mas ainda não foi implementado.
+Quem decide cada passagem é o **orquestrador** (`harness/orchestrator.py`, `prepare.py experiment`), código fixo
+com hash no manifesto, nunca o agente.
 
 ## O cenário do Cesar (resumo)
 
@@ -82,17 +87,18 @@ de taxa (até 2x os padrões) e o controle negativo R0b.
 |---|---|---|
 | `prepare.py` (avaliação fixa, não muda) | `prepare.py` + `harness/` + `oracle/`, com hash no manifesto | ninguém durante as campanhas |
 | `train.py` (o único arquivo que o agente edita) | `workload.py`: só literais, variantes da carga do Cesar | agente |
-| `program.md` (instruções do agente) | `program.md`: instruções das campanhas `detect` e `causas` | humano |
+| `program.md` (instruções do agente) | `program.md`: instruções de uma rodada das campanhas `detect` e `causas` e dos resumos | humano |
 | `val_bpb` (uma métrica) | `detect`: Sen's slope da latência de `retrieve_hot` (ms/h), com Hamed-Rao, e `ratio` contra a referência da rodada. `causas`: razões de cada variação contra a carga congelada | juiz |
 | orçamento fixo de 5 min | 60 min por rodada, 4 instâncias em paralelo | juiz |
 | `results.tsv` sem commit; keep avança a branch, discard faz `git reset` | igual na `detect`; na `causas` não há keep nem discard | agente |
+| o agente roda o laço inteiro | um orquestrador fixo chama o agente uma rodada por vez e decide verificação, causas e retomada | ninguém |
 
 ```
 autoresearch/
 ├── program.md                  # instruções do agente (detect e causas)
 ├── workload.py                 # o agente edita: CANDIDATES com args literais
-├── prepare.py                  # juiz: setup, check-oracles, controls, detect, freeze, confirm, causes, wait, verify, rehash
-├── run_campaign.sh             # lança uma campanha (detect ou causas) em modo headless
+├── prepare.py                  # juiz: setup, check-oracles, experiment, controls, detect, check-load, freeze, causes, wait, verify, rehash
+├── run_experiment.sh           # dispara o experimento completo (orquestrador)
 ├── docs/DESENHO-EXPERIMENTAL.md
 ├── apps/credit-card-fastapi/
 │   ├── instrumented/           # alvo (código do Cesar + aging_probe.py)
@@ -104,11 +110,12 @@ autoresearch/
 │   ├── load.py                 # roda os scripts do Cesar; contrato de args; regra de um fator (causas)
 │   ├── evaluate.py             # MK Hamed-Rao + Sen; elegibilidade; flags; custo por MB; interferência
 │   ├── functional_check.py     # sobe a app e roda o teste funcional (check-oracles)
+│   ├── orchestrator.py         # orquestrador: Fase 0, busca, verificação, causas, retomada, relatório
 │   ├── workload_check.py       # lê workload.py como dados (AST + literal_eval)
 │   └── stats.py                # Mann-Kendall, Sen's slope, Hamed-Rao (pymannkendall)
 ├── oracle/                     # teste funcional do Cesar e o executor
-├── tests/                      # test_c1.py (controle interno) e test_causes.py (fase de causas)
-├── frozen/                     # carga congelada (gerada pelo freeze)
+├── tests/                      # test_c1.py (controle interno), test_causes.py (causas), test_orchestrator.py (fluxo)
+├── frozen/                     # carga confirmada congelada pelo orquestrador (campanha de causas atual)
 ├── .claude/settings.{detect,causas}.json   # permissões do agente por campanha
 └── updates/                    # notas de mudança
 ```
@@ -123,15 +130,19 @@ barreira de segurança; para isolar de verdade, rode o agente com outro usuário
 
 ## Campanhas do agente (resumo; regras completas no `program.md`)
 
-**`detect`:** 8 rodadas de 60 min, sem parar antes, sementes 101–108. Em cada rodada, a referência (carga com os
-parâmetros padrão) e até 3 candidatos. Um braço é **elegível** quando é válido, a latência e o tamanho de resposta
-de `retrieve_hot` sobem (Hamed-Rao p < 0,01 e mudança ≥ 50%) e o controle interno fica plano. Keep quando o
-`ratio` contra a referência da mesma rodada supera o melhor anterior em pelo menos 10%; empate dentro de 10% com
-menos parâmetros alterados também vira keep (critério de simplicidade).
+O orquestrador chama o agente **uma rodada por vez**, dizendo a campanha, a rodada e a semente.
 
-**`causas`:** 6 rodadas de 60 min, sementes 301–306, só depois da confirmação. A referência é a carga congelada; cada
-variação muda **exatamente um** parâmetro (o juiz recusa as outras) e roda em duas réplicas. Um efeito é declarado
-quando a razão fica do mesmo lado de 1, a pelo menos 20% dele, nas duas réplicas.
+**`detect`:** em cada rodada, a referência (carga com os parâmetros padrão) e até 3 candidatos. Um braço é
+**elegível** quando é válido, a latência e o tamanho de resposta de `retrieve_hot` sobem (Hamed-Rao p < 0,01 e
+mudança ≥ 50%) e o controle interno fica plano. Keep quando o `ratio` contra a referência da mesma rodada supera o
+melhor anterior em pelo menos 10%; empate dentro de 10% com menos parâmetros alterados também vira keep (critério de
+simplicidade). O melhor candidato elegível de cada rodada (que não seja uma carga já confirmada) vai para a
+verificação.
+
+**`causas`:** 6 rodadas por carga confirmada. A referência é a carga congelada; cada variação muda **exatamente
+um** parâmetro (o juiz recusa as outras) e roda em duas réplicas. Um efeito é declarado quando a razão fica do
+mesmo lado de 1, a pelo menos 20% dele, nas duas réplicas. Hipóteses já testadas numa campanha anterior entram só
+no resumo.
 
 O `ref_sizes` (telefones de referência 4 e 200) é fixo: é o controle interno e não pode ser um fator.
 
@@ -149,31 +160,24 @@ python prepare.py setup --src ../llm-aging-detection-agents
 python prepare.py check-oracles
 git add -A && git commit -m "Setup do alvo do Cesar"
 
-# 2. Teste rápido do fluxo (cerca de 3 min; não mostra tendência)
-python prepare.py detect --smoke
+# 2. Teste rápido do fluxo inteiro (rodadas de 2 min; não mostra tendência)
+./run_experiment.sh teste-smoke --smoke
 
-# 3. Fase 0: controles negativos (60 min)
-python prepare.py controls --with-r1
-
-# 4. Fase 1: campanha de detecção (cerca de 8,5 h)
-./run_campaign.sh detect det-nov23
-
-# 5. Fase 2: congelar o melhor braço e confirmar duas vezes (8 h cada)
-python prepare.py freeze <run_id> <arm>
-python prepare.py confirm --seed 201
-python prepare.py confirm --seed 202
-
-# 6. Fase 4: investigação de causas (cerca de 6,5 h), só com as duas confirmações positivas
-./run_campaign.sh causas causas-nov23
+# 3. Experimento completo, sem humano no meio
+nohup ./run_experiment.sh exp-nov23 &
+# relatório: results/experiment-exp-nov23/relatorio.md; resumos do agente: summary_detect.md, summary_causas_<N>.md
 ```
 
-`run_campaign.sh` tira a permissão de escrita de `prepare.py`, `harness/`, `oracle/`, `apps/`, `.judge/` e
-`frozen/`. Para rodar `freeze` ou `setup` depois disso, devolva a escrita com `chmod -R u+w`. Depois de alterar
-qualquer arquivo do juiz, rode `python prepare.py rehash`; senão `verify` aborta.
+`run_experiment.sh` tira a permissão de escrita de `prepare.py`, `harness/`, `oracle/`, `apps/`, `workloads/` e
+`findings/` (o orquestrador precisa escrever em `frozen/` e `.judge/`). Para rodar `setup` depois disso, devolva a
+escrita com `chmod -R u+w`. Depois de alterar qualquer arquivo do juiz, rode `python prepare.py rehash`; senão
+`verify` aborta. As peças do fluxo também podem ser rodadas à mão para depurar (`controls`, `detect`,
+`check-load`, `freeze`, `causes`).
 
-**Confirmação:** duas execuções de 8 h com sementes distintas (201 e 202), banco limpo, os quatro braços com a
-mesma semente. O aging só é confirmado se **as duas** passarem. Execução **inválida** (D1, D3, H4, app caiu) não
-conta e é repetida com 203, 204…; execução **negativa** significa aging não confirmado e a Fase 4 não roda.
+**Verificação:** 2 rodadas de 60 min logo depois da rodada de busca que achou a carga, com R1, a carga, R0 e R0b
+na mesma semente e banco limpo (regra do Ermeson). Confirmado só se **as duas** forem positivas. Uma rodada
+**inválida** (D1, D3, H4, app caiu) é repetida uma vez; uma **negativa** encerra a verificação e a busca continua.
+A verificação pode ir até a rodada 10.
 
 ## Taxonomia de atalhos (reward hacking)
 
@@ -200,7 +204,8 @@ um desses caminhos (`"atalho": true`). Esses casos também são resultado da pes
 | Artur | Reward hacking; feedback em ~1 h; versões em paralelo | flags D1–D4, C1, H4; `DEFAULT_MINUTES = 60`; `SLOTS = 4` |
 | Fumio | Documentar os atalhos do agente é contribuição | `judge_log.jsonl` e `"atalho"` no ledger |
 | Ermeson | Workloads, métricas, critério de parada e duração | `harness/load.py`, `harness/evaluate.py`, orçamentos no `program.md` |
-| Rafael e Ermeson (19/11) | Sementes independentes; confirmação repetida, mesma duração, banco limpo, unanimidade | sementes 101–108 e 201/202 |
+| Rafael e Ermeson (19/11) | Sementes independentes; confirmação repetida com parâmetros fixos, mesma duração, banco limpo, R1 e controles com a mesma semente, unanimidade | sementes 100 + *n*; verificação em 2 rodadas |
+| Rafael (23/11) | Sem humano no meio; confirmação nas rodadas seguintes (até a 10); cada carga confirmada ganha campanha de causas; a busca retoma depois | `harness/orchestrator.py`, `prepare.py experiment` |
 | Rafael (23/11) | Investigação de causas só pela carga; `program.md` só com instruções; agente sem acesso ao que causaria viés | `prepare.py causes`, `program.md`, `.claude/settings.*.json` |
 | karpathy/autoresearch | Arquivo único editado pelo agente, orçamento fixo, keep/discard por git, critério de simplicidade, registros sem commit, não parar para perguntar | `workload.py`, `program.md` |
 
@@ -218,8 +223,8 @@ um desses caminhos (`"atalho": true`). Esses casos também são resultado da pes
 
 1. **Limiares** (50% na latência, 25% no controle interno, 5 MB/h no RSS, 20% para declarar efeito na
    `causas`): valores de partida, a calibrar com a Fase 0 e com as primeiras campanhas.
-2. **Orquestrador** e **decisão automática no `confirm`** (positiva / negativa / inválida): previstos, não
-   implementados.
+2. **Nenhuma rodada real ainda:** o fluxo foi testado com juiz e agente simulados; falta o primeiro
+   `./run_experiment.sh <tag> --smoke` com a app.
 3. **Sem controle positivo:** "não achamos aging" não mede a sensibilidade do juiz.
 4. **Cliente e app na mesma máquina.**
 5. **Próximas apps** do Cesar (convert-image, monitor, uptime) e **apps reais** (exigência do Artur).

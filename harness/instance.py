@@ -35,7 +35,7 @@ def free_port():
 
 
 def copy_writable(src, dst, ignore=None):
-    """copytree que devolve a escrita ao dono. run_campaign.sh faz chmod -R a-w em apps/,
+    """copytree que devolve a escrita ao dono. run_experiment.sh faz chmod -R a-w em apps/,
     e copytree copia o modo: sem isto o app falha com EACCES ao criar o banco."""
     shutil.copytree(src, dst, ignore=ignore, copy_function=shutil.copyfile)
     for d, _, files in os.walk(dst):

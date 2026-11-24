@@ -12,22 +12,24 @@ Detalhes em cada nota.
 | 5 | `program.md` só com instruções do agente; desenho em `docs/`; `program_detect.md` absorvido | alinhar com o autoresearch e evitar viés | [2026-11-23_program-md-e-autoresearch.md](2026-11-23_program-md-e-autoresearch.md) |
 | 6 | Leitura do agente restrita e textos neutros | o agente foca na temática, sem pistas do mecanismo | idem |
 | 7 | Conceitos do autoresearch reforçados no `program.md` (simplicidade, crash, timeout, primeira rodada, contexto) | conferência com o original | idem |
-| 8 | `README.md` reescrito; `run_campaign.sh` aceita `detect` e `causas` | estado atual | — |
+| 8 | `README.md` reescrito | estado atual | — |
+| 9 | Confirmação dentro da campanha (2 rodadas com R1, R0, R0b), sem humano no meio; opção de 3 campanhas em stand-by | decisão de 23/11 | [2026-11-23_confirmacao-em-rodadas.md](2026-11-23_confirmacao-em-rodadas.md) |
+| 10 | Orquestrador: Fase 0 → busca → verificação → causas → retomada → relatório; `run_experiment.sh`; sai o `confirm` de 8 h e o `run_campaign.sh` | implementa o item 9 | [2026-11-23_orquestrador.md](2026-11-23_orquestrador.md) |
 
 ## O que não mudou
 
-Juiz de detecção (instância, carga, Hamed-Rao + Sen, as 4 condições de elegibilidade, C1, D1–D4, H4), sementes
-101–108, keep pela razão contra a referência da rodada, confirmação em duas execuções de 8 h com sementes 201 e 202
-e unanimidade.
+Juiz de detecção (instância, carga, Hamed-Rao + Sen, as 4 condições de elegibilidade, C1, D1–D4, H4) e keep pela
+razão contra a referência da rodada. A confirmação de 2 × 8 h foi trocada pela verificação em rodadas (item 9).
 
 ## Estado
 
-Código compila, `tests/test_c1.py` e `tests/test_causes.py` passam, rodada `causes` simulada ok, manifesto
-refeito (`verify: ok`). **Nenhuma medição com a app foi feita** nesta branch.
+Código compila; `tests/test_c1.py`, `tests/test_causes.py` e `tests/test_orchestrator.py` passam; simulação de
+ponta a ponta do experimento ok; manifesto refeito (`verify: ok`). **Nenhuma medição com a app foi feita** nesta
+branch.
 
 ## Pendências
 
 1. Controles de 60 min (Fase 0) e calibração dos limiares.
-2. Orquestrador que encadeia as fases e decisão automática no `confirm`.
-3. Confirmar com o Cesar: `N_MIN = 8`, `N_CAUSAS = 6` e o agente sem acesso ao código da app e ao card do F1.
+2. Primeiro `./run_experiment.sh <tag> --smoke` com a app.
+3. Confirmar com o Cesar: 8 rodadas de busca, 6 de causas e o agente sem acesso ao código da app e ao card do F1.
 4. Atualizar a figura do fluxograma (o Cesar monta quando as mudanças fecharem).
