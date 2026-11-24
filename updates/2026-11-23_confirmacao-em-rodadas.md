@@ -13,10 +13,11 @@ Humano dispara
  └─ Campanha de detecção: até 8 rodadas de 60 min
       Rodada n: uma carga dá aging
       Rodadas n+1 e n+2: repetem essa carga (verificação)
-        ├─ as 3 rodadas dão aging ──► aging confirmado + carga congelada (a detecção para aqui)
-        │     └─ Campanha de causas: variações de um fator contra a carga confirmada ──► relatório final
+        ├─ as 3 rodadas dão aging ──► aging confirmado + carga congelada
+        │     └─ a detecção pausa ──► Campanha de causas (variações de um fator contra a carga confirmada)
+        │           └─ a detecção retoma nas rodadas que restam
         └─ alguma não dá aging ──► a campanha volta a procurar nas rodadas que restam
-      Fim do orçamento sem confirmar ──► relatório: aging não confirmado
+      Fim do orçamento de detecção ──► relatório final (todos os agings confirmados, suas cargas e causas)
 Humano lê o relatório
 ```
 
@@ -32,8 +33,12 @@ pelo humano). A referência é a carga confirmada; o resto segue a nota
 
 ## Pontos a fechar antes de implementar
 
-1. ~~Ao confirmar, a detecção para?~~ **Decidido (Rafael, 23/11): sim.** Ao confirmar, a campanha de detecção
-   termina e o orquestrador dispara a campanha de causas.
+1. ~~Ao confirmar, a detecção para?~~ **Decidido (Rafael, 23/11):** ao confirmar, a detecção **pausa**, o
+   orquestrador roda a campanha de causas para a carga confirmada e, terminada essa campanha, **a detecção retoma**
+   nas rodadas que restam do orçamento. O relatório final sai quando o orçamento de detecção acaba.
+   **Em aberto:** (a) se outra carga for confirmada depois da retomada, ela também ganha uma campanha de causas?
+   (b) depois da retomada, uma carga que só repete o mesmo aging já explicado conta como nova (por exemplo, exigir
+   que seja diferente da carga já confirmada)?
 2. **Orçamento:** se o aging aparecer tarde (rodada 7 ou 8), permitir que as 2 rodadas de verificação passem das 8
    (até 10). Recomendado.
 3. **Controles R0 e R0b** nas rodadas de verificação: recomendado (é o que cumpre "R1 e seus controles com a
