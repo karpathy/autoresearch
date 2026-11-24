@@ -1,6 +1,6 @@
 # 2026-11-23 — Confirmação dentro da campanha (opção 2) e opção 1 em stand-by
 
-**Status:** decisão de desenho. **Ainda não implementada**: o código e o `program.md` seguem com a confirmação de
+**Status:** desenho fechado (todos os pontos decididos). **Ainda não implementado**: o código e o `program.md` seguem com a confirmação de
 2 × 8 h e com etapas humanas no meio.
 
 ## Decisão (Rafael, 23/11)
@@ -16,9 +16,9 @@ Humano dispara
       Rodadas n+1 e n+2: repetem essa carga (verificação: R1, carga, R0, R0b, mesma semente)
         ├─ as 3 rodadas dão aging ──► aging confirmado + carga congelada
         │     └─ a detecção pausa ──► Campanha de causas (variações de um fator contra a carga confirmada)
-        │           └─ a detecção retoma nas rodadas que restam
+        │           └─ a detecção retoma nas rodadas que restam (cada nova carga confirmada ganha a sua campanha de causas)
         └─ alguma não dá aging ──► a campanha volta a procurar nas rodadas que restam
-      Fim do orçamento de detecção ──► relatório final (todos os agings confirmados, suas cargas e causas)
+      Fim do orçamento de detecção ──► relatório final (todos os agings confirmados, cargas, causas e hipóteses já cobertas)
 Humano lê o relatório
 ```
 
@@ -37,9 +37,11 @@ pelo humano). A referência é a carga confirmada; o resto segue a nota
 1. ~~Ao confirmar, a detecção para?~~ **Decidido (Rafael, 23/11):** ao confirmar, a detecção **pausa**, o
    orquestrador roda a campanha de causas para a carga confirmada e, terminada essa campanha, **a detecção retoma**
    nas rodadas que restam do orçamento. O relatório final sai quando o orçamento de detecção acaba.
-   **Em aberto:** (a) se outra carga for confirmada depois da retomada, ela também ganha uma campanha de causas?
-   (b) depois da retomada, uma carga que só repete o mesmo aging já explicado conta como nova (por exemplo, exigir
-   que seja diferente da carga já confirmada)?
+   - **(a) Decidido:** toda carga confirmada depois da retomada também ganha a sua campanha de causas.
+   - **(b) Decidido:** uma carga parecida com uma já confirmada **conta como aging novo** e pode consumir o resto do
+     orçamento. Na campanha de causas dela, o agente testa **primeiro as hipóteses que ainda não foram testadas**;
+     hipóteses iguais às de uma campanha de causas anterior não são rodadas de novo, só entram no relatório, com
+     referência ao resultado já obtido.
 2. **Orçamento — decidido (Rafael, 23/11): sim.** A busca usa até 8 rodadas; se o aging aparecer tarde (rodada 7
    ou 8), as 2 rodadas de verificação podem passar das 8, até a rodada 10.
 3. **Controles nas rodadas de verificação — decidido (Rafael, 23/11): sim.** Os 4 slots são R1, a carga, R0 e R0b,
@@ -49,7 +51,7 @@ pelo humano). A referência é a carga confirmada; o resto segue a nota
    e R1) antes da rodada 1; se R0 ou R0b subirem, ou R1 não subir, para com "sem calibração" antes de gastar o
    orçamento de detecção.
 
-**Ainda em aberto:** os pontos (a) e (b) do item 1.
+**Todos os pontos estão decididos.** Falta implementar.
 
 ## O que precisa mudar quando for implementado
 
