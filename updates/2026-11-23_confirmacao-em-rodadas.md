@@ -10,9 +10,10 @@ confirmação do aging acontece **dentro da campanha de detecção**, usando as 
 
 ```
 Humano dispara
- └─ Campanha de detecção: até 8 rodadas de 60 min
+ └─ Fase 0: controles de 60 min (R0, R0b, R1) ── falha ──► relatório: sem calibração
+ └─ Campanha de detecção: até 8 rodadas de busca de 60 min (+ verificação até a rodada 10)
       Rodada n: uma carga dá aging
-      Rodadas n+1 e n+2: repetem essa carga (verificação)
+      Rodadas n+1 e n+2: repetem essa carga (verificação: R1, carga, R0, R0b, mesma semente)
         ├─ as 3 rodadas dão aging ──► aging confirmado + carga congelada
         │     └─ a detecção pausa ──► Campanha de causas (variações de um fator contra a carga confirmada)
         │           └─ a detecção retoma nas rodadas que restam
@@ -29,7 +30,7 @@ semente**. A repetição tem a mesma duração da rodada que se confirma (60 min
 pelo humano). A referência é a carga confirmada; o resto segue a nota
 [2026-11-23_fase4-causas.md](2026-11-23_fase4-causas.md).
 
-**Substitui:** a Fase 0 manual, o `freeze` manual e a confirmação de 2 × 8 h (`confirm --seed 201/202`).
+**Substitui:** a Fase 0 manual (que passa a ser automática), o `freeze` manual e a confirmação de 2 × 8 h (`confirm --seed 201/202`).
 
 ## Pontos a fechar antes de implementar
 
@@ -39,12 +40,16 @@ pelo humano). A referência é a carga confirmada; o resto segue a nota
    **Em aberto:** (a) se outra carga for confirmada depois da retomada, ela também ganha uma campanha de causas?
    (b) depois da retomada, uma carga que só repete o mesmo aging já explicado conta como nova (por exemplo, exigir
    que seja diferente da carga já confirmada)?
-2. **Orçamento:** se o aging aparecer tarde (rodada 7 ou 8), permitir que as 2 rodadas de verificação passem das 8
-   (até 10). Recomendado.
-3. **Controles R0 e R0b** nas rodadas de verificação: recomendado (é o que cumpre "R1 e seus controles com a
-   mesma semente").
-4. **Fase 0 (controles de 60 min) automática** no início, antes da primeira rodada, ou dispensada porque R0 e R0b
-   já entram na verificação.
+2. **Orçamento — decidido (Rafael, 23/11): sim.** A busca usa até 8 rodadas; se o aging aparecer tarde (rodada 7
+   ou 8), as 2 rodadas de verificação podem passar das 8, até a rodada 10.
+3. **Controles nas rodadas de verificação — decidido (Rafael, 23/11): sim.** Os 4 slots são R1, a carga, R0 e R0b,
+   todos com a mesma semente (regra do Ermeson: "R1 e seus controles com a mesma semente"). R0 e R0b precisam ficar
+   planos; R1 e a carga, elegíveis.
+4. **Fase 0 — decidido (Rafael, 23/11): continua, automática.** O orquestrador roda os controles de 60 min (R0, R0b
+   e R1) antes da rodada 1; se R0 ou R0b subirem, ou R1 não subir, para com "sem calibração" antes de gastar o
+   orçamento de detecção.
+
+**Ainda em aberto:** os pontos (a) e (b) do item 1.
 
 ## O que precisa mudar quando for implementado
 
